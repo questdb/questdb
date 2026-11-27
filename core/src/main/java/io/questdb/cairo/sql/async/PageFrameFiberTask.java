@@ -247,7 +247,7 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
                 final long frameSequenceId = reduceTask.getFrameSequenceId();
                 reduceTask.clear();
                 subSeq.done(cursor);
-                dispatcher.signalProgress(frameSequence);
+                dispatcher.signalRingProgress(dispatcher.getUnorderedRing());
                 if (frameSequenceId != frameSequence.getId()) {
                     LOG.error()
                             .$("skipping stale task [expected=").$(frameSequence.getId())
@@ -306,11 +306,12 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
 
     private void completeOwnership() {
         if (orderedFrameSequence != null) {
+            final int shard = orderedFrameSequence.getShard();
             try {
                 orderedSubSeq.done(orderedCursor);
             } finally {
                 orderedFrameSequence.getReduceFinishedCounter().incrementAndGet();
-                dispatcher.signalProgress(orderedFrameSequence);
+                dispatcher.signalProgress(orderedFrameSequence, shard);
             }
         } else if (unorderedFrameSequence != null) {
             try {
@@ -360,11 +361,12 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
             try {
                 MemoryTracker.detachResourceMemoryCurrentThread();
             } finally {
+                final int shard = frameSequence.getShard();
                 try {
                     subSeq.done(cursor);
                 } finally {
                     frameSequence.getReduceFinishedCounter().incrementAndGet();
-                    dispatcher.signalProgress(frameSequence);
+                    dispatcher.signalProgress(frameSequence, shard);
                 }
             }
         }

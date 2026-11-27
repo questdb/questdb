@@ -26,10 +26,12 @@ package io.questdb.test.cairo;
 
 import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableFlagResolver;
@@ -38,6 +40,8 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.pool.PoolListener;
+import io.questdb.cairo.pool.ex.EntryLockedException;
+import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
@@ -45,23 +49,31 @@ import io.questdb.mp.Job;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.tasks.TelemetryTask;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.AfterClass;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
+import java.io.File;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -125,6 +137,31 @@ public class CairoEngineTest extends AbstractCairoTest {
                 } catch (CairoError expected) {
                     TestUtils.assertContains(expected.getMessage(), "engine is poisoned");
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testDataSyncFailureStopsOnlyTheEngineWhoseRootHoldsTheFile() throws Exception {
+        // Two engines on one facade object: the path the OS gives for the failed file picks the engine whose root
+        // holds it. A failure of no file stops every engine on the facade, so that no stop is lost.
+        Assume.assumeTrue(Files.isPathLookupSupported());
+        assertMemoryLeak(() -> {
+            final FilesFacade ff = new FilesFacadeImpl();
+            final File rootA = new File(temp.newFolder(), "db");
+            final File rootB = new File(temp.newFolder(), "db");
+            Assert.assertTrue(rootA.mkdir());
+            Assert.assertTrue(rootB.mkdir());
+            try (
+                    CairoEngine engineA = new CairoEngine(syncConfiguration(rootA, ff));
+                    CairoEngine engineB = new CairoEngine(syncConfiguration(rootB, ff))
+            ) {
+                assertFailedFlushOfFileStopsOnly(ff, rootA, engineA, engineB);
+                assertFailedFlushOfFileStopsOnly(ff, rootB, engineB, engineA);
+
+                CairoException.dataSyncFailureOfFd(ff, -1, 5, "fdatasync", "injected");
+                Assert.assertTrue(engineA.isDurabilityFailed());
+                Assert.assertTrue(engineB.isDurabilityFailed());
             }
         });
     }
@@ -610,6 +647,65 @@ public class CairoEngineTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTableMetadataOfLockedTableFailsWithoutTakingWriter() throws Exception {
+        // The test thread locks the readers and the metadata of a table, as DROP and RENAME do before
+        // they lock the writer. The lock says nothing about the table's files, so a read of the
+        // metadata fails as busy at once: it does not open the writer to repair the table, which
+        // would make the DDL's lock of the writer fail.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE plain (a INT)");
+            execute("CREATE TABLE partitioned (a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("CREATE TABLE wal (a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+            assertTableMetadataOfLockedTableFails("plain", false, "a:INT");
+            assertTableMetadataOfLockedTableFails("partitioned", false, "a:INT, ts:TIMESTAMP");
+            assertTableMetadataOfLockedTableFails("wal", true, "a:INT, ts:TIMESTAMP");
+        });
+    }
+
+    @Test
+    public void testTableMetadataRepairsNonWalTableAfterMetaSwapCrash() throws Exception {
+        // A crash between the two renames of the writer's metadata swap leaves a non-WAL table with
+        // no _meta, only _meta.prev and a _todo_ armed to restore it. A read of the metadata cannot
+        // load the table, so it opens the writer, which restores _meta, and reads again.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO t VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-02T00:00:00.000000Z')");
+            final TableToken tt = engine.verifyTableName("t");
+            Assert.assertFalse(tt.isWal());
+            RecoveryCoordinatorTest.crashMetaSwap(tt, false);
+            Assert.assertFalse(isPresentInTableDir(tt, TableUtils.META_FILE_NAME));
+            Assert.assertTrue(isPresentInTableDir(tt, TableUtils.META_PREV_FILE_NAME));
+
+            // the read of the missing _meta gives up after the spin lock timeout, and not after the
+            // default 5 seconds
+            spinLockTimeout = 1;
+            final LogCapture capture = new LogCapture();
+            capture.start();
+            try {
+                try (TableMetadata metadata = engine.getTableMetadata(tt)) {
+                    Assert.assertEquals("a:INT, ts:TIMESTAMP", columnsOf(metadata));
+                }
+                capture.drain();
+                capture.assertLogged("starting table repair [table=t~, cause=");
+            } finally {
+                capture.stop();
+            }
+            Assert.assertTrue(isPresentInTableDir(tt, TableUtils.META_FILE_NAME));
+            Assert.assertFalse(isPresentInTableDir(tt, TableUtils.META_PREV_FILE_NAME));
+            assertQuery("t")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            a\tts
+                            1\t2024-01-01T00:00:00.000000Z
+                            2\t2024-01-02T00:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
     public void testTheMaintenanceJobDoesNotObstructTableLocking() throws Exception {
         final String tableName = testName.getMethodName();
         assertMemoryLeak(() -> {
@@ -651,6 +747,104 @@ public class CairoEngineTest extends AbstractCairoTest {
                 Assert.assertTrue(engine.clear());
             }
         });
+    }
+
+    // A failed flush of a file under root, by its descriptor and by its mapping, stops owner and not bystander
+    private static void assertFailedFlushOfFileStopsOnly(FilesFacade ff, File root, CairoEngine owner, CairoEngine bystander) {
+        final long size = Files.PAGE_SIZE;
+        try (Path path = new Path().of(root.getAbsolutePath()).concat("a.d")) {
+            final long fd = Files.openRW(path.$());
+            Assert.assertTrue(fd > -1);
+            try {
+                Assert.assertTrue(Files.allocate(fd, size));
+                final long address = Files.mmap(fd, size, 0, Files.MAP_RW, MemoryTag.MMAP_DEFAULT);
+                try {
+                    CairoException.dataSyncFailureOfMapping(ff, address, 5, "msync", "injected");
+                    Assert.assertTrue(owner.isDurabilityFailed());
+                    Assert.assertFalse("[failure=" + bystander.getDurabilityFailure() + ']', bystander.isDurabilityFailed());
+                    owner.resetDurabilityFailure();
+
+                    CairoException.dataSyncFailureOfFd(ff, fd, 5, "fdatasync", "injected");
+                    Assert.assertTrue(owner.isDurabilityFailed());
+                    Assert.assertFalse("[failure=" + bystander.getDurabilityFailure() + ']', bystander.isDurabilityFailed());
+                    owner.resetDurabilityFailure();
+                } finally {
+                    Files.munmap(address, size, MemoryTag.MMAP_DEFAULT);
+                }
+            } finally {
+                Files.close(fd);
+            }
+        }
+    }
+
+    // Locks the readers and the metadata of the table, reads the metadata, and unlocks. The read
+    // fails as busy, takes no writer of the table and starts no repair. Once unlocked, the table's
+    // metadata holds the expected columns.
+    private static void assertTableMetadataOfLockedTableFails(String tableName, boolean isWal, String expectedColumns) {
+        final TableToken tt = engine.verifyTableName(tableName);
+        Assert.assertEquals(isWal, tt.isWal());
+        final long testThread = Thread.currentThread().threadId();
+        final AtomicBoolean hasTakenWriter = new AtomicBoolean();
+        engine.setPoolListener((factoryType, thread, tableToken, event, segment, position) -> {
+            if (thread == testThread
+                    && factoryType == PoolListener.SRC_WRITER
+                    && (event == PoolListener.EV_GET || event == PoolListener.EV_CREATE)
+                    && tableToken != null
+                    && tableToken.getTableName().equals(tableName)) {
+                hasTakenWriter.set(true);
+            }
+        });
+        final LogCapture capture = new LogCapture();
+        capture.start();
+        try {
+            Assert.assertTrue(engine.lockReadersAndMetadata(tt));
+            try (TableMetadata ignore = engine.getTableMetadata(tt)) {
+                Assert.fail("expected the metadata read of the locked table " + tableName + " to fail");
+            } catch (EntryLockedException e) {
+                TestUtils.assertEquals("table busy [reason=unknown]", e.getFlyweightMessage());
+            } finally {
+                engine.unlockReadersAndMetadata(tt);
+            }
+            capture.drain();
+            capture.assertNotLogged("starting table repair [table=");
+        } finally {
+            capture.stop();
+            engine.setPoolListener(null);
+        }
+        Assert.assertFalse("the metadata read took the writer of " + tableName, hasTakenWriter.get());
+        try (TableMetadata metadata = engine.getTableMetadata(tt)) {
+            Assert.assertEquals(expectedColumns, columnsOf(metadata));
+        }
+    }
+
+    // the columns of the metadata as name:TYPE, separated by commas
+    private static String columnsOf(TableMetadata metadata) {
+        final StringSink sink = new StringSink();
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            if (i > 0) {
+                sink.put(", ");
+            }
+            sink.put(metadata.getColumnName(i)).put(':').put(ColumnType.nameOf(metadata.getColumnType(i)));
+        }
+        return sink.toString();
+    }
+
+    private static boolean isPresentInTableDir(TableToken tableToken, String fileName) {
+        return configuration.getFilesFacade().exists(path.of(configuration.getDbRoot()).concat(tableToken).concat(fileName).$());
+    }
+
+    private static CairoConfiguration syncConfiguration(File root, FilesFacade ff) {
+        return new DefaultTestCairoConfiguration(root.getAbsolutePath()) {
+            @Override
+            public int getCommitMode() {
+                return CommitMode.SYNC;
+            }
+
+            @Override
+            public @NotNull FilesFacade getFilesFacade() {
+                return ff;
+            }
+        };
     }
 
     private static void waitForTableStatus(int status) {

@@ -419,8 +419,11 @@ public final class HashJoinGroupByMetadata implements Closeable {
     }
 
     private static TableColumnMetadata copyColumn(RecordMetadata metadata, int column, boolean isSymbolTableStatic) {
-        return new TableColumnMetadata(metadata.getColumnName(column), metadata.getColumnType(column),
+        final TableColumnMetadata copy = new TableColumnMetadata(metadata.getColumnName(column), metadata.getColumnType(column),
                 IndexType.NONE, 0, isSymbolTableStatic, null);
+        // The join passes the column through, so it keeps the column's PARQUET(...) setting.
+        copy.setParquetEncodingConfig(metadata.getColumnMetadata(column).getParquetEncodingConfig());
+        return copy;
     }
 
     private static int indexOf(IntList columns, int value) {

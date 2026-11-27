@@ -32,10 +32,14 @@ import io.questdb.test.griffin.fuzz.types.ColumnKind;
 import io.questdb.test.griffin.fuzz.types.FuzzColumnType;
 import io.questdb.test.griffin.fuzz.types.FuzzColumnTypes;
 import io.questdb.test.griffin.fuzz.types.IntKeyType;
+import io.questdb.test.griffin.fuzz.types.IntType;
 import io.questdb.test.griffin.fuzz.types.LongKeyType;
+import io.questdb.test.griffin.fuzz.types.LongType;
+import io.questdb.test.griffin.fuzz.types.StringType;
 import io.questdb.test.griffin.fuzz.types.SymbolType;
 import io.questdb.test.griffin.fuzz.types.TimestampType;
 import io.questdb.test.griffin.fuzz.types.VarcharKeyType;
+import io.questdb.test.griffin.fuzz.types.VarcharType;
 
 import java.time.LocalDate;
 import java.time.ZoneOffset;
@@ -97,6 +101,9 @@ public final class FuzzTableFactory {
     private static final String JOIN_KEY_COLUMN = "sym";
     private static final String LONG_JOIN_KEY_COLUMN = "lk";
     private static final double PARTIAL_PARQUET_PARTITION_CHANCE = 0.5;
+    // Per-table chance that the first generated INT column turns to LONG and the first
+    // generated VARCHAR column to STRING after the parquet conversion (see applyRetype).
+    private static final double RETYPE_CHANCE = 0.5;
     // Per-posting-index chance of attaching a covering INCLUDE list.
     private static final double POSTING_COVERING_CHANCE = 0.5;
     private static final int POSTING_MAX_COVERING_COLUMNS = 3;
@@ -168,10 +175,29 @@ public final class FuzzTableFactory {
             shadowParquet = copyIntoDeltaShadow(shadowRnd, shadowKind, primaryName, shadowName, shadowParquet, executor, drainWal);
         }
 
+        // Retype after the conversion, so that a parquet partition keeps the column in its old type.
+        if (applyRetype(rnd, primaryName, shadowName, primaryColumns, shadowColumns, executor, shadowKind == ShadowKind.WAL)) {
+            drainWal.run();
+        }
+
         FuzzTable shadow = new FuzzTable(shadowName, shadowColumns, TS_COLUMN,
                 shadowParquet.mode, shadowParquet.partitions, null, null);
         return new FuzzTable(primaryName, primaryColumns, TS_COLUMN,
                 primaryParquet.mode, primaryParquet.partitions, compositeDay, shadow);
+    }
+
+    private static boolean isCovered(ObjList<FuzzColumn> columns, String columnName) {
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            final FuzzIndex index = columns.getQuick(i).getIndex();
+            if (index != null && index.coveringColumns() != null) {
+                for (int j = 0, m = index.coveringColumns().size(); j < m; j++) {
+                    if (index.coveringColumns().getQuick(j).equals(columnName)) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
     }
 
     /**
@@ -211,6 +237,57 @@ public final class FuzzTableFactory {
             case PARTIAL -> executor.execute("ALTER TABLE " + tableName
                     + " CONVERT PARTITION TO PARQUET LIST " + conversion.partitions);
         }
+    }
+
+    /**
+     * With {@link #RETYPE_CHANCE} probability, turns the first generated INT column to LONG and the
+     * first generated VARCHAR column to STRING on both siblings, after their parquet conversion. A
+     * parquet partition keeps such a column in its old type and every read converts it lazily, in the
+     * row accessors, while a native partition holds it rewritten, so the diff-shadow oracle compares
+     * the lazy conversion with the rewrite, and a Parquet export of the column streams its rows. A
+     * column that a posting index on either sibling covers keeps its type. A Delta shadow cannot
+     * retype its columns, so neither sibling changes; the draw still happens, keeping the seed's
+     * stream as it is with Delta shadows off. Returns whether it altered anything.
+     */
+    private boolean applyRetype(
+            Rnd rnd,
+            String primaryName,
+            String shadowName,
+            ObjList<FuzzColumn> primaryColumns,
+            ObjList<FuzzColumn> shadowColumns,
+            SqlExecutor executor,
+            boolean isShadowRetypable
+    ) throws SqlException {
+        if (rnd.nextDouble() >= RETYPE_CHANCE || !isShadowRetypable) {
+            return false;
+        }
+        boolean isRetyped = false;
+        boolean isIntRetyped = false;
+        boolean isVarcharRetyped = false;
+        for (int i = 0, n = primaryColumns.size(); i < n; i++) {
+            final FuzzColumn column = primaryColumns.getQuick(i);
+            final FuzzColumnType targetType;
+            if (!isIntRetyped && column.getType() == IntType.INSTANCE) {
+                targetType = LongType.INSTANCE;
+                isIntRetyped = true;
+            } else if (!isVarcharRetyped && column.getType() == VarcharType.INSTANCE) {
+                targetType = StringType.INSTANCE;
+                isVarcharRetyped = true;
+            } else {
+                continue;
+            }
+            if (isCovered(primaryColumns, column.getName()) || isCovered(shadowColumns, column.getName())) {
+                continue;
+            }
+            for (String tableName : new String[]{primaryName, shadowName}) {
+                executor.execute("ALTER TABLE " + tableName + " ALTER COLUMN " + column.getName() + " TYPE " + targetType.getDdl());
+            }
+            primaryColumns.setQuick(i, new FuzzColumn(column.getName(), targetType, column.getIndex()));
+            final FuzzColumn shadowColumn = shadowColumns.getQuick(i);
+            shadowColumns.setQuick(i, new FuzzColumn(shadowColumn.getName(), targetType, shadowColumn.getIndex()));
+            isRetyped = true;
+        }
+        return isRetyped;
     }
 
     /**

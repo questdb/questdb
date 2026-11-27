@@ -27,6 +27,7 @@ package io.questdb.test.griffin.fuzz;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.test.griffin.fuzz.clauses.GroupByClause;
+import io.questdb.test.griffin.fuzz.clauses.GroupingSetsClause;
 import io.questdb.test.griffin.fuzz.clauses.HashJoinGroupByClause;
 import io.questdb.test.griffin.fuzz.clauses.HorizonJoinClause;
 import io.questdb.test.griffin.fuzz.clauses.LatestOnClause;
@@ -59,7 +60,10 @@ import io.questdb.test.griffin.fuzz.expr.BindContext;
  * distribution. When equi-join GROUP BY fuzzing is enabled
  * ({@code hashJoinEnabled}, on by default), its band is carved out of the top
  * of the GROUP BY range ([65, 70)), since the shape is a GROUP BY over a join;
- * disabling it gives the band back to GROUP BY without an extra rnd draw.
+ * disabling it gives the band back to GROUP BY without an extra rnd draw. When
+ * grouping sets fuzzing is enabled ({@code groupingSetsEnabled}, on by default),
+ * ROLLUP, CUBE and GROUPING SETS queries take the band [60, 65) of the GROUP BY
+ * range in the same way.
  * <p>
  * For non-join shapes the {@link FuzzSource} is usually a direct
  * reference to a real table, but occasionally wrapped in a subquery or
@@ -87,18 +91,19 @@ public final class QueryGenerator {
             boolean latestOnEnabled,
             boolean horizonJoinEnabled,
             boolean windowJoinEnabled,
-            boolean hashJoinEnabled
+            boolean hashJoinEnabled,
+            boolean groupingSetsEnabled,
+            FuzzConfig config
     ) {
         int pick = rnd.nextInt(100);
         FuzzTable t = tables.getQuick(rnd.nextInt(tables.size()));
 
         if (pick < 15 && tables.size() >= 2) {
             FuzzTable other = pickOtherTable(rnd, tables, t);
-            // Joins stay on direct, real tables: ASOF/LT/SPLICE, HORIZON and
-            // WINDOW joins all need a designated timestamp on both sides which
-            // virtual tables don't carry. The 15% join band is split across the
-            // enabled join kinds; with both new kinds off it stays temporal-only
-            // and draws no extra rnd op, preserving the original distribution.
+            // Joins stay on real tables: ASOF/LT/SPLICE, HORIZON and WINDOW
+            // joins all need a designated timestamp on both sides which virtual
+            // tables don't carry. The 15% join band is split across the
+            // enabled join kinds; with both new kinds off it stays temporal-only.
             return generateJoin(rnd, t, other, ctx, injectFaultFn, horizonJoinEnabled, windowJoinEnabled);
         }
 
@@ -123,7 +128,7 @@ public final class QueryGenerator {
         // on/off axis in QueryRunner with nothing to compare.
         if (hashJoinEnabled && pick >= 65 && pick < 70 && tables.size() >= 2) {
             FuzzTable other = pickOtherTable(rnd, tables, t);
-            return HashJoinGroupByClause.generate(rnd, t, other, ctx, injectFaultFn).withShape(QueryShape.HASH_JOIN_GROUP_BY);
+            return HashJoinGroupByClause.generate(rnd, t, other, ctx, injectFaultFn, config).withShape(QueryShape.HASH_JOIN_GROUP_BY);
         }
 
         FuzzSource source = pickSource(rnd, t);
@@ -134,6 +139,9 @@ public final class QueryGenerator {
                 return SimpleClause.generate(rnd, source, ctx, injectFaultFn);
             }
             return SampleByClause.generate(rnd, source, ctx, injectFaultFn).withShape(QueryShape.SAMPLE_BY);
+        }
+        if (groupingSetsEnabled && pick >= 60 && pick < 65) {
+            return GroupingSetsClause.generate(rnd, source, ctx, injectFaultFn).withShape(QueryShape.GROUPING_SETS);
         }
         if (pick < 70) {
             return GroupByClause.generate(rnd, source, ctx, injectFaultFn).withShape(QueryShape.GROUP_BY);
@@ -158,9 +166,10 @@ public final class QueryGenerator {
      * Picks one of the enabled join kinds for the join band. Temporal
      * (ASOF/LT/SPLICE) is always available; HORIZON and WINDOW joins are added
      * when their config flags are on. The sub-pick is drawn only when more than
-     * one kind is enabled, so the both-off case reproduces the pre-existing
-     * temporal-only rnd stream exactly. All three kinds run on direct real
-     * tables and thread {@code injectFaultFn} into their master-only WHERE.
+     * one kind is enabled. All three kinds run on real tables, directly or, for
+     * a side that SPLICE or HORIZON JOIN reads by row id, through a WINDOW JOIN
+     * sub-query (see {@link FuzzSource#rowIdJoinSide}), and thread
+     * {@code injectFaultFn} into their master-only WHERE.
      */
     private static GeneratedQuery generateJoin(
             Rnd rnd,
@@ -174,7 +183,7 @@ public final class QueryGenerator {
         int kinds = 1 + (horizonJoinEnabled ? 1 : 0) + (windowJoinEnabled ? 1 : 0);
         int joinPick = kinds > 1 ? rnd.nextInt(kinds) : 0;
         if (joinPick == 0) {
-            return TemporalJoinClause.generate(rnd, FuzzSource.direct(t), FuzzSource.direct(other), ctx, injectFaultFn).withShape(QueryShape.TEMPORAL_JOIN);
+            return TemporalJoinClause.generate(rnd, t, other, ctx, injectFaultFn).withShape(QueryShape.TEMPORAL_JOIN);
         }
         if (horizonJoinEnabled && joinPick == 1) {
             return HorizonJoinClause.generate(rnd, t, other, ctx, injectFaultFn).withShape(QueryShape.HORIZON_JOIN);

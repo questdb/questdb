@@ -140,8 +140,9 @@ public class O3ParquetMergeStrategy {
      *                               timestamp that the O3 batch also lands on are merged as a single
      *                               unit, so a dedup key at the shared timestamp is compared against
      *                               every existing copy. Pass false for non-deduplicating commits:
-     *                               the tie is then harmless and coalescing (which forces a
-     *                               full-partition rewrite) is unnecessary.
+     *                               the O3 rows at the shared timestamp merge into the last row group
+     *                               that holds it, after every stored row of that timestamp, and
+     *                               coalescing (which forces a full-partition rewrite) is unnecessary.
      * @return the number of actions written into actionsBuf
      */
     public static int computeMergeActions(
@@ -156,6 +157,42 @@ public class O3ParquetMergeStrategy {
             LongList gapO3Ranges,
             boolean coalesceBoundaryTies
     ) {
+        return computeMergeActions(
+                rowGroupBounds, sortedTimestampsAddr, srcOooLo, srcOooHi, smallRowGroupThreshold,
+                maxRowGroupSize, actionsBuf, rgO3Ranges, gapO3Ranges, coalesceBoundaryTies,
+                Long.MAX_VALUE, Long.MIN_VALUE
+        );
+    }
+
+    /**
+     * Same as
+     * {@link #computeMergeActions(LongList, long, long, long, int, int, ObjList, LongList, LongList, boolean)},
+     * plus an optional replace-commit range. A row group with O3 rows becomes a MERGE that also
+     * drops its existing rows inside the range. A row group the range intersects without O3 rows
+     * becomes a DROP when fully covered, else a MERGE with an empty O3 slice.
+     *
+     * @param replaceLo inclusive range start, or Long.MAX_VALUE when not a replace commit
+     * @param replaceHi inclusive range end, or Long.MIN_VALUE when not a replace commit;
+     *                  every O3 row must lie inside [replaceLo, replaceHi]
+     */
+    public static int computeMergeActions(
+            LongList rowGroupBounds,
+            long sortedTimestampsAddr,
+            long srcOooLo,
+            long srcOooHi,
+            int smallRowGroupThreshold,
+            int maxRowGroupSize,
+            ObjList<MergeAction> actionsBuf,
+            LongList rgO3Ranges,
+            LongList gapO3Ranges,
+            boolean coalesceBoundaryTies,
+            long replaceLo,
+            long replaceHi
+    ) {
+        final boolean isReplace = replaceLo <= replaceHi;
+        // Replace commits never dedup, and coalescing exists only for dedup.
+        assert !(isReplace && coalesceBoundaryTies);
+
         int actionCount = 0;
 
         final int rowGroupCount = getRowGroupCount(rowGroupBounds);
@@ -206,11 +243,15 @@ public class O3ParquetMergeStrategy {
                     o3Cursor = gapHi + 1;
                 }
             } else if (o3Ts <= rgMax) {
-                // O3 data overlaps with this row group
-                // Find all O3 data that overlaps (timestamps <= rgMax)
+                // O3 data overlaps with this row group. When the next row group starts at this
+                // row group's max, the O3 rows at that timestamp go to the next row group: an O3
+                // row lands after every stored row of its timestamp, as in a native partition, and
+                // the last row group that holds the timestamp takes it.
+                final boolean isMaxTiedWithNext = currentRg + 1 < rowGroupCount
+                        && getRowGroupMin(rowGroupBounds, currentRg + 1) == rgMax;
                 long overlapHi = Vect.boundedBinarySearchIndexT(
                         sortedTimestampsAddr,
-                        rgMax,
+                        isMaxTiedWithNext ? rgMax - 1 : rgMax,
                         o3Cursor,
                         srcOooHi,
                         Vect.BIN_SEARCH_SCAN_DOWN
@@ -285,8 +326,10 @@ public class O3ParquetMergeStrategy {
             // is only needed when O3 actually has a row at the shared timestamp;
             // otherwise the tie is harmless and the groups stay independent. It is
             // also skipped entirely for non-deduplicating commits (coalesceBoundaryTies
-            // is false): without dedup the tie causes no incorrectness, so the groups
-            // stay independent and avoid the rewrite a coalesced run would force.
+            // is false): the assignment above already gives the O3 rows at the shared
+            // timestamp to the last group of the run, after every stored row of that
+            // timestamp, so the groups stay independent and avoid the rewrite a
+            // coalesced run would force.
             int runEnd = rg;
             while (coalesceBoundaryTies
                     && runEnd + 1 < rowGroupCount
@@ -322,6 +365,16 @@ public class O3ParquetMergeStrategy {
             long rgRowCount = getRowGroupRowCount(rowGroupBounds, rg);
             if (getRangeLo(rgO3Ranges, rg) >= 0) {
                 nextAction(actionsBuf, actionCount++).setMerge(rg, 0, rgRowCount - 1, getRangeLo(rgO3Ranges, rg), getRangeHi(rgO3Ranges, rg));
+            } else if (isReplace
+                    && getRowGroupMin(rowGroupBounds, rg) <= replaceHi
+                    && getRowGroupMax(rowGroupBounds, rg) >= replaceLo) {
+                // The replace range intersects this row group but brings no rows for it.
+                if (getRowGroupMin(rowGroupBounds, rg) >= replaceLo && getRowGroupMax(rowGroupBounds, rg) <= replaceHi) {
+                    nextAction(actionsBuf, actionCount++).setDrop(rg);
+                } else {
+                    // min or max row lies outside the range, so at least one row survives
+                    nextAction(actionsBuf, actionCount++).setFilter(rg, rgRowCount);
+                }
             } else {
                 nextAction(actionsBuf, actionCount++).setCopyRowGroupSlice(rg, 0, rgRowCount - 1);
             }
@@ -456,7 +509,13 @@ public class O3ParquetMergeStrategy {
          * Copy O3 data as a new row group (no overlapping row group).
          * o3Lo/o3Hi are valid; rowGroupIndex is -1, rgLo/rgHi are -1.
          */
-        COPY_O3
+        COPY_O3,
+
+        /**
+         * Discard a row group fully covered by a replace range that brings no rows for it.
+         * rowGroupIndex is valid; rgLo, rgHi, o3Lo, o3Hi are -1.
+         */
+        DROP
     }
 
     /**
@@ -492,7 +551,7 @@ public class O3ParquetMergeStrategy {
          * Returns the number of rows from O3 data (0 if COPY_ROW_GROUP_SLICE).
          */
         public long getO3RowCount() {
-            return o3Hi >= 0 ? o3Hi - o3Lo + 1 : 0;
+            return o3Hi >= o3Lo && o3Hi >= 0 ? o3Hi - o3Lo + 1 : 0;
         }
 
         /**
@@ -540,6 +599,27 @@ public class O3ParquetMergeStrategy {
             this.rgHi = rgHi;
             this.o3Lo = -1;
             this.o3Hi = -1;
+        }
+
+        /**
+         * Set this action to discard a row group fully covered by a replace range.
+         */
+        public void setDrop(int rowGroupIndex) {
+            this.type = ActionType.DROP;
+            this.rowGroupIndex = rowGroupIndex;
+            this.rowGroupIndexHi = rowGroupIndex;
+            this.rgLo = -1;
+            this.rgHi = -1;
+            this.o3Lo = -1;
+            this.o3Hi = -1;
+        }
+
+        /**
+         * Set this action to a MERGE with an empty O3 slice ({@code o3Hi < o3Lo}), which
+         * drops the rows a replace range covers and keeps the rest.
+         */
+        public void setFilter(int rowGroupIndex, long rgRowCount) {
+            setMerge(rowGroupIndex, 0, rgRowCount - 1, 0, -1);
         }
 
         /**
@@ -591,6 +671,7 @@ public class O3ParquetMergeStrategy {
                 case COPY_ROW_GROUP_SLICE ->
                         "COPY_ROW_GROUP_SLICE(rg=" + rowGroupIndex + "[" + rgLo + "," + rgHi + "])";
                 case COPY_O3 -> "COPY_O3(o3=[" + o3Lo + "," + o3Hi + "])";
+                case DROP -> "DROP(rg=" + rowGroupIndex + ")";
             };
         }
     }

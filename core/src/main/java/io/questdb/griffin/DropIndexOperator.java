@@ -27,12 +27,16 @@ package io.questdb.griffin;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.idx.IndexFactory;
+import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 
 import static io.questdb.cairo.TableUtils.dFile;
@@ -77,12 +81,24 @@ public class DropIndexOperator {
                 long columnVersion = tableWriter.getColumnNameTxn(pTimestamp, columnIndex);
                 long columnTop = tableWriter.getColumnTop(pTimestamp, columnIndex, -1);
                 if (columnTop != -1) {
+                    // read before the upsert names the column after this txn
+                    final boolean isForeignParquetVersion = tableWriter.isForeignParquetColumnVersion(pIndex, columnIndex);
                     // bump up column version, metadata will be updated later
                     tableWriter.upsertColumnVersion(pTimestamp, columnIndex, columnTop);
+                    if (isForeignParquetVersion) {
+                        // No purge may take a version at or above this txn: the partition moves to a new directory
+                        // version without the dropped index, and the version leaves with the old directory
+                        tableWriter.relocateParquetPartition(pIndex, columnIndex);
+                        continue;
+                    }
+                    final long columnDropIndexVersion = tableWriter.getColumnNameTxn(pTimestamp, columnIndex);
 
                     // An evicted Delta partition's base is remote: it has no native column file to link.
                     if (tableWriter.isPartitionBaseNative(pIndex)) {
-                        final long columnDropIndexVersion = tableWriter.getColumnNameTxn(pTimestamp, columnIndex);
+                        if (columnDropIndexVersion != columnVersion) {
+                            // A rolled-back operation can leave files under the new version behind.
+                            removeStaleFiles(timestampType, partitionBy, pTimestamp, pVersion, columnName, indexType, columnDropIndexVersion);
+                        }
                         // create hard link to column data
                         // src
                         partitionDFile(path, rootLen, timestampType, partitionBy, pTimestamp, pVersion, columnName, columnVersion);
@@ -96,6 +112,10 @@ public class DropIndexOperator {
                         }
                         rollbackColumnVersions.add(columnIndex, columnDropIndexVersion, pTimestamp, pVersion);
                     }
+                    // The column keeps its data under the new version, and so do the indexes that INCLUDE it.
+                    tableWriter.linkCoveringSidecars(columnIndex, pTimestamp, pVersion, columnVersion, columnDropIndexVersion);
+                    // Under SYNC, the linked names must survive a power loss before the commit that names them.
+                    tableWriter.fsyncPartitionDirUnderSync(pTimestamp, pVersion);
 
                     // add to cleanup tasks, the index will be removed in due time
                     purgingOperator.add(columnIndex, columnName, ColumnType.SYMBOL, indexType, columnVersion, pTimestamp, pVersion);
@@ -143,5 +163,42 @@ public class DropIndexOperator {
                 partitionNameTxn
         );
         dFile(path, columnName, columnNameTxn);
+    }
+
+    private void removeStaleFile(LPSZ file) {
+        if (!ff.removeQuiet(file)) {
+            final int errno = ff.errno();
+            if (ff.exists(file)) {
+                throw CairoException.critical(errno).put("cannot remove stale column file [path=").put(file).put(']');
+            }
+        }
+    }
+
+    /**
+     * Removes the column's files under its new version in the partition. A rolled-back UPDATE can leave there a hard
+     * link to the committed data, which the new link would collide with, and an index of the data, which ADD INDEX
+     * would later adopt as the column's index instead of building one.
+     */
+    private void removeStaleFiles(
+            int timestampType,
+            int partitionBy,
+            long partitionTimestamp,
+            long partitionNameTxn,
+            CharSequence columnName,
+            byte indexType,
+            long columnNameTxn
+    ) {
+        TableUtils.setPathForNativePartition(other.trimTo(rootLen), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+        final int plen = other.size();
+        removeStaleFile(dFile(other, columnName, columnNameTxn));
+        if (IndexType.isPosting(indexType)) {
+            if (PostingIndexUtils.removeAllSealedFiles(ff, other, plen, columnName, columnNameTxn)) {
+                throw CairoException.critical(0).put("cannot remove stale index files [path=").put(other.trimTo(plen))
+                        .put(", column=").put(columnName).put(']');
+            }
+        } else {
+            removeStaleFile(IndexFactory.valueFileName(indexType, other.trimTo(plen), columnName, columnNameTxn, columnNameTxn));
+        }
+        removeStaleFile(IndexFactory.keyFileName(indexType, other.trimTo(plen), columnName, columnNameTxn));
     }
 }

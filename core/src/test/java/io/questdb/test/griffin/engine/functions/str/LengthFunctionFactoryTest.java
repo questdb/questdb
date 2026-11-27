@@ -71,6 +71,22 @@ public class LengthFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSymbolLengthBytes() throws Exception {
+        // length_bytes has only a VARCHAR overload, which a SYMBOL argument matches
+        assertQuery("SELECT sym, length_bytes(sym) FROM x")
+                .ddl("CREATE TABLE x AS (SELECT rnd_symbol('abc', 'тест', NULL) sym FROM long_sequence(5))")
+                .expectSize()
+                .returns("""
+                        sym\tlength_bytes
+                        abc\t3
+                        abc\t3
+                        тест\t8
+                        \t-1
+                        \t-1
+                        """);
+    }
+
+    @Test
     public void testSymbolSimple() throws Exception {
         assertQuery("select sym,length(sym) from x")
                 .ddl("create table x as (" +

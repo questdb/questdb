@@ -49,7 +49,6 @@ import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.mp.Sequence;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
-import io.questdb.std.Os;
 import io.questdb.std.Rows;
 import io.questdb.std.Transient;
 import io.questdb.std.Vect;
@@ -344,7 +343,7 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
                         if (seq > -1) {
                             runStolenTask(queue, subSeq, seq, dispatcher);
                         } else {
-                            Os.pause();
+                            ownerLoop.pause();
                         }
                     }
                 }
@@ -407,22 +406,28 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
         while (remainingKeys.size() > 0 && (frame = frameCursor.next()) != null) {
             circuitBreaker.statefulThrowExceptionIfTripped();
             final IndexReader indexReader = frame.getIndexReader(columnIndex, IndexReader.DIR_BACKWARD);
-            final long partitionLo = frame.getPartitionLo();
-            final long partitionHi = frame.getPartitionHi() - 1;
+            final long indexRowLo = frame.getIndexRowLo();
+            final long indexRowHi = frame.getIndexRowHi() - 1;
             final int invertedFrameIndex = Rows.MAX_SAFE_PARTITION_INDEX - frameIndex;
-            final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
-            recordA.init(frameMemory);
+            // Only a materialized frame has a source-row resolver, and only prefixes read the record.
+            IndexReader.SourceRowResolver sourceRows = IndexReader.SourceRowResolver.NONE;
+            if (prefixes.size() > 2 || frameMemoryPool.usesCustomDecode(frameIndex)) {
+                final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
+                recordA.init(frameMemory);
+                sourceRows = frameMemory.getSourceRowResolver();
+            }
 
             for (int i = remainingKeys.size() - 1; i >= 0; i--) {
                 final int key = remainingKeys.getQuick(i);
                 try (RowCursor cursor = indexReader.getCursor(
                         key,
-                        partitionLo,
-                        partitionHi,
+                        indexRowLo,
+                        indexRowHi,
                         null,
-                        frameMemory.getSourceRowResolver()
+                        sourceRows
                 )) {
                     if (cursor.hasNext()) {
+                        // Relative to indexRowLo, so already frame-relative, as the native scan returns it.
                         final long row = cursor.next();
                         recordA.setRowIndex(row);
                         if (matchesPrefixes()) {
@@ -492,11 +497,7 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
                 // done(seq) releases the slot
                 subSeq.done(seq);
                 if (dispatcher != null) {
-                    try {
-                        dispatcher.signalQueueProgress();
-                    } finally {
-                        dispatcher.signalOwnerProgress(stolenProgress);
-                    }
+                    dispatcher.signalOwnerProgress(stolenProgress);
                 }
             }
         }
@@ -520,7 +521,7 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
                 if (seq > -1) {
                     runStolenTask(queue, subSeq, seq, dispatcher);
                 } else {
-                    Os.pause();
+                    ownerLoop.pause();
                 }
             }
         }

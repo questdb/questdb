@@ -40,61 +40,94 @@ import io.questdb.tasks.TableWriterTask;
  *     {@code liveRows} and the recorded tops go unused.</li>
  *     <li>MERGE ({@link #ofMerge}): the whole LOGICAL partition - the main directory plus every MOVE-TAIL split -
  *     copied into one staging directory, which replaces the run of {@code _txn} entries it was built from.</li>
+ *     <li>PARQUET CONVERSION ({@link #ofParquetConversion}): a MERGE into one parquet file, maybe of one folder. A lone
+ *     plain folder whose indexed columns have no top keeps its row ids, so the writer links its index files into the
+ *     staging directory instead of the job building them.</li>
+ *     <li>PARQUET GENERATION ({@link #ofParquetGeneration}): a parquet copy beside a plain native folder.</li>
  * </ul>
- * All three are the same errand - compact this partition - so they share one command and one lock reason.
+ * All five are the same errand - rebuild this partition off a reader - so they share one command and one lock reason.
  */
-public class CompositePartitionSwapCommand implements AsyncWriterCommand {
+public class CompositePartitionSwapCommand implements CompactionSwapCommand {
     /**
      * Longs per {@link #folders} entry: the folder's own start timestamp, its name txn, its generation
-     * (a composite folder's writer txn, zero for a plain one), its live row count and the column version its
-     * files carried when the copy read them. Together they are the state the writer re-checks each source
-     * folder against before it swaps the merged copy in.
+     * (a composite folder's writer txn, zero for a plain one), its live row count, the column version its
+     * files carried when the copy read them and its squash tracker ({@link TableUtils#readPartitionSquashTracker}).
+     * Together they are the state the writer re-checks each source folder against before it swaps the merged
+     * copy in.
      */
-    public static final int LONGS_PER_FOLDER = 5;
+    public static final int LONGS_PER_FOLDER = 6;
     private final ColumnTopRecorder columnTops = new ColumnTopRecorder();
     /**
      * MERGE only: the source folders the staging copy was built from, in {@code _txn} order.
      */
     private final LongList folders = new LongList();
     private long correlationId = -1L;
+    // PARQUET GENERATION only: the column version the folder's files carried when the copy read them.
+    private long expectedColumnVersion;
     private long expectedMetadataVersion;
+    // PARQUET GENERATION only: the folder's squash tracker when the copy read it.
+    private long expectedSquashTracker;
     private long expectedSrcNameTxn;
     private long expectedWriterTxn;
+    private volatile boolean isApplied;
+    // PARQUET CONVERSION only: the job left the indexes out of the staging directory for the swap to link.
+    private boolean isIndexLinkedAtSwap;
     private boolean isMakePlain;
     private boolean isMerge;
+    private boolean isParquetGeneration;
     private long liveRows;
+    // PARQUET CONVERSION only: the staged data.parquet size, -1 for every other mode.
+    private long parquetFileSize = -1L;
     private long partitionTimestamp;
+    // PARQUET GENERATION only: the version the copy's footer carries.
+    private long seqTxn;
     private int tableId;
     private TableToken tableToken;
 
     @Override
     public long apply(MetadataService svc, boolean contextAllowsAnyStructureChanges) {
-        if (isMerge) {
-            ((TableWriter) svc).swapMergedLogicalPartition(
-                    partitionTimestamp,
-                    folders,
-                    expectedSrcNameTxn,
-                    expectedWriterTxn,
-                    expectedMetadataVersion,
-                    liveRows,
-                    columnTops
-            );
-        } else if (isMakePlain) {
-            ((TableWriter) svc).makePartitionPlainInPlace(
-                    partitionTimestamp,
-                    expectedSrcNameTxn,
-                    expectedWriterTxn,
-                    expectedMetadataVersion
-            );
-        } else {
-            ((TableWriter) svc).swapCompactedCompositePartition(
-                    partitionTimestamp,
-                    expectedSrcNameTxn,
-                    expectedWriterTxn,
-                    expectedMetadataVersion,
-                    liveRows,
-                    columnTops
-            );
+        try {
+            if (isParquetGeneration) {
+                ((TableWriter) svc).installGeneratedParquet(
+                        partitionTimestamp,
+                        expectedSrcNameTxn,
+                        liveRows,
+                        expectedColumnVersion,
+                        expectedMetadataVersion,
+                        expectedSquashTracker,
+                        seqTxn
+                );
+            } else if (isMerge) {
+                ((TableWriter) svc).swapMergedLogicalPartition(
+                        partitionTimestamp,
+                        folders,
+                        expectedSrcNameTxn,
+                        expectedWriterTxn,
+                        expectedMetadataVersion,
+                        liveRows,
+                        parquetFileSize,
+                        isIndexLinkedAtSwap,
+                        columnTops
+                );
+            } else if (isMakePlain) {
+                ((TableWriter) svc).makePartitionPlainInPlace(
+                        partitionTimestamp,
+                        expectedSrcNameTxn,
+                        expectedWriterTxn,
+                        expectedMetadataVersion
+                );
+            } else {
+                ((TableWriter) svc).swapCompactedCompositePartition(
+                        partitionTimestamp,
+                        expectedSrcNameTxn,
+                        expectedWriterTxn,
+                        expectedMetadataVersion,
+                        liveRows,
+                        columnTops
+                );
+            }
+        } finally {
+            isApplied = true;
         }
         return 0;
     }
@@ -146,6 +179,10 @@ public class CompositePartitionSwapCommand implements AsyncWriterCommand {
         return liveRows;
     }
 
+    public long getParquetFileSize() {
+        return parquetFileSize;
+    }
+
     public long getPartitionTimestamp() {
         return partitionTimestamp;
     }
@@ -168,6 +205,11 @@ public class CompositePartitionSwapCommand implements AsyncWriterCommand {
     @Override
     public long getTableVersion() {
         return 0;
+    }
+
+    @Override
+    public boolean isApplied() {
+        return isApplied;
     }
 
     public boolean isMakePlain() {
@@ -197,8 +239,15 @@ public class CompositePartitionSwapCommand implements AsyncWriterCommand {
         this.liveRows = liveRows;
         this.isMakePlain = false;
         this.isMerge = false;
+        this.isParquetGeneration = false;
+        this.parquetFileSize = -1L;
+        this.expectedColumnVersion = -1L;
+        this.expectedSquashTracker = -1L;
+        this.seqTxn = -1L;
         this.folders.clear();
         this.columnTops.clear();
+        this.isIndexLinkedAtSwap = false;
+        this.isApplied = false;
     }
 
     /**
@@ -235,17 +284,46 @@ public class CompositePartitionSwapCommand implements AsyncWriterCommand {
             long liveRows
     ) {
         assert folders.size() >= 2 * LONGS_PER_FOLDER : "a merge needs at least two folders";
-        of(
-                tableToken,
-                tableId,
-                logicalPartitionTimestamp,
-                folders.getQuick(1),
-                folders.getQuick(2),
-                expectedMetadataVersion,
-                liveRows
-        );
-        this.isMerge = true;
-        this.folders.add(folders);
+        ofRun(tableToken, tableId, logicalPartitionTimestamp, folders, expectedMetadataVersion, liveRows);
+    }
+
+    /**
+     * {@link #ofMerge} into one parquet file; the build calls {@link #setParquetFileSize} before publishing.
+     *
+     * @param isIndexLinkedAtSwap the staging directory holds no index files: the writer links the source folder's
+     *                            own, or declines the swap as stale when it can no longer prove they match
+     */
+    public void ofParquetConversion(
+            TableToken tableToken,
+            int tableId,
+            long logicalPartitionTimestamp,
+            LongList folders,
+            long expectedMetadataVersion,
+            long liveRows,
+            boolean isIndexLinkedAtSwap
+    ) {
+        assert folders.size() >= LONGS_PER_FOLDER : "a conversion needs a folder";
+        ofRun(tableToken, tableId, logicalPartitionTimestamp, folders, expectedMetadataVersion, liveRows);
+        this.parquetFileSize = 0;
+        this.isIndexLinkedAtSwap = isIndexLinkedAtSwap;
+    }
+
+    public void ofParquetGeneration(
+            TableToken tableToken,
+            int tableId,
+            long partitionTimestamp,
+            long expectedSrcNameTxn,
+            long expectedColumnVersion,
+            long expectedMetadataVersion,
+            long expectedSquashTracker,
+            long liveRows,
+            long seqTxn
+    ) {
+        of(tableToken, tableId, partitionTimestamp, expectedSrcNameTxn, 0, expectedMetadataVersion, liveRows);
+        this.isParquetGeneration = true;
+        this.expectedColumnVersion = expectedColumnVersion;
+        this.expectedSquashTracker = expectedSquashTracker;
+        this.seqTxn = seqTxn;
     }
 
     @Override
@@ -261,7 +339,33 @@ public class CompositePartitionSwapCommand implements AsyncWriterCommand {
         this.correlationId = correlationId;
     }
 
+    public void setParquetFileSize(long parquetFileSize) {
+        assert this.parquetFileSize > -1 : "not a parquet conversion";
+        this.parquetFileSize = parquetFileSize;
+    }
+
     @Override
     public void startAsync() {
+    }
+
+    private void ofRun(
+            TableToken tableToken,
+            int tableId,
+            long logicalPartitionTimestamp,
+            LongList folders,
+            long expectedMetadataVersion,
+            long liveRows
+    ) {
+        of(
+                tableToken,
+                tableId,
+                logicalPartitionTimestamp,
+                folders.getQuick(1),
+                folders.getQuick(2),
+                expectedMetadataVersion,
+                liveRows
+        );
+        this.isMerge = true;
+        this.folders.add(folders);
     }
 }

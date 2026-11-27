@@ -44,6 +44,7 @@ public class TestCommitModeSwitchTest extends AbstractCairoTest {
 
     @Test
     public void testEveryConfigurationPathAgreesOnTheSuiteCommitMode() {
+        Assert.assertNull("only a fuzz test class draws its own commit mode", Overrides.getFuzzCommitMode());
         final int expected = CommitMode.fromString(Overrides.TEST_COMMIT_MODE);
         Assert.assertNotEquals(
                 "questdb.test.commit.mode must name a real commit mode, was: " + Overrides.TEST_COMMIT_MODE,
@@ -90,6 +91,9 @@ public class TestCommitModeSwitchTest extends AbstractCairoTest {
         Assert.assertEquals("adaptive epoch flush on close", viaDefaults.isAdaptiveEpochFlushOnClose(), viaProperties.isAdaptiveEpochFlushOnClose());
         Assert.assertEquals("adaptive epoch column sync batched", viaDefaults.isAdaptiveEpochColumnSyncBatched(), viaProperties.isAdaptiveEpochColumnSyncBatched());
         Assert.assertEquals("commit mode", viaDefaults.getCommitMode(), viaProperties.getCommitMode());
+        // No test may run as a downgrade start unless it asks for one: it would write no _cv checksums.
+        Assert.assertFalse("commit mode adaptive downgrade", viaDefaults.isCommitModeAdaptiveDowngrade());
+        Assert.assertFalse("commit mode adaptive downgrade", viaProperties.isCommitModeAdaptiveDowngrade());
     }
 
     /**

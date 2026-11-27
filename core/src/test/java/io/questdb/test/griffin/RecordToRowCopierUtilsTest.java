@@ -75,6 +75,17 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
     };
 
     @Test
+    public void testChunkedCopierCountsConversionsWithinTag() throws Exception {
+        // generateChunkedCopier() sizes each chunk with estimateColumnBytecodeSize(); a conversion the
+        // estimate misses lets a chunk method outgrow the method size limit
+        assertMemoryLeak(() -> {
+            assertWideInsertSelect("GEOHASH(5c)", "GEOHASH(1c)", "#u33d8", "u");
+            assertWideInsertSelect("GEOHASH(5c)", "GEOHASH(4c)", "#u33d8", "u33d");
+            assertWideInsertSelect("TIMESTAMP", "TIMESTAMP_NS", "'2024-01-01T00:00:00.000001Z'::TIMESTAMP", "2024-01-01T00:00:00.000001000Z");
+        });
+    }
+
+    @Test
     public void testCompareAllCopiersWithWideTable() throws Exception {
         Rnd rnd = TestUtils.generateRandom(LOG);
         assertMemoryLeak(() -> {
@@ -900,6 +911,30 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNullSourceColumnsAddNoBytecode() {
+        // a NULL-typed source column generates no copy, so a thousand of them leave one INT copy in a
+        // single method; counted as copies they would exceed the 8000-byte method limit
+        final ArrayColumnTypes fromTypes = new ArrayColumnTypes();
+        final GenericRecordMetadata toMetadata = new GenericRecordMetadata();
+        final ListColumnFilter columnFilter = new ListColumnFilter();
+        for (int i = 0; i <= 1000; i++) {
+            fromTypes.add(i < 1000 ? ColumnType.NULL : ColumnType.INT);
+            toMetadata.add(new TableColumnMetadata("c" + i, ColumnType.INT));
+            columnFilter.add(i + 1);
+        }
+        Assert.assertEquals(
+                RecordToRowCopierTestUtils.CopierMode.SINGLE_METHOD,
+                RecordToRowCopierTestUtils.copierModeOf(RecordToRowCopierUtils.generateCopier(
+                        new BytecodeAssembler(),
+                        fromTypes,
+                        toMetadata,
+                        columnFilter,
+                        configuration
+                ))
+        );
+    }
+
+    @Test
     public void testO3InsertSelectVarcharToString() throws Exception {
         assertMemoryLeak(() -> {
             setCopierType(RecordToRowCopierUtils.COPIER_TYPE_SINGLE_METHOD);
@@ -1134,6 +1169,33 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
         }
     }
 
+    private void assertWideInsertSelect(String fromType, String toType, String fromValue, String expectedValue) throws Exception {
+        final int columnCount = 1000;
+        final StringBuilder fromColumns = new StringBuilder();
+        final StringBuilder toColumns = new StringBuilder();
+        for (int i = 0; i < columnCount; i++) {
+            if (i > 0) {
+                fromColumns.append(", ");
+                toColumns.append(", ");
+            }
+            fromColumns.append(fromValue).append(" c").append(i);
+            toColumns.append('c').append(i).append(' ').append(toType);
+        }
+        execute("CREATE TABLE src AS (SELECT " + fromColumns + " FROM long_sequence(1))");
+        execute("CREATE TABLE dst (" + toColumns + ")");
+        assertQuery("SELECT typeOf(c0) t FROM src")
+                .noLeakCheck()
+                .expectSize()
+                .returns("t\n" + fromType + "\n");
+        execute("INSERT INTO dst SELECT * FROM src");
+        assertQuery("SELECT c0, c999 FROM dst")
+                .noLeakCheck()
+                .expectSize()
+                .returns("c0\tc999\n" + expectedValue + "\t" + expectedValue + "\n");
+        execute("DROP TABLE src");
+        execute("DROP TABLE dst");
+    }
+
     // Copies every row of the factory's cursor into a recording row and describes the puts into column x.
     private String describeCopy(RecordCursorFactory factory, int toType, int copierType, int padCount, String pair) throws SqlException {
         final String context = pair + " [copierType=" + copierType + ']';
@@ -1174,6 +1236,7 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
                     return null;
                 }
         );
+        final boolean isNullSource = ColumnType.isNull(factory.getMetadata().getColumnType(0));
         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
             final Record record = cursor.getRecord();
             boolean isValueRow = true;
@@ -1186,7 +1249,10 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
                 } catch (Throwable th) {
                     throw new AssertionError(context + ": copy failed", th);
                 }
-                if (isValueRow) {
+                if (isNullSource) {
+                    // a NULL-typed column has no value to copy: the writer fills the column with NULL
+                    Assert.assertEquals(context + ": copier wrote a NULL-typed column", rowStart, outcome.length());
+                } else if (isValueRow) {
                     Assert.assertTrue(context + ": copier wrote nothing for a non-NULL value", outcome.length() > rowStart);
                     isValueRow = false;
                 }

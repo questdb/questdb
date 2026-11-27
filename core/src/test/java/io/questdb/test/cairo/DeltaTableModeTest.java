@@ -515,7 +515,8 @@ public class DeltaTableModeTest extends AbstractCairoTest {
             }
             Assert.assertEquals(2, providerCalls);
             assertMeta(engine.verifyTableName("w"), ColumnType.VERSION, TableWriteMode.WAL_SEGMENTS);
-            assertMeta(engine.verifyTableName("b"), ColumnType.VERSION, TableWriteMode.WAL_SEGMENTS);
+            // Opening its TableWriter stamped the downgrade lock.
+            assertMeta(engine.verifyTableName("b"), ColumnType.DOWNGRADE_LOCKED_STORAGE_VERSION, TableWriteMode.WAL_SEGMENTS);
         });
     }
 

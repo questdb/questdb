@@ -237,6 +237,10 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
                 cursor.of(reader, null);
                 for (int pass = 0; pass < 2; pass++) {
                     assertFrameRows(cursor.next(), 8, 10);
+                    // Later searches narrow within this decode, so only the first one must decode.
+                    if (convertToParquet && pass == 0) {
+                        Assert.assertTrue("the interval search must decode timestamps", decodedRowHi.size() > 0);
+                    }
                     decodedRowHi.clear();
                     final RecordCursor.Counter counter = new RecordCursor.Counter();
                     cursor.calculateSize(counter);
@@ -932,7 +936,6 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
 
     private void assertDecodeBound(IntList decodedRowHi, int rowHi) {
         if (convertToParquet) {
-            Assert.assertTrue("the interval search must decode timestamps", decodedRowHi.size() > 0);
             for (int i = 0; i < decodedRowHi.size(); i++) {
                 Assert.assertTrue("decoded rows from a previously searched interval", decodedRowHi.getQuick(i) <= rowHi);
             }

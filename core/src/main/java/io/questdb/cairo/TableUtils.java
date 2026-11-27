@@ -29,10 +29,12 @@ import io.questdb.Telemetry;
 import io.questdb.TelemetryEvent;
 import io.questdb.TelemetryOrigin;
 import io.questdb.cairo.file.BlockFileWriter;
+import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.lv.LiveViewState;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewState;
+import io.questdb.cairo.pool.WriterPool;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTable;
@@ -41,6 +43,7 @@ import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryMAR;
@@ -54,10 +57,8 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.parquet.MappedMemoryPartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
-import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
-import io.questdb.griffin.engine.table.parquet.PartitionUpdater;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IQueryModel;
 import io.questdb.log.Log;
@@ -69,7 +70,6 @@ import io.questdb.std.Decimals;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.IntIntHashMap;
 import io.questdb.std.IntList;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.MemoryTag;
@@ -115,6 +115,13 @@ public final class TableUtils {
      * source directory before the writer has agreed to swap it in - see {@code PartitionCompactionScanJob}.
      */
     public static final String COMPACTING_DIR_MARKER = ".compacting";
+    // Dedup modes, stored in the _meta header at META_OFFSET_DEDUP_MODE. The mode matters only when
+    // deduplication is enabled, i.e. when the designated timestamp is a dedup key.
+    // SKIP: a new row is discarded when a row with the same dedup key values already exists,
+    // the earliest write wins.
+    public static final int DEDUP_MODE_SKIP = 1;
+    // UPSERT: a new row replaces the existing row with the same dedup key values, the latest write wins.
+    public static final int DEDUP_MODE_UPSERT = 0;
     public static final String DEFAULT_PARTITION_NAME = "default";
     // Delta state of one partition version: <partition>/_delta/_catalog.
     public static final String DELTA_CATALOG_FILE_NAME = "_catalog";
@@ -125,6 +132,10 @@ public final class TableUtils {
     public static final long ESTIMATED_VAR_COL_SIZE = 28;
     public static final String FILE_SUFFIX_D = ".d";
     public static final String FILE_SUFFIX_I = ".i";
+    /**
+     * Suffix of {@code <partition>.<nameTxn>.generating}, the staging dir of a native partition's parquet copy.
+     */
+    public static final String GENERATING_DIR_MARKER = ".generating";
     public static final int INITIAL_TXN = 0;
     public static final String LEGACY_CHECKPOINT_DIRECTORY = "snapshot";
     public static final int LONGS_PER_TX_ATTACHED_PARTITION = 4;
@@ -132,17 +143,29 @@ public final class TableUtils {
     public static final int MAX_SYMBOL_NULL_SCAN_ROWS = 1 << 20;
     public static final long META_COLUMN_DATA_SIZE = 32;
     public static final String META_FILE_NAME = "_meta";
-    public static final short META_FORMAT_MINOR_VERSION_LATEST = 2;
+    // The dedup mode header field came after the EXPIRE ROWS trailing section (v3), so a v3 _meta that a
+    // release without the field wrote reads as UPSERT by version gate, whatever its header bytes hold.
+    public static final short META_FORMAT_MINOR_VERSION_DEDUP_MODE = 4;
+    public static final short META_FORMAT_MINOR_VERSION_LATEST = 4;
     public static final short META_FORMAT_MINOR_VERSION_PARQUET_ENCODING_CONFIG = 1;
+    // Trustworthy inline symbol capacity in _meta was introduced at minor version 1 (#5242); gate the fast
+    // hydration read on THIS, not LATEST, so a later LATEST bump never forces v1 tables onto the slow path.
+    public static final short META_FORMAT_MINOR_VERSION_SYMBOL_CAPACITY = 1;
     public static final short META_FORMAT_MINOR_VERSION_TABLE_FORMAT = 2;
     public static final short META_FORMAT_MINOR_VERSION_TTL = 1;
-    public static final int META_FORMAT_VERSION_DELTA = 431;
+    // A Delta-mode table keeps this _meta version for life. It is above ColumnType.MAX_STORAGE_VERSION, so builds
+    // without Delta tables refuse to open one.
+    public static final int META_FORMAT_VERSION_DELTA = 435;
     /**
      * Marks a whole LOGICAL partition's merge - every folder of one period, the main directory and all its splits,
      * copied into one - staged next to the source directories before the writer has agreed to swap it in. Named
      * {@code <logicalPartition>.<firstFolderNameTxn>.merging<folderCount>}; see {@code PartitionCompactionScanJob}.
      */
     public static final String MERGING_DIR_MARKER = ".merging";
+    // EXPIRE ROWS trailing section was added after TABLE_FORMAT (v2). It lives at v3 so a master-written
+    // v2 _meta (table_format, no policy) is read as "no policy" by version gate rather than relying on
+    // EOF-bounds handling of the absent trailing section.
+    public static final short META_FORMAT_MINOR_VERSION_EXPIRE_ROWS = 3;
     public static final long META_OFFSET_COLUMN_TYPES = 128;
     public static final long META_OFFSET_COUNT = 0;
     public static final long META_OFFSET_MAX_UNCOMMITTED_ROWS = 20; // INT
@@ -158,7 +181,8 @@ public final class TableUtils {
     public static final long META_OFFSET_META_FORMAT_MINOR_VERSION = META_OFFSET_WAL_ENABLED + 1; // INT
     public static final long META_OFFSET_TTL_HOURS_OR_MONTHS = META_OFFSET_META_FORMAT_MINOR_VERSION + 4; // INT
     public static final long META_OFFSET_TABLE_FORMAT = META_OFFSET_TTL_HOURS_OR_MONTHS + 4; // INT
-    public static final long META_OFFSET_WRITE_MODE = 56; // INT; present only in the Delta metadata format
+    public static final long META_OFFSET_DEDUP_MODE = META_OFFSET_TABLE_FORMAT + 4; // INT
+    public static final long META_OFFSET_WRITE_MODE = META_OFFSET_DEDUP_MODE + 4; // INT; present only in the Delta metadata format
     public static final String META_PREV_FILE_NAME = "_meta.prev";
     public static final String META_SWAP_FILE_NAME = "_meta.swp";
     public static final int MIN_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(2);
@@ -328,6 +352,8 @@ public final class TableUtils {
     private static final int PARQUET_CONFIG_EXPLICIT_FLAG = 1 << 24;
     private static final int PARQUET_CONFIG_LEVEL_MASK = 0xFF;
     private static final int PARQUET_CONFIG_LEVEL_SHIFT = 16;
+    // The column name txn of an index file name isSupersededIndexFile() cannot classify; such a file is not superseded.
+    private static final long UNKNOWN_COLUMN_NAME_TXN = Long.MIN_VALUE;
     private static final long XXH3_PRIME_MX1 = 0x165667919E3779F9L;
     // Counts _txn partition-table hash terms; TxnBodyChecksumCacheTest relies on it. It lives in TableUtils
     // because every partition-table hash passes through this class, whatever the caller: a full hash through
@@ -723,39 +749,42 @@ public final class TableUtils {
     }
 
     /**
-     * Rewrites {@code _meta}'s metadataVersion in place and re-stamps the checksum in the meta-format
-     * minor-version field to match. Use this rather than writing {@link #META_OFFSET_METADATA_VERSION}
-     * directly: the two fields are coupled, and breaking the coupling fails silently.
+     * Rewrites {@code _meta}'s metadataVersion in place, e.g. when the table gets a fresh sequencer, and
+     * re-stamps the checksum in the meta-format minor-version field to match. Use this rather than writing
+     * {@link #META_OFFSET_METADATA_VERSION} directly: the two fields are coupled, and breaking the coupling
+     * fails silently.
      *
      * <p>{@link #isMetaFormatAtLeast} trusts the stored minor version only while the low short of
      * {@link #META_OFFSET_META_FORMAT_MINOR_VERSION} matches a checksum over (metadataVersion, columnCount).
      * A caller that resets the metadataVersion of a table it clones or converts ({@code REBASE WAL},
-     * {@code SET TYPE WAL}) would otherwise invalidate that checksum, and every version-gated tail field
-     * would read as absent: TTL becomes 0 and the table format falls back to NATIVE.
+     * {@code SET TYPE WAL}) would otherwise invalidate that checksum, and every version-gated field (TTL,
+     * table format, dedup mode, Parquet encoding config, EXPIRE ROWS policy) would read as absent: TTL
+     * becomes 0, the table format falls back to NATIVE, the dedup mode to UPSERT, and a materialized view
+     * loses its EXPIRE ROWS policy.
      *
      * <p>The stored minor version is kept, never raised to {@link #META_FORMAT_MINOR_VERSION_LATEST}:
      * claiming a newer format than the bytes carry would make the reader interpret never-written tail bytes
-     * as values (a zero would read as {@link CommitMode#ASYNC}, not "unset").
+     * as values. So a trusted field stays trusted and an untrusted one stays untrusted: if the source's
+     * checksum does not match, e.g. because a release that predates the field, or one that does not maintain
+     * it, wrote the header, its tail fields are already ignored, and the field is left as it is: recomputing
+     * it would turn whatever those bytes hold into a valid claim.
      *
-     * <p>If the source's checksum does not match, its tail fields are already ignored, and the field is
-     * left as it is: recomputing it would turn whatever those bytes hold into a valid claim.
+     * <p>The checksum goes before the version. Should the process die between the two writes, the file stays
+     * untrusted, and a repeated call with the same version, which the table type conversion makes when it
+     * runs again at the next startup, completes the stamp.
      */
-    public static void resetMetadataVersion(MemoryMARW metaMem, long metadataVersion) {
-        final long previousMetadataVersion = metaMem.getLong(META_OFFSET_METADATA_VERSION);
+    public static void resetMetadataVersion(MemoryARW metaMem, long metadataVersion) {
         final int minorVersionField = metaMem.getInt(META_OFFSET_META_FORMAT_MINOR_VERSION);
-        final int columnCount = metaMem.getInt(META_OFFSET_COUNT);
-        metaMem.putLong(META_OFFSET_METADATA_VERSION, metadataVersion);
-        if (Numbers.decodeLowShort(minorVersionField)
-                != checksumForMetaFormatMinorVersionField(previousMetadataVersion, columnCount)) {
-            return;
+        if (isMetaFormatMinorVersionFieldValid(metaMem, minorVersionField)) {
+            metaMem.putInt(
+                    META_OFFSET_META_FORMAT_MINOR_VERSION,
+                    Numbers.encodeLowHighShorts(
+                            checksumForMetaFormatMinorVersionField(metadataVersion, metaMem.getInt(META_OFFSET_COUNT)),
+                            Numbers.decodeHighShort(minorVersionField)
+                    )
+            );
         }
-        metaMem.putInt(
-                META_OFFSET_META_FORMAT_MINOR_VERSION,
-                Numbers.encodeLowHighShorts(
-                        checksumForMetaFormatMinorVersionField(metadataVersion, columnCount),
-                        Numbers.decodeHighShort(minorVersionField)
-                )
-        );
+        metaMem.putLong(META_OFFSET_METADATA_VERSION, metadataVersion);
     }
 
     public static short checksumForMetaFormatMinorVersionField(long metadataVersion, int columnCount) {
@@ -1351,6 +1380,69 @@ public final class TableUtils {
         }
     }
 
+    /**
+     * Computes the byte offset of the trailing row-expiry policy section: the offset just past the
+     * column-name section and the per-column covering-indices section. Returns -1 when the section is
+     * absent/truncated (older formats) or a column-name length prefix is out of range.
+     * <p>
+     * A column name has length in [1, 255] (the filename bound {@link #buildColumnListFromMetadataFile}
+     * enforces). Rejecting anything else keeps the name walk from moving the offset backward, which would
+     * otherwise dereference a wild native address; this walk runs before the names are validated in the
+     * MetadataCache startup path, so it cannot rely on a prior check.
+     * <p>
+     * This is the single source of truth for the _meta readers (TableReaderMetadata, TableWriterMetadata
+     * and MetadataCache), so the policy offset cannot drift between them.
+     */
+    public static long getMetaExpiryPolicyOffset(MemoryR metaMem, int columnCount) {
+        long memSize = metaMem.size();
+        long offset = getColumnNameOffset(columnCount);
+        for (int i = 0; i < columnCount; i++) {
+            if (offset + Integer.BYTES > memSize) {
+                return -1;
+            }
+            int strLen = metaMem.getInt(offset);
+            if (strLen < 1 || strLen > 255) {
+                return -1;
+            }
+            offset += Vm.getStorageLength(strLen);
+        }
+        for (int i = 0; i < columnCount; i++) {
+            if (isColumnCovering(metaMem, i)) {
+                if (offset + Integer.BYTES > memSize) {
+                    return -1;
+                }
+                int includeCount = metaMem.getInt(offset);
+                offset += Integer.BYTES;
+                if (includeCount > 0) {
+                    if (offset + (long) includeCount * Integer.BYTES > memSize) {
+                        return -1;
+                    }
+                    offset += (long) includeCount * Integer.BYTES;
+                }
+            }
+        }
+        return offset;
+    }
+
+    /**
+     * Validates the row-expiry predicate string stored at {@code policyOffset} and returns the number
+     * of bytes it occupies ({@link Vm#getStorageLength}), or -1 when the stored length is corrupt. A
+     * negative length would make the caller's offset move backward into a wild native read, and an
+     * out-of-file length would read past the mapping. Unlike a column name, the predicate is an
+     * arbitrary SQL expression, so length 0 (the "no policy" case) and lengths above 255 are both valid.
+     *
+     * @param policyOffset offset of the predicate's length prefix; the caller must have already checked
+     *                     that {@code policyOffset + Integer.BYTES <= memSize}
+     */
+    public static long getMetaExpiryPredicateStorageLength(MemoryR metaMem, long policyOffset, long memSize) {
+        int predicateLen = metaMem.getInt(policyOffset);
+        if (predicateLen < 0) {
+            return -1;
+        }
+        long storageLength = Vm.getStorageLength(predicateLen);
+        return policyOffset + storageLength <= memSize ? storageLength : -1;
+    }
+
     public static long getNullLong(int columnType, int longIndex) {
         // In theory, we can have a column type where `NULL` value will be different `LONG` values,
         // then this should return different values on longIndex. At the moment there are no such types.
@@ -1708,6 +1800,55 @@ public final class TableUtils {
         return (packed & PARQUET_CONFIG_EXPLICIT_FLAG) != 0;
     }
 
+    /**
+     * Whether {@code fileName} is an index file of an indexed column of {@code metadata} under a column name txn other
+     * than the one {@code columnVersionReader} names for the column in the partition at {@code partitionTimestamp}.
+     * Unclassifiable names do not count as superseded.
+     */
+    public static boolean isSupersededIndexFile(
+            CharSequence fileName,
+            RecordMetadata metadata,
+            ColumnVersionReader columnVersionReader,
+            long partitionTimestamp
+    ) {
+        // Column names cannot contain a dot, so the first one ends the column name.
+        final int nameHi = Chars.indexOf(fileName, '.');
+        if (nameHi < 1) {
+            return false;
+        }
+        final int columnIndex = metadata.getColumnIndexQuiet(fileName, 0, nameHi);
+        if (columnIndex < 0 || !metadata.isColumnIndexed(columnIndex)) {
+            return false;
+        }
+        final long liveColumnNameTxn = columnVersionReader.getColumnNameTxn(
+                partitionTimestamp,
+                metadata.getWriterIndex(columnIndex)
+        );
+        final int len = fileName.length();
+        final int kindLo = nameHi + 1;
+        int kindHi = Chars.indexOf(fileName, kindLo, len, '.');
+        if (kindHi < 0) {
+            kindHi = len;
+        }
+        final long fileColumnNameTxn;
+        if (isUnsealedIndexFileKind(fileName, kindLo, kindHi)) {
+            fileColumnNameTxn = parseUnsealedIndexFileColumnNameTxn(fileName, kindHi);
+        } else {
+            // The sealed posting files, .pv and .pc<N>
+            final long sealedFileColumnNameTxn = PostingIndexUtils.sealedFileColumnNameTxn(fileName, kindLo);
+            if (sealedFileColumnNameTxn == PostingIndexUtils.PARSE_FAIL) {
+                fileColumnNameTxn = UNKNOWN_COLUMN_NAME_TXN;
+            } else if (fileName.charAt(kindLo + 1) == 'c'
+                    && sealedFileColumnNameTxn == PostingIndexUtils.coverFileHostTxn(liveColumnNameTxn)) {
+                // A cover data file spells COLUMN_NAME_TXN_NONE and txn 0 alike, as 0.
+                fileColumnNameTxn = liveColumnNameTxn;
+            } else {
+                fileColumnNameTxn = sealedFileColumnNameTxn;
+            }
+        }
+        return fileColumnNameTxn != UNKNOWN_COLUMN_NAME_TXN && fileColumnNameTxn != liveColumnNameTxn;
+    }
+
     public static boolean isSymbolCached(MemoryR metaMem, int columnIndex) {
         return (getColumnFlags(metaMem, columnIndex) & META_FLAG_BIT_SYMBOL_CACHE) != 0;
     }
@@ -1723,7 +1864,9 @@ public final class TableUtils {
                 && !getCommandName(CMD_STORAGE_POLICY).equals(lockReason)
                 // The compaction sweep holds the writer to land its swap the same way STORAGE POLICY does.
                 && !getCommandName(CMD_COMPOSITE_PARTITION_SWAP).equals(lockReason)
-                && !getCommandName(CMD_PARQUET_PARTITION_SWAP).equals(lockReason);
+                && !getCommandName(CMD_PARQUET_PARTITION_SWAP).equals(lockReason)
+                // A publisher that finds the writer back in the pool ticks the queue under this reason.
+                && !WriterPool.OWNERSHIP_REASON_ASYNC_COMMAND.equals(lockReason);
     }
 
     public static boolean isValidColumnName(CharSequence columnName, int fsFileNameLimit) {
@@ -2233,6 +2376,15 @@ public final class TableUtils {
         throw CairoException.critical(ff.errno()).put("could not open read-write [file=").put(path).put(']');
     }
 
+    /**
+     * Opens a file that is meant to be created, never reused: any file already at the path is removed first, see
+     * {@link #removeExistingOrFail}.
+     */
+    public static long openRWFresh(FilesFacade ff, LPSZ path, Log log, int opts) {
+        removeExistingOrFail(ff, path);
+        return openRW(ff, path, log, opts);
+    }
+
     public static void openSmallFile(FilesFacade ff, Path path, int rootLen, MemoryMR metaMem, CharSequence fileName, int memoryTag) {
         path.concat(fileName);
         try {
@@ -2368,9 +2520,59 @@ public final class TableUtils {
             long squashTracker,
             long seqTxn
     ) {
+        try {
+            setPathForNativePartition(other.trimTo(pathSize), metadata.getTimestampType(), metadata.getPartitionBy(), partitionTimestamp, parquetNameTxn);
+            return produceParquetFromNativeInto(
+                    path,
+                    other,
+                    pathSize,
+                    partitionTimestamp,
+                    partitionNameTxn,
+                    tableName,
+                    partitionRowCount,
+                    metadata,
+                    columnVersionReader,
+                    symbolTableProvider,
+                    configuration,
+                    commitMode,
+                    bloomFilterColumns,
+                    bloomFilterFpp,
+                    bloomFilterIndexes,
+                    squashTracker,
+                    seqTxn
+            );
+        } finally {
+            other.trimTo(pathSize);
+        }
+    }
+
+    /**
+     * {@link #produceParquetFromNative} into the existing {@code dstPartitionDir}, trimmed back on return.
+     */
+    public static long produceParquetFromNativeInto(
+            Path path,
+            Path dstPartitionDir,
+            int pathSize,
+            long partitionTimestamp,
+            long partitionNameTxn,
+            String tableName,
+            long partitionRowCount,
+            TableMetadata metadata,
+            ColumnVersionReader columnVersionReader,
+            SymbolTableProvider symbolTableProvider,
+            CairoConfiguration configuration,
+            int commitMode,
+            @Nullable CharSequence bloomFilterColumns,
+            double bloomFilterFpp,
+            DirectIntList bloomFilterIndexes,
+            long squashTracker,
+            long seqTxn
+    ) {
         final FilesFacade ff = configuration.getFilesFacade();
         final int partitionBy = metadata.getPartitionBy();
         final int timestampType = metadata.getTimestampType();
+        final Path other = dstPartitionDir;
+        final int dstDirLen = other.size();
 
         setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
         if (!ff.exists(path.$())) {
@@ -2379,10 +2581,12 @@ public final class TableUtils {
         final int partitionDirLen = path.size();
         final int pathRootSize = configuration.getDbRoot().length();
 
-        setPathForParquetPartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn);
+        other.trimTo(dstDirLen).concat(PARQUET_PARTITION_NAME).$();
         if (ff.exists(other.$())) {
             LOG.info().$("parquet for native partition already present [path=").$substr(pathRootSize, path).I$();
-            return ff.length(other.$());
+            final long length = ff.length(other.$());
+            other.trimTo(dstDirLen);
+            return length;
         }
 
         LOG.info().$("producing parquet for native partition [path=").$substr(pathRootSize, path).I$();
@@ -2419,10 +2623,9 @@ public final class TableUtils {
                     final int writerIndex = tableColumnMetadata.getWriterIndex();
 
                     final int versionRecordIndex = columnVersionReader.getRecordIndex(partitionTimestamp, writerIndex);
-                    long columnNameTxn = columnVersionReader.getColumnNameTxnByIndex(versionRecordIndex);
-                    if (columnNameTxn == -1) {
-                        columnNameTxn = columnVersionReader.getDefaultColumnNameTxn(writerIndex);
-                    }
+                    final long columnNameTxn = versionRecordIndex > -1
+                            ? columnVersionReader.getColumnNameTxnByIndex(versionRecordIndex)
+                            : columnVersionReader.getDefaultColumnNameTxn(writerIndex);
                     final long columnTop = columnVersionReader.getColumnTopByIndexOrDefault(versionRecordIndex, partitionTimestamp, writerIndex, -1L);
                     final long columnRowCount = (columnTop != -1) ? partitionRowCount - columnTop : 0;
                     final int parquetEncodingConfig = tableColumnMetadata.getParquetEncodingConfig();
@@ -2548,8 +2751,8 @@ public final class TableUtils {
                 double fpp = Double.isNaN(bloomFilterFpp) ? configuration.getPartitionEncoderParquetBloomFilterFpp() : bloomFilterFpp;
 
                 // Open _pm file for the Rust encoder to write simultaneously.
-                setPathForParquetPartitionMetadata(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn);
-                parquetMetaFd = TableUtils.openRW(ff, other.$(), LOG, configuration.getWriterFileOpenOpts());
+                other.trimTo(dstDirLen).concat(PARQUET_METADATA_FILE_NAME).$();
+                parquetMetaFd = TableUtils.openRWFresh(ff, other.$(), LOG, configuration.getWriterFileOpenOpts());
 
                 bloomFilterIndexes.clear();
                 if (useMetadataBloomFilters) {
@@ -2565,7 +2768,7 @@ public final class TableUtils {
                 }
 
                 // Restore parquet file path for encoding.
-                setPathForParquetPartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn);
+                other.trimTo(dstDirLen).concat(PARQUET_PARTITION_NAME).$();
 
                 PartitionEncoder.encodeWithOptions(
                         partitionDescriptor,
@@ -2591,21 +2794,19 @@ public final class TableUtils {
                 if (commitMode != CommitMode.NOSYNC) {
                     if (CommitMode.isPowerLossDurable(commitMode)) {
                         // fsync data.parquet before _pm (data before metadata, mirrors syncColumns0 ordering)
-                        setPathForParquetPartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn);
+                        other.trimTo(dstDirLen).concat(PARQUET_PARTITION_NAME).$();
                         fsyncFileDurable(ff, other.$());
                     }
                     ff.fsync(parquetMetaFd);
                     if (!Os.isWindows()) {
-                        setPathForParquetPartitionMetadata(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn);
-                        // Drop the trailing /_pm component to fsync the partition dir itself.
-                        other.parent();
+                        other.trimTo(dstDirLen).$();
                         final long dirFd = TableUtils.openRONoCache(ff, other.$(), LOG);
                         if (dirFd != -1) {
                             ff.fsyncAndClose(dirFd);
                         }
                     }
                 }
-                setPathForParquetPartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn);
+                other.trimTo(dstDirLen).concat(PARQUET_PARTITION_NAME).$();
                 return ff.length(other.$());
             }
         } catch (CairoException e) {
@@ -2622,215 +2823,20 @@ public final class TableUtils {
                 ff.close(parquetMetaFd);
                 parquetMetaFd = -1;
             }
-            setPathForParquetPartitionMetadata(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn);
+            other.trimTo(dstDirLen).concat(PARQUET_METADATA_FILE_NAME).$();
             if (ff.exists(other.$()) && !ff.removeQuiet(other.$())) {
                 LOG.error().$("could not remove parquet _pm on rollback [path=").$(other).I$();
             }
-            setPathForParquetPartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn);
+            other.trimTo(dstDirLen).concat(PARQUET_PARTITION_NAME).$();
             if (ff.exists(other.$()) && !ff.removeQuiet(other.$())) {
                 LOG.error().$("could not remove parquet file on rollback [path=").$(other).I$();
             }
             throw e;
         } finally {
             path.trimTo(pathSize);
-            other.trimTo(pathSize);
+            other.trimTo(dstDirLen);
             if (parquetMetaFd > -1) {
                 ff.close(parquetMetaFd);
-            }
-        }
-    }
-
-    /**
-     * Produces a staged current-schema parquet file from a committed local parquet partition.
-     * The source is resolved through its {@code _pm} sidecar at {@code sourceParquetFileSize};
-     * the output is written as sibling staging files in the same partition directory and is
-     * not authoritative until a writer-side guarded publish installs it.
-     */
-    public static long produceParquetFromParquetWithConversions(
-            Path path,
-            Path other,
-            int pathSize,
-            long partitionTimestamp,
-            long partitionNameTxn,
-            long sourceParquetFileSize,
-            CharSequence candidateParquetFileName,
-            CharSequence candidateParquetMetaFileName,
-            TableMetadata metadata,
-            ColumnVersionReader columnVersionReader,
-            SymbolTableProvider symbolTableProvider,
-            CairoConfiguration configuration,
-            ParquetConversionContext conversionContext,
-            int flushCommitMode,
-            long seqTxn
-    ) {
-        final FilesFacade ff = configuration.getFilesFacade();
-        final int partitionBy = metadata.getPartitionBy();
-        final int timestampType = metadata.getTimestampType();
-        final int timestampIndex = metadata.getTimestampIndex();
-        final int compressionCodec = configuration.getPartitionEncoderParquetCompressionCodec();
-        final int compressionLevel = configuration.getPartitionEncoderParquetCompressionLevel();
-        final int rowGroupSize = configuration.getPartitionEncoderParquetRowGroupSize();
-        final int dataPageSize = configuration.getPartitionEncoderParquetDataPageSize();
-        final boolean statisticsEnabled = configuration.isPartitionEncoderParquetStatisticsEnabled();
-        final boolean rawArrayEncoding = configuration.isPartitionEncoderParquetRawArrayEncoding();
-        final double bloomFilterFpp = configuration.getPartitionEncoderParquetBloomFilterFpp();
-        final double minCompressionRatio = configuration.getPartitionEncoderParquetMinCompressionRatio();
-
-        long parquetMetaAddr = 0;
-        long parquetMetaSize = 0;
-        long parquetAddr = 0;
-        long mappedParquetSize = 0;
-        long readerFd = -1;
-        long writerFd = -1;
-        long parquetMetaFd = -1;
-        int readerFdOs;
-        int writerFdOs = -1;
-        int parquetMetaFdOs = -1;
-        conversionContext.clear();
-        final ParquetMetaFileReader parquetMetaReader = conversionContext.getParquetMetaReader();
-        final ParquetPartitionDecoder decoder = conversionContext.getPartitionDecoder(configuration);
-        final PartitionUpdater partitionUpdater = conversionContext.getPartitionUpdater();
-
-        try {
-            setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
-            final int partitionDirLen = path.size();
-            path.concat(PARQUET_METADATA_FILE_NAME).$();
-            parquetMetaAddr = ParquetMetaFileReader.openAndMapRO(ff, path.$(), parquetMetaReader);
-            if (parquetMetaAddr == 0) {
-                throw CairoException.critical(ff.errno())
-                        .put("could not open source parquet metadata [path=").put(path).put(']');
-            }
-            parquetMetaSize = parquetMetaReader.getFileSize();
-            if (!parquetMetaReader.resolveFooter(sourceParquetFileSize)) {
-                throw CairoException.critical(0)
-                        .put("_pm tail does not match source parquet file size [path=").put(path)
-                        .put(", parquetFileSize=").put(sourceParquetFileSize).put(']');
-            }
-            final long sourceParquetSize = parquetMetaReader.getParquetFileSize();
-            path.trimTo(partitionDirLen).concat(PARQUET_PARTITION_NAME).$();
-            parquetAddr = mapRO(ff, path.$(), LOG, sourceParquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
-            mappedParquetSize = sourceParquetSize;
-            decoder.of(parquetMetaReader, parquetAddr, sourceParquetSize, MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER);
-
-            setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
-            other.concat(candidateParquetFileName).$();
-            ff.removeQuiet(other.$());
-            writerFd = openRW(ff, other.$(), LOG, configuration.getWriterFileOpenOpts());
-            writerFdOs = Files.detach(writerFd);
-            writerFd = -1;
-
-            other.trimTo(partitionDirLen).concat(candidateParquetMetaFileName).$();
-            ff.removeQuiet(other.$());
-            parquetMetaFd = openRW(ff, other.$(), LOG, configuration.getWriterFileOpenOpts());
-            parquetMetaFdOs = Files.detach(parquetMetaFd);
-            parquetMetaFd = -1;
-
-            readerFd = openRONoCache(ff, path.$(), LOG);
-            readerFdOs = Files.detach(readerFd);
-            readerFd = -1;
-
-            // JNI adopts all three detached descriptors before it can fail
-            // (for example while validating compression or parsing the source).
-            // Disown them on the Java side before crossing that ownership
-            // boundary so the finally block cannot close recycled OS fd numbers.
-            final int adoptedReaderFdOs = readerFdOs;
-            final int adoptedWriterFdOs = writerFdOs;
-            final int adoptedParquetMetaFdOs = parquetMetaFdOs;
-            writerFdOs = parquetMetaFdOs = -1;
-            partitionUpdater.of(
-                    path.$(),
-                    adoptedReaderFdOs,
-                    sourceParquetSize,
-                    adoptedWriterFdOs,
-                    0,
-                    timestampIndex,
-                    ParquetCompression.packCompressionCodecLevel(compressionCodec, compressionLevel),
-                    statisticsEnabled,
-                    rawArrayEncoding,
-                    rowGroupSize,
-                    dataPageSize,
-                    bloomFilterFpp,
-                    minCompressionRatio,
-                    adoptedParquetMetaFdOs,
-                    0,
-                    0,
-                    -1,
-                    seqTxn
-            );
-
-            final int columnCount = metadata.getColumnCount();
-            ParquetRowGroupMaterializer.setTargetSchema(
-                    conversionContext,
-                    partitionUpdater,
-                    metadata,
-                    symbolTableProvider
-            );
-
-            final ParquetMetaFileReader sourceMeta = decoder.metadata();
-            final IntIntHashMap parquetColIdToIdx = conversionContext.getParquetColIdToIdx();
-            for (int i = 0, n = sourceMeta.getColumnCount(); i < n; i++) {
-                parquetColIdToIdx.put(sourceMeta.getColumnId(i), i);
-            }
-            final IntList tableToParquetIdx = conversionContext.getTableToParquetIdx(columnCount);
-            for (int i = 0; i < columnCount; i++) {
-                if (metadata.getColumnType(i) < 0) {
-                    continue;
-                }
-                tableToParquetIdx.setQuick(i, parquetColIdToIdx.get(metadata.getColumnMetadata(i).getOriginalWriterIndex()));
-            }
-
-            for (int rowGroupIndex = 0, rowGroupCount = sourceMeta.getRowGroupCount(); rowGroupIndex < rowGroupCount; rowGroupIndex++) {
-                ParquetRowGroupMaterializer.materializeChangedColumns(
-                        conversionContext,
-                        decoder,
-                        partitionUpdater,
-                        rowGroupIndex,
-                        metadata,
-                        columnVersionReader,
-                        partitionTimestamp,
-                        tableToParquetIdx,
-                        symbolTableProvider
-                );
-            }
-
-            final long resultParquetSize = partitionUpdater.updateFileMetadata();
-            partitionUpdater.commitParquetMeta(flushCommitMode != CommitMode.NOSYNC);
-            return resultParquetSize;
-        } catch (Throwable th) {
-            // Close Rust-owned descriptors before removing candidates, especially on Windows.
-            conversionContext.releaseResources();
-            setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
-            final int partitionDirLen = other.size();
-            other.concat(candidateParquetFileName);
-            ff.removeQuiet(other.$());
-            other.trimTo(partitionDirLen).concat(candidateParquetMetaFileName);
-            ff.removeQuiet(other.$());
-            if (th instanceof CairoException) {
-                throw (CairoException) th;
-            }
-            if (th instanceof Error) {
-                throw (Error) th;
-            }
-            throw CairoException.critical(0).put("could not produce parquet from parquet [error=").put(th.getMessage()).put(']');
-        } finally {
-            conversionContext.releaseResources();
-            parquetMetaReader.clear();
-            path.trimTo(pathSize);
-            other.trimTo(pathSize);
-            ff.close(readerFd);
-            ff.close(writerFd);
-            ff.close(parquetMetaFd);
-            if (writerFdOs != -1) {
-                Files.closeDetached(writerFdOs);
-            }
-            if (parquetMetaFdOs != -1) {
-                Files.closeDetached(parquetMetaFdOs);
-            }
-            if (parquetMetaAddr != 0) {
-                ff.munmap(parquetMetaAddr, parquetMetaSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
-            }
-            if (parquetAddr != 0) {
-                ff.munmap(parquetAddr, mappedParquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
             }
         }
     }
@@ -2859,6 +2865,38 @@ public final class TableUtils {
             throw CairoException.critical(ff.errno()).put("could not read long [fd=").put(fd).put(", offset=").put(offset);
         }
         return Unsafe.getLong(tempMem8b);
+    }
+
+    /**
+     * A plain folder's squash identity: its {@code _txn} squash count or, once that 16-bit count has saturated, the
+     * time of its last squash, which the writer records in {@link #PARTITION_LAST_SQUASH_TIMESTAMP_FILE} instead. A
+     * squash that appends a split back into the folder in place keeps its name txn, and under DEDUP its row count,
+     * so this is what tells a copy built before the squash from the folder after it.
+     *
+     * @param partitionDir the folder's directory, trimmed back on return
+     * @param squashCount  the folder's squash count in {@code _txn}
+     */
+    public static long readPartitionSquashTracker(FilesFacade ff, Path partitionDir, int squashCount) {
+        if (squashCount != TxReader.PARTITION_SQUASH_COUNTER_MAX) {
+            return squashCount;
+        }
+        final int partitionDirLen = partitionDir.size();
+        try {
+            final long fd = ff.openRO(partitionDir.concat(PARTITION_LAST_SQUASH_TIMESTAMP_FILE).$());
+            if (fd > -1) {
+                try {
+                    final long lastSquashTimestamp = ff.readNonNegativeLong(fd, 0);
+                    if (lastSquashTimestamp > -1) {
+                        return lastSquashTimestamp;
+                    }
+                } finally {
+                    ff.close(fd);
+                }
+            }
+            return TxReader.PARTITION_SQUASH_COUNTER_MAX;
+        } finally {
+            partitionDir.trimTo(partitionDirLen);
+        }
     }
 
     public static String readTableName(Path path, int rootLen, MemoryCMR mem, FilesFacade ff) {
@@ -2928,6 +2966,18 @@ public final class TableUtils {
         columnNameIndexMap.remove(columnName);
         final TableColumnMetadata deletedMeta = columnMetadata.getQuick(columnIndex);
         deletedMeta.markDeleted();
+    }
+
+    /**
+     * Removes the file at the path, if there is one, before a writer creates it anew. A new partition directory
+     * version can hold hard links to the files of the live version, such as one a failed reindex could not remove.
+     * Opening such a link for write, or truncating it, would change the committed data that version and its readers
+     * still use; unlinking it first gives the writer a file of its own.
+     */
+    public static void removeExistingOrFail(FilesFacade ff, LPSZ path) {
+        if (!ff.removeQuiet(path) && ff.exists(path)) {
+            throw CairoException.critical(ff.errno()).put("could not remove existing file [path=").put(path).put(']');
+        }
     }
 
     public static void renameColumnInMetadata(
@@ -3458,8 +3508,9 @@ public final class TableUtils {
 
     public static void validateMetaVersion(Utf8Sequence metaPath, MemoryMR metaMem, long metaVersionOffset, int expectedVersion, int maxVersion) {
         final int metaVersion = metaMem.getInt(metaVersionOffset);
-        // A table that currently holds composite partitions carries ColumnType.MAX_STORAGE_VERSION
-        // rather than ColumnType.VERSION; both are readable by this binary, so accept the whole
+        // A table that currently holds composite or Delta partitions, or is downgrade-locked because its _cv
+        // carries checksum trailers, carries a version in (ColumnType.VERSION, ColumnType.MAX_STORAGE_VERSION]
+        // rather than ColumnType.VERSION; all are readable by this binary, so accept the whole
         // [expectedVersion, maxVersion] range. A version below expectedVersion is a table
         // that predates a migration (migrations bring it up before it is opened), and a version
         // above maxVersion comes from a newer binary this one cannot read.
@@ -3571,7 +3622,7 @@ public final class TableUtils {
         mem.putInt(TableUtils.calculateMetaFormatMinorVersionField(0, count));
         mem.putInt(tableStruct.getTtlHoursOrMonths());
         mem.putInt(tableStruct.getTableFormat());
-        mem.jumpTo(META_OFFSET_WRITE_MODE);
+        mem.putInt(tableStruct.getDedupMode());
         mem.putInt(tableStruct.getWriteMode());
 
         mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
@@ -3614,6 +3665,11 @@ public final class TableUtils {
                 }
             }
         }
+
+        // Trailing row-expiry policy section (META_FORMAT_MINOR_VERSION_EXPIRE_ROWS). Always written,
+        // even when there's no policy (empty string + 0L), so the two _meta serializers stay symmetric.
+        mem.putStr(tableStruct.getExpiryPredicate() == null ? "" : tableStruct.getExpiryPredicate());
+        mem.putLong(tableStruct.getExpiryCleanupIntervalMicros());
     }
 
     private static long allocateDiskSpace(FilesFacade ff, long fd, long allocatedHi, long size, long allocateTo) {
@@ -3664,15 +3720,19 @@ public final class TableUtils {
         return metaMem.getStrA(offset);
     }
 
-    static boolean isMetaFormatAtLeast(MemoryR metaMem, short minorVersion) {
-        int metaFormatMinorVersionField = metaMem.getInt(META_OFFSET_META_FORMAT_MINOR_VERSION);
-        short savedChecksum = Numbers.decodeLowShort(metaFormatMinorVersionField);
-        short actualChecksum = checksumForMetaFormatMinorVersionField(
-                metaMem.getLong(TableUtils.META_OFFSET_METADATA_VERSION),
-                metaMem.getInt(TableUtils.META_OFFSET_COUNT)
+    public static boolean isMetaFormatAtLeast(MemoryR metaMem, short minorVersion) {
+        final int metaFormatMinorVersionField = metaMem.getInt(META_OFFSET_META_FORMAT_MINOR_VERSION);
+        return isMetaFormatMinorVersionFieldValid(metaMem, metaFormatMinorVersionField)
+                && Numbers.decodeHighShort(metaFormatMinorVersionField) >= minorVersion;
+    }
+
+    // The checksum in the low short of the Metadata Format Minor Version field matches the metadata version and
+    // the column count of the header only when a version that maintains the field wrote it.
+    private static boolean isMetaFormatMinorVersionFieldValid(MemoryR metaMem, int metaFormatMinorVersionField) {
+        return Numbers.decodeLowShort(metaFormatMinorVersionField) == checksumForMetaFormatMinorVersionField(
+                metaMem.getLong(META_OFFSET_METADATA_VERSION),
+                metaMem.getInt(META_OFFSET_COUNT)
         );
-        short savedMetaFormatMinorVersion = Numbers.decodeHighShort(metaFormatMinorVersionField);
-        return savedChecksum == actualChecksum && savedMetaFormatMinorVersion >= minorVersion;
     }
 
     private static boolean isOlderThanTtl(TimestampDriver timestampDriver, long partitionBoundary, long maxTimestamp, int ttl) {
@@ -3693,6 +3753,37 @@ public final class TableUtils {
             return false;
         }
         return maxTimestamp - partitionBoundary >= timestampDriver.fromHours(ttl);
+    }
+
+    /**
+     * Whether {@code fileName[kindLo, kindHi)} is the kind of an index file that carries one version per column name
+     * txn and no seal txn: bitmap {@code .k} and {@code .v}, posting {@code .pk} and {@code .pci}.
+     */
+    private static boolean isUnsealedIndexFileKind(CharSequence fileName, int kindLo, int kindHi) {
+        return Chars.equals("k", fileName, kindLo, kindHi)
+                || Chars.equals("v", fileName, kindLo, kindHi)
+                || Chars.equals("pk", fileName, kindLo, kindHi)
+                || Chars.equals("pci", fileName, kindLo, kindHi);
+    }
+
+    /**
+     * Parses the column name txn that follows the kind in an unsealed index file name:
+     * {@code sym.k} gives {@link #COLUMN_NAME_TXN_NONE} and {@code sym.k.12} gives 12.
+     * Returns {@link #UNKNOWN_COLUMN_NAME_TXN} when the rest of the name is not one numeric segment.
+     */
+    private static long parseUnsealedIndexFileColumnNameTxn(CharSequence fileName, int kindHi) {
+        final int len = fileName.length();
+        if (kindHi == len) {
+            return COLUMN_NAME_TXN_NONE;
+        }
+        if (kindHi + 1 == len || Chars.indexOf(fileName, kindHi + 1, len, '.') >= 0) {
+            return UNKNOWN_COLUMN_NAME_TXN;
+        }
+        try {
+            return Numbers.parseLong(fileName, kindHi + 1, len);
+        } catch (NumericException e) {
+            return UNKNOWN_COLUMN_NAME_TXN;
+        }
     }
 
     // Utility method for debugging. This method is not used in production.
@@ -3837,6 +3928,17 @@ public final class TableUtils {
         return decodeIndexTypeFlags(getColumnFlags(metaMem, columnIndex));
     }
 
+    /**
+     * Returns the dedup mode stored in the _meta header, one of the DEDUP_MODE_* constants. A _meta
+     * file written before the dedup mode field existed has no such field: deduplication on such a
+     * table, when enabled, is always UPSERT.
+     */
+    static int getDedupMode(MemoryR metaMem) {
+        return isMetaFormatAtLeast(metaMem, META_FORMAT_MINOR_VERSION_DEDUP_MODE)
+                ? metaMem.getInt(TableUtils.META_OFFSET_DEDUP_MODE)
+                : DEDUP_MODE_UPSERT;
+    }
+
     static int getIndexBlockCapacity(MemoryR metaMem, int columnIndex) {
         return metaMem.getInt(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE + 4 + 8);
     }
@@ -3848,9 +3950,10 @@ public final class TableUtils {
     }
 
     static int getTtlHoursOrMonths(MemoryR metaMem) {
-        return isMetaFormatAtLeast(metaMem, META_FORMAT_MINOR_VERSION_TTL)
-                ? metaMem.getInt(TableUtils.META_OFFSET_TTL_HOURS_OR_MONTHS)
-                : 0;
+        // Gate on the version that introduced TTL rather than LATEST: a future bump of
+        // META_FORMAT_MINOR_VERSION_LATEST must not silently zero out TTL for older tables
+        // that legitimately have it set (same rationale as hasParquetEncodingConfig).
+        return isMetaFormatAtLeast(metaMem, META_FORMAT_MINOR_VERSION_TTL) ? metaMem.getInt(TableUtils.META_OFFSET_TTL_HOURS_OR_MONTHS) : 0;
     }
 
     static boolean isColumnCovering(MemoryR metaMem, int columnIndex) {

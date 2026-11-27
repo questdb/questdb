@@ -387,6 +387,7 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
                 frame.partitionLo = partitionLo;
                 frame.rowGroupIndex = window;
                 setFrameRowBounds(
+                        window,
                         partitionLo - windowStartRow,
                         adjustedHi - windowStartRow,
                         requiresMaterialization
@@ -629,11 +630,13 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
                 setFramePartitionFrameState(requiresMaterialization);
                 frame.partitionLo = partitionLo;
                 frame.partitionHi = adjustedHi;
-                frame.pieceShift = 0;
+                // Symbol indexes store index rows, see ParquetMetaFileReader#getRowGroupIndexRowLo.
+                frame.pieceShift = metadata.getRowGroupIndexRowLo(i, rowGroupStartRow) - rowGroupStartRow;
                 frame.skipSkeleton = false;
                 frame.format = PartitionFormat.PARQUET;
                 frame.rowGroupIndex = i;
                 setFrameRowBounds(
+                        i,
                         partitionLo - rowGroupStartRow,
                         adjustedHi - rowGroupStartRow,
                         requiresMaterialization
@@ -791,15 +794,15 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         frame.partitionFrameState = requiresMaterialization ? reenterPartitionFrameState : 0;
     }
 
-    private void setFrameRowBounds(long logicalLo, long logicalHi, boolean requiresMaterialization) {
+    private void setFrameRowBounds(int window, long logicalLo, long logicalHi, boolean requiresMaterialization) {
         frame.partitionFrameRowLo = logicalLo;
         frame.partitionFrameRowHi = logicalHi;
         if (requiresMaterialization) {
             frame.rowGroupLo = 0;
             frame.rowGroupHi = Math.toIntExact(logicalHi - logicalLo);
         } else {
-            frame.rowGroupLo = Math.toIntExact(logicalLo);
-            frame.rowGroupHi = Math.toIntExact(logicalHi);
+            frame.rowGroupLo = TablePageFrameCursor.toWindowRow(reader, reenterPartitionIndex, window, logicalLo);
+            frame.rowGroupHi = TablePageFrameCursor.toWindowRow(reader, reenterPartitionIndex, window, logicalHi);
         }
     }
 

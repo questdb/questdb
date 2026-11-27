@@ -97,6 +97,7 @@ public final class QwpDecimalColumnCursor implements QwpColumnCursor {
         valueCount = 0;
         valueSize = 8;
         scale = 0;
+        valueCount = 0;
         nullBitmapAddress = 0;
         valuesAddress = 0;
         resetRowPosition();
@@ -190,6 +191,14 @@ public final class QwpDecimalColumnCursor implements QwpColumnCursor {
 
     public long getValuesAddress() {
         return valuesAddress;
+    }
+
+    /**
+     * Returns whether any row of this column holds a value. Without one, the
+     * scale byte is only a placeholder.
+     */
+    public boolean hasValues() {
+        return valueCount > 0;
     }
 
     @Override

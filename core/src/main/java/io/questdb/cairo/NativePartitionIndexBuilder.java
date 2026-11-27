@@ -68,6 +68,7 @@ final class NativePartitionIndexBuilder implements QuietCloseable {
     private final MemoryMAR ddlMem;
     private final FilesFacade ff;
     private final PostingSupersededFileRemover supersededFileRemover;
+    private int commitMode = CommitMode.NOSYNC;
     private SymbolColumnIndexer indexer;
     private byte indexerType = -1;
 
@@ -89,6 +90,8 @@ final class NativePartitionIndexBuilder implements QuietCloseable {
      * @param partitionTimestamp the timestamp the directory is published under
      * @param partitionRowCount  the rows the directory holds
      * @param tableTxn           the table txn the caller built off; tags the posting chain entries
+     * @param commitMode         the commit mode the copy wrote its columns under; the index files are flushed as the
+     *                           writer flushes its column files under it
      */
     void buildIndexes(
             Path partitionDir,
@@ -97,8 +100,10 @@ final class NativePartitionIndexBuilder implements QuietCloseable {
             ColumnTopRecorder columnTops,
             long partitionTimestamp,
             long partitionRowCount,
-            long tableTxn
+            long tableTxn,
+            int commitMode
     ) {
+        this.commitMode = commitMode;
         final int dirLen = partitionDir.size();
         try {
             for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
@@ -221,6 +226,11 @@ final class NativePartitionIndexBuilder implements QuietCloseable {
                 writer.setNextTxnAtSeal(tableTxn);
                 indexer.rebuildSidecars();
             }
+            // Flushed as the writer flushes its column files at commit: under SYNC and ASYNC. Under ADAPTIVE the save
+            // point flushes them, under NOSYNC nothing does. The swap that names the directory follows.
+            if (CommitMode.appliesColumnSync(commitMode)) {
+                indexer.sync(commitMode == CommitMode.ASYNC);
+            }
             isBuilt = true;
         } finally {
             if (coverCount > 0) {
@@ -254,6 +264,10 @@ final class NativePartitionIndexBuilder implements QuietCloseable {
             try {
                 ddlMem.smallFile(ff, partitionDir.$(), MemoryTag.MMAP_TABLE_WRITER);
                 IndexFactory.initKeyMemory(indexType, ddlMem, indexValueBlockCapacity);
+                // An index of a column with no rows in the directory is published as written here.
+                if (CommitMode.appliesColumnSync(commitMode)) {
+                    ddlMem.sync(commitMode == CommitMode.ASYNC);
+                }
             } finally {
                 ddlMem.close();
             }

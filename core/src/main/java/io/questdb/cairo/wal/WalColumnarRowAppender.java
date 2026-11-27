@@ -87,6 +87,7 @@ public class WalColumnarRowAppender extends AbstractColumnarRowAppender {
 
     @Override
     protected long beginWrite(int rowCount) {
+        walWriter.throwIfCommitPrepared("begin a columnar write");
         walWriter.checkDistressed();
         if (walWriter.getTableToken().isDelta()) {
             throw CairoException.schemaMismatch().put("table switched to Delta; reacquire the columnar appender [table=")

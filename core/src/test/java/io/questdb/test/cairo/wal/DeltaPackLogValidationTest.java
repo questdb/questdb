@@ -120,10 +120,14 @@ public class DeltaPackLogValidationTest extends AbstractCairoTest {
                         Assert.assertTrue(cursor.hasNext());
                         Assert.assertTrue(cursor.isPacked());
                         header.putLong(TableTransactionLogFile.PACK_START_TXN_OFFSET_64, -1);
-                        CairoException error = partCount == 0
-                                ? Assert.assertThrows(CairoException.class, cursor::isPacked)
-                                : Assert.assertThrows(CairoException.class, cursor::extend);
-                        TestUtils.assertContains(error.getFlyweightMessage(), "pack boundary");
+                        if (partCount == 0) {
+                            CairoException error = Assert.assertThrows(CairoException.class, cursor::isPacked);
+                            TestUtils.assertContains(error.getFlyweightMessage(), "pack boundary");
+                        } else {
+                            // A V2 cursor keeps a boundary its transactions reached; the next cursor reads the corruption.
+                            Assert.assertFalse(cursor.extend());
+                            Assert.assertTrue(cursor.isPacked());
+                        }
                     }
                     if (partCount == 0) {
                         Assert.assertFalse(TableTransactionLogV1.isTailIntact(configuration.getFilesFacade(), header.getFd(), 1, 1, true));
@@ -214,7 +218,7 @@ public class DeltaPackLogValidationTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testV2CursorRefreshesBoundaryWithoutNewTransactions() throws Exception {
+    public void testV2CursorReadsBoundaryActivatedAfterOpening() throws Exception {
         assertMemoryLeak(() -> {
             try (Path path = new Path(); TableTransactionLogFile log = newLog(2)) {
                 path.of(root).concat("cursor-boundary");
@@ -234,6 +238,39 @@ public class DeltaPackLogValidationTest extends AbstractCairoTest {
                     Assert.assertEquals(2, cursor.getTxn());
                     Assert.assertTrue(cursor.isPacked());
                     Assert.assertEquals(4, cursor.getSegmentTxn());
+                    Assert.assertFalse(cursor.hasNext());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testV2CursorRereadsBoundaryBeyondItsTransactions() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path(); TableTransactionLogFile log = newLog(2); MemoryCMARW header = Vm.getCMARWInstance()) {
+                path.of(root).concat("unreached-boundary");
+                configuration.getFilesFacade().mkdir(path.$(), configuration.getMkDirMode());
+                int dirLen = path.size();
+                log.create(path, 10_000_000_000L);
+                log.open(path);
+                log.addEntry(0, 1, 0, 0, 10_000_000_001L, 1, 1, 1);
+                header.smallFile(configuration.getFilesFacade(), path.concat(TXNLOG_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
+                path.trimTo(dirLen);
+                // The cursor opens while an activation shows its boundary, then the failed sync undoes it.
+                header.putLong(TableTransactionLogFile.PACK_START_TXN_OFFSET_64, 2);
+                try (TransactionLogCursor cursor = log.getCursor(0, path)) {
+                    header.putLong(TableTransactionLogFile.PACK_START_TXN_OFFSET_64, 0);
+                    Assert.assertEquals(2, log.addEntry(0, 1, 0, 1, 10_000_000_002L, 1, 1, 1));
+                    log.setPackStartTxn(3);
+                    Assert.assertEquals(3, log.addEntry(0, 0, 1, 4, 10_000_000_003L, 1, 1, 1));
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertFalse(cursor.isPacked());
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertEquals(2, cursor.getTxn());
+                    Assert.assertFalse(cursor.isPacked());
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertEquals(3, cursor.getTxn());
+                    Assert.assertTrue(cursor.isPacked());
                     Assert.assertFalse(cursor.hasNext());
                 }
             }

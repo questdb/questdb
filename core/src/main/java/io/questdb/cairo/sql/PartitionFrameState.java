@@ -31,19 +31,32 @@ import io.questdb.std.Unsafe;
  * Stable Java view of the fixed ABI header in an opaque Rust partition-state handle.
  */
 public final class PartitionFrameState {
+    public static final long HEADER_BYTES = 11L * Long.BYTES;
     public static final int SUMMARY_BASE_ROWS = 0;
     public static final int SUMMARY_FLAGS = 3;
     public static final int SUMMARY_LOGICAL_ROWS = 2;
     public static final int SUMMARY_LONGS = 4;
     public static final long WINDOW_HAS_DELTA = 1;
+    private static final int HEADER_BASE_ID = 6;
     private static final int HEADER_BASE_ROWS = 5;
     private static final int HEADER_HAS_CUSTOM_FRAMES = 3;
     private static final int HEADER_LOGICAL_ROWS = 2;
+    private static final int HEADER_PARQUET_ADDR = 9;
+    private static final int HEADER_PARQUET_FILE_SIZE = 10;
+    private static final int HEADER_PARQUET_METADATA_ADDR = 7;
+    private static final int HEADER_PARQUET_METADATA_SIZE = 8;
     private static final int HEADER_SUBFRAME_SIZE = 4;
     private static final int HEADER_SUMMARIES_ADDR = 0;
     private static final int HEADER_WINDOW_COUNT = 1;
 
     private PartitionFrameState() {
+    }
+
+    /**
+     * The pinned base's catalog identity; a reader keeps its partition open while it stays the same.
+     */
+    public static long getBaseId(long state) {
+        return headerValue(state, HEADER_BASE_ID);
     }
 
     public static long getBasePartitionRowCount(long state) {
@@ -60,6 +73,28 @@ public final class PartitionFrameState {
 
     public static long getLogicalRowCount(long state, int window) {
         return summaryValue(state, window, SUMMARY_LOGICAL_ROWS);
+    }
+
+    /**
+     * The shared mapping of a local Parquet base's data file, or 0 for a remote or native base.
+     */
+    public static long getParquetAddr(long state) {
+        return headerValue(state, HEADER_PARQUET_ADDR);
+    }
+
+    public static long getParquetFileSize(long state) {
+        return headerValue(state, HEADER_PARQUET_FILE_SIZE);
+    }
+
+    /**
+     * The shared mapping of a Parquet base's committed _pm prefix, or 0 for a native base.
+     */
+    public static long getParquetMetadataAddr(long state) {
+        return headerValue(state, HEADER_PARQUET_METADATA_ADDR);
+    }
+
+    public static long getParquetMetadataSize(long state) {
+        return headerValue(state, HEADER_PARQUET_METADATA_SIZE);
     }
 
     public static long getSubframeSize(long state) {

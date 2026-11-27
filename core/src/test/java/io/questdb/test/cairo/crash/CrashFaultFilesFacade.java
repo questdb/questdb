@@ -13,6 +13,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
@@ -150,6 +151,9 @@ import java.util.stream.Stream;
  *   <li>{@code syncedDataEnd} is a single end (the max synced range end), not a set of written extents. The
  *       workloads append contiguously from offset 0, so one end is exact; a sparse-write workload would need a
  *       per-extent set.</li>
+ *   <li>The model keeps durability per name, while on disk it belongs to the inode. {@link #crash} restores a
+ *       hard-linked file once, from the name with the newest device snapshot, so it never mixes the records of two
+ *       names. Ranged syncs through two names of one file are not merged, though: the newest snapshot wins whole.</li>
  * </ul>
  */
 public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
@@ -177,6 +181,12 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     private final Map<String, Boolean> pteFlushed = new HashMap<>();
     private final Map<String, byte[]> deviceCacheContent = new HashMap<>();
     private final Map<String, byte[]> durableContent = new HashMap<>();
+    // The order of each path's last device snapshot taken through that name alone (fsync, fdatasync, fsyncAndClose,
+    // msync, sync_file_range, markFileDurable). crash() restores a hard-linked file from the name with the newest one;
+    // a name without one ranks below the others. syncfs and markDurableBaseline snapshot every name of a file at once,
+    // so they never set its names apart and do not count.
+    private final Map<String, Long> deviceSnapshotSeq = new HashMap<>();
+    private long deviceSnapshotCounter;
     // Data at the device versus journaled metadata (see the class javadoc).
     // writtenDataEnd[F]: high-water of bytes actually written (not posix_fallocate'd zeros), advanced by
     //   write()/append() and by msync (the range the app declared dirty), so a device flush of a sparsely written,
@@ -208,6 +218,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     private final Map<String, byte[]> killImageFiles = new HashMap<>();
     // The durable state frozen by powerLoss(); crash() restores it under the crashed root.
     private final Map<String, byte[]> powerLossContent = new HashMap<>();
+    private final Map<String, Long> powerLossDeviceSnapshotSeq = new HashMap<>();
     private final Set<String> powerLossDirectories = new HashSet<>();
     private final Set<String> powerLossFileEntries = new HashSet<>();
     private final Map<String, byte[]> powerLossNamespaceImages = new HashMap<>();
@@ -489,6 +500,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
             track(p);
             byte[] now = readCurrent(p);
             deviceCacheContent.put(p, now);
+            recordDeviceSnapshot(p);
             advanceWrittenDataEnd(p, nonZeroEnd(now));
             advanceSyncedDataEnd(p, writtenDataEnd.getOrDefault(p, 0L));
             journalCommit(p);
@@ -565,6 +577,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
                 track(p);
                 byte[] now = readCurrent(p);
                 deviceCacheContent.put(p, now);
+                recordDeviceSnapshot(p);
                 advanceWrittenDataEnd(p, nonZeroEnd(now));
                 advanceSyncedDataEnd(p, writtenDataEnd.getOrDefault(p, 0L));
                 journalCommit(p);
@@ -603,6 +616,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
                 // it survives the close above.
                 track(p);
                 deviceCacheContent.put(p, snapshot);
+                recordDeviceSnapshot(p);
                 advanceWrittenDataEnd(p, nonZeroEnd(snapshot));
                 advanceSyncedDataEnd(p, writtenDataEnd.getOrDefault(p, 0L));
                 journalCommit(p);
@@ -653,8 +667,11 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
         final String targetPath = toAbsPath(hardLink);
         final int result = super.hardLink(src, hardLink);
         if (result == io.questdb.std.Files.FILES_RENAME_OK) {
-            // Both names refer to the same inode. Seed the target's durability state from the source, so crash() never
-            // treats the new name as an untracked zero-length file and truncates the shared inode under the source too.
+            // Both names refer to the same inode. Track the source too, so every later syncfs snapshots both names and
+            // the source keeps the file's durable bytes if the new name goes away: RENAME COLUMN links a column file
+            // that may never have been written. Then seed the target's durability state from the source, so crash()
+            // never treats the new name as an untracked zero-length file.
+            track(sourcePath);
             duplicateMapValue(durableContent, sourcePath, targetPath);
             duplicateMapValue(deviceCacheContent, sourcePath, targetPath);
             duplicateMapValue(durableSize, sourcePath, targetPath);
@@ -755,6 +772,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
 
     private void rekeyDurability(String fromPath, String toPath) {
         rekeyMap(durableContent, fromPath, toPath);
+        rekeyMap(deviceSnapshotSeq, fromPath, toPath);
         rekeyMap(deviceCacheContent, fromPath, toPath);
         rekeyMap(durableSize, fromPath, toPath);
         rekeyMap(writtenDataEnd, fromPath, toPath);
@@ -778,6 +796,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
 
     private void evictDurability(String path, boolean includeDescendants) {
         evictMap(durableContent, path, includeDescendants);
+        evictMap(deviceSnapshotSeq, path, includeDescendants);
         evictMap(deviceCacheContent, path, includeDescendants);
         evictMap(durableSize, path, includeDescendants);
         evictMap(writtenDataEnd, path, includeDescendants);
@@ -793,6 +812,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     private void evictMissingDurability(String root) {
         final Set<String> keys = new HashSet<>(trackedFiles);
         keys.addAll(durableContent.keySet());
+        keys.addAll(deviceSnapshotSeq.keySet());
         keys.addAll(deviceCacheContent.keySet());
         keys.addAll(durableSize.keySet());
         keys.addAll(writtenDataEnd.keySet());
@@ -861,6 +881,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
                 // files' if modelSharedJournal), then flush, which promotes the journaled extent of every tracked file
                 // to durable.
                 deviceCacheContent.put(p, withRangeWrittenBack(deviceCacheContent.get(p), readCurrent(p), fileEnd - len, fileEnd));
+                recordDeviceSnapshot(p);
                 advanceSyncedDataEnd(p, Math.min(fileEnd, writtenDataEnd.getOrDefault(p, 0L)));
                 journalCommit(p);
                 doFlush();
@@ -886,6 +907,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
                 // so journaledDataEnd stays. The drained bytes become durable only once a later journal commit (this
                 // file's own, or a shared-journal commit) journals the extent conversion.
                 deviceCacheContent.put(p, withRangeWrittenBack(deviceCacheContent.get(p), readCurrent(p), offset, offset + nbytes));
+                recordDeviceSnapshot(p);
                 advanceWrittenDataEnd(p, offset + nbytes);
                 advanceSyncedDataEnd(p, offset + nbytes);
             }
@@ -947,6 +969,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
         pteFlushed.clear();
         deviceCacheContent.clear();
         durableContent.clear();
+        deviceSnapshotSeq.clear();
         writtenDataEnd.clear();
         syncedDataEnd.clear();
         journaledDataEnd.clear();
@@ -1025,6 +1048,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
         final byte[] now = readCurrent(key);
         track(key);
         deviceCacheContent.put(key, now);
+        recordDeviceSnapshot(key);
         durableContent.put(key, now);
         writtenDataEnd.put(key, (long) now.length);
         syncedDataEnd.put(key, (long) now.length);
@@ -1053,6 +1077,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
         }
         powerLossMarked = true;
         powerLossContent.putAll(durableContent);
+        powerLossDeviceSnapshotSeq.putAll(deviceSnapshotSeq);
         powerLossSize.putAll(durableSize);
         for (String key : durableSize.keySet()) {
             final Path p = Paths.get(key);
@@ -1089,7 +1114,9 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
      * Rolls every file under {@code dbRoot} back to its durable state, then applies any torn-tail ranges.
      * <p>
      * A file with a {@code durableContent} snapshot is restored to those exact bytes, which also fixes the durable
-     * length. A file the content model never tracked is truncated to its last durable size.
+     * length. A file the content model never tracked is truncated to its last durable size. A file with several names
+     * (hard links) is restored once, from the name whose last device snapshot is newest: durability belongs to the
+     * inode, so a name no sync ever saw must not truncate the file that another name made durable.
      * <p>
      * The durable state is the one frozen by {@link #powerLoss}, which must be marked first. Under {@code dbRoot}
      * the mark is consumed and the model restarts from the rolled-back files: they are durable, and nothing is left
@@ -1120,12 +1147,21 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
         }
         final Path root = Paths.get(dbRoot.toString()).toAbsolutePath();
         final Map<String, Long> liveSizeAtPowerLoss = new HashMap<>(powerLossLiveSize);
+        // Group the names of each hard-linked file before the namespace rollback, which can remove the very name whose
+        // sync made the shared file durable.
+        final Map<String, List<String>> linkedNames = hardLinkedNames(dbRoot);
         restorePowerLossState(root.toString());
         clearPowerLoss();
         restoreNamespace(root);
+        final Set<String> restoredLinkedFiles = new HashSet<>();
         walk(dbRoot, p -> {
-            String key = p.toAbsolutePath().toString();
-            byte[] durable = durableContent.get(key);
+            final String key = p.toAbsolutePath().toString();
+            final List<String> names = linkedNames.getOrDefault(key, List.of(key));
+            if (names.size() > 1 && !restoredLinkedFiles.add(names.get(0))) {
+                return; // another name of this file has restored it
+            }
+            final String recordKey = newestDurableName(names);
+            byte[] durable = durableContent.get(recordKey);
             try (FileChannel ch = FileChannel.open(p, StandardOpenOption.WRITE)) {
                 if (durable != null) {
                     // Content rollback: overwrite the prefix with durable bytes, then set the durable length. A
@@ -1136,8 +1172,8 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
                     // image) is capped by its restored length.
                     final long length = restoredLength(
                             durable.length,
-                            durableSize.getOrDefault(key, 0L),
-                            liveSizeAtPowerLoss.getOrDefault(key, ch.size())
+                            durableSize.getOrDefault(recordKey, 0L),
+                            liveSizeAtPowerLoss.getOrDefault(recordKey, ch.size())
                     );
                     if (durable.length > 0) {
                         ch.write(ByteBuffer.wrap(durable), 0);
@@ -1150,13 +1186,13 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
                     }
                 } else {
                     // No content snapshot for this file: size-only rollback.
-                    Long durableSz = durableSize.get(key);
+                    Long durableSz = durableSize.get(recordKey);
                     if (durableSz != null) {
                         if (ch.size() > durableSz) {
                             ch.truncate(durableSz);
                         }
                     } else {
-                        final byte[] namespaceImage = namespaceFileImages.get(key);
+                        final byte[] namespaceImage = namespaceFileImages.get(recordKey);
                         if (namespaceImage != null) {
                             ch.write(ByteBuffer.wrap(namespaceImage), 0);
                             ch.truncate(namespaceImage.length);
@@ -1165,14 +1201,16 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
                         }
                     }
                 }
-                List<long[]> ranges = tornTails.get(key);
-                if (ranges != null) {
-                    for (long[] r : ranges) {
-                        if (r[1] < 0 || r[1] > Integer.MAX_VALUE)
-                            throw new IllegalArgumentException("tornTail len out of range: " + r[1]);
-                        int n = (int) r[1];
-                        ByteBuffer zeros = ByteBuffer.allocate(n);
-                        ch.write(zeros, r[0]);
+                for (int i = 0, k = names.size(); i < k; i++) {
+                    List<long[]> ranges = tornTails.get(names.get(i));
+                    if (ranges != null) {
+                        for (long[] r : ranges) {
+                            if (r[1] < 0 || r[1] > Integer.MAX_VALUE)
+                                throw new IllegalArgumentException("tornTail len out of range: " + r[1]);
+                            int n = (int) r[1];
+                            ByteBuffer zeros = ByteBuffer.allocate(n);
+                            ch.write(zeros, r[0]);
+                        }
                     }
                 }
                 ch.force(true);
@@ -1707,6 +1745,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     private void clearPowerLoss() {
         powerLossMarked = false;
         powerLossContent.clear();
+        powerLossDeviceSnapshotSeq.clear();
         powerLossSize.clear();
         powerLossLiveSize.clear();
         powerLossDirectories.clear();
@@ -1723,6 +1762,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     private void restorePowerLossState(String rootKey) {
         final Map<String, byte[]> laterImages = new HashMap<>(namespaceFileImages);
         restoreUnder(durableContent, powerLossContent, rootKey);
+        restoreUnder(deviceSnapshotSeq, powerLossDeviceSnapshotSeq, rootKey);
         restoreUnder(durableSize, powerLossSize, rootKey);
         restoreUnder(durableDirectories, powerLossDirectories, rootKey);
         restoreUnder(durableFileEntries, powerLossFileEntries, rootKey);
@@ -1755,6 +1795,62 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
                 live.add(key);
             }
         }
+    }
+
+    // Maps every name of a file that has several names under dbRoot (hard links) to the list of all its names.
+    private static Map<String, List<String>> hardLinkedNames(CharSequence dbRoot) {
+        final Map<Object, List<String>> namesByInode = new HashMap<>();
+        walk(dbRoot, p -> {
+            final Object inode;
+            try {
+                inode = Files.readAttributes(p, BasicFileAttributes.class).fileKey();
+            } catch (IOException e) {
+                throw new UncheckedIOException(e);
+            }
+            if (inode != null) {
+                namesByInode.computeIfAbsent(inode, k -> new ArrayList<>()).add(p.toAbsolutePath().toString());
+            }
+        });
+        final Map<String, List<String>> linkedNames = new HashMap<>();
+        for (List<String> names : namesByInode.values()) {
+            if (names.size() > 1) {
+                for (int i = 0, n = names.size(); i < n; i++) {
+                    linkedNames.put(names.get(i), names);
+                }
+            }
+        }
+        return linkedNames;
+    }
+
+    // The name whose record crash() restores a file from: among the names with a durable record, the one with the
+    // newest device snapshot; else a name with a namespace image; else the first name. For a file with one name, that
+    // name.
+    private String newestDurableName(List<String> names) {
+        String newest = null;
+        long newestSeq = Long.MIN_VALUE;
+        for (int i = 0, n = names.size(); i < n; i++) {
+            final String name = names.get(i);
+            if (durableContent.containsKey(name) || durableSize.containsKey(name)) {
+                final long seq = deviceSnapshotSeq.getOrDefault(name, -1L);
+                if (newest == null || seq > newestSeq) {
+                    newest = name;
+                    newestSeq = seq;
+                }
+            }
+        }
+        if (newest != null) {
+            return newest;
+        }
+        for (int i = 0, n = names.size(); i < n; i++) {
+            if (namespaceFileImages.containsKey(names.get(i))) {
+                return names.get(i);
+            }
+        }
+        return names.get(0);
+    }
+
+    private void recordDeviceSnapshot(String path) {
+        deviceSnapshotSeq.put(path, ++deviceSnapshotCounter);
     }
 
     private void recordDurable(long fd) {

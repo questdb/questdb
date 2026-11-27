@@ -89,6 +89,11 @@ public class EncodedSortLightRecordCursorFactory extends AbstractRecordCursorFac
     }
 
     @Override
+    public boolean hasTableScanTimestamp() {
+        return SortedRecordCursorFactory.hasTableScanTimestamp(getMetadata(), sortColumnFilter, base);
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return true;
     }

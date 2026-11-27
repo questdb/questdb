@@ -72,6 +72,8 @@ import io.questdb.griffin.engine.functions.catalogue.DumpThreadStacksFunctionFac
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
+import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
+import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SCSequence;
@@ -439,6 +441,16 @@ public abstract class AbstractCairoTest extends AbstractTest {
     @Before
     public void setUp() {
         super.setUp();
+        // A fuzz test class runs under its own commit mode - see AbstractTest.fuzzCommitModeRule. Set for every
+        // test, since tearDown clears the overrides, and ahead of the test so a mode the test pins still wins.
+        final String fuzzCommitMode = Overrides.getFuzzCommitMode();
+        if (fuzzCommitMode != null) {
+            forEachNode(node -> {
+                if (!node.getConfigurationOverrides().isPropertySet(PropertyKey.CAIRO_COMMIT_MODE)) {
+                    node.getConfigurationOverrides().setProperty(PropertyKey.CAIRO_COMMIT_MODE, fuzzCommitMode);
+                }
+            });
+        }
         previousSuspensionMode = SuspensionScope.enter(SuspensionScope.Mode.BLOCKING);
         SharedRandom.RANDOM.set(new Rnd());
         isCompositePartitionRandomisationEnabled = false;
@@ -912,6 +924,24 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
     }
 
+    /**
+     * Encodes the first partition of the table into the Parquet file {@code fileName} in the db root, replacing a
+     * file of that name. {@code read_parquet()} finds the file when the test sets {@code inputRoot} to {@code root}.
+     */
+    protected static void encodeTable(CharSequence tableName, CharSequence fileName) {
+        try (
+                Path path = new Path();
+                PartitionDescriptor descriptor = new PartitionDescriptor();
+                TableReader reader = engine.getReader(tableName)
+        ) {
+            path.of(root).concat(fileName);
+            engine.getConfiguration().getFilesFacade().remove(path.$());
+            PartitionEncoder.populateFromTableReader(reader, descriptor, 0);
+            PartitionEncoder.encode(descriptor, path);
+            Assert.assertTrue(Files.exists(path.$()));
+        }
+    }
+
     protected static void execute(CharSequence sqlText) throws SqlException {
         engine.execute(sqlText, sqlExecutionContext);
         randomiseCompositePartitions(sqlExecutionContext, sqlText);
@@ -1082,9 +1112,10 @@ public abstract class AbstractCairoTest extends AbstractTest {
      * purge job, which is where an enrolled writer sends a directory it could not remove inline; under every
      * other mode it does nothing, and the test asserts what master wrote it to assert. Call it before draining
      * a purge job of your own or asserting that a compaction ran. A fold that only appends needs no save point.
+     * A table without WAL never enrols in ADAPTIVE and takes no save point, so for it this does nothing either.
      */
     protected static void releaseSavePointHolds(CharSequence tableName) {
-        if (engine.getResolvedCommitMode() != CommitMode.ADAPTIVE) {
+        if (engine.getResolvedCommitMode() != CommitMode.ADAPTIVE || !engine.verifyTableName(tableName).isWal()) {
             return;
         }
         try (TableWriter writer = getWriter(tableName)) {

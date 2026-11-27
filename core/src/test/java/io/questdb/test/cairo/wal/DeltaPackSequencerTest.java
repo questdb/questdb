@@ -273,6 +273,31 @@ public class DeltaPackSequencerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCursorClosedByNestedUserReportsNoTransactions() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path(); TableTransactionLogFile log = newLog(2)) {
+                path.of(root).concat("nested-cursor");
+                configuration.getFilesFacade().mkdir(path.$(), configuration.getMkDirMode());
+                log.create(path, 10_000_000_000L);
+                log.open(path);
+                log.beginMetadataChangeEntry(1, SERIALIZER, null, 10_000_000_001L);
+                Assert.assertEquals(1, log.endMetadataChangeEntry());
+                final TransactionLogCursor cursor = log.getCursor(0, path);
+                Assert.assertTrue(cursor.hasNext());
+                Assert.assertFalse(cursor.hasNext());
+                // The cursor is thread-local: a nested user's close also closes the outer user's header.
+                try (TransactionLogCursor nested = log.getCursor(1, path)) {
+                    Assert.assertSame(cursor, nested);
+                    Assert.assertFalse(nested.hasNext());
+                }
+                // As on an ordinary WAL table, the failed header read reports no new transactions.
+                Assert.assertFalse(cursor.extend());
+                Assert.assertFalse(cursor.hasNext());
+            }
+        });
+    }
+
+    @Test
     public void testPackedAdmissionRequiresValidReservationV1() throws Exception {
         testPackedAdmissionRequiresValidReservation(0);
     }

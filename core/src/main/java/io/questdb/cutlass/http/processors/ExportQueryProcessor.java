@@ -50,6 +50,7 @@ import io.questdb.cutlass.http.HttpKeywords;
 import io.questdb.cutlass.http.HttpRequestHandler;
 import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.HttpRequestProcessor;
+import io.questdb.cutlass.http.HttpResponseHeader;
 import io.questdb.cutlass.http.LocalValue;
 import io.questdb.cutlass.parquet.HTTPSerialParquetExporter;
 import io.questdb.cutlass.parquet.HybridColumnMaterializer;
@@ -85,6 +86,7 @@ import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8Sink;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 
@@ -205,8 +207,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                 try {
                     boolean runQuery = true;
                     boolean isParquet = state.getExportModel().isParquetFormat();
-                    final int order = state.recordCursorFactory.getScanDirection() == SCAN_DIRECTION_BACKWARD ? ORDER_DESC : ORDER_ASC;
-                    state.descending = order == ORDER_DESC;
+                    state.descending = state.recordCursorFactory.getScanDirection() == SCAN_DIRECTION_BACKWARD;
                     if (isParquet) {
                         state.parquetExportMode = ParquetExportMode.determineExportMode(state.recordCursorFactory, state.descending, sqlExecutionContext);
                     }
@@ -215,7 +216,10 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                             if (isParquet) {
                                 switch (state.parquetExportMode) {
                                     case DIRECT_PAGE_FRAME ->
-                                            state.pageFrameCursor = state.recordCursorFactory.getPageFrameCursor(sqlExecutionContext, order);
+                                            state.pageFrameCursor = state.recordCursorFactory.getPageFrameCursor(
+                                                    sqlExecutionContext,
+                                                    state.descending ? ORDER_DESC : ORDER_ASC
+                                            );
                                     case PAGE_FRAME_BACKED -> {
                                         // Safe cast: determineExportMode() only returns PAGE_FRAME_BACKED
                                         // when unwrapped instanceof VirtualRecordCursorFactory.
@@ -270,7 +274,10 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                                 state.recordCursorFactory = cc.getRecordCursorFactory();
                             }
                             if (isParquet) {
-                                state.parquetExportMode = ParquetExportMode.determineExportMode(state.recordCursorFactory, state.descending, sqlExecutionContext);
+                                // The recompiled plan's page frames are read ascending, and a plan that scans backward
+                                // streams its cursor instead.
+                                state.parquetExportMode = ParquetExportMode.determineRecompiledExportMode(state.recordCursorFactory, sqlExecutionContext);
+                                state.descending = false;
                             }
                         }
                     }
@@ -283,11 +290,14 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                         state.pageFrameCursor.setScanProfile(ReaderScanProfile.SEQUENTIAL_EVICT);
                         state.materializer.setUpPageFrameBacked(vf, state.pageFrameCursor, sqlExecutionContext);
                     } else if (isParquet && state.parquetExportMode == ParquetExportMode.CURSOR_BASED) {
+                        // The cursor writer marks the designated timestamp in the order of the plan it streams, which
+                        // can be a recompiled one.
+                        state.descending = state.recordCursorFactory.getScanDirection() == SCAN_DIRECTION_BACKWARD;
                         RecordCursorFactory unwrapped = ParquetExportMode.unwrapFactory(state.recordCursorFactory);
                         if (unwrapped instanceof VirtualRecordCursorFactory vf) {
-                            state.materializer.setUpCursorBacked(vf);
+                            state.materializer.setUpCursorBacked(vf, state.cursor);
                         } else {
-                            state.materializer.setUp(state.recordCursorFactory.getMetadata());
+                            state.materializer.setUp(state.recordCursorFactory.getMetadata(), state.cursor);
                         }
                     }
                     state.metadata = state.recordCursorFactory.getMetadata();
@@ -392,6 +402,18 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         }
     }
 
+    private static boolean hasControlChar(CharSequence text) {
+        for (int i = 0, n = text.length(); i < n; i++) {
+            final char c = text.charAt(i);
+            // CTL of RFC 5234. A header field may carry none of them but HTAB,
+            // and no file name needs that.
+            if (c < 0x20 || c == 0x7F) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private static boolean isExpUrl(Utf8Sequence tok) {
         if (tok.size() != 4) {
             return false;
@@ -477,6 +499,28 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         if (!Interval.NULL.equals(interval)) {
             interval.toSink(response.putQuote(), intervalType);
             response.putQuote();
+        }
+    }
+
+    /**
+     * Writes the text as the content of an RFC 9110 quoted-string. A backslash escapes each double
+     * quote and backslash, so neither can end the string early and leave the rest of the text, and
+     * the file extension after it, outside the quotes. The text must not hold control characters,
+     * since CR and LF would end the header line; parseUrl() rejects file names that hold them.
+     */
+    private static void putQuotedStringContent(Utf8Sink sink, CharSequence text) {
+        final int n = text.length();
+        int i = 0;
+        while (i < n) {
+            final char c = text.charAt(i++);
+            if (c < 128) {
+                if (c == '"' || c == '\\') {
+                    sink.putAscii('\\');
+                }
+                sink.putAscii(c);
+            } else {
+                i = Utf8s.encodeUtf16Char(sink, text, n, i, c);
+            }
         }
     }
 
@@ -1126,7 +1170,18 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         DirectUtf8Sequence fileName = request.getUrlParam(URL_PARAM_FILENAME);
         state.fileName.clear();
         if (fileName != null && fileName.size() > 0) {
-            state.fileName.put(fileName);
+            if (!Utf8s.utf8ToUtf16(fileName.lo(), fileName.hi(), state.fileName)) {
+                info(state).$("Bad UTF8 encoding in filename").$();
+                sendException(response, 0, "Bad UTF8 encoding in filename", state);
+                return false;
+            }
+            // header() copies the file name into the Content-Disposition header, where CR or LF
+            // would end the header line and let the URL add headers of its own to the response.
+            if (hasControlChar(state.fileName)) {
+                info(state).$("control character in filename").$();
+                sendException(response, 0, "filename must not contain control characters", state);
+                return false;
+            }
         }
 
         DirectUtf8Sequence delimiter = request.getUrlParam(URL_PARAM_DELIMITER);
@@ -1398,12 +1453,15 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         String contentType = isParquet ? CONTENT_TYPE_PARQUET : CONTENT_TYPE_CSV;
         String fileExtension = isParquet ? FILE_EXTENSION_PARQUET : FILE_EXTENSION_CSV;
         response.status(statusCode, contentType);
+        final HttpResponseHeader headers = response.headers();
         if (!state.fileName.isEmpty()) {
-            response.headers().putAscii("Content-Disposition: attachment; filename=\"").put(state.fileName).putAscii(fileExtension).putAscii("\"").putEOL();
+            headers.putAscii("Content-Disposition: attachment; filename=\"");
+            putQuotedStringContent(headers, state.fileName);
+            headers.putAscii(fileExtension).putAscii('"').putEOL();
         } else {
-            response.headers().putAscii("Content-Disposition: attachment; filename=\"questdb-query-").put(clock.getTicks()).putAscii(fileExtension).putAscii("\"").putEOL();
+            headers.putAscii("Content-Disposition: attachment; filename=\"questdb-query-").put(clock.getTicks()).putAscii(fileExtension).putAscii("\"").putEOL();
         }
-        response.headers().setKeepAlive(configuration.getKeepAliveHeader());
+        headers.setKeepAlive(configuration.getKeepAliveHeader());
         response.sendHeader();
     }
 

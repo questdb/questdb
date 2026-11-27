@@ -27,7 +27,7 @@ package io.questdb.cairo;
 public enum AttachDetachStatus {
     OK(false),
     DETACH_ERR_ACTIVE(false),
-    DETACH_ERR_READ_ONLY(false),
+    DETACH_ERR_REMOTE(false),
     DETACH_ERR_MISSING_PARTITION(false),
     DETACH_ERR_MISSING_PARTITION_DIR,
     DETACH_ERR_COPY_META,
@@ -46,7 +46,8 @@ public enum AttachDetachStatus {
     ATTACH_ERR_DELTA(false),
     ATTACH_ERR_READ_PARTITION,
     ATTACH_ERR_CREATE_PM_FILE,
-    ATTACH_ERR_GENERATE_PM_FILE;
+    ATTACH_ERR_GENERATE_PM_FILE,
+    ATTACH_ERR_STAMP_PM_FILE(false);
 
     private final boolean isCritical;
 

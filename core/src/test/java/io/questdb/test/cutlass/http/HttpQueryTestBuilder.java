@@ -56,6 +56,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.PlainSocketFactory;
+import io.questdb.network.SocketFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
@@ -95,6 +96,7 @@ public class HttpQueryTestBuilder {
     private SecurityContext securityContext = null;
     private int sendBufferSize = -1;
     private HttpServerConfigurationBuilder serverConfigBuilder;
+    private SocketFactory socketFactory = PlainSocketFactory.INSTANCE;
     private long startWriterWaitTimeout = 500;
     private boolean telemetry;
     private String temp;
@@ -209,7 +211,7 @@ public class HttpQueryTestBuilder {
         }
         try (
                 CairoEngine engine = new CairoEngine(cairoConfiguration);
-                HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE);
+                HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, socketFactory);
                 SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)
         ) {
             this.httpServer = httpServer;
@@ -430,6 +432,15 @@ public class HttpQueryTestBuilder {
 
     public HttpQueryTestBuilder withSendBufferSize(int sendBufferSize) {
         this.sendBufferSize = sendBufferSize;
+        return this;
+    }
+
+    /**
+     * The factory of the sockets that the HTTP server accepts connections with, such as
+     * one that behaves like the sockets of an encrypted connection.
+     */
+    public HttpQueryTestBuilder withSocketFactory(SocketFactory socketFactory) {
+        this.socketFactory = socketFactory;
         return this;
     }
 

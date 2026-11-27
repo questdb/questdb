@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
@@ -43,6 +44,8 @@ import io.questdb.cutlass.http.LocalValue;
 import io.questdb.cutlass.qwp.server.egress.QwpEgressProcessorState;
 import io.questdb.cutlass.qwp.server.egress.QwpEgressUpgradeProcessor;
 import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.PlainSocketFactory;
 import io.questdb.std.MemoryTag;
@@ -68,7 +71,73 @@ import java.lang.reflect.Field;
  */
 public class QwpEgressUpgradeProcessorResumeSendTest extends AbstractCairoTest {
 
+    // One row whose RESULT_BATCH fits SEND_BUFFER_SIZE, leaving too little room for RESULT_END.
+    private static final String FINAL_BATCH_SQL = "SELECT rpad('a', 190, 'b') s FROM long_sequence(1)";
     private static final int SEND_BUFFER_SIZE = 256;
+
+    @Test
+    public void testParkedFinalBatchFactoryIsCachedByResumingProcessor() throws Exception {
+        // A fiber-limit reload closes the processor that parked the final RESULT_BATCH of a
+        // cacheable SELECT on the two-send path, and the connection resumes on another
+        // processor. That processor finishes the query and puts the factory into its own
+        // select cache, which frees the factory when it closes.
+        assertMemoryLeak(() -> {
+            HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            long sendBuf = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            CloseSpyFactory factory = null;
+            try {
+                MockRawSocket rawSocket = new MockRawSocket(sendBuf, SEND_BUFFER_SIZE);
+                try (TestableContext context = new TestableContext(httpConfig, rawSocket)) {
+                    QwpEgressProcessorState state = setupState(context);
+                    factory = new CloseSpyFactory(select(FINAL_BATCH_SQL));
+                    try (QwpEgressUpgradeProcessor processor = new QwpEgressUpgradeProcessor(engine, httpConfig, 1)) {
+                        parkFinalBatch(processor, context, rawSocket, state, factory);
+                    }
+                    try (QwpEgressUpgradeProcessor processor = new QwpEgressUpgradeProcessor(engine, httpConfig, 1)) {
+                        rawSocket.setThrowPeerSlow(false);
+                        processor.resumeSend(context);
+                        // RESULT_END follows the parked RESULT_BATCH.
+                        Assert.assertEquals(2, rawSocket.sendCallCount);
+                        Assert.assertFalse(state.isStreamingActive());
+                        Assert.assertFalse(factory.isClosed);
+                    }
+                    Assert.assertTrue(factory.isClosed);
+                }
+            } finally {
+                Misc.free(factory);
+                Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testParkedFinalBatchFactoryIsFreedAfterItsProcessorCloses() throws Exception {
+        // A fiber-limit reload closes processors while their connections stay parked. The
+        // final RESULT_BATCH of a cacheable SELECT parks on the two-send path, the processor
+        // that ran it closes with its select cache, then the connection drops. The factory
+        // must be freed, not put into the closed cache.
+        assertMemoryLeak(() -> {
+            HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            long sendBuf = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            CloseSpyFactory factory = null;
+            try {
+                MockRawSocket rawSocket = new MockRawSocket(sendBuf, SEND_BUFFER_SIZE);
+                try (TestableContext context = new TestableContext(httpConfig, rawSocket)) {
+                    QwpEgressProcessorState state = setupState(context);
+                    factory = new CloseSpyFactory(select(FINAL_BATCH_SQL));
+                    try (QwpEgressUpgradeProcessor processor = new QwpEgressUpgradeProcessor(engine, httpConfig, 1)) {
+                        parkFinalBatch(processor, context, rawSocket, state, factory);
+                    }
+                    Assert.assertFalse(factory.isClosed);
+                }
+                // Closing the context drops the connection and ends its streaming.
+                Assert.assertTrue(factory.isClosed);
+            } finally {
+                Misc.free(factory);
+                Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
 
     @Test
     public void testResumeSendDeferredFlushReparks() throws Exception {
@@ -301,6 +370,44 @@ public class QwpEgressUpgradeProcessorResumeSendTest extends AbstractCairoTest {
         return (LocalValue<QwpEgressProcessorState>) lvField.get(null);
     }
 
+    // Parks the final RESULT_BATCH of FINAL_BATCH_SQL on the two-send path: the batch fits the
+    // send buffer, but RESULT_END does not fit after it.
+    private static void parkFinalBatch(
+            QwpEgressUpgradeProcessor processor,
+            TestableContext context,
+            MockRawSocket rawSocket,
+            QwpEgressProcessorState state,
+            CloseSpyFactory factory
+    ) throws Exception {
+        RecordMetadata metadata = factory.getMetadata();
+        // Room for more rows than the cursor has, so the batch sees the cursor end.
+        state.setMaxBatchRows(10);
+        state.borrowColumnDefs(1).getQuick(0).of(metadata.getColumnName(0), metadata.getColumnType(0));
+        state.beginStreaming(
+                1,
+                factory,
+                factory.getCursor(sqlExecutionContext),
+                1,
+                0,
+                FINAL_BATCH_SQL,
+                CompiledQuery.SELECT,
+                true
+        );
+        Assert.assertTrue(state.isStreamingFactoryCacheable());
+        rawSocket.setThrowPeerSlow(true);
+        try {
+            processor.resumeSend(context);
+            Assert.fail("Expected PeerIsSlowToReadException");
+        } catch (PeerIsSlowToReadException expected) {
+            // expected: the RESULT_BATCH send parked
+        }
+        // Only the RESULT_BATCH frame with the query's only row went out, and the query still
+        // streams: the batch took the final-batch path but could not coalesce RESULT_END.
+        Assert.assertEquals(1, rawSocket.sendCallCount);
+        Assert.assertEquals(1, state.getStreamingRowsEmitted());
+        Assert.assertTrue(state.isStreamingActive());
+    }
+
     private static QwpEgressProcessorState setupState(TestableContext context) throws Exception {
         LocalValue<QwpEgressProcessorState> lv = getLV();
         QwpEgressProcessorState state = new QwpEgressProcessorState(configuration);
@@ -437,6 +544,38 @@ public class QwpEgressUpgradeProcessorResumeSendTest extends AbstractCairoTest {
 
         @Override
         public void toTop() {
+        }
+    }
+
+    private static class CloseSpyFactory implements RecordCursorFactory {
+        private final RecordCursorFactory base;
+        private boolean isClosed;
+
+        CloseSpyFactory(RecordCursorFactory base) {
+            this.base = base;
+        }
+
+        @Override
+        public void close() {
+            if (!isClosed) {
+                isClosed = true;
+                base.close();
+            }
+        }
+
+        @Override
+        public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+            return base.getCursor(executionContext);
+        }
+
+        @Override
+        public RecordMetadata getMetadata() {
+            return base.getMetadata();
+        }
+
+        @Override
+        public boolean recordCursorSupportsRandomAccess() {
+            return base.recordCursorSupportsRandomAccess();
         }
     }
 

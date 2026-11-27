@@ -359,7 +359,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
                 ? (TransactionLogCursorImpl) cursorHolder.getTransactionLogCursor(WAL_SEQUENCER_FORMAT_VERSION_V2)
                 : tlTransactionLogCursor.get();
         if (cursor == null) {
-            cursor = new TransactionLogCursorImpl(ff, configuration.getBypassWalFdCache(), txnLo, path, partTransactionCount);
+            cursor = new TransactionLogCursorImpl(this, ff, configuration.getBypassWalFdCache(), txnLo, path, partTransactionCount);
             if (cursorHolder != null) {
                 cursorHolder.registerTransactionLogCursor(WAL_SEQUENCER_FORMAT_VERSION_V2, cursor);
             } else {
@@ -368,7 +368,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
             return cursor;
         }
         try {
-            return cursor.of(ff, configuration.getBypassWalFdCache(), txnLo, path, partTransactionCount);
+            return cursor.of(this, ff, configuration.getBypassWalFdCache(), txnLo, path, partTransactionCount);
         } catch (Throwable th) {
             cursor.close();
             throw th;
@@ -926,10 +926,10 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         private long txnLo;
         private long txnOffset;
 
-        public TransactionLogCursorImpl(FilesFacade ff, boolean bypassWalFdCache, long txnLo, final @Transient Path path, int partTransactionCount) {
+        public TransactionLogCursorImpl(TableTransactionLogV2 log, FilesFacade ff, boolean bypassWalFdCache, long txnLo, final @Transient Path path, int partTransactionCount) {
             rootPath = new Path();
             try {
-                of(ff, bypassWalFdCache, txnLo, path, partTransactionCount);
+                of(log, ff, bypassWalFdCache, txnLo, path, partTransactionCount);
             } catch (Throwable th) {
                 close();
                 throw th;
@@ -954,9 +954,9 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         @Override
         public boolean extend() {
             final long newTxnCount = ff.readNonNegativeLong(headerFd, MAX_TXN_OFFSET_64);
-            readPackStartTxn();
             boolean extended = newTxnCount > txnCount;
             if (extended) {
+                refreshPackStartTxn();
                 txnCount = newTxnCount;
             }
             return extended;
@@ -1033,8 +1033,11 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         @Override
         public boolean hasNext() {
             if (txn >= txnCount) {
-                txnCount = ff.readNonNegativeLong(headerFd, MAX_TXN_OFFSET_64);
-                readPackStartTxn();
+                final long newTxnCount = ff.readNonNegativeLong(headerFd, MAX_TXN_OFFSET_64);
+                if (newTxnCount > txnCount) {
+                    refreshPackStartTxn();
+                }
+                txnCount = newTxnCount;
                 if (txn >= txnCount) {
                     return false;
                 }
@@ -1123,7 +1126,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         }
 
         @NotNull
-        private TransactionLogCursorImpl of(FilesFacade ff, boolean bypassFdCache, long txnLo, @Transient Path path, int partTransactionCount) {
+        private TransactionLogCursorImpl of(TableTransactionLogV2 log, FilesFacade ff, boolean bypassFdCache, long txnLo, @Transient Path path, int partTransactionCount) {
             this.ff = ff;
             close();
             this.partTransactionCount = partTransactionCount;
@@ -1131,10 +1134,12 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
             this.headerFd = openFileRO(ff, path, bypassFdCache);
             this.bypassFdCache = bypassFdCache;
             long newTxnCount = ff.readNonNegativeLong(headerFd, MAX_TXN_OFFSET_64);
-            readPackStartTxn();
             rootPath.of(path);
 
             if (newTxnCount > -1L) {
+                // The open log's mapped header serves the boundary without a read. It follows the count,
+                // as a writer persists the boundary before the transactions it applies to.
+                packStartTxn = log.getPackStartTxn();
                 this.txnCount = newTxnCount;
                 assert txnLo > -1;
                 this.txn = txnLo;
@@ -1143,13 +1148,6 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
             }
             this.txnLo = txnLo;
             return this;
-        }
-
-        private void readPackStartTxn() {
-            packStartTxn = ff.readNonNegativeLong(headerFd, PACK_START_TXN_OFFSET_64);
-            if (packStartTxn < 0) {
-                throw CairoException.critical(ff.errno()).put("could not read pack boundary");
-            }
         }
 
         private void openPart(long zeroBasedTxn) {
@@ -1174,6 +1172,18 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
                 }
             }
             this.txnOffset = (zeroBasedTxn % partTransactionCount) * RECORD_SIZE;
+        }
+
+        // Called once the count grows, before txnCount takes it. A boundary at or below the count read before
+        // it is final: writers set it to the next transaction and undo a failed activation before appending.
+        // An unset boundary, or one past that count, may still change and is read again.
+        private void refreshPackStartTxn() {
+            if (packStartTxn == 0 || packStartTxn > txnCount) {
+                packStartTxn = ff.readNonNegativeLong(headerFd, PACK_START_TXN_OFFSET_64);
+                if (packStartTxn < 0) {
+                    throw CairoException.critical(ff.errno()).put("could not read pack boundary");
+                }
+            }
         }
     }
 }

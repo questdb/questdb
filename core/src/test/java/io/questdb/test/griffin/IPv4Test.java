@@ -1136,6 +1136,42 @@ public class IPv4Test extends AbstractCairoTest {
     }
 
     @Test
+    public void testIPv4AsVarcharOnlyArgument() throws Exception {
+        // each call resolves to a VARCHAR overload for the IPv4 argument: length_bytes, json_extract and
+        // arg_max have no STRING overload, the others win on total distance thanks to the VARCHAR column
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ip IPv4, v VARCHAR, d DOUBLE)");
+            execute("INSERT INTO t VALUES ('1.2.3.4', '1.2', 1.0), ('10.0.0.1', '10', 2.0), (NULL, NULL, 0.5)");
+            assertQuery("SELECT length_bytes(ip) lb, starts_with(ip, v) sw, strpos(ip, v) sp, nullif(v, ip) ni, replace(ip, v, v) r FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            lb\tsw\tsp\tni\tr
+                            7\ttrue\t1\t1.2\t1.2.3.4
+                            8\ttrue\t1\t10\t10.0.0.1
+                            -1\tfalse\tnull\t\t
+                            """);
+            assertQuery("SELECT json_extract(ip, '$.a') je FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            je
+                            1.2.3.4
+                            10.0.0.1
+                            
+                            """);
+            assertQuery("SELECT arg_max(ip, d) am FROM t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            am
+                            10.0.0.1
+                            """);
+        });
+    }
+
+    @Test
     public void testIPv4BitOr() throws Exception {
         assertQuery("select ipv4 '1.1.1.1' | '255.0.0.0'")
                 .expectSize()

@@ -31,6 +31,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolUtils;
@@ -46,6 +47,7 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.fuzz.FuzzTransaction;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.Nullable;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.BeforeClass;
@@ -83,6 +85,14 @@ public class AbstractFuzzTest extends AbstractCairoTest {
         // 50..10000 rows: small enough that fuzz partitions routinely span
         // multiple row groups, exercising the per-row-group write/read paths.
         return 50 + rnd.nextInt(9951);
+    }
+
+    /**
+     * Small enough that fuzz parquet partitions span several row groups; with one row group every
+     * O3 merge rewrites the file and the in-place update path is never fuzzed.
+     */
+    public static int getRndSmallParquetRowGroupSize(Rnd rnd) {
+        return 4 + rnd.nextInt(29);
     }
 
     public static long getRndPartitionCompactionCheckInterval(Rnd rnd) {
@@ -193,7 +203,6 @@ public class AbstractFuzzTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, TestUtils.randomSymbolIndexTypeName(setUpRnd));
         super.setUp();
         fuzzer.withDb(engine, sqlExecutionContext);
-        fuzzer.clearSeeds();
     }
 
     @After
@@ -292,19 +301,28 @@ public class AbstractFuzzTest extends AbstractCairoTest {
                 .replace('=', '_');
     }
 
+    protected void haltWorkerPool() {
+        sharedWorkerPool.halt();
+        fuzzer.setHasPoolColumnPurgeJob(false);
+    }
+
     protected void runFuzz(Rnd rnd) throws Exception {
+        runFuzz(rnd, (FuzzRunner.FollowUpList) null);
+    }
+
+    protected void runFuzz(Rnd rnd, @Nullable FuzzRunner.FollowUpList followUp) throws Exception {
         assertMemoryLeak(fuzzer.getFileFacade(), () -> {
             try {
-                WorkerPoolUtils.setupWriterJobs(sharedWorkerPool, engine);
+                setupWriterJobs();
                 WorkerPoolUtils.setupAsyncMunmapJob(sharedWorkerPool, engine);
                 sharedWorkerPool.start(LOG);
 
                 int size = rnd.nextInt(8 * 1024 * 1024);
                 node1.setProperty(PropertyKey.DEBUG_CAIRO_O3_COLUMN_MEMORY_SIZE, size);
                 setZeroWalPurgeInterval();
-                fuzzer.runFuzz(getTestName(), rnd);
+                fuzzer.runFuzz(getTestName(), rnd, followUp);
             } finally {
-                sharedWorkerPool.halt();
+                haltWorkerPool();
             }
         });
     }
@@ -312,14 +330,14 @@ public class AbstractFuzzTest extends AbstractCairoTest {
     protected void runFuzz(Rnd rnd, String tableNameBase, int tableCount) throws Exception {
         assertMemoryLeak(fuzzer.getFileFacade(), () -> {
             try {
-                WorkerPoolUtils.setupWriterJobs(sharedWorkerPool, engine);
+                setupWriterJobs();
                 WorkerPoolUtils.setupAsyncMunmapJob(sharedWorkerPool, engine);
                 sharedWorkerPool.start(LOG);
 
                 setZeroWalPurgeInterval();
                 fuzzer.runFuzz(rnd, tableNameBase, tableCount, false, false);
             } finally {
-                sharedWorkerPool.halt();
+                haltWorkerPool();
             }
         });
     }
@@ -512,11 +530,51 @@ public class AbstractFuzzTest extends AbstractCairoTest {
         }
     }
 
+    /**
+     * Draws the parquet O3 dead-bytes rewrite gate for the run: the defaults, low thresholds
+     * (ratio 0.1-0.5, max 4-64 KiB) that send most merges to rewrite, or no gate at all. Without
+     * the last, commits that re-encode much of a partition cross the gate and never run in place.
+     */
+    protected void setRndParquetRewriteGate(Rnd rnd) {
+        switch (rnd.nextInt(3)) {
+            case 0 -> LOG.info().$("parquet rewrite gate: defaults").$();
+            case 1 -> {
+                final double ratio = 0.1 + rnd.nextDouble() * 0.4;
+                final long maxBytes = 4096 + rnd.nextLong(60_000);
+                node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, String.valueOf(ratio));
+                node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, maxBytes);
+                LOG.info().$("parquet rewrite gate: low [ratio=").$(ratio).$(", maxBytes=").$(maxBytes).I$();
+            }
+            default -> {
+                node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, "1.0");
+                node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, Long.MAX_VALUE);
+                LOG.info().$("parquet rewrite gate: never on dead bytes").$();
+            }
+        }
+    }
+
+    /**
+     * Sets a parquet row group size small enough for fuzz partitions to hold several row groups,
+     * plus a random rewrite gate. A single-row-group partition always rewrites, so the default
+     * size (100_000) would leave the in-place paths untested.
+     */
+    protected void setRndParquetO3Properties(Rnd rnd, int minRowGroupSize, int maxRowGroupSize) {
+        final int rowGroupSize = minRowGroupSize + rnd.nextInt(maxRowGroupSize - minRowGroupSize + 1);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, rowGroupSize);
+        LOG.info().$("parquet row group size: ").$(rowGroupSize).$();
+        setRndParquetRewriteGate(rnd);
+    }
+
     protected void setRandomAppendPageSize(Rnd rnd) {
         int minPage = 18;
         setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, 1L << (minPage + rnd.nextInt(22 - minPage))); // MAX page size 4Mb
         long dataAppendPageSize = configuration.getDataAppendPageSize();
         LOG.info().$("dataAppendPageSize=").$(dataAppendPageSize).$();
+    }
+
+    protected void setupWriterJobs() throws SqlException {
+        WorkerPoolUtils.setupWriterJobs(sharedWorkerPool, engine);
+        fuzzer.setHasPoolColumnPurgeJob(!engine.getConfiguration().disableColumnPurgeJob());
     }
 
     // Joins every job the caller started, including a partially started batch, so a failure mid-run

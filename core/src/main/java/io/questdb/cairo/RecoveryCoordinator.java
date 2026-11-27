@@ -42,6 +42,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 
@@ -170,6 +171,51 @@ public class RecoveryCoordinator {
                     throw e;
                 }
             }
+
+            // After the restores and exits above, since a save point ships a checksummed _cv: a downgrade start
+            // (cairo.commit.mode.adaptive.downgrade=true) leaves every table in a shape an older release may
+            // write, which is the documented way down.
+            if (configuration.isCommitModeAdaptiveDowngrade()) {
+                unlockTablesForDowngrade(tokens, dir);
+            }
+        }
+    }
+
+    // Zeroes the magic of every 16-byte [magic][checksum] trailer in _cv and makes that durable: the two after
+    // the areas the header names, and those that earlier commits left elsewhere in the file, since an older
+    // release may end an area right before any of them. Without its magic a checksum is no trailer. The header
+    // and the data of the two named areas are not touched: a reader finds no magic and loads the area
+    // unverified, as it loads a file an older release wrote.
+    private void clearColumnVersionTrailers(Path cvPath, long tempMem8b) {
+        final long fd = TableUtils.openRW(ff, cvPath.$(), LOG, configuration.getWriterFileOpenOpts());
+        try {
+            final long fileLen = ff.length(fd);
+            if (fileLen < ColumnVersionReader.HEADER_SIZE + Long.BYTES) {
+                return;
+            }
+            final long buf = Unsafe.malloc(fileLen, MemoryTag.NATIVE_DEFAULT);
+            try {
+                if (ff.read(fd, buf, fileLen, 0) != fileLen) {
+                    throw CairoException.critical(ff.errno()).put("could not read _cv [path=").put(cvPath).put(", size=").put(fileLen).put(']');
+                }
+                final long offsetA = Unsafe.getLong(buf + ColumnVersionReader.OFFSET_OFFSET_A_64);
+                final long sizeA = Unsafe.getLong(buf + ColumnVersionReader.OFFSET_SIZE_A_64);
+                final long offsetB = Unsafe.getLong(buf + ColumnVersionReader.OFFSET_OFFSET_B_64);
+                final long sizeB = Unsafe.getLong(buf + ColumnVersionReader.OFFSET_SIZE_B_64);
+                // The header, the areas and the trailers are all made of 8-byte words.
+                for (long offset = ColumnVersionReader.HEADER_SIZE; offset + Long.BYTES <= fileLen; offset += Long.BYTES) {
+                    if (Unsafe.getLong(buf + offset) == TableUtils.CV_CHECKSUM_MAGIC
+                            && !isColumnVersionData(offset, offsetA, sizeA)
+                            && !isColumnVersionData(offset, offsetB, sizeB)) {
+                        TableUtils.writeLongOrFail(ff, fd, offset, 0L, tempMem8b, cvPath);
+                    }
+                }
+            } finally {
+                Unsafe.free(buf, fileLen, MemoryTag.NATIVE_DEFAULT);
+            }
+            ff.fsync(fd);
+        } finally {
+            ff.close(fd);
         }
     }
 
@@ -323,20 +369,20 @@ public class RecoveryCoordinator {
             return 0;
         }
         final int[] removed = {0};
-        PostingIndexUtils.scanSealedFiles(ff, path, partitionLen, columnName, new PostingIndexUtils.SealedFileVisitor() {
+        PostingIndexUtils.scanSealedFiles(ff, path, partitionLen, columnName, columnNameTxn, new PostingIndexUtils.SealedFileVisitor() {
             @Override
-            public void onCoverDataFile(int includeIdx, long filePostingColumnNameTxn, long coveredColumnNameTxn, long sealTxn) {
-                if (filePostingColumnNameTxn == columnNameTxn && namedSealTxns.indexOf(sealTxn) < 0
-                        && ff.removeQuiet(PostingIndexUtils.coverDataFileName(path.trimTo(partitionLen), columnName, includeIdx, filePostingColumnNameTxn, coveredColumnNameTxn, sealTxn))) {
+            public void onCoverDataFile(int includeIdx, long coveredColumnNameTxn, long sealTxn) {
+                if (namedSealTxns.indexOf(sealTxn) < 0
+                        && ff.removeQuiet(PostingIndexUtils.coverDataFileName(path.trimTo(partitionLen), columnName, includeIdx, columnNameTxn, coveredColumnNameTxn, sealTxn))) {
                     removed[0]++;
                 }
                 path.trimTo(partitionLen);
             }
 
             @Override
-            public void onValueFile(long fileColumnNameTxn, long sealTxn) {
-                if (fileColumnNameTxn == columnNameTxn && namedSealTxns.indexOf(sealTxn) < 0
-                        && ff.removeQuiet(PostingIndexUtils.valueFileName(path.trimTo(partitionLen), columnName, fileColumnNameTxn, sealTxn))) {
+            public void onValueFile(long sealTxn) {
+                if (namedSealTxns.indexOf(sealTxn) < 0
+                        && ff.removeQuiet(PostingIndexUtils.valueFileName(path.trimTo(partitionLen), columnName, columnNameTxn, sealTxn))) {
                     removed[0]++;
                 }
                 path.trimTo(partitionLen);
@@ -941,6 +987,80 @@ public class RecoveryCoordinator {
         return p.of(configuration.getDbRoot()).concat(token);
     }
 
+    private void unlockTableForDowngrade(TableToken token, Path path, int tableRootLen, long tempMem8b) {
+        // One open, one read and one close per table on the healthy path. A missing or short _meta is left to the
+        // writer, which repairs or refuses it on open; this pass has nothing to unlock there.
+        path.concat(TableUtils.META_FILE_NAME);
+        final long roFd = ff.openRO(path.$());
+        if (roFd < 0) {
+            return;
+        }
+        final int storageVersion;
+        try {
+            if (ff.read(roFd, tempMem8b, Integer.BYTES, TableUtils.META_OFFSET_VERSION) != Integer.BYTES) {
+                return;
+            }
+            storageVersion = Unsafe.getInt(tempMem8b);
+        } finally {
+            ff.close(roFd);
+        }
+        if (!ColumnType.isDowngradeLockedStorageVersion(storageVersion)) {
+            return;
+        }
+        path.trimTo(tableRootLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME);
+        if (ff.exists(path.$())) {
+            clearColumnVersionTrailers(path, tempMem8b);
+        }
+        path.trimTo(tableRootLen).concat(TableUtils.META_FILE_NAME);
+        final long metaFd = TableUtils.openRW(ff, path.$(), LOG, configuration.getWriterFileOpenOpts());
+        try {
+            final int unlocked = ColumnType.storageVersion(
+                    ColumnType.isCompositeStorageVersion(storageVersion),
+                    ColumnType.isDeltaStorageVersion(storageVersion),
+                    false
+            );
+            TableUtils.writeIntOrFail(ff, metaFd, TableUtils.META_OFFSET_VERSION, unlocked, tempMem8b, path);
+            ff.fsync(metaFd);
+            LOG.info().$("table unlocked for downgrade, its _cv checksums are removed [table=").$(token)
+                    .$(", storageVersion=").$(unlocked).I$();
+        } finally {
+            ff.close(metaFd);
+        }
+    }
+
+    /**
+     * The way back to an older release. For every table whose {@code _meta} carries the downgrade lock
+     * ({@link ColumnType#isDowngradeLockedStorageVersion}): clears every {@code _cv} checksum trailer, so an
+     * older binary that rewrites an area in place leaves no magic next to data it never checksummed, then
+     * drops the lock from {@code _meta}, so the older binary opens the table. Trailers first and durable, lock
+     * last: a crash in between leaves the table locked, and the next downgrade start repeats this. Runs before
+     * any writer opens, on a start with {@code cairo.commit.mode.adaptive.downgrade=true} only, which writes no
+     * trailer itself.
+     */
+    private void unlockTablesForDowngrade(ObjHashSet<TableToken> tokens, Path path) {
+        final long tempMem8b = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+        try {
+            for (int i = 0, n = tokens.size(); i < n; i++) {
+                final TableToken token = tokens.get(i);
+                // A regular view has no _meta on disk; a materialized view (isView()==false) has one.
+                if (token.isView()) {
+                    continue;
+                }
+                final int tableRootLen = tablePath(path, token).size();
+                try {
+                    unlockTableForDowngrade(token, path, tableRootLen, tempMem8b);
+                } catch (CairoException | CairoError e) {
+                    engine.handleDataSyncFailure(e);
+                    throw e;
+                } finally {
+                    path.trimTo(tableRootLen);
+                }
+            }
+        } finally {
+            Unsafe.free(tempMem8b, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
     /**
      * Removes the table's save point files, {@code _epoch.manifest.0} and {@code _epoch.manifest.1}, the older
      * first, and fails if one stays. {@code path} is at the table root, {@code tableRootLen} long, and is left
@@ -994,6 +1114,12 @@ public class RecoveryCoordinator {
             // While this handle keeps the scoreboard pooled, as pinRecoveredEpoch records the pin.
             tracker.clearPinnedEpoch();
         }
+    }
+
+    // Whether a _cv file offset lies in the data of an area the header names. An area that was never written
+    // names offset 0 and holds no data. Written so that a garbage header cannot overflow it.
+    private static boolean isColumnVersionData(long offset, long areaOffset, long areaSize) {
+        return areaOffset >= ColumnVersionReader.HEADER_SIZE && offset >= areaOffset && offset - areaOffset < areaSize;
     }
 
     private static void removeAdaptiveEpochArtifactOrFail(FilesFacade ff, Path path) {

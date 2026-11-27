@@ -197,7 +197,7 @@ public class WalTxnDetailsDeltaTest extends AbstractCairoTest {
                 Assert.assertEquals(WalTxnType.DATA, details.getWalTxnType(1));
                 Assert.assertEquals(WalTxnType.NONE, details.getWalTxnType(2));
                 Assert.assertEquals(100, details.getMinTimestamp(3));
-                Assert.assertEquals(1, details.calculateInsertTransactionBlock(1, TableWriterPressureControl.EMPTY, 1000, Long.MIN_VALUE));
+                Assert.assertEquals(1, details.calculateInsertTransactionBlock(1, TableWriterPressureControl.EMPTY, 1000, Long.MIN_VALUE, false));
             }
         });
     }

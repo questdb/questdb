@@ -188,25 +188,40 @@ public final class Files {
     public native static int findNext(long findPtr);
 
     /**
-     * The path of the file {@code fd} is open on, or null where the OS cannot tell (Linux only). It reads
-     * {@code /proc} and allocates, so it is for failure paths.
+     * The path of the file {@code fd} is open on, or null where the OS cannot tell: off Linux, macOS and Windows
+     * (see {@link #isPathLookupSupported()}), or for a descriptor of no file. A deleted file keeps the path it had
+     * on Linux and has none on macOS. Linux reads {@code /proc}, macOS and Windows ask the OS through libquestdbr.
+     * It allocates, so it is for failure paths.
      */
     public static @Nullable String findPathOfFd(long fd) {
-        if (!Os.isLinux()) {
-            return null;
-        }
         try {
-            return stripDeleted(java.nio.file.Files.readSymbolicLink(java.nio.file.Path.of("/proc/self/fd/" + toOsFd(fd))).toString());
+            if (Os.isLinux()) {
+                return stripDeleted(java.nio.file.Files.readSymbolicLink(java.nio.file.Path.of("/proc/self/fd/" + toOsFd(fd))).toString());
+            }
+            if (Os.isOSX() || Os.isWindows()) {
+                return findPathOfFd0(toOsFd(fd));
+            }
         } catch (Throwable th) {
-            return null;
+            // the caller is failing already: no path rather than a second failure in place of the first
         }
+        return null;
     }
 
     /**
-     * The path of the file mapped at {@code address}, or null where the OS cannot tell (Linux only). It reads
-     * {@code /proc} and allocates, so it is for failure paths.
+     * The path of the file mapped at {@code address}, anywhere in the mapping, or null where the OS cannot tell: off
+     * Linux, macOS and Windows (see {@link #isPathLookupSupported()}), or for an address that maps no file. A deleted
+     * file keeps the path it had on Linux and has none on macOS. Linux reads {@code /proc}, macOS and Windows ask the
+     * OS through libquestdbr. It allocates, so it is for failure paths.
      */
     public static @Nullable String findPathOfMapping(long address) {
+        if (Os.isOSX() || Os.isWindows()) {
+            try {
+                return findPathOfMapping0(address);
+            } catch (Throwable th) {
+                // the caller is failing already: no path rather than a second failure in place of the first
+                return null;
+            }
+        }
         if (!Os.isLinux()) {
             return null;
         }
@@ -440,6 +455,14 @@ public final class Files {
     public static boolean isErrnoFileDoesNotExist(int errno) {
         return errno == CairoException.ERRNO_FILE_DOES_NOT_EXIST ||
                 (Os.isWindows() && errno == CairoException.ERRNO_FILE_DOES_NOT_EXIST_WIN);
+    }
+
+    /**
+     * Whether {@link #findPathOfFd(long)} and {@link #findPathOfMapping(long)} can name a file on this OS: Linux,
+     * macOS and Windows can, FreeBSD cannot.
+     */
+    public static boolean isPathLookupSupported() {
+        return Os.isLinux() || Os.isOSX() || Os.isWindows();
     }
 
     public native static boolean isSoftLink(long lpszPath);
@@ -791,6 +814,12 @@ public final class Files {
 
     // caller must call findClose to free allocated struct
     private native static long findFirst(long lpszName);
+
+    // libquestdbr on macOS and Windows; null when the OS cannot tell
+    private static native String findPathOfFd0(int osFd);
+
+    // libquestdbr on macOS and Windows; null when no file is mapped at the address
+    private static native String findPathOfMapping0(long address);
 
     private static native int fdatasync0(int fd);
 

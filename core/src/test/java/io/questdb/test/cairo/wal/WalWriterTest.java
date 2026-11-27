@@ -42,6 +42,7 @@ import io.questdb.cairo.RecoveryCoordinator;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TableWriterMetadata;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.arr.ArrayView;
@@ -1539,6 +1540,65 @@ public class WalWriterTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .returns("count\n21\n");
             assertBitmapIndexMaxValue(tableName, expectedMaxRow);
+        });
+    }
+
+    /**
+     * A cancel that cannot rewind its columns distresses the writer; the table takes rows through a fresh one.
+     */
+    @Test
+    public void testCancelColumnarWriteFailureDistressesWriter() throws Exception {
+        final long pageSize = 16_384;
+        setProperty(PropertyKey.CAIRO_WAL_WRITER_DATA_APPEND_PAGE_SIZE, pageSize);
+        final AtomicBoolean isMmapFailing = new AtomicBoolean();
+        final AtomicInteger failedMmaps = new AtomicInteger();
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+                if (isMmapFailing.compareAndSet(true, false)) {
+                    failedMmaps.incrementAndGet();
+                    return FilesFacade.MAP_FAILED;
+                }
+                return super.mmap(fd, len, offset, flags, memoryTag);
+            }
+        };
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final TableToken token = engine.verifyTableName("t");
+            final WalWriter w = engine.getWalWriter(token);
+            try {
+                final ColumnarRowAppender appender = w.getColumnarRowAppender();
+                final int rowCount = rowsCrossingAppendPages(pageSize);
+                appender.beginColumnarWrite(rowCount);
+                // The designated timestamp column crosses onto later pages: the cancel
+                // maps its first page again.
+                w.putServerAssignedTimestampColumnar(rowCount, 1_000_000L);
+                isMmapFailing.set(true);
+                try {
+                    appender.cancelColumnarWrite();
+                    Assert.fail("the cancel must fail");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "could not mmap");
+                }
+                Assert.assertEquals("test setup: the cancel must map a page", 1, failedMmaps.get());
+                Assert.assertTrue(w.isDistressed());
+                Assert.assertTrue(w.isInColumnarWrite());
+            } finally {
+                w.close();
+            }
+            Assert.assertFalse("the pool must expel the distressed writer", w.isOpen());
+            try (WalWriter w2 = engine.getWalWriter(token)) {
+                Assert.assertNotSame(w, w2);
+                TableWriter.Row row = w2.newRow(2_000_000L);
+                row.putInt(1, 7);
+                row.append();
+                w2.commit();
+            }
+            drainWalQueue();
+            assertQuery("SELECT ts, val FROM t").expectSize().timestamp("ts").returns("""
+                    ts\tval
+                    1970-01-01T00:00:02.000000Z\t7
+                    """);
         });
     }
 
@@ -4610,6 +4670,324 @@ public class WalWriterTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * The rollback keeps the rows appended between the two marks.
+     */
+    @Test
+    public void testSavepointMarkedAgainReplacesEarlierMark() throws Exception {
+        setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 10);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try (WalWriter w = engine.getWalWriter(engine.verifyTableName("t"))) {
+                appendSavepointRow(w, 1, 1_000_000L);
+                w.markSavepoint();
+                appendSavepointRow(w, 2, 2_000_000L);
+                w.markSavepoint();
+                appendSavepointRow(w, 91, 9_000_000L);
+                w.rollbackToSavepoint();
+                Assert.assertEquals(2, w.getUncommittedRowCount());
+                appendSavepointRow(w, 3, 3_000_000L);
+                w.commit();
+            }
+            drainWalQueue();
+            assertQuery("SELECT minTimestamp, maxTimestamp, rowCount FROM wal_transactions('t')")
+                    .noRandomAccess()
+                    .returns("""
+                            minTimestamp\tmaxTimestamp\trowCount
+                            1970-01-01T00:00:01.000000Z\t1970-01-01T00:00:03.000000Z\t3
+                            """);
+            assertQuery("SELECT v, ts FROM t").expectSize().timestamp("ts").returns("""
+                    v\tts
+                    1\t1970-01-01T00:00:01.000000Z
+                    2\t1970-01-01T00:00:02.000000Z
+                    3\t1970-01-01T00:00:03.000000Z
+                    """);
+        });
+    }
+
+    /**
+     * A started, unappended row's timestamp and value go too: the next row takes its own slot, with nulls.
+     */
+    @Test
+    public void testSavepointRollbackDropsStartedRow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try (WalWriter w = engine.getWalWriter(engine.verifyTableName("t"))) {
+                appendSavepointRow(w, 1, 1_000_000L);
+                w.markSavepoint();
+                w.newRow(2_000_000L).putInt(0, 99);
+                w.rollbackToSavepoint();
+                Assert.assertEquals(1, w.getUncommittedRowCount());
+                w.newRow(3_000_000L).append();
+                w.commit();
+            }
+            drainWalQueue();
+            assertQuery("SELECT v, ts FROM t").expectSize().timestamp("ts").returns("""
+                    v\tts
+                    1\t1970-01-01T00:00:01.000000Z
+                    null\t1970-01-01T00:00:03.000000Z
+                    """);
+        });
+    }
+
+    /**
+     * The rollback cannot remap an earlier page: the writer refuses a second rollback and commits nothing.
+     */
+    @Test
+    public void testSavepointRollbackFailureDistressesWriter() throws Exception {
+        final long pageSize = 16_384;
+        setProperty(PropertyKey.CAIRO_WAL_WRITER_DATA_APPEND_PAGE_SIZE, pageSize);
+        final AtomicBoolean isMmapFailing = new AtomicBoolean();
+        final AtomicInteger failedMmaps = new AtomicInteger();
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+                if (isMmapFailing.compareAndSet(true, false)) {
+                    failedMmaps.incrementAndGet();
+                    return FilesFacade.MAP_FAILED;
+                }
+                return super.mmap(fd, len, offset, flags, memoryTag);
+            }
+        };
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final TableToken token = engine.verifyTableName("t");
+            try (WalWriter w = engine.getWalWriter(token)) {
+                appendSavepointRow(w, 1, 1_000_000L);
+                w.markSavepoint();
+                // The designated timestamp column crosses onto later pages: the rollback to row
+                // 1 maps its first page again.
+                for (int i = 0, n = rowsCrossingAppendPages(pageSize); i < n; i++) {
+                    appendSavepointRow(w, 100 + i, 2_000_000L + i);
+                }
+                isMmapFailing.set(true);
+                try {
+                    w.rollbackToSavepoint();
+                    Assert.fail("the rollback must fail");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "could not mmap");
+                }
+                Assert.assertEquals("test setup: the rewind must map a page", 1, failedMmaps.get());
+                Assert.assertTrue(w.isDistressed());
+                try {
+                    w.rollbackToSavepoint();
+                    Assert.fail("a distressed writer must refuse the rollback");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "WAL writer is distressed");
+                }
+                Assert.assertEquals("the refusal does no I/O", 1, failedMmaps.get());
+            }
+            try (WalWriter w = engine.getWalWriter(token)) {
+                appendSavepointRow(w, 7, 7_000_000L);
+                w.commit();
+            }
+            drainWalQueue();
+            assertQuery("SELECT v, ts FROM t").expectSize().timestamp("ts").returns("""
+                    v\tts
+                    7\t1970-01-01T00:00:07.000000Z
+                    """);
+        });
+    }
+
+    /**
+     * The writer stays as it was: the columnar write completes and its rows commit.
+     */
+    @Test
+    public void testSavepointRollbackRefusedDuringColumnarWrite() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try (WalWriter w = engine.getWalWriter(engine.verifyTableName("t"))) {
+                appendSavepointRow(w, 1, 1_000_000L);
+                w.markSavepoint();
+                final ColumnarRowAppender appender = w.getColumnarRowAppender();
+                appender.beginColumnarWrite(2);
+                w.putServerAssignedTimestampColumnar(2, 2_000_000L);
+                try {
+                    w.rollbackToSavepoint();
+                    Assert.fail("the rollback must refuse a columnar write in progress");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "cannot rollback to savepoint during columnar write");
+                }
+                Assert.assertTrue(w.isInColumnarWrite());
+                Assert.assertFalse(w.isDistressed());
+                appender.endColumnarWrite(2_000_000L, 2_000_000L, false);
+                Assert.assertEquals(3, w.getUncommittedRowCount());
+                w.commit();
+            }
+            drainWalQueue();
+            assertQuery("SELECT v, ts FROM t").expectSize().timestamp("ts").returns("""
+                    v\tts
+                    1\t1970-01-01T00:00:01.000000Z
+                    null\t1970-01-01T00:00:02.000000Z
+                    null\t1970-01-01T00:00:02.000000Z
+                    """);
+        });
+    }
+
+    /**
+     * Rows before the mark are out of order and the rolled back row is not: the flag stays, the table reads sorted.
+     */
+    @Test
+    public void testSavepointRollbackRestoresOutOfOrderOfRowsBeforeMark() throws Exception {
+        setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 10);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final TableToken token = engine.verifyTableName("t");
+            final String walName;
+            final int segmentId;
+            try (WalWriter w = engine.getWalWriter(token)) {
+                walName = w.getWalName();
+                segmentId = w.getSegmentId();
+                appendSavepointRow(w, 2, 3_000_000L);
+                appendSavepointRow(w, 1, 2_000_000L);
+                w.markSavepoint();
+                appendSavepointRow(w, 91, 9_000_000L);
+                w.rollbackToSavepoint();
+                appendSavepointRow(w, 3, 4_000_000L);
+                w.commit();
+            }
+            assertWalEventOutOfOrder(token, walName, segmentId, 3, true);
+            drainWalQueue();
+            assertQuery("SELECT minTimestamp, maxTimestamp, rowCount FROM wal_transactions('t')")
+                    .noRandomAccess()
+                    .returns("""
+                            minTimestamp\tmaxTimestamp\trowCount
+                            1970-01-01T00:00:02.000000Z\t1970-01-01T00:00:04.000000Z\t3
+                            """);
+            assertQuery("SELECT v, ts FROM t").expectSize().timestamp("ts").returns("""
+                    v\tts
+                    1\t1970-01-01T00:00:02.000000Z
+                    2\t1970-01-01T00:00:03.000000Z
+                    3\t1970-01-01T00:00:04.000000Z
+                    """);
+        });
+    }
+
+    /**
+     * Rows after the mark widen the bounds and break the order; the rollback restores both, or does nothing.
+     */
+    @Test
+    public void testSavepointRollbackRestoresTransactionBounds() throws Exception {
+        setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 10);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final TableToken token = engine.verifyTableName("t");
+            final String walName;
+            final int segmentId;
+            try (WalWriter w = engine.getWalWriter(token)) {
+                walName = w.getWalName();
+                segmentId = w.getSegmentId();
+                appendSavepointRow(w, 1, 2_000_000L);
+                appendSavepointRow(w, 2, 3_000_000L);
+                w.markSavepoint();
+                appendSavepointRow(w, 91, 9_000_000L);
+                appendSavepointRow(w, 92, 1_000_000L);
+                Assert.assertEquals(4, w.getUncommittedRowCount());
+                w.rollbackToSavepoint();
+                Assert.assertEquals(2, w.getUncommittedRowCount());
+                w.rollbackToSavepoint();
+                Assert.assertEquals("nothing appended since the mark", 2, w.getUncommittedRowCount());
+                appendSavepointRow(w, 3, 4_000_000L);
+                w.commit();
+            }
+            assertWalEventOutOfOrder(token, walName, segmentId, 3, false);
+            drainWalQueue();
+            assertQuery("SELECT minTimestamp, maxTimestamp, rowCount FROM wal_transactions('t')")
+                    .noRandomAccess()
+                    .returns("""
+                            minTimestamp\tmaxTimestamp\trowCount
+                            1970-01-01T00:00:02.000000Z\t1970-01-01T00:00:04.000000Z\t3
+                            """);
+            assertQuery("SELECT v, ts FROM t").expectSize().timestamp("ts").returns("""
+                    v\tts
+                    1\t1970-01-01T00:00:02.000000Z
+                    2\t1970-01-01T00:00:03.000000Z
+                    3\t1970-01-01T00:00:04.000000Z
+                    """);
+        });
+    }
+
+    /**
+     * Fixed, timestamp, var-size and symbol columns, with rolled back values longer than the rows around them.
+     */
+    @Test
+    public void testSavepointRollbackRewindsEveryColumnType() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t (
+                        i INT, vc VARCHAR, s STRING, bin BINARY, arr DOUBLE[], sym SYMBOL, l256 LONG256, u UUID, ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL""");
+            final long bin = Unsafe.malloc(2, MemoryTag.NATIVE_DEFAULT);
+            try (DirectArray array = new DirectArray(); WalWriter w = engine.getWalWriter(engine.verifyTableName("t"))) {
+                appendEveryTypeRow(w, array, bin, 1, "v1-\u00e9\u20ac", 1_000_000L);
+                appendEveryTypeRow(w, array, bin, 2, "v2-\u00e9\u20ac", 2_000_000L);
+                w.markSavepoint();
+                appendEveryTypeRow(w, array, bin, 91, "a rolled back VARCHAR too long to be inlined, 91", 3_000_000L);
+                appendEveryTypeRow(w, array, bin, 92, "a rolled back VARCHAR too long to be inlined, 92", 4_000_000L);
+                w.rollbackToSavepoint();
+                appendEveryTypeRow(w, array, bin, 3, "v3-\u00e9\u20ac", 5_000_000L);
+                final TableWriter.Row row = w.newRow(6_000_000L);
+                row.putInt(0, 4);
+                row.append();
+                w.commit();
+            } finally {
+                Unsafe.free(bin, 2, MemoryTag.NATIVE_DEFAULT);
+            }
+            drainWalQueue();
+            assertQuery("SELECT i, vc, s, base64(bin, 100) bin, arr, sym, l256, u, ts FROM t").expectSize().timestamp("ts").returns("""
+                    i\tvc\ts\tbin\tarr\tsym\tl256\tu\tts
+                    1\tv1-\u00e9\u20ac\ts1\tAQI=\t[1.0,1.5]\tsym1\t0x01000000000000000100000000000000010000000000000001\ta0eebc99-9c0b-4ef8-bb6d-6bb9bd380001\t1970-01-01T00:00:01.000000Z
+                    2\tv2-\u00e9\u20ac\ts2\tAgM=\t[2.0,2.5]\tsym2\t0x02000000000000000200000000000000020000000000000002\ta0eebc99-9c0b-4ef8-bb6d-6bb9bd380002\t1970-01-01T00:00:02.000000Z
+                    3\tv3-\u00e9\u20ac\ts3\tAwQ=\t[3.0,3.5]\tsym3\t0x03000000000000000300000000000000030000000000000003\ta0eebc99-9c0b-4ef8-bb6d-6bb9bd380003\t1970-01-01T00:00:05.000000Z
+                    4\t\t\t\tnull\t\t\t\t1970-01-01T00:00:06.000000Z
+                    """);
+        });
+    }
+
+    /**
+     * A mark of no rows with a segment roll pending: the savepoint counts from the transaction's start.
+     */
+    @Test
+    public void testSavepointWithoutRowsSurvivesSegmentRoll() throws Exception {
+        setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 10);
+        setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 2);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try (WalWriter w = engine.getWalWriter(engine.verifyTableName("t"))) {
+                appendSavepointRow(w, 1, 1_000_000L);
+                appendSavepointRow(w, 2, 2_000_000L);
+                // The segment reached the rollover row count: the next row rolls it.
+                w.commit();
+                final int segmentId = w.getSegmentId();
+                w.markSavepoint();
+                final ColumnarRowAppender appender = w.getColumnarRowAppender();
+                appender.beginColumnarWrite(3);
+                w.putServerAssignedTimestampColumnar(3, 5_000_000L);
+                appender.endColumnarWrite(5_000_000L, 5_000_000L, false);
+                Assert.assertEquals("test setup: the block must roll the segment", segmentId + 1, w.getSegmentId());
+                Assert.assertEquals(3, w.getUncommittedRowCount());
+                w.rollbackToSavepoint();
+                Assert.assertEquals(0, w.getUncommittedRowCount());
+                appendSavepointRow(w, 3, 3_000_000L);
+                w.commit();
+            }
+            drainWalQueue();
+            assertQuery("SELECT segmentId, minTimestamp, maxTimestamp, rowCount FROM wal_transactions('t')")
+                    .noRandomAccess()
+                    .returns("""
+                            segmentId\tminTimestamp\tmaxTimestamp\trowCount
+                            0\t1970-01-01T00:00:01.000000Z\t1970-01-01T00:00:02.000000Z\t2
+                            1\t1970-01-01T00:00:03.000000Z\t1970-01-01T00:00:03.000000Z\t1
+                            """);
+            assertQuery("SELECT v, ts FROM t").expectSize().timestamp("ts").returns("""
+                    v\tts
+                    1\t1970-01-01T00:00:01.000000Z
+                    2\t1970-01-01T00:00:02.000000Z
+                    3\t1970-01-01T00:00:03.000000Z
+                    """);
+        });
+    }
+
     @Test
     public void testSequencerFilesNotCached() throws Exception {
         AtomicInteger fdOpenCount = new AtomicInteger();
@@ -5525,7 +5903,8 @@ public class WalWriterTest extends AbstractCairoTest {
                         startTxn + 2,
                         TableWriterPressureControl.EMPTY,
                         Long.MAX_VALUE,
-                        Long.MIN_VALUE
+                        Long.MIN_VALUE,
+                        false
                 );
 
                 assertEquals(2, blockSize);
@@ -5543,6 +5922,45 @@ public class WalWriterTest extends AbstractCairoTest {
                             3\t2022-02-26T21:00:00.000000Z
                             4\t2022-02-27T06:00:00.000000Z
                             5\t2022-02-27T07:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testTruncateParquetThenBlockCommitIntoEarlierPartition() throws Exception {
+        // TRUNCATE resets the writer's append horizon. A stale one would survive a block commit into an
+        // earlier partition, and on a parquet table the next single-transaction commit would suspend the table.
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            execute("CREATE TABLE " + tableName + " (ts TIMESTAMP, val INT, sym SYMBOL)" +
+                    " TIMESTAMP(ts) PARTITION BY DAY FORMAT PARQUET WAL");
+            TableToken tableToken = engine.verifyTableName(tableName);
+
+            execute("INSERT INTO " + tableName + " VALUES ('2022-02-25T10:00:00.000000Z', 1, 'a')");
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+
+            // Queue everything, then drain once, so a single writer applies all of it.
+            execute("TRUNCATE TABLE " + tableName);
+            // Two consecutive INSERTs form a block that lands in an earlier partition than
+            // the one TRUNCATE dropped.
+            execute("INSERT INTO " + tableName + " VALUES ('2022-02-24T10:00:00.000000Z', 2, 'b')");
+            execute("INSERT INTO " + tableName + " VALUES ('2022-02-24T11:00:00.000000Z', 3, 'c')");
+            // A structural change ends the block, so the next INSERT applies on its own.
+            execute("ALTER TABLE " + tableName + " RENAME COLUMN val TO val2");
+            execute("INSERT INTO " + tableName + " VALUES ('2022-02-25T12:00:00.000000Z', 4, 'd')");
+            drainWalQueue();
+
+            Assert.assertFalse("table suspended", engine.getTableSequencerAPI().isSuspended(tableToken));
+            assertQuery(tableName)
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tval2\tsym
+                            2022-02-24T10:00:00.000000Z\t2\tb
+                            2022-02-24T11:00:00.000000Z\t3\tc
+                            2022-02-25T12:00:00.000000Z\t4\td
                             """);
         });
     }
@@ -5928,6 +6346,275 @@ public class WalWriterTest extends AbstractCairoTest {
             // Only the applied row survives; the pending insert AND the structural add-column are discarded.
             assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n1\n");
             assertQuery("select count() from table_columns('t')").noLeakCheck().expectSize().noRandomAccess().returns("count\n2\n");
+        });
+    }
+
+    @Test
+    public void testRebaseWalKeepsFormatParquet() throws Exception {
+        // REBASE keeps the FORMAT PARQUET that an ALTER set, together with DEDUP SKIP: the rebased table
+        // still writes new partitions as Parquet and discards a row that repeats the dedup key of a stored row.
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("ALTER TABLE t SET FORMAT PARQUET");
+            execute("ALTER TABLE t DEDUP ENABLE SKIP KEYS(ts)");
+            execute("INSERT INTO t VALUES ('2024-01-01T00:00:00.000000Z', 10)");
+            drainWalQueue();
+
+            final String expectedDdl = """
+                    ddl
+                    CREATE TABLE 't' (\s
+                    \tts TIMESTAMP,
+                    \tv LONG
+                    ) timestamp(ts) PARTITION BY DAY FORMAT PARQUET
+                    DEDUP SKIP KEYS(ts);
+                    """;
+            assertQuery("SHOW CREATE TABLE t").noLeakCheck().noRandomAccess().returns(expectedDdl);
+
+            execute("ALTER TABLE t SUSPEND WAL");
+            execute("ALTER TABLE t REBASE WAL");
+            drainWalQueue();
+
+            final TableToken tableToken = engine.verifyTableName("t");
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+            assertQuery("SHOW CREATE TABLE t").noLeakCheck().noRandomAccess().returns(expectedDdl);
+            try (TableReaderMetadata initialMetadata = openInitialMetadata(tableToken)) {
+                Assert.assertEquals(TableUtils.TABLE_FORMAT_PARQUET, initialMetadata.getTableFormat());
+                Assert.assertEquals(TableUtils.DEDUP_MODE_SKIP, initialMetadata.getDedupMode());
+            }
+
+            execute("INSERT INTO t VALUES ('2024-01-01T00:00:00.000000Z', 30)");
+            drainWalQueue();
+            execute("INSERT INTO t VALUES ('2024-01-02T00:00:00.000000Z', 20)");
+            drainWalQueue();
+            assertQuery("t")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tv
+                            2024-01-01T00:00:00.000000Z\t10
+                            2024-01-02T00:00:00.000000Z\t20
+                            """);
+            assertQuery("SELECT name, isParquet FROM table_partitions('t')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            name\tisParquet
+                            2024-01-01\ttrue
+                            2024-01-02\ttrue
+                            """);
+        });
+    }
+
+    @Test
+    public void testRebaseWalKeepsKeyedDedupSkip() throws Exception {
+        // DEDUP SKIP with a key besides the designated timestamp, the usual setup. After REBASE, the table
+        // applies the two empty seed transactions, stays SKIP, and keeps the stored row of every key, while
+        // a row with a new key gets in. A replica that builds the table from txn_seq/_meta.0 gets SKIP too.
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, sym SYMBOL, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("ALTER TABLE t DEDUP ENABLE SKIP KEYS(ts, sym)");
+            execute("ALTER TABLE t SET TTL 2 DAYS");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:00.000000Z', 'a', 10),
+                    ('2024-01-01T00:00:00.000000Z', 'b', 20)
+                    """);
+            drainWalQueue();
+            final String ddl = showCreateTable("t");
+            TestUtils.assertContains(ddl, "TTL 2 DAYS");
+            TestUtils.assertContains(ddl, "DEDUP SKIP KEYS(ts,sym)");
+
+            execute("ALTER TABLE t SUSPEND WAL");
+            execute("ALTER TABLE t REBASE WAL");
+            drainWalQueue();
+
+            final TableToken tableToken = engine.verifyTableName("t");
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+            assertQuery("SHOW CREATE TABLE t").noLeakCheck().noRandomAccess().returns(ddl);
+            try (TableReaderMetadata initialMetadata = openInitialMetadata(tableToken)) {
+                Assert.assertEquals(TableUtils.DEDUP_MODE_SKIP, initialMetadata.getDedupMode());
+                Assert.assertEquals(48, initialMetadata.getTtlHoursOrMonths());
+            }
+            try (TableReaderMetadata replicaMetadata = openReplicaBootstrapMetadata(tableToken)) {
+                Assert.assertEquals(TableUtils.DEDUP_MODE_SKIP, replicaMetadata.getDedupMode());
+                Assert.assertEquals(48, replicaMetadata.getTtlHoursOrMonths());
+                Assert.assertTrue(replicaMetadata.isDedupKey(replicaMetadata.getColumnIndex("sym")));
+            }
+
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:00.000000Z', 'a', 30),
+                    ('2024-01-01T00:00:00.000000Z', 'c', 40)
+                    """);
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+            assertQuery("SELECT * FROM t ORDER BY sym")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            ts\tsym\tv
+                            2024-01-01T00:00:00.000000Z\ta\t10
+                            2024-01-01T00:00:00.000000Z\tb\t20
+                            2024-01-01T00:00:00.000000Z\tc\t40
+                            """);
+        });
+    }
+
+    @Test
+    public void testRebaseWalKeepsKeyedDedupUpsert() throws Exception {
+        // The UPSERT counterpart of testRebaseWalKeepsKeyedDedupSkip: after REBASE, the table applies the two
+        // empty seed transactions and stays UPSERT, so a re-sent row replaces the stored row of its key.
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, sym SYMBOL, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("ALTER TABLE t DEDUP ENABLE UPSERT KEYS(ts, sym)");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:00.000000Z', 'a', 10),
+                    ('2024-01-01T00:00:00.000000Z', 'b', 20)
+                    """);
+            drainWalQueue();
+            final String ddl = showCreateTable("t");
+            TestUtils.assertContains(ddl, "DEDUP UPSERT KEYS(ts,sym)");
+
+            execute("ALTER TABLE t SUSPEND WAL");
+            execute("ALTER TABLE t REBASE WAL");
+            drainWalQueue();
+
+            final TableToken tableToken = engine.verifyTableName("t");
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+            assertQuery("SHOW CREATE TABLE t").noLeakCheck().noRandomAccess().returns(ddl);
+
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:00.000000Z', 'a', 30),
+                    ('2024-01-01T00:00:00.000000Z', 'c', 40)
+                    """);
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+            assertQuery("SELECT * FROM t ORDER BY sym")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            ts\tsym\tv
+                            2024-01-01T00:00:00.000000Z\ta\t30
+                            2024-01-01T00:00:00.000000Z\tb\t20
+                            2024-01-01T00:00:00.000000Z\tc\t40
+                            """);
+        });
+    }
+
+    @Test
+    public void testRebaseWalKeepsMetaHeaderFields() throws Exception {
+        // REBASE resets the metadata version of the cloned _meta. The header fields that the
+        // Metadata Format Minor Version checksum guards (dedup mode, TTL, Parquet encoding config)
+        // must survive the reset. The ALTERs take the metadata version above zero, so a reset that
+        // left the checksum as it was made readers fall back to the defaults.
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("ALTER TABLE t DEDUP ENABLE SKIP KEYS(ts)");
+            execute("ALTER TABLE t SET TTL 2 DAYS");
+            execute("ALTER TABLE t ALTER COLUMN v SET PARQUET(delta_binary_packed, zstd(3))");
+            execute("INSERT INTO t VALUES ('2024-01-01T00:00:00.000000Z', 10)");
+            drainWalQueue();
+
+            final String expectedDdl = """
+                    ddl
+                    CREATE TABLE 't' (\s
+                    \tts TIMESTAMP,
+                    \tv LONG PARQUET(delta_binary_packed, zstd(3))
+                    ) timestamp(ts) PARTITION BY DAY TTL 2 DAYS
+                    DEDUP SKIP KEYS(ts);
+                    """;
+            assertQuery("SHOW CREATE TABLE t").noLeakCheck().noRandomAccess().returns(expectedDdl);
+            final int encodingConfig;
+            try (TableReader reader = engine.getReader(engine.verifyTableName("t"))) {
+                encodingConfig = reader.getMetadata().getColumnMetadata(1).getParquetEncodingConfig();
+            }
+            Assert.assertNotEquals(0, encodingConfig);
+
+            execute("ALTER TABLE t SUSPEND WAL");
+            execute("ALTER TABLE t REBASE WAL");
+            drainWalQueue();
+
+            assertQuery("SHOW CREATE TABLE t").noLeakCheck().noRandomAccess().returns(expectedDdl);
+
+            // Replicas rebuild _meta from the sequencer's initial metadata, which REBASE writes from the
+            // reset _meta, so it must carry the same header fields.
+            try (TableReaderMetadata initialMetadata = openInitialMetadata(engine.verifyTableName("t"))) {
+                Assert.assertEquals(TableUtils.DEDUP_MODE_SKIP, initialMetadata.getDedupMode());
+                Assert.assertEquals(48, initialMetadata.getTtlHoursOrMonths());
+                Assert.assertEquals(encodingConfig, initialMetadata.getColumnMetadata(1).getParquetEncodingConfig());
+            }
+
+            // The rebased table still discards a row that repeats the dedup key of a stored row.
+            execute("INSERT INTO t VALUES ('2024-01-01T00:00:00.000000Z', 30)");
+            drainWalQueue();
+            assertQuery("t")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tv
+                            2024-01-01T00:00:00.000000Z\t10
+                            """);
+        });
+    }
+
+    @Test
+    public void testRebaseWalKeepsMetaHeaderFieldsOnSecondRebase() throws Exception {
+        // A rebased table starts over at metadata version zero. An ALTER takes it above zero again, and the
+        // next REBASE must keep the header fields as well, including the one that ALTER changed.
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("ALTER TABLE t DEDUP ENABLE SKIP KEYS(ts)");
+            execute("ALTER TABLE t SET TTL 2 DAYS");
+            execute("INSERT INTO t VALUES ('2024-01-01T00:00:00.000000Z', 10)");
+            drainWalQueue();
+            execute("ALTER TABLE t SUSPEND WAL");
+            execute("ALTER TABLE t REBASE WAL");
+            drainWalQueue();
+
+            execute("ALTER TABLE t SET TTL 4 DAYS");
+            drainWalQueue();
+            execute("ALTER TABLE t SUSPEND WAL");
+            execute("ALTER TABLE t REBASE WAL");
+            drainWalQueue();
+
+            final TableToken tableToken = engine.verifyTableName("t");
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+            assertQuery("SHOW CREATE TABLE t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            ddl
+                            CREATE TABLE 't' (\s
+                            \tts TIMESTAMP,
+                            \tv LONG
+                            ) timestamp(ts) PARTITION BY DAY TTL 4 DAYS
+                            DEDUP SKIP KEYS(ts);
+                            """);
+            try (TableReaderMetadata initialMetadata = openInitialMetadata(tableToken)) {
+                Assert.assertEquals(TableUtils.DEDUP_MODE_SKIP, initialMetadata.getDedupMode());
+                Assert.assertEquals(96, initialMetadata.getTtlHoursOrMonths());
+            }
+
+            execute("INSERT INTO t VALUES ('2024-01-01T00:00:00.000000Z', 30)");
+            drainWalQueue();
+            assertQuery("t")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tv
+                            2024-01-01T00:00:00.000000Z\t10
+                            """);
         });
     }
 
@@ -6840,6 +7527,49 @@ public class WalWriterTest extends AbstractCairoTest {
         });
     }
 
+    // A row of the table of testSavepointRollbackRewindsEveryColumnType with every column
+    // set from i, and the VARCHAR as given.
+    private static void appendEveryTypeRow(WalWriter w, DirectArray array, long bin, int i, String varchar, long ts) {
+        final TableWriter.Row row = w.newRow(ts);
+        row.putInt(0, i);
+        row.putVarchar(1, new Utf8String(varchar));
+        row.putStr(2, "s" + i);
+        Unsafe.putByte(bin, (byte) i);
+        Unsafe.putByte(bin + 1, (byte) (i + 1));
+        row.putBin(3, bin, 2);
+        array.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, 1));
+        array.setDimLen(0, 2);
+        array.applyShape();
+        array.putDouble(0, i);
+        array.putDouble(1, i + 0.5);
+        row.putArray(4, array);
+        row.putSym(5, "sym" + i);
+        row.putLong256(6, i, i, i, i);
+        row.putUuid(7, "a0eebc99-9c0b-4ef8-bb6d-6bb9bd38" + (i < 10 ? "000" : "00") + i);
+        row.append();
+    }
+
+    // A row of a table (v INT, ts TIMESTAMP).
+    private static void appendSavepointRow(WalWriter w, int v, long ts) {
+        final TableWriter.Row row = w.newRow(ts);
+        row.putInt(0, v);
+        row.append();
+    }
+
+    // The out-of-order flag that the WAL event of the segment's only transaction carries.
+    private static void assertWalEventOutOfOrder(TableToken token, String walName, int segmentId, long segmentRows, boolean isOutOfOrderExpected) {
+        try (WalReader reader = engine.getWalReader(AllowAllSecurityContext.INSTANCE, token, walName, segmentId, segmentRows)) {
+            final WalEventCursor eventCursor = reader.getWalEventCursor();
+            assertTrue(eventCursor.hasNext());
+            assertEquals(WalTxnType.DATA, eventCursor.getType());
+            final WalEventCursor.DataInfo dataInfo = eventCursor.getDataInfo();
+            assertEquals(0, dataInfo.getStartRowID());
+            assertEquals(segmentRows, dataInfo.getEndRowID());
+            assertEquals(isOutOfOrderExpected, dataInfo.isOutOfOrder());
+            assertFalse(eventCursor.hasNext());
+        }
+    }
+
     @SuppressWarnings("SameParameterValue")
     private static void checkWalEvents(TableToken tableToken, long refreshTxn, boolean newFormat) {
         try (Path path = new Path();
@@ -6909,6 +7639,61 @@ public class WalWriterTest extends AbstractCairoTest {
         }
     }
 
+    private static Path initialMetadataPath(Path path, TableToken tableToken) {
+        return path.of(configuration.getDbRoot()).concat(tableToken).concat(WalUtils.SEQ_DIR).concat(WalUtils.INITIAL_META_FILE_NAME);
+    }
+
+    // Opens txn_seq/_meta.0, the sequencer's initial metadata that a replica rebuilds the table's _meta from.
+    private static TableReaderMetadata openInitialMetadata(TableToken tableToken) {
+        final TableReaderMetadata metadata = new TableReaderMetadata(configuration);
+        try (Path path = new Path()) {
+            metadata.loadMetadata(initialMetadataPath(path, tableToken).$());
+            return metadata;
+        } catch (Throwable th) {
+            Misc.free(metadata);
+            throw th;
+        }
+    }
+
+    // Builds a table from txn_seq/_meta.0 the way a replica does when it first registers the table: it reloads
+    // the initial metadata and creates the table files from it. Opens the metadata of the result.
+    private static TableReaderMetadata openReplicaBootstrapMetadata(TableToken tableToken) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        final String replicaDirName = "replica_bootstrap";
+        try (
+                Path path = new Path();
+                MemoryCMARW metaMem = Vm.getCMARWInstance();
+                TableWriterMetadata initialMetadata = new TableWriterMetadata(tableToken)
+        ) {
+            metaMem.smallFile(ff, initialMetadataPath(path, tableToken).$(), MemoryTag.MMAP_DEFAULT);
+            initialMetadata.reload(path, metaMem);
+            path.of(configuration.getDbRoot()).concat(replicaDirName);
+            final int tableDirLen = path.size();
+            Assert.assertEquals(0, ff.mkdirs(path.slash(), configuration.getMkDirMode()));
+            TableUtils.createTableOrViewOrMatViewFiles(
+                    ff,
+                    metaMem,
+                    null,
+                    null,
+                    path.trimTo(tableDirLen),
+                    tableDirLen,
+                    replicaDirName,
+                    initialMetadata,
+                    ColumnType.VERSION,
+                    tableToken.getTableId(),
+                    configuration.getCommitMode()
+            );
+        }
+        final TableReaderMetadata metadata = new TableReaderMetadata(configuration);
+        try (Path path = new Path()) {
+            metadata.loadMetadata(path.of(configuration.getDbRoot()).concat(replicaDirName).concat(TableUtils.META_FILE_NAME).$());
+            return metadata;
+        } catch (Throwable th) {
+            Misc.free(metadata);
+            throw th;
+        }
+    }
+
     private static int rowsCrossingAppendPages(long requestedPageSize) {
         // PropServerConfiguration wraps CAIRO_WAL_WRITER_DATA_APPEND_PAGE_SIZE
         // in Files.ceilPageSize(), and Files.PAGE_SIZE is the OS allocation
@@ -6923,6 +7708,11 @@ public class WalWriterTest extends AbstractCairoTest {
         // exactly on a page boundary.
         final long timestampEntryBytes = 2L * Long.BYTES;
         return (int) ((Files.ceilPageSize(requestedPageSize) / timestampEntryBytes) * 2 + 100);
+    }
+
+    private static String showCreateTable(String tableName) throws SqlException {
+        printSql("SHOW CREATE TABLE " + tableName);
+        return sink.toString();
     }
 
     private static void testReadMatViewState(int chunkSize) {

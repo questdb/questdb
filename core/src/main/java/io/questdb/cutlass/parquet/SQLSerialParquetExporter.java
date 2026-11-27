@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.ReaderScanProfile;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.PageFrame;
@@ -38,7 +39,11 @@ import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cutlass.text.CopyExportContext;
+import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.ops.CreateTableOperation;
@@ -58,6 +63,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -74,6 +80,7 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 public class SQLSerialParquetExporter extends BaseParquetExporter implements Closeable {
     private static final Log LOG = LogFactory.getLog(SQLSerialParquetExporter.class);
     private final DirectIntList bloomFilterColumnIndexes = new DirectIntList(16, MemoryTag.NATIVE_PARQUET_EXPORTER, true);
+    private final ObjList<CharSequence> columnNames = new ObjList<>();
     private final CairoConfiguration configuration;
     private final StringSink exportPath = new StringSink(128);
     private final FilesFacade ff;
@@ -92,18 +99,6 @@ public class SQLSerialParquetExporter extends BaseParquetExporter implements Clo
     public SQLSerialParquetExporter(CairoEngine engine) {
         super(engine);
         this.sqlExecutionContext = new SqlExecutionContextImpl(engine, 1) {
-            @Override
-            public boolean isPartitionFormatChangeTolerated() {
-                return true;
-            }
-
-            @Override
-            public boolean isTableRowCountChangeTolerated() {
-                // The export runs the factory that COPY compiled when it queued the export, and
-                // nothing compiles it again, so a recompile request would fail the export.
-                return true;
-            }
-
             @Override
             public synchronized void setCancelledFlag(AtomicBoolean cancelled, long generation) {
                 super.setCancelledFlag(cancelled, generation);
@@ -168,9 +163,21 @@ public class SQLSerialParquetExporter extends BaseParquetExporter implements Clo
                 case DIRECT_PAGE_FRAME, PAGE_FRAME_BACKED, CURSOR_BASED -> {
                     // Streaming export: the mode was determined upstream in
                     // CopyExportFactory so we avoid an extra query compilation.
-                    processStreamingExport(task.getSelectFactory(), exportMode, entry);
-                    success = true;
-                    return CopyExportRequestTask.Phase.SUCCESS;
+                    if (processStreamingExport(exportMode, entry) != ParquetExportMode.TEMP_TABLE) {
+                        success = true;
+                        return CopyExportRequestTask.Phase.SUCCESS;
+                    }
+                    // The select, compiled again on this worker, needs a temp table. CopyExportFactory streams a
+                    // select only for PARTITION_BY NONE, and it names the task after the temp table it would create.
+                    LOG.info().$("recompiled export select needs a temp table, materializing [id=")
+                            .$hexPadded(task.getCopyID()).$(", tempTable=").$(exportTableName).$(']').$();
+                    createOp = materializingOp(
+                            cairoEngine,
+                            task.getSelectText(),
+                            task.getSelectText(),
+                            exportTableName,
+                            PartitionBy.NONE
+                    );
                 }
                 case TEMP_TABLE, TABLE_READER -> {
                     // Fall through to partition-by-partition export below.
@@ -185,8 +192,7 @@ public class SQLSerialParquetExporter extends BaseParquetExporter implements Clo
                 // export would report success over stale data. Resolve the mode on the very reader that will be
                 // read, and materialize through a temp table when this snapshot is composite.
                 tableToken = cairoEngine.verifyTableName(exportTableName);
-                sqlExecutionContext.getSecurityContext().authorizeSelectOnAnyColumn(tableToken);
-                sourceReader = cairoEngine.getReader(tableToken);
+                sourceReader = getAuthorizedReader(cairoEngine, tableToken);
                 if (sourceReader.getTxFile().hasCompositePartitions()) {
                     final int sourcePartitionBy = sourceReader.getPartitionedBy();
                     sourceReader = Misc.free(sourceReader);
@@ -194,7 +200,13 @@ public class SQLSerialParquetExporter extends BaseParquetExporter implements Clo
                     LOG.info().$("table turned composite after the export was queued, materializing [id=")
                             .$hexPadded(task.getCopyID()).$(", table=").$(tableToken)
                             .$(", tempTable=").$(exportTableName).$(']').$();
-                    createOp = materializingOp(cairoEngine, task.getTableName(), exportTableName, sourcePartitionBy);
+                    createOp = materializingOp(
+                            cairoEngine,
+                            CopyExportRequestTask.selectAllText(task.getTableName()),
+                            task.getTableName(),
+                            exportTableName,
+                            sourcePartitionBy
+                    );
                     tableToken = null;
                 }
             }
@@ -414,26 +426,29 @@ public class SQLSerialParquetExporter extends BaseParquetExporter implements Clo
     }
 
     /**
-     * Builds the same create-as-select temp table operation {@link io.questdb.griffin.engine.ops.CopyExportFactory}
-     * builds when it already sees a composite table at enqueue time, so both routes materialize identically -
-     * including the quoting {@link CopyExportRequestTask#selectAllText} puts around the source table name.
-     * {@link CreateTableOperation#execute} compiles and validates the select on this worker. The source table name
-     * doubles as the operation's SQL text, which only feeds the query registry and the progress log - the COPY
-     * statement itself does not reach the worker.
+     * Builds the same create-as-select temp table operation over {@code selectText} that
+     * {@link io.questdb.griffin.engine.ops.CopyExportFactory} builds when it picks a temp table at enqueue time, for
+     * an export that finds out on this worker that it needs one, so both routes materialize identically. A direct
+     * table export whose table turned composite after the export was queued passes the
+     * {@link CopyExportRequestTask#selectAllText} of the table, with the quoting it puts around the table name, and a
+     * streaming export whose select, compiled again on this worker, needs a temp table passes its select text.
+     * {@link CreateTableOperation#execute} compiles and validates the select on this worker. {@code sqlText} only
+     * feeds the query registry and the progress log - the COPY statement itself does not reach the worker.
      */
     private static CreateTableOperation materializingOp(
             CairoEngine engine,
-            String sourceTableName,
+            String selectText,
+            String sqlText,
             String tempTableName,
             int partitionBy
     ) {
         CreateTableOperationImpl op = new CreateTableOperationImpl(
-                CopyExportRequestTask.selectAllText(sourceTableName),
+                selectText,
                 tempTableName,
                 partitionBy,
                 false,
                 engine.getConfiguration().getDefaultSymbolCapacity(),
-                sourceTableName,
+                sqlText,
                 false
         );
         op.setTableKind(TableUtils.TABLE_KIND_TEMP_PARQUET_EXPORT);
@@ -450,6 +465,47 @@ public class SQLSerialParquetExporter extends BaseParquetExporter implements Clo
         sink.put("copy.");
         Numbers.appendHex(sink, copyID, true);
         return sink.toString();
+    }
+
+    /**
+     * Returns the reader a direct table export reads, once the principal may SELECT every column of the reader's
+     * snapshot. A security context can resolve the table and column names against the table as it is when the check
+     * runs, and pass a name it does not find. A DDL that commits once getReader() returns can therefore make the check
+     * judge another table, or skip a renamed or dropped column whose data the snapshot still holds. When the name no
+     * longer leads to the reader's table, the export fails. When the schema changed, this method checks a fresh reader
+     * again, at most {@code cairo.sql.max.recompile.attempts} more times.
+     */
+    private TableReader getAuthorizedReader(CairoEngine engine, TableToken tableToken) {
+        final int maxRetries = configuration.getMaxSqlRecompileAttempts();
+        for (int retries = 0; ; retries++) {
+            final TableReader reader = engine.getReader(tableToken);
+            final boolean isSchemaUnchanged;
+            try {
+                final TableReaderMetadata metadata = reader.getMetadata();
+                columnNames.clear();
+                for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                    columnNames.add(metadata.getColumnName(i));
+                }
+                sqlExecutionContext.getSecurityContext().authorizeSelect(tableToken, columnNames);
+                engine.verifyTableToken(tableToken);
+                try (TableMetadata current = engine.getTableMetadata(tableToken)) {
+                    isSchemaUnchanged = current.getMetadataVersion() == metadata.getMetadataVersion();
+                }
+            } catch (Throwable th) {
+                Misc.free(reader);
+                throw th;
+            }
+            if (isSchemaUnchanged) {
+                return reader;
+            }
+            Misc.free(reader);
+            if (retries >= maxRetries) {
+                throw CairoException.nonCritical()
+                        .put("table schema changed too many times [table=").put(tableToken.getTableName()).put(']');
+            }
+            LOG.info().$("table schema changed during export authorization, authorizing again [id=")
+                    .$hexPadded(task.getCopyID()).$(", table=").$(tableToken).I$();
+        }
     }
 
     private void moveAndOverwriteFiles() {
@@ -554,43 +610,48 @@ public class SQLSerialParquetExporter extends BaseParquetExporter implements Clo
         return null;
     }
 
+    /**
+     * Streams the rows of the plan that {@link #processStreamingExport} opened: the page frames of a
+     * PAGE_FRAME_BACKED plan, whose materializer the open set up already, or the cursor of a CURSOR_BASED plan. The
+     * caller frees the page frame cursor and the cursor.
+     */
     private void processHybridExport(
             RecordCursorFactory factory,
             ParquetExportMode mode,
+            PageFrameCursor pfc,
+            RecordCursor cursor,
             CopyExportRequestTask.StreamPartitionParquetExporter exporter,
             CopyExportRequestTask.Phase phase
     ) throws Exception {
-        PageFrameCursor pfc = mode == ParquetExportMode.PAGE_FRAME_BACKED
-                ? openPageFrameCursor(((VirtualRecordCursorFactory) factory).getBaseFactory())
-                : null;
-        RecordCursor cursor = null;
-        try {
-            if (pfc != null) {
-                VirtualRecordCursorFactory vf = (VirtualRecordCursorFactory) factory;
-                pfc.setScanProfile(ReaderScanProfile.SEQUENTIAL_EVICT);
-                streamBuffers.setUpPageFrameBacked(vf, pfc, sqlExecutionContext);
-                exporter.setUp(streamBuffers.getAdjustedMetadata(), pfc, streamBuffers.getBaseColumnMap());
+        boolean isPageFrameBacked = mode == ParquetExportMode.PAGE_FRAME_BACKED;
+        if (isPageFrameBacked) {
+            exporter.setUp(streamBuffers.getAdjustedMetadata(), pfc, streamBuffers.getBaseColumnMap());
+        } else {
+            if (factory instanceof VirtualRecordCursorFactory vf) {
+                streamBuffers.setUpCursorBacked(vf, cursor);
             } else {
-                cursor = factory.getCursor(sqlExecutionContext);
-                if (factory instanceof VirtualRecordCursorFactory vf) {
-                    streamBuffers.setUpCursorBacked(vf);
-                } else {
-                    streamBuffers.setUp(factory.getMetadata());
-                }
-                exporter.setUp(streamBuffers.getAdjustedMetadata());
+                streamBuffers.setUp(factory.getMetadata(), cursor);
             }
-
-            long batchSize = task.getRowGroupSize() > 0 ? task.getRowGroupSize() : 100_000;
-            drainHybridFrames(exporter, streamBuffers, streamColumnData, pfc, cursor, batchSize, phase);
-            numOfFiles = 1;
-        } finally {
-            Misc.free(pfc);
-            Misc.free(cursor);
+            // The writer marks the designated timestamp in the order of the plan it streams, which a recompile can
+            // change since COPY queued the export.
+            task.setDescending(factory.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_BACKWARD);
+            exporter.setUp(streamBuffers.getAdjustedMetadata());
         }
+
+        long batchSize = task.getRowGroupSize() > 0 ? task.getRowGroupSize() : 100_000;
+        drainHybridFrames(exporter, streamBuffers, streamColumnData, pfc, cursor, batchSize, phase);
+        numOfFiles = 1;
     }
 
-    private void processStreamingExport(
-            RecordCursorFactory selectFactory,
+    /**
+     * Streams the rows of the task's select into the export file. The task holds the factory that COPY compiled when it
+     * queued the export; when opening it reports the plan stale, the export compiles the select again, up to
+     * {@code cairo.sql.max.recompile.attempts} times, as HTTP /exp does, and opens the new plan in its own mode.
+     *
+     * @return the mode the export streamed in, or {@link ParquetExportMode#TEMP_TABLE} when the select, compiled again,
+     * needs a temp table, in which case the export leaves no file behind and the caller materializes the select
+     */
+    private ParquetExportMode processStreamingExport(
             ParquetExportMode mode,
             CopyExportContext.ExportTaskEntry entry
     ) {
@@ -612,6 +673,8 @@ public class SQLSerialParquetExporter extends BaseParquetExporter implements Clo
         streamColumnData.clear();
         boolean streamSuccess = false;
         long fd = -1;
+        PageFrameCursor pfc = null;
+        RecordCursor cursor = null;
         try {
             fd = ff.openRW(tempPath.$(), configuration.getWriterFileOpenOpts());
             if (fd < 0) {
@@ -622,54 +685,95 @@ public class SQLSerialParquetExporter extends BaseParquetExporter implements Clo
             LOG.info().$("starting streaming parquet export [id=").$hexPadded(task.getCopyID())
                     .$(", selectText=").$(task.getSelectText()).$(", mode=").$(mode).$(']').$();
 
-            // Unwrap QueryProgress so that its register/unregister lifecycle
-            // does not null the circuit breaker's cancelledFlag when cursors close.
-            // The outer COPY command handles query registration and cancellation.
-            RecordCursorFactory baseFactory = ParquetExportMode.unwrapFactory(selectFactory);
             CopyExportRequestTask.StreamPartitionParquetExporter exporter = task.getStreamPartitionParquetExporter();
             // File-write callback
             writeCallback.of(ff, fd);
             task.setWriteCallback(writeCallback);
 
-            switch (mode) {
-                case DIRECT_PAGE_FRAME -> {
-                    final PageFrameCursor directCursor = openPageFrameCursor(baseFactory);
-                    if (directCursor == null) {
-                        processHybridExport(baseFactory, ParquetExportMode.CURSOR_BASED, exporter, phase);
-                        break;
+            for (int recompiles = 0; ; recompiles++) {
+                // Unwrap QueryProgress so that its register/unregister lifecycle
+                // does not null the circuit breaker's cancelledFlag when cursors close.
+                // The outer COPY command handles query registration and cancellation.
+                final RecordCursorFactory factory = ParquetExportMode.unwrapFactory(task.getSelectFactory());
+                try {
+                    // A snapshot with custom (Delta) frames has no zero-copy page frames, see openPageFrameCursor(),
+                    // so a zero-copy mode streams the plan's cursor instead.
+                    switch (mode) {
+                        case DIRECT_PAGE_FRAME -> {
+                            pfc = openPageFrameCursor(factory);
+                            if (pfc == null) {
+                                mode = ParquetExportMode.CURSOR_BASED;
+                                cursor = factory.getCursor(sqlExecutionContext);
+                            }
+                        }
+                        case PAGE_FRAME_BACKED -> {
+                            // Safe cast: determineExportMode() returns PAGE_FRAME_BACKED only for a
+                            // VirtualRecordCursorFactory.
+                            final VirtualRecordCursorFactory vf = (VirtualRecordCursorFactory) factory;
+                            pfc = openPageFrameCursor(vf.getBaseFactory());
+                            if (pfc == null) {
+                                mode = ParquetExportMode.CURSOR_BASED;
+                                cursor = factory.getCursor(sqlExecutionContext);
+                            } else {
+                                pfc.setScanProfile(ReaderScanProfile.SEQUENTIAL_EVICT);
+                                // Function.init() opens the projection's sub-queries, whose plans can be stale as well.
+                                streamBuffers.setUpPageFrameBacked(vf, pfc, sqlExecutionContext);
+                            }
+                        }
+                        case CURSOR_BASED -> cursor = factory.getCursor(sqlExecutionContext);
+                        default -> throw new UnsupportedOperationException("unexpected mode: " + mode);
                     }
-                    try (PageFrameCursor pfc = directCursor) {
-                        pfc.setScanProfile(ReaderScanProfile.SEQUENTIAL_EVICT);
-                        RecordMetadata meta = baseFactory.getMetadata();
-                        int colCount = meta.getColumnCount();
-                        if (identityColumnMap.size() != colCount) {
-                            identityColumnMap.setPos(colCount);
-                            for (int i = 0; i < colCount; i++) {
-                                identityColumnMap.setQuick(i, i);
-                            }
-                        }
-                        exporter.setUp(meta, pfc, identityColumnMap);
-
-                        PageFrame frame;
-                        long previousRowsWritten = exporter.getRowsWrittenToRowGroups();
-                        while ((frame = pfc.next()) != null) {
-                            if (circuitBreaker.checkIfTrippedOrYield()) {
-                                throw CopyExportException.instance(phase, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
-                            }
-                            exporter.writePageFrame(pfc, frame);
-                            long currentRowsWritten = exporter.getRowsWrittenToRowGroups();
-                            if (currentRowsWritten > previousRowsWritten) {
-                                pfc.releaseOpenPartitions();
-                                previousRowsWritten = currentRowsWritten;
-                            }
-                        }
-
-                        exporter.finishExport();
-                        numOfFiles = 1;
+                    break;
+                } catch (TableReferenceOutOfDateException e) {
+                    pfc = Misc.free(pfc);
+                    cursor = Misc.free(cursor);
+                    // setUpPageFrameBacked() appends buffers, which a second set-up would index from 0 again.
+                    streamBuffers.clear();
+                    if (recompiles >= configuration.getMaxSqlRecompileAttempts()) {
+                        throw e;
+                    }
+                    LOG.info().$("recompiling stale export select [id=").$hexPadded(task.getCopyID())
+                            .$(", msg=").$safe(e.getFlyweightMessage()).I$();
+                    mode = recompileSelect();
+                    if (mode == ParquetExportMode.TEMP_TABLE) {
+                        return mode;
                     }
                 }
-                case PAGE_FRAME_BACKED, CURSOR_BASED -> processHybridExport(baseFactory, mode, exporter, phase);
-                default -> throw new UnsupportedOperationException("unexpected mode: " + mode);
+            }
+
+            final RecordCursorFactory baseFactory = ParquetExportMode.unwrapFactory(task.getSelectFactory());
+            switch (mode) {
+                case DIRECT_PAGE_FRAME -> {
+                    pfc.setScanProfile(ReaderScanProfile.SEQUENTIAL_EVICT);
+                    RecordMetadata meta = baseFactory.getMetadata();
+                    int colCount = meta.getColumnCount();
+                    if (identityColumnMap.size() != colCount) {
+                        identityColumnMap.setPos(colCount);
+                        for (int i = 0; i < colCount; i++) {
+                            identityColumnMap.setQuick(i, i);
+                        }
+                    }
+                    exporter.setUp(meta, pfc, identityColumnMap);
+
+                    PageFrame frame;
+                    long previousRowsWritten = exporter.getRowsWrittenToRowGroups();
+                    while ((frame = pfc.next()) != null) {
+                        if (circuitBreaker.checkIfTrippedOrYield()) {
+                            throw CopyExportException.instance(phase, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
+                        }
+                        exporter.writePageFrame(pfc, frame);
+                        long currentRowsWritten = exporter.getRowsWrittenToRowGroups();
+                        if (currentRowsWritten > previousRowsWritten) {
+                            pfc.releaseOpenPartitions();
+                            previousRowsWritten = currentRowsWritten;
+                        }
+                    }
+
+                    exporter.finishExport();
+                    numOfFiles = 1;
+                }
+                case PAGE_FRAME_BACKED, CURSOR_BASED ->
+                        processHybridExport(baseFactory, mode, pfc, cursor, exporter, phase);
             }
             streamSuccess = true;
         } catch (CopyExportException e) {
@@ -681,6 +785,8 @@ public class SQLSerialParquetExporter extends BaseParquetExporter implements Clo
         } catch (Throwable e) {
             throw CopyExportException.instance(phase, e.getMessage(), -1);
         } finally {
+            Misc.free(pfc);
+            Misc.free(cursor);
             if (fd > -1) {
                 ff.close(fd);
             }
@@ -711,6 +817,34 @@ public class SQLSerialParquetExporter extends BaseParquetExporter implements Clo
 
         LOG.info().$("streaming parquet export completed [id=").$hexPadded(task.getCopyID())
                 .$(", totalRows=").$(task.getStreamPartitionParquetExporter().getTotalRows()).$(']').$();
+        return mode;
+    }
+
+    /**
+     * Compiles the task's select text again on this worker's context, which holds the security context, the bind
+     * values and the clock of the COPY that queued the export, and hands the new factory to the task. This method
+     * takes the stale factory, whose cursors the caller closed, off the task before it frees that factory, so that the
+     * task never frees it twice. It decides the mode of the new plan by its own scan direction, see
+     * {@link ParquetExportMode#determineRecompiledExportMode}, and frees a plan that needs a temp table at once, since
+     * the temp table's CREATE TABLE AS SELECT compiles the select once more.
+     */
+    private ParquetExportMode recompileSelect() throws SqlException {
+        final RecordCursorFactory staleFactory = task.getSelectFactory();
+        task.setSelectFactory(null);
+        Misc.free(staleFactory);
+        try (SqlCompiler compiler = sqlExecutionContext.getCairoEngine().getSqlCompiler()) {
+            final CompiledQuery compiledQuery = compiler.compile(task.getSelectText(), sqlExecutionContext);
+            // COPY compiled the same text as a SELECT when it queued the export, and the text decides the statement kind
+            assert compiledQuery.getType() == CompiledQuery.SELECT;
+            task.setSelectFactory(compiledQuery.getRecordCursorFactory());
+        }
+        final ParquetExportMode mode = ParquetExportMode.determineRecompiledExportMode(task.getSelectFactory(), sqlExecutionContext);
+        if (mode == ParquetExportMode.TEMP_TABLE) {
+            final RecordCursorFactory factory = task.getSelectFactory();
+            task.setSelectFactory(null);
+            Misc.free(factory);
+        }
+        return mode;
     }
 
     CharSequence getExportPath() {

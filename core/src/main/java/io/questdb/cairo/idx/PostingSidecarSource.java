@@ -38,7 +38,9 @@ import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 
-/** Reads a private build's completed sidecars while the writer seals a new file version. */
+/**
+ * Reads a private build's completed sidecars while the writer seals a new file version.
+ */
 final class PostingSidecarSource implements QuietCloseable {
     private final int[] requiredCover = new int[1];
     private final ColumnVersionReader versions = new ColumnVersionReader();

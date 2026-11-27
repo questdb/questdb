@@ -37,13 +37,17 @@ import io.questdb.cutlass.qwp.server.QwpIngressUpgradeProcessor;
 import io.questdb.cutlass.qwp.websocket.WebSocketOpcode;
 import io.questdb.log.Log;
 import io.questdb.network.NetworkFacadeImpl;
+import io.questdb.network.PeerDisconnectedException;
+import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.PeerIsSlowToWriteException;
 import io.questdb.network.PlainSocket;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 
 import java.lang.reflect.Field;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 
 /**
  * Drives a {@link QwpIngressUpgradeProcessor} over in-memory sockets: builds client
@@ -100,12 +104,23 @@ final class QwpIngressWireHarness {
     }
 
     static byte[] createMaskedFrame(int opcode, byte[] payload, boolean isFin) {
-        // all test frames are tiny; single-byte payload length is sufficient
-        assert payload.length <= 125;
-        byte[] frame = new byte[2 + 4 + payload.length];
+        // The payload length takes 7 bits, or 16 or 64 bits after a 126 or 127 marker.
+        final int lengthBytes = payload.length <= 125 ? 0 : payload.length < 65_536 ? 2 : 8;
+        byte[] frame = new byte[2 + lengthBytes + 4 + payload.length];
         int offset = 0;
         frame[offset++] = (byte) ((isFin ? 0x80 : 0) | (opcode & 0x0F));
-        frame[offset++] = (byte) (0x80 | payload.length);
+        if (lengthBytes == 0) {
+            frame[offset++] = (byte) (0x80 | payload.length);
+        } else if (lengthBytes == 2) {
+            frame[offset++] = (byte) (0x80 | 126);
+            frame[offset++] = (byte) (payload.length >>> 8);
+            frame[offset++] = (byte) payload.length;
+        } else {
+            frame[offset++] = (byte) (0x80 | 127);
+            for (int shift = 56; shift >= 0; shift -= 8) {
+                frame[offset++] = (byte) ((long) payload.length >>> shift);
+            }
+        }
         System.arraycopy(DEFAULT_MASK_KEY, 0, frame, offset, 4);
         offset += 4;
         for (int i = 0; i < payload.length; i++) {
@@ -118,6 +133,39 @@ final class QwpIngressWireHarness {
         byte[] copy = message.clone();
         copy[5] |= QwpConstants.FLAG_DEFER_COMMIT;
         return copy;
+    }
+
+    /**
+     * The highest seqTxn that any durable-ack frame (primary or local stream) sent
+     * to the client names for {@code table}, or -1 when none names it. After
+     * [status] a durable ack carries [count u16 LE], then per table
+     * [name length u16 LE][name UTF-8][seqTxn i64 LE].
+     */
+    static long durableAckSeqTxn(ObjList<byte[]> frames, String table) {
+        final byte[] name = table.getBytes(StandardCharsets.UTF_8);
+        long highest = -1;
+        for (int i = 0, n = frames.size(); i < n; i++) {
+            byte[] f = frames.getQuick(i);
+            // A durable ack with no entries is shorter than isBinaryFrame() admits.
+            if (f.length < 5
+                    || (f[0] & 0x0F) != WebSocketOpcode.BINARY
+                    || (f[1] & 0x7F) >= 126
+                    || (f[2] != QwpConstants.STATUS_DURABLE_ACK && f[2] != QwpConstants.STATUS_LOCAL_DURABLE_ACK)) {
+                continue;
+            }
+            int pos = 5;
+            for (int entry = 0, count = readLeShort(f, 3); entry < count; entry++) {
+                int nameLen = readLeShort(f, pos);
+                pos += 2;
+                boolean isMatch = Arrays.equals(f, pos, pos + nameLen, name, 0, name.length);
+                pos += nameLen;
+                if (isMatch) {
+                    highest = Math.max(highest, readLeLong(f, pos));
+                }
+                pos += 8;
+            }
+        }
+        return highest;
     }
 
     static void drive(
@@ -202,6 +250,34 @@ final class QwpIngressWireHarness {
     }
 
     /**
+     * The seqTxn that the cumulative OK-ACK for {@code seq} names for
+     * {@code table}, or -1 when there is no such ack or it has no entry for the
+     * table. After [status][seq LE] an OK-ACK carries [count u16 LE], then per
+     * table [name length u16 LE][name UTF-8][seqTxn i64 LE].
+     */
+    static long okAckSeqTxn(ObjList<byte[]> frames, long seq, String table) {
+        final byte[] name = table.getBytes(StandardCharsets.UTF_8);
+        for (int i = 0, n = frames.size(); i < n; i++) {
+            byte[] f = frames.getQuick(i);
+            if (!isBinaryFrame(f) || f[2] != QwpConstants.STATUS_OK || readLeLong(f, 3) != seq) {
+                continue;
+            }
+            int pos = 13;
+            for (int entry = 0, count = readLeShort(f, 11); entry < count; entry++) {
+                int nameLen = readLeShort(f, pos);
+                pos += 2;
+                boolean isMatch = Arrays.equals(f, pos, pos + nameLen, name, 0, name.length);
+                pos += nameLen;
+                if (isMatch) {
+                    return readLeLong(f, pos);
+                }
+                pos += 8;
+            }
+        }
+        return -1;
+    }
+
+    /**
      * QWP v1 message: table "tab", one row, schema
      * [{@code v} LONG, {@code ""} TIMESTAMP (designated)].
      */
@@ -258,6 +334,10 @@ final class QwpIngressWireHarness {
             v = (v << 8) | (buf[offset + i] & 0xFFL);
         }
         return v;
+    }
+
+    static int readLeShort(byte[] buf, int offset) {
+        return (buf[offset] & 0xFF) | (buf[offset + 1] & 0xFF) << 8;
     }
 
     /// A frame carrying no table blocks at all, with FLAG_DEFER_COMMIT. The
@@ -317,6 +397,49 @@ final class QwpIngressWireHarness {
         }
         assert i == block.length;
         return block;
+    }
+
+    /**
+     * One-row table block with schema [{@code v} LONG, {@code column} LONG, {@code ""}
+     * TIMESTAMP (designated)]: {@link #tableBlock} with one more column, which holds
+     * {@code value}.
+     */
+    static byte[] tableBlockWithColumn(String table, long v, String column, long value, long tsMicros) {
+        final byte[] name = table.getBytes(StandardCharsets.UTF_8);
+        final byte[] columnName = column.getBytes(StandardCharsets.UTF_8);
+        assert name.length < 128 && columnName.length < 128;
+        byte[] block = new byte[1 + name.length + 9 + columnName.length + 3 * 9];
+        int i = 0;
+        block[i++] = (byte) name.length;
+        System.arraycopy(name, 0, block, i, name.length);
+        i += name.length;
+        block[i++] = 1; // rowCount
+        block[i++] = 3; // columnCount
+        block[i++] = 1; // column name length
+        block[i++] = 'v';
+        block[i++] = QwpConstants.TYPE_LONG;
+        block[i++] = (byte) columnName.length;
+        System.arraycopy(columnName, 0, block, i, columnName.length);
+        i += columnName.length;
+        block[i++] = QwpConstants.TYPE_LONG;
+        block[i++] = 0; // empty name = designated timestamp
+        block[i++] = QwpConstants.TYPE_TIMESTAMP;
+        block[i++] = 0; // no null bitmap
+        i = writeLeLong(block, i, v);
+        block[i++] = 0;
+        i = writeLeLong(block, i, value);
+        block[i++] = 0;
+        i = writeLeLong(block, i, tsMicros);
+        assert i == block.length;
+        return block;
+    }
+
+    /**
+     * One-row table block with schema [{@code v} LONG, {@code w} LONG, {@code ""}
+     * TIMESTAMP (designated)]: {@link #tableBlock} with one more column.
+     */
+    static byte[] tableBlockWithExtraColumn(String table, long v, long w, long tsMicros) {
+        return tableBlockWithColumn(table, v, "w", w, tsMicros);
     }
 
     /**
@@ -402,12 +525,20 @@ final class QwpIngressWireHarness {
     }
 
     /**
-     * Captures every frame the server sends, in order.
+     * Captures every frame the server sends, in order: the bytes of each send. A send
+     * listed in {@link #blockedSends} records its bytes and then throws
+     * {@link PeerIsSlowToReadException}, as a real send does when the peer has not read
+     * them yet: they are on their way, and the server must park until they leave. The
+     * send numbered {@link #disconnectedSend} and every later one find the peer gone.
      */
     static class RecordingRawSocket implements HttpRawSocket {
+        // Numbers of the sends that block, counted from 1.
+        final IntHashSet blockedSends = new IntHashSet();
         final ObjList<byte[]> sentFrames = new ObjList<>();
         private final long bufferAddress;
         private final int bufferSize;
+        int disconnectedSend = Integer.MAX_VALUE;
+        private int sendCount;
 
         RecordingRawSocket(long bufferAddress, int bufferSize) {
             this.bufferAddress = bufferAddress;
@@ -425,12 +556,18 @@ final class QwpIngressWireHarness {
         }
 
         @Override
-        public void send(int size) {
+        public void send(int size) throws PeerDisconnectedException, PeerIsSlowToReadException {
+            if (++sendCount >= disconnectedSend) {
+                throw PeerDisconnectedException.INSTANCE;
+            }
             byte[] copy = new byte[size];
             for (int i = 0; i < size; i++) {
                 copy[i] = Unsafe.getByte(bufferAddress + i);
             }
             sentFrames.add(copy);
+            if (blockedSends.contains(sendCount)) {
+                throw PeerIsSlowToReadException.INSTANCE;
+            }
         }
     }
 
@@ -440,14 +577,14 @@ final class QwpIngressWireHarness {
      * access points with the test doubles.
      */
     static class TestableContext extends HttpConnectionContext {
-        private final RecordingRawSocket rawSocket;
+        private final HttpRawSocket rawSocket;
         private final long testRecvBuffer;
         private final int testRecvBufferSize;
 
         TestableContext(
                 HttpServerConfiguration config,
                 PhasedNetworkFacade nf,
-                RecordingRawSocket rawSocket,
+                HttpRawSocket rawSocket,
                 long recvBuffer,
                 int recvBufferSize
         ) {

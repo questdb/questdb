@@ -30,6 +30,7 @@ import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -46,6 +47,7 @@ import io.questdb.std.str.Path;
 
 public class FuzzDropCreateTableOperation implements FuzzTransactionOperation {
     static final Log LOG = LogFactory.getLog(FuzzDropCreateTableOperation.class);
+    private int dedupMode = TableUtils.DEDUP_MODE_UPSERT;
     private boolean dedupTsColumn;
     private boolean isWal;
     private RecordMetadata recreateTableMetadata;
@@ -81,14 +83,7 @@ public class FuzzDropCreateTableOperation implements FuzzTransactionOperation {
                     vm,
                     path,
                     false,
-                    new TableStructMetadataAdapter(
-                            tableName,
-                            isWal,
-                            recreateTableMetadata,
-                            engine.getConfiguration(),
-                            PartitionBy.DAY,
-                            recreateTableMetadata.getTimestampIndex()
-                    ),
+                    newTableStructure(engine),
                     false
             );
         }
@@ -104,14 +99,7 @@ public class FuzzDropCreateTableOperation implements FuzzTransactionOperation {
                         vm,
                         path,
                         false,
-                        new TableStructMetadataAdapter(
-                                tableName,
-                                isWal,
-                                recreateTableMetadata,
-                                engine.getConfiguration(),
-                                PartitionBy.DAY,
-                                recreateTableMetadata.getTimestampIndex()
-                        ),
+                        newTableStructure(engine),
                         false
                 );
             }
@@ -120,8 +108,13 @@ public class FuzzDropCreateTableOperation implements FuzzTransactionOperation {
         return false;
     }
 
-    public void setDedupEnable(boolean dedupTsColumn) {
+    /**
+     * Makes the recreated WAL table deduplicate on the designated timestamp in the given
+     * mode, {@link TableUtils#DEDUP_MODE_UPSERT} or {@link TableUtils#DEDUP_MODE_SKIP}.
+     */
+    public void setDedupEnable(boolean dedupTsColumn, int dedupMode) {
         this.dedupTsColumn = dedupTsColumn;
+        this.dedupMode = dedupMode;
     }
 
     private RecordMetadata denseMetaCopy(TableRecordMetadata metadata, int timestampIndex) {
@@ -153,5 +146,18 @@ public class FuzzDropCreateTableOperation implements FuzzTransactionOperation {
         }
         newMeta.setTimestampIndex(tsIndex);
         return newMeta;
+    }
+
+    private TableStructMetadataAdapter newTableStructure(CairoEngine engine) {
+        return new TableStructMetadataAdapter(
+                tableName,
+                isWal,
+                recreateTableMetadata,
+                engine.getConfiguration(),
+                PartitionBy.DAY,
+                recreateTableMetadata.getTimestampIndex(),
+                // the mode applies only to a table with dedup keys, see denseMetaCopy()
+                dedupTsColumn && isWal ? dedupMode : TableUtils.DEDUP_MODE_UPSERT
+        );
     }
 }

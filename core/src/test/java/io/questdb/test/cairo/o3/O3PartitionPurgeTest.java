@@ -42,6 +42,7 @@ import io.questdb.cairo.TxReader;
 import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
+import io.questdb.mp.MCSequence;
 import io.questdb.mp.MPSequence;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
@@ -1549,6 +1550,68 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
                 Assert.assertFalse(purge.run());
             }
             assertQuery("SELECT x FROM tbl").noLeakCheck().expectSize().returns("x\n3\n");
+        });
+    }
+
+    @Test
+    public void testPurgeRetryBacksOffWhilePinned() throws Exception {
+        assertMemoryLeak(() -> {
+            final AtomicInteger scans = new AtomicInteger();
+            ff = new TestFilesFacadeImpl() {
+                @Override
+                public long findFirst(LPSZ path) {
+                    // The table directory only: a purge also lists the partition it removes.
+                    if (Utf8s.containsAscii(path, "tbl~") && !Utf8s.containsAscii(path, "1970-01-10")) {
+                        scans.incrementAndGet();
+                    }
+                    return super.findFirst(path);
+                }
+            };
+            setCurrentMicros(0);
+            execute("CREATE TABLE tbl AS (SELECT x, CAST('1970-01-10T10' AS " + timestampType.getTypeName() + ") ts FROM long_sequence(1)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO tbl SELECT 4, '1970-01-10T09'");
+            final TableToken tableToken = engine.verifyTableName("tbl");
+
+            try (O3PartitionPurgeJob purge = new O3PartitionPurgeJob(engine); Path path = new Path()) {
+                purge.drain(0);
+                final int scansBeforeRetries;
+                path.of(configuration.getDbRoot()).concat(tableToken).concat("1970-01-10.1").$();
+                Assert.assertTrue("fixture: the version the reader pins", Files.exists(path.$()));
+
+                try (TableReader rdr = getReader("tbl")) {
+                    // The rewrite leaves the reader's version to the purge job.
+                    execute("INSERT INTO tbl SELECT 5, '1970-01-10T08'");
+                    purge.drain(0);
+                    Assert.assertTrue(rdr.size() > 0);
+                    scansBeforeRetries = scans.get();
+
+                    // An hour pinned, in 5 s clock ticks: 5 s, then doubling to the 5 min cap.
+                    for (int i = 0; i < 720; i++) {
+                        currentMicros += 5_000_000L;
+                        purge.run();
+                    }
+                    Assert.assertEquals("scans in the pinned hour", 16, scans.get() - scansBeforeRetries);
+                    Assert.assertTrue("the pin keeps the version", Files.exists(path.$()));
+                }
+
+                // Drop the reader's notification, as a full queue would: the retry alone must free the version.
+                final MCSequence subSeq = engine.getMessageBus().getO3PurgeDiscoverySubSeq();
+                long cursor;
+                while ((cursor = subSeq.next()) > -1) {
+                    subSeq.done(cursor);
+                }
+
+                // The next retry after the release frees the version and ends the retries.
+                currentMicros += 300_000_000L;
+                Assert.assertTrue(purge.run());
+                Assert.assertEquals(17, scans.get() - scansBeforeRetries);
+                Assert.assertFalse("the release frees the version", Files.exists(path.$()));
+
+                currentMicros += 300_000_000L;
+                Assert.assertFalse(purge.run());
+                Assert.assertEquals(17, scans.get() - scansBeforeRetries);
+            }
+            assertQuery("SELECT x FROM tbl ORDER BY x").noLeakCheck().expectSize().returns("x\n1\n4\n5\n");
         });
     }
 

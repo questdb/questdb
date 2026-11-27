@@ -84,7 +84,10 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     private final String sqlText;
     private long batchO3MaxLag;
     private long batchSize;
+    private int dedupMode = TableUtils.DEDUP_MODE_UPSERT;
     private int defaultSymbolCapacity = -1;
+    private long expiryCleanupIntervalMicros;
+    private String expiryPredicate;
     private boolean ignoreIfExists;
     private boolean isBatchExplicit;
     private String likeTableName;
@@ -179,7 +182,10 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             int maxUncommittedRows,
             int ttlHoursOrMonths,
             int ttlPosition,
+            String expiryPredicate,
+            long expiryCleanupIntervalMicros,
             int tableFormat,
+            int dedupMode,
             boolean walEnabled,
             int writeMode,
             boolean autoIncludeTimestamp
@@ -195,6 +201,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.partitionByPosition = partitionByPosition;
         this.tableFormat = tableFormat;
         this.writeMode = writeMode;
+        this.dedupMode = dedupMode;
         for (int i = 0, n = columnNames.size(); i < n; i++) {
             CharSequence colName = columnNames.get(i);
             this.columnNames.add(Chars.toString(colName));
@@ -225,6 +232,8 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.maxUncommittedRows = maxUncommittedRows;
         this.ttlHoursOrMonths = ttlHoursOrMonths;
         this.ttlPosition = ttlPosition;
+        this.expiryPredicate = expiryPredicate;
+        this.expiryCleanupIntervalMicros = expiryCleanupIntervalMicros;
         this.walEnabled = walEnabled;
 
         this.selectText = null;
@@ -251,6 +260,10 @@ public class CreateTableOperationImpl implements CreateTableOperation {
      * @param timestampColumnName         designated timestamp column name
      * @param timestampColumnNamePosition designated timestamp column name in user's input
      * @param volumeAlias                 the name of the "volume" where table is created, volumes are used to create table on different physical disks
+     * @param ttlHoursOrMonths            time-to-live of the table data, positive in hours, negative in months, zero for none
+     * @param ttlPosition                 the position of the TTL clause in user's input, it is used for error reporting
+     * @param tableFormat                 default storage format of new partitions, see TableUtils.TABLE_FORMAT_* constants
+     * @param dedupMode                   dedup mode, see TableUtils.DEDUP_MODE_* constants, it applies only when DEDUP keys are given
      * @param walEnabled                  WAL flag
      * @param writeMode                   sequenced table write mode, see TableWriteMode
      * @param defaultSymbolCapacity       the default symbol capacity value, usually comes from the configuration
@@ -278,7 +291,10 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             int volumePosition,
             int ttlHoursOrMonths,
             int ttlPosition,
+            String expiryPredicate,
+            long expiryCleanupIntervalMicros,
             int tableFormat,
+            int dedupMode,
             boolean walEnabled,
             int writeMode,
             int defaultSymbolCapacity,
@@ -306,8 +322,11 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.timestampColumnNamePosition = timestampColumnNamePosition;
         this.ttlHoursOrMonths = ttlHoursOrMonths;
         this.ttlPosition = ttlPosition;
+        this.expiryPredicate = expiryPredicate;
+        this.expiryCleanupIntervalMicros = expiryCleanupIntervalMicros;
         this.tableFormat = tableFormat;
         this.writeMode = writeMode;
+        this.dedupMode = dedupMode;
         this.defaultSymbolCapacity = defaultSymbolCapacity;
         this.isBatchExplicit = isBatchExplicit;
         this.batchSize = batchSize;
@@ -380,6 +399,21 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             return coveringColumnIndicesList.getQuick(index);
         }
         return null;
+    }
+
+    @Override
+    public int getDedupMode() {
+        return dedupMode;
+    }
+
+    @Override
+    public long getExpiryCleanupIntervalMicros() {
+        return expiryCleanupIntervalMicros;
+    }
+
+    @Override
+    public String getExpiryPredicate() {
+        return expiryPredicate;
     }
 
     @Override
@@ -519,9 +553,14 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     }
 
     public void initColumnMetadata(@Transient LowerCaseCharSequenceObjHashMap<CreateTableColumnModel> createColumnModelMap) {
-        assert columnNames.size() == 0;
-        assert columnBits.size() == 0;
-
+        // Only a create-as-select op scrapes its columns from the query. A CREATE MATERIALIZED VIEW retry
+        // calls this again after validateAndUpdateMetadataFromSelect() has filled the column lists for
+        // the discarded pass.
+        assert selectText != null;
+        columnNames.clear();
+        columnBits.clear();
+        coveringColumnIndicesList.clear();
+        parquetEncodingConfigs.clear();
         colNameToDedupClausePos.clear();
         colNameToIndexClausePos.clear();
         colNameToCastClausePos.clear();
@@ -634,7 +673,12 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.walEnabled = likeTableMetadata.isWalEnabled();
         this.writeMode = likeTableMetadata.getWriteMode();
         this.ttlHoursOrMonths = likeTableMetadata.getTtlHoursOrMonths();
+        // Deliberately DO NOT inherit an EXPIRE ROWS policy: EXPIRE is materialized-view-only and CREATE
+        // TABLE (LIKE ...) always creates a plain table. Copying it would put a policy on a plain table that
+        // the read filter and cleanup job would then apply -- silently hiding and physically deleting rows on
+        // a table type the feature forbids. Leave expiryPredicate/expiryCleanupIntervalMicros at their default.
         this.tableFormat = likeTableMetadata.getTableFormat();
+        this.dedupMode = likeTableMetadata.getDedupMode();
         columnNames.clear();
         columnBits.clear();
         coveringColumnIndicesList.clear();
@@ -786,7 +830,12 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                 indexType = IndexType.NONE;
                 isDedupKey = false;
                 indexBlockCapacity = 0;
-                parquetEncodingConfig = 0;
+                // A Parquet export encodes its temp table, so the table keeps the PARQUET(...) config the select
+                // carries for each column, which the streaming export paths apply too. A user's CREATE TABLE AS
+                // SELECT starts every column from the defaults.
+                parquetEncodingConfig = tableKind == TableUtils.TABLE_KIND_TEMP_PARQUET_EXPORT
+                        ? metadata.getColumnMetadata(i).getParquetEncodingConfig()
+                        : 0;
             }
 
             if (!ColumnType.isSymbol(columnType) && IndexType.isIndexed(indexType)) {

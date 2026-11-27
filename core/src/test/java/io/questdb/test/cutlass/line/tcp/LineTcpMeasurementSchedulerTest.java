@@ -117,8 +117,8 @@ public class LineTcpMeasurementSchedulerTest extends AbstractCairoTest {
                     null,
                     writePool
             );
-            Assert.assertEquals(expectedJobCount, networkPool.getAssignedJobCount());
-            Assert.assertEquals(expectedJobCount, writePool.getAssignedJobCount());
+            Assert.assertEquals(expectedJobCount, networkPool.getAssignmentCount());
+            Assert.assertEquals(expectedJobCount, writePool.getAssignmentCount());
         } catch (Throwable th) {
             failure = th;
         } finally {
@@ -142,7 +142,7 @@ public class LineTcpMeasurementSchedulerTest extends AbstractCairoTest {
             assignedJobCount++;
         }
 
-        private int getAssignedJobCount() {
+        private int getAssignmentCount() {
             return assignedJobCount;
         }
     }

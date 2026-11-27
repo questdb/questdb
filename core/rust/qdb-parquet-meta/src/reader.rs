@@ -68,7 +68,7 @@ fn compute_bloom_section_size(header: &FileHeader, footer_data: &[u8]) -> Parque
 }
 
 fn validate_footer_feature_flags(feature_flags: FooterFeatureFlags) -> ParquetMetaResult<()> {
-    let unknown_required = feature_flags.unknown_required(0);
+    let unknown_required = feature_flags.unknown_required(FooterFeatureFlags::KNOWN_REQUIRED);
     if unknown_required != 0 {
         return Err(parquet_meta_err!(
             ParquetMetaErrorKind::InvalidValue,
@@ -714,7 +714,7 @@ mod tests {
         // Patch footer feature flags to set an unknown required bit (bit 32).
         let footer_offset = footer_offset_of(&bytes, parquet_meta_file_size);
         let flags_off = footer_offset as usize + FOOTER_FEATURE_FLAGS_OFF;
-        let required_bit: u64 = 1 << 32;
+        let required_bit: u64 = 1 << 33;
         bytes[flags_off..flags_off + 8].copy_from_slice(&required_bit.to_le_bytes());
 
         let err = match ParquetMetaReader::from_file_size(&bytes, parquet_meta_file_size) {
@@ -801,7 +801,7 @@ mod tests {
 
         let latest_footer_offset = footer_offset_of(&updated, updated_meta_size);
         let latest_flags_off = latest_footer_offset as usize + FOOTER_FEATURE_FLAGS_OFF;
-        let required_bit: u64 = 1 << 32;
+        let required_bit: u64 = 1 << 33;
         updated[latest_flags_off..latest_flags_off + 8]
             .copy_from_slice(&required_bit.to_le_bytes());
 
@@ -828,7 +828,7 @@ mod tests {
         assert_eq!(err.kind, ParquetMetaErrorKind::InvalidValue);
         assert_eq!(
             err.msg,
-            "unsupported required footer feature flags [flags=0x100000000]"
+            "unsupported required footer feature flags [flags=0x200000000]"
         );
     }
 
@@ -845,7 +845,7 @@ mod tests {
         let (mut bytes, parquet_meta_file_size) = w.finish().unwrap();
         let footer_offset = footer_offset_of(&bytes, parquet_meta_file_size);
         let flags_off = footer_offset as usize + FOOTER_FEATURE_FLAGS_OFF;
-        let required_bit: u64 = 1 << 32;
+        let required_bit: u64 = 1 << 33;
         bytes[flags_off..flags_off + 8].copy_from_slice(&required_bit.to_le_bytes());
 
         let err = match ParquetMetaReader::find_footer_for_parquet_size(
@@ -859,7 +859,7 @@ mod tests {
         assert_eq!(err.kind, ParquetMetaErrorKind::InvalidValue);
         assert_eq!(
             err.msg,
-            "unsupported required footer feature flags [flags=0x100000000]"
+            "unsupported required footer feature flags [flags=0x200000000]"
         );
     }
 
