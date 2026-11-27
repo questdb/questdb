@@ -216,6 +216,12 @@ public class TimestampDiffFunctionFactoryTest extends AbstractFunctionFactoryTes
     }
 
     @Test
+    public void testInvalidConstantUnitReturnsLongNull() throws Exception {
+        assertSqlWithTypes("datediff\nnull:LONG\n", "select datediff('q', 0::timestamp, 1::timestamp)");
+        assertSqlWithTypes("datediff\nnull:LONG\n", "select datediff('q', 0::timestamp_ns, 1::timestamp_ns)");
+    }
+
+    @Test
     public void testHourConstantEndNaN() throws Exception {
         assertQuery("select datediff('h', to_timestamp(concat('202',x),'yyyy'), cast(NaN as long)) from long_sequence(2);")
                 .expectSize()
