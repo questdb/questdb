@@ -225,14 +225,6 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
         });
     }
 
-    @Ignore("Tracked by #7159. Cross-column FILL(PREV(symbol_col)) is rejected at codegen by the "
-            + "SYMBOL guard in SqlCodeGenerator.generateFill. The query previously slipped past "
-            + "that guard because SqlOptimiser.detectDuplicateAggregates collapsed first(s) AS sv, "
-            + "first(s) AS a into a single inner aggregate, so the FILL list never reached the "
-            + "cross-column path. The fill-list propagation in SqlOptimiser.rewriteSelectClause0 "
-            + "disables duplicate-aggregate detection on the calendar-align FILL path, exposing "
-            + "the rejection. Restore once dedup is reactivated for FILL or once cross-column "
-            + "PREV is supported on SYMBOL columns.")
     @Test
     public void testCrossColumnPrevToAggregateSymbol() throws Exception {
         // SYMBOL cross-col PREV exercises FillRecord.getSym's mode>=0 arm
@@ -253,6 +245,29 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
                             2024-01-01T01:00:00.000000Z\talpha\talpha
                             2024-01-01T02:00:00.000000Z\tbeta\tbeta
                             """);
+        });
+    }
+
+    @Test
+    public void testCrossColumnPrevToDifferentAggregateSymbolFails() throws Exception {
+        // Proves that lifting the SYMBOL guard only applies to identical aggregates.
+        // first(s) and last(s) have different ASTs, so cross-column PREV should still be rejected.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (s SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "('alpha', '2024-01-01T00:00:00.000000Z')," +
+                    "('beta', '2024-01-01T02:00:00.000000Z')");
+
+            try {
+                execute("SELECT ts, first(s) AS sym, last(s) AS other FROM x " +
+                        "SAMPLE BY 1h FILL(PREV, PREV(sym)) ALIGN TO CALENDAR");
+                Assert.fail("Query should have failed but didn't!");
+            } catch (Exception e) {
+                Assert.assertTrue(
+                        "Unexpected error message: " + e.getMessage(),
+                        e.getMessage().contains("FILL(PREV(sym)) is not supported on SYMBOL columns; use bare FILL(PREV) instead")
+                );
+            }
         });
     }
 
