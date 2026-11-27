@@ -311,14 +311,13 @@ public class CsvFileIndexer implements Closeable, Mutable {
         //  allowing for importing 256TB big files with rows up to 65kB long
         long lengthAndOffset = (length << 48 | lineStartOffset);
         long partitionKey = partitionFloorMethod.floor(timestampValue);
-        long mapKey = timestampDriver.toHours(partitionKey); //remove trailing zeros to avoid excessive collisions in hashmap
 
         final IndexOutputFile target;
-        int keyIndex = outputFileLookupMap.keyIndex(mapKey);
+        int keyIndex = outputFileLookupMap.keyIndex(partitionKey);
         if (keyIndex > -1) {
             target = prepareTargetFile(partitionKey);
             outputFileDenseList.add(target);
-            outputFileLookupMap.putAt(keyIndex, mapKey, target);
+            outputFileLookupMap.putAt(keyIndex, partitionKey, target);
         } else {
             target = outputFileLookupMap.valueAt(keyIndex);
         }
