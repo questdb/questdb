@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.str.CharSink;
@@ -123,6 +124,46 @@ public final class RowExpiryUtil {
     private static final String WINDOW_PREFIX = "" + POLICY_SENTINEL + MODE_WINDOW;
 
     private RowExpiryUtil() {
+    }
+
+    /**
+     * Returns what CREATE MATERIALIZED VIEW with a column list probes its {@code EXPIRE ROWS} policy over, before the
+     * view exists: {@code (SELECT ... FROM ((<selectText>) TIMESTAMP("<queryTimestampName>")))} with the listed
+     * columns in the list's order, the designated timestamp as the query names it and every other column as a NULL of
+     * its listed type. The view's columns are the listed ones, not the query's. A computed select keeps the designated
+     * timestamp only under the query's spelling of its name, which may differ from the list's in letter case. The
+     * parentheses around the {@code TIMESTAMP} clause keep the designation for a query that has none of its own, such
+     * as a GROUP BY timestamp_floor() without ORDER BY: a select of computed columns straight over
+     * {@code (<selectText>) TIMESTAMP(...)} loses it.
+     */
+    public static String buildColumnListProbeSource(
+            RecordMetadata columnList,
+            CharSequence queryTimestampName,
+            CharSequence selectText
+    ) {
+        final int timestampIndex = columnList.getTimestampIndex();
+        assert timestampIndex > -1;
+        final StringSink sink = new StringSink();
+        sink.putAscii("(SELECT ");
+        for (int i = 0, n = columnList.getColumnCount(); i < n; i++) {
+            if (i > 0) {
+                sink.putAscii(", ");
+            }
+            if (i == timestampIndex) {
+                sink.put(quoteIdentifier(queryTimestampName));
+                continue;
+            }
+            final int columnType = columnList.getColumnType(i);
+            if (ColumnType.tagOf(columnType) == ColumnType.LONG128) {
+                // SQL has no cast to LONG128
+                sink.putAscii("to_long128(NULL, NULL)");
+            } else {
+                sink.putAscii("CAST(NULL AS ").put(ColumnType.nameOf(columnType)).putAscii(')');
+            }
+            sink.putAscii(" AS ").put(quoteIdentifier(columnList.getColumnName(i)));
+        }
+        sink.putAscii(" FROM ((").put(selectText).putAscii(") TIMESTAMP(").put(quoteIdentifier(queryTimestampName)).putAscii(")))");
+        return sink.toString();
     }
 
     /**

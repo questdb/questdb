@@ -89,13 +89,14 @@ public class MatViewRefreshRetryTest extends AbstractCairoTest {
                             price_1h\tvalid
                             """);
 
+            // 56 batch commits, after the view state event that persists the base table id at the first refresh
             assertQuery("select count() from wal_transactions('price_1h')")
                     .noLeakCheck()
                     .expectSize()
                     .noRandomAccess()
                     .returns("""
                             count
-                            56
+                            57
                             """);
         });
     }

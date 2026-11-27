@@ -67,6 +67,17 @@ public class TableData {
         writePermits.set(0);
     }
 
+    // Takes out a line that the table refused after addLine(), as when the server refuses the request it came in.
+    public synchronized void removeLine(LineData line) {
+        final int lineIndex = rows.indexOf(line);
+        assert lineIndex > -1 : "the line was not added";
+        rows.remove(lineIndex);
+        index.clear();
+        for (int i = 0, n = rows.size(); i < n; i++) {
+            index.add(i, rows.getQuick(i).getTimestamp());
+        }
+    }
+
     public synchronized CharSequence generateRows(TableReaderMetadata metadata) {
         return generateRows(metadata, false);
     }

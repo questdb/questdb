@@ -408,7 +408,46 @@ public class WalUtils {
     }
 
     /**
+     * Retrieves the last refresh state for a materialized view, taking its base table id from the {@code _mv.s}
+     * state file alone. See {@link #readMatViewState(Path, TableToken, CairoConfiguration, MemoryCMR, WalEventReader,
+     * BlockFileReader, MatViewStateReader, long)}.
+     */
+    public static boolean readMatViewState(
+            Path tablePath,
+            TableToken tableToken,
+            CairoConfiguration configuration,
+            MemoryCMR txnLogMemory,
+            WalEventReader walEventReader,
+            BlockFileReader blockFileReader,
+            MatViewStateReader matViewStateReader
+    ) {
+        return readMatViewState(
+                tablePath,
+                tableToken,
+                configuration,
+                txnLogMemory,
+                walEventReader,
+                blockFileReader,
+                matViewStateReader,
+                Long.MAX_VALUE
+        );
+    }
+
+    /**
      * Retrieves the last refresh state for a materialized view.
+     * <p>
+     * The state comes from the newest {@code MAT_VIEW_DATA} or {@code MAT_VIEW_INVALIDATE} event above
+     * {@code appliedSeqTxn}, the view's applied seqTxn, past the unapplied transactions that carry no view state and
+     * the structural transactions, which carry no WAL event. When there is none, it comes from the newest applied
+     * transaction with a WAL event: its view state event, or the {@code _mv.s} state file, which holds the state of the
+     * applied transactions, when the event carries no view state. The event comes first because the WAL apply job only
+     * logs a failed write of the state file after it commits a refresh. An event that cannot be opened gives the state
+     * file's state too, and so does a txn-log part that the WAL purge job deleted or that cannot be opened, and a scan
+     * that finds no transaction with a WAL event. The base table id comes from the newest
+     * {@code MAT_VIEW_INVALIDATE} event above {@code appliedSeqTxn}, and otherwise from the {@code _mv.s} state file,
+     * which the WAL apply job writes before it marks a view state event applied and keeps when it applies a data
+     * commit. A data commit cannot carry the id. Bounding the scan by the applied seqTxn keeps the load from opening
+     * the event of every refresh commit in the view's unpurged WAL.
      * <p>
      * Note: This function is intended to be used during the initialization phase only.
      * It has been extracted into `WalUtils` solely to facilitate its usage in tests.
@@ -420,6 +459,8 @@ public class WalUtils {
      * @param walEventReader     the reader to read WAL events
      * @param blockFileReader    the reader to read the state file
      * @param matViewStateReader the reader used to collect the state
+     * @param appliedSeqTxn      the seqTxn the view's table has applied up to; -1 scans every transaction and
+     *                           Long.MAX_VALUE none, taking the base table id from the state file alone
      * @return true if the last mat view state was successfully retrieved, false otherwise
      */
     public static boolean readMatViewState(
@@ -429,8 +470,10 @@ public class WalUtils {
             MemoryCMR txnLogMemory,
             WalEventReader walEventReader,
             BlockFileReader blockFileReader,
-            MatViewStateReader matViewStateReader
+            MatViewStateReader matViewStateReader,
+            long appliedSeqTxn
     ) {
+        final MatViewStateScan scan = new MatViewStateScan(appliedSeqTxn);
         try (MemoryCMR mem = txnLogMemory) {
             final int tablePathLen = tablePath.size();
             mem.smallFile(configuration.getFilesFacade(), tablePath.concat(SEQ_DIR).concat(TXNLOG_FILE_NAME).$(), MemoryTag.MMAP_TX_LOG);
@@ -447,9 +490,10 @@ public class WalUtils {
                 if (txnCount > 0 && mem.size() >= TableTransactionLogFile.HEADER_SIZE + txnCount * TableTransactionLogV1.RECORD_SIZE) {
                     for (long txn = txnCount - 1; txn >= 0; txn--) {
                         final long offset = TableTransactionLogFile.HEADER_SIZE + txn * TableTransactionLogV1.RECORD_SIZE;
-                        if (processTransaction(
+                        if (scan.process(
                                 mem,
                                 offset,
+                                txn + 1,
                                 tablePath,
                                 tablePathLen,
                                 walEventReader,
@@ -457,7 +501,7 @@ public class WalUtils {
                                 matViewStateReader,
                                 tableToken
                         )) {
-                            return true;
+                            break;
                         }
                     }
                 }
@@ -467,15 +511,28 @@ public class WalUtils {
                 if (txnCount > 0 && partSize > 0) {
                     final long partCount = (txnCount + partSize - 1) / partSize;
                     try (MemoryCMR partMem = Vm.getCMRInstance(configuration.getBypassWalFdCache())) {
+                        PARTS:
                         for (long part = partCount - 1; part >= 0; part--) {
                             tablePath.trimTo(tablePathLen).concat(SEQ_DIR).concat(TXNLOG_PARTS_DIR).slash().put(part);
-                            partMem.smallFile(configuration.getFilesFacade(), tablePath.$(), MemoryTag.MMAP_TX_LOG);
+                            // The WAL purge job deletes the parts below the one of the view's applied seqTxn, so the
+                            // transactions of a missing part and the ones below are applied, and the state file holds
+                            // their state and base table id. The scan reads it below, after the loop. A part that the
+                            // job deletes during a promote's reload cannot be opened, and gives the same.
+                            if (!configuration.getFilesFacade().exists(tablePath.$())) {
+                                break;
+                            }
+                            try {
+                                partMem.smallFile(configuration.getFilesFacade(), tablePath.$(), MemoryTag.MMAP_TX_LOG);
+                            } catch (CairoException e) {
+                                break;
+                            }
                             final long partTxnCount = Math.min(partSize, txnCount - part * partSize);
                             for (long txn = partTxnCount - 1; txn >= 0; txn--) {
                                 final long offset = txn * TableTransactionLogV2.RECORD_SIZE;
-                                if (processTransaction(
+                                if (scan.process(
                                         partMem,
                                         offset,
+                                        part * partSize + txn + 1,
                                         tablePath,
                                         tablePathLen,
                                         walEventReader,
@@ -483,7 +540,7 @@ public class WalUtils {
                                         matViewStateReader,
                                         tableToken
                                 )) {
-                                    return true;
+                                    break PARTS;
                                 }
                             }
                         }
@@ -492,8 +549,17 @@ public class WalUtils {
             } else {
                 throw new UnsupportedOperationException("Unsupported transaction log version: " + formatVersion);
             }
+            if (!scan.isStateLoaded) {
+                // No transaction with a WAL event gave the state: the scan reached a missing part or the first
+                // transaction, past transactions without view state and structural ones. The state file holds the state
+                // of the applied transactions, the ones the scan did not read, and the scanned ones carry none.
+                scan.isStateLoaded = readMatViewStateFile(tablePath, tablePathLen, blockFileReader, matViewStateReader, tableToken);
+            }
         }
-        return false;
+        if (scan.isStateLoaded && scan.isBaseTableIdFound) {
+            matViewStateReader.setBaseTableId(scan.baseTableId);
+        }
+        return scan.isStateLoaded;
     }
 
     /**
@@ -649,6 +715,37 @@ public class WalUtils {
                 || Chars.startsWith(name, WAL_NAME_BASE);
     }
 
+    // Returns the base table id of the MAT_VIEW_INVALIDATE event of the transaction log record at the offset, or
+    // Integer.MIN_VALUE when the record is of another type or its event cannot be opened.
+    private static int readInvalidationBaseTableId(
+            MemoryCMR mem,
+            long offset,
+            Path tablePath,
+            int tablePathLen,
+            WalEventReader walEventReader
+    ) {
+        final int walId = mem.getInt(offset + TableTransactionLogFile.TX_LOG_WAL_ID_OFFSET);
+        if (walId > 0) {
+            final int segmentId = mem.getInt(offset + TableTransactionLogFile.TX_LOG_SEGMENT_OFFSET);
+            final int segmentTxn = mem.getInt(offset + TableTransactionLogFile.TX_LOG_SEGMENT_TXN_OFFSET);
+            tablePath.trimTo(tablePathLen).concat(WAL_NAME_BASE).put(walId).slash().put(segmentId);
+            try {
+                final WalEventCursor walEventCursor = walEventReader.of(tablePath, segmentTxn);
+                if (walEventCursor.getType() == MAT_VIEW_INVALIDATE) {
+                    return walEventCursor.getMatViewInvalidationInfo().getBaseTableId();
+                }
+            } catch (Throwable th) {
+                // the WAL-e files may be gone; an older event gives the id, or the state file does
+                LOG.info().$("could not read materialized view WAL event, skipping it for the base table id [path=").$(tablePath)
+                        .$(", ex=").$(th)
+                        .I$();
+            } finally {
+                walEventReader.close();
+            }
+        }
+        return Integer.MIN_VALUE;
+    }
+
     private static boolean processTransaction(
             MemoryCMR mem,
             long offset,
@@ -657,7 +754,9 @@ public class WalUtils {
             WalEventReader walEventReader,
             BlockFileReader blockFileReader,
             MatViewStateReader matViewStateReader,
-            TableToken tableToken
+            TableToken tableToken,
+            MatViewStateScan scan,
+            boolean isUnapplied
     ) {
         final int walId = mem.getInt(offset + TableTransactionLogFile.TX_LOG_WAL_ID_OFFSET);
         final int segmentId = mem.getInt(offset + TableTransactionLogFile.TX_LOG_SEGMENT_OFFSET);
@@ -668,29 +767,77 @@ public class WalUtils {
             // Since we are scanning the transaction log of a materialized view table,
             // we assume the last transaction is the one we are looking for (for the most cases).
             // As a result, fd and memory usage is not optimized.
+            boolean refreshStateLoaded = false;
+            int eventBaseTableId = Integer.MIN_VALUE;
+            boolean isUnappliedWithoutState = false;
             try (WalEventReader eventReader = walEventReader) {
                 WalEventCursor walEventCursor = eventReader.of(tablePath, segmentTxn);
                 if (walEventCursor.getType() == MAT_VIEW_DATA) {
                     matViewStateReader.of(walEventCursor.getMatViewDataInfo());
-                    return true;
-                }
-                if (walEventCursor.getType() == MAT_VIEW_INVALIDATE) {
+                    refreshStateLoaded = true;
+                } else if (walEventCursor.getType() == MAT_VIEW_INVALIDATE) {
                     matViewStateReader.of(walEventCursor.getMatViewInvalidationInfo());
-                    return true;
+                    eventBaseTableId = matViewStateReader.getBaseTableId();
+                    refreshStateLoaded = true;
+                } else {
+                    // a plain user backfill (DATA) or another type that carries no mat-view state
+                    isUnappliedWithoutState = isUnapplied;
                 }
             } catch (Throwable th) {
-                // walEventReader may not be able to find/open the WAL-e files
+                // walEventReader may not be able to find/open the WAL-e files; fall back to file.
+            }
+            if (isUnappliedWithoutState) {
+                // The state file does not hold the view state events below this transaction until the view's WAL
+                // applies them, so the state comes from an older transaction.
+                return false;
+            }
+            if (refreshStateLoaded) {
+                // Consult the _mv.s state file. It is the authoritative source for the frozen-zone
+                // runtime fields (backfill frontier / boundary floor), which no WAL event carries.
                 try (BlockFileReader blockReader = blockFileReader) {
                     tablePath.trimTo(tablePathLen).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME);
                     blockReader.of(tablePath.$());
-                    matViewStateReader.of(blockReader, tableToken);
-                    return true;
+                    // Keep the refresh state from the WAL event; overlay only the frozen-zone fields and the
+                    // base table id.
+                    matViewStateReader.ofFrozenZoneOverlay(blockReader);
                 } catch (Throwable ignored) {
+                    // _mv.s may not exist yet (never refreshed/backfilled). Keep the refresh state of the WAL
+                    // event with default frozen-zone fields and no base table id.
+                    matViewStateReader.setBaseTableId(MatViewState.BASE_TABLE_ID_UNKNOWN);
                 }
-                return false;
+                // Only a view state event that loaded the state sets eventBaseTableId.
+                if (isUnapplied && eventBaseTableId != Integer.MIN_VALUE) {
+                    // A view state event that the view's WAL has not applied yet is newer than the state file.
+                    scan.onBaseTableIdFound(eventBaseTableId);
+                }
+                return true;
             }
+            // No usable WAL event: an applied transaction without view state, or an event that cannot be opened.
+            return readMatViewStateFile(tablePath, tablePathLen, blockFileReader, matViewStateReader, tableToken);
         }
+        // A structural transaction carries no WAL event and no view state.
         return false;
+    }
+
+    // Loads the complete state, frozen-zone fields included, from the _mv.s state file, and returns whether it could
+    // read the file.
+    private static boolean readMatViewStateFile(
+            Path tablePath,
+            int tablePathLen,
+            BlockFileReader blockFileReader,
+            MatViewStateReader matViewStateReader,
+            TableToken tableToken
+    ) {
+        try (BlockFileReader blockReader = blockFileReader) {
+            tablePath.trimTo(tablePathLen).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME);
+            blockReader.of(tablePath.$());
+            matViewStateReader.of(blockReader, tableToken);
+            return true;
+        } catch (Throwable ignored) {
+            // _mv.s may not exist yet (never refreshed/backfilled)
+            matViewStateReader.setBaseTableId(MatViewState.BASE_TABLE_ID_UNKNOWN);
+            return false;
+        }
     }
 
     /**
@@ -792,6 +939,63 @@ public class WalUtils {
             // not a missing WAL-e file, and swallowing it into a safe-abort return
             // would hide it from the caller.
             return -1;
+        }
+    }
+
+    // Collects the state and the base table id of a materialized view while readMatViewState() scans the view's
+    // transaction log from the newest record down.
+    private static final class MatViewStateScan {
+        private final long appliedSeqTxn;
+        private int baseTableId = MatViewState.BASE_TABLE_ID_UNKNOWN;
+        private boolean isBaseTableIdFound;
+        private boolean isStateLoaded;
+
+        private MatViewStateScan(long appliedSeqTxn) {
+            this.appliedSeqTxn = appliedSeqTxn;
+        }
+
+        private void onBaseTableIdFound(int baseTableId) {
+            this.baseTableId = baseTableId;
+            isBaseTableIdFound = true;
+        }
+
+        // Processes the transaction log record of the seqTxn at the offset, and returns true once the scan is done:
+        // the state is loaded, and either an unapplied view state event gave the base table id, or the scan reached
+        // the applied transactions, whose id the state file holds.
+        private boolean process(
+                MemoryCMR mem,
+                long offset,
+                long seqTxn,
+                Path tablePath,
+                int tablePathLen,
+                WalEventReader walEventReader,
+                BlockFileReader blockFileReader,
+                MatViewStateReader matViewStateReader,
+                TableToken tableToken
+        ) {
+            final boolean isUnapplied = seqTxn > appliedSeqTxn;
+            if (!isStateLoaded) {
+                isStateLoaded = processTransaction(
+                        mem,
+                        offset,
+                        tablePath,
+                        tablePathLen,
+                        walEventReader,
+                        blockFileReader,
+                        matViewStateReader,
+                        tableToken,
+                        this,
+                        isUnapplied
+                );
+            } else {
+                // once the state is loaded, the scan goes on only while the records are unapplied
+                assert isUnapplied;
+                final int eventBaseTableId = readInvalidationBaseTableId(mem, offset, tablePath, tablePathLen, walEventReader);
+                if (eventBaseTableId != Integer.MIN_VALUE) {
+                    onBaseTableIdFound(eventBaseTableId);
+                }
+            }
+            return isStateLoaded && (isBaseTableIdFound || seqTxn - 1 <= appliedSeqTxn);
         }
     }
 }

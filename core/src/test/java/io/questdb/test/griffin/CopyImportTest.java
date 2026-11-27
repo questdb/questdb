@@ -30,6 +30,7 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.text.Atomicity;
+import io.questdb.cutlass.text.CopyImportContext;
 import io.questdb.cutlass.text.CopyImportRequestJob;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -105,6 +106,33 @@ public class CopyImportTest extends AbstractCairoTest {
     public void testCopyFullHack2() throws Exception {
         assertQuery("copy x from '\\..\\..\\'")
                 .fails(13, "'.' is not allowed");
+    }
+
+    @Test
+    public void testCopyIntoTableReplacedByMatViewRejected() throws Exception {
+        // REFRESH LIMIT 1 HOUR lets INSERT backfill the view's frozen zone, but the import is refused all the same.
+        // Wall clock 12:30, base max 12:00: the boundary is 11:00, so the view's first build holds the 12:00 bucket
+        // only, and a row at 08:00 sits in the frozen zone.
+        assertCopyIntoTableReplacedByMatViewRejected(
+                true,
+                """
+                        sym\tprice\tts
+                        a\t9.0\t2024-09-10T12:00:00.000000Z
+                        """
+        );
+    }
+
+    @Test
+    public void testCopyIntoTableReplacedByMatViewWithoutRefreshLimitRejected() throws Exception {
+        // without REFRESH LIMIT, the view's first build holds every bucket of the base
+        assertCopyIntoTableReplacedByMatViewRejected(
+                false,
+                """
+                        sym\tprice\tts
+                        a\t8.0\t2024-09-10T10:00:00.000000Z
+                        a\t9.0\t2024-09-10T12:00:00.000000Z
+                        """
+        );
     }
 
     @Test
@@ -1487,6 +1515,102 @@ public class CopyImportTest extends AbstractCairoTest {
         });
     }
 
+    // A COPY compiled while its target is a table, such as one pg-wire keeps prepared, publishes its import task each
+    // time it executes, and a materialized view may have replaced the table since. The job sends a view, which is
+    // always partitioned, to the parallel importer, which refuses it before it takes the view's TableWriter: the
+    // import fails in its first phase, nothing reaches the view or its WAL, and the view still refreshes.
+    private void assertCopyIntoTableReplacedByMatViewRejected(boolean hasRefreshLimit, String viewRowsAfterFirstBuild) throws Exception {
+        final String csvRoot = inputRoot;
+        try {
+            final File dir = temp.newFolder("copy-replaced-by-view" + System.nanoTime());
+            TestUtils.writeStringToFile(
+                    new File(dir, "price.csv"),
+                    """
+                            sym,price,ts
+                            a,55.0,2024-09-10T08:00:00.000000Z
+                            a,77.0,2024-09-10T12:00:00.000000Z
+                            """
+            );
+            inputRoot = dir.getAbsolutePath();
+            // the ALTER that sets REFRESH LIMIT is the view's only WAL txn
+            final String viewWalTxns = hasRefreshLimit ? "writerTxn\tsequencerTxn\n1\t1\n" : "writerTxn\tsequencerTxn\n0\t0\n";
+            final String[] importId = new String[1];
+
+            CopyRunnable stmt = () -> {
+                currentMicros = parseFloorPartialTimestamp("2024-09-10T12:30:00.000000Z");
+                execute("CREATE TABLE base_price (sym SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("INSERT INTO base_price VALUES ('a', 8.0, '2024-09-10T10:10'), ('a', 9.0, '2024-09-10T12:00')");
+                execute("CREATE TABLE price_1h (sym SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+                drainWalQueue();
+                try (RecordCursorFactory copy = select("COPY price_1h FROM 'price.csv' WITH HEADER true TIMESTAMP 'ts' FORMAT 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ'")) {
+                    execute("DROP TABLE price_1h");
+                    execute("CREATE MATERIALIZED VIEW price_1h REFRESH MANUAL DEFERRED AS (SELECT sym, last(price) AS price, ts FROM base_price SAMPLE BY 1h) PARTITION BY DAY");
+                    if (hasRefreshLimit) {
+                        execute("ALTER MATERIALIZED VIEW price_1h SET REFRESH LIMIT 1 HOUR");
+                    }
+                    drainWalAndMatViewQueues();
+                    assertViewWalTxns(viewWalTxns);
+                    try (RecordCursor cursor = copy.getCursor(sqlExecutionContext)) {
+                        Assert.assertTrue(cursor.hasNext());
+                        importId[0] = cursor.getRecord().getStrA(0).toString();
+                    }
+                }
+            };
+
+            CopyRunnable test = () -> {
+                assertQuery("SELECT phase, status, rows_handled, rows_imported, errors, message FROM " + configuration.getSystemTableNamePrefix() + "text_import_log")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                phase\tstatus\trows_handled\trows_imported\terrors\tmessage
+                                \tstarted\tnull\tnull\t0\t
+                                analyze_file_structure\tstarted\tnull\tnull\t0\t
+                                \tfailed\t0\t0\t0\tcannot modify materialized view [view=price_1h]
+                                """);
+                Assert.assertEquals(CopyImportContext.INACTIVE_COPY_ID, engine.getCopyImportContext().getActiveImportID());
+                // copy ... cancel returns a cursor that does not implement the full
+                // Record API (getStrLen), so it cannot go through the query builder.
+                assertQuery("COPY '" + importId[0] + "' CANCEL")
+                        .noLeakCheck()
+                        .returnsOnce("id\tstatus\n" + importId[0] + "\tfailed\n");
+
+                drainWalAndMatViewQueues();
+                assertQuery("SELECT count() FROM price_1h")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("count\n0\n");
+                assertViewWalTxns(viewWalTxns);
+
+                execute("REFRESH MATERIALIZED VIEW price_1h INCREMENTAL");
+                drainWalAndMatViewQueues();
+                assertQuery("price_1h")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns(viewRowsAfterFirstBuild);
+                if (hasRefreshLimit) {
+                    // the view still takes INSERT backfill into its frozen zone
+                    execute("INSERT INTO price_1h VALUES ('a', 55.0, '2024-09-10T08:00')");
+                    drainWalAndMatViewQueues();
+                    assertQuery("price_1h")
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .expectSize()
+                            .returns("""
+                                    sym\tprice\tts
+                                    a\t55.0\t2024-09-10T08:00:00.000000Z
+                                    a\t9.0\t2024-09-10T12:00:00.000000Z
+                                    """);
+                }
+            };
+
+            testCopy(stmt, test);
+        } finally {
+            inputRoot = csvRoot;
+        }
+    }
+
     private void assertQuotesTableContent() throws Exception {
         assertQuotesTableContent0(false);
     }
@@ -1527,6 +1651,13 @@ public class CopyImportTest extends AbstractCairoTest {
 
     private void assertQuotesTableContentExisting() throws Exception {
         assertQuotesTableContent0(true);
+    }
+
+    private void assertViewWalTxns(String expected) throws Exception {
+        assertQuery("SELECT writerTxn, sequencerTxn FROM wal_tables() WHERE name = 'price_1h'")
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns(expected);
     }
 
     private void testCopyWithAtomicity(boolean parallel, String atomicity, int expectedCount) throws Exception {

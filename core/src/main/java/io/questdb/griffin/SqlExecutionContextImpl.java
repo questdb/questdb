@@ -103,12 +103,15 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private CharSequence expiryMaterializingViewName;
     private TableToken expiryRawReadTable;
     private ExpiryReadPolicy expiryReadPolicy = ExpiryReadPolicy.FILTER;
+    // See hasViewSqlGeneratedColumnNames(): true, positional copy, until the parser reports.
+    private boolean hasViewSqlGeneratedColumnNames = true;
     private int intervalFunctionType;
     private long intervalPlanGeneration;
     private long intervalPlanGenerationCounter;
     private boolean isMetadataProbe;
     private boolean isViewCompile;
     private boolean isViewMetadataSubquery;
+    private boolean isViewSqlCompile;
     private int jitMode;
     private boolean liveViewCompile;
     private MemoryTracker memoryTracker;
@@ -465,6 +468,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public boolean hasViewSqlGeneratedColumnNames() {
+        return hasViewSqlGeneratedColumnNames;
+    }
+
+    @Override
     public void initNow() {
         this.nowNanos = nanoClock.getTicks();
         this.nowMicros = microClock.getTicks();
@@ -579,6 +587,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public boolean isViewMetadataSubquery() {
         return isViewMetadataSubquery;
+    }
+
+    @Override
+    public boolean isViewSqlCompile() {
+        return isViewSqlCompile;
     }
 
     @Override
@@ -876,6 +889,16 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public void setViewSqlCompile(boolean isViewSqlCompile) {
+        this.isViewSqlCompile = isViewSqlCompile;
+    }
+
+    @Override
+    public void setViewSqlGeneratedColumnNames(boolean hasViewSqlGeneratedColumnNames) {
+        this.hasViewSqlGeneratedColumnNames = hasViewSqlGeneratedColumnNames;
+    }
+
+    @Override
     public boolean shouldLogSql() {
         // Validation only compiles the SQL to check it; suppress query progress logging
         // so the validation endpoint does not pollute the log with every validated statement.
@@ -987,6 +1010,8 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.intervalPlanGeneration = 0;
         this.validationOnly = false;
         this.validationSecurityContext = null;
+        this.isViewSqlCompile = false;
+        this.hasViewSqlGeneratedColumnNames = true;
         // Defensive: production callers arm live-view compile mode inside a try/finally
         // that disarms it, so this is currently a backstop rather than a reachable leak,
         // but a reused per-connection context must never inherit a stale live-view flag.

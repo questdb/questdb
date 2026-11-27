@@ -131,6 +131,11 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
     private static final int FUZZ_TWO_BLOCKS = 4;
     // The index of fuzz table fc, which takes v as a VARCHAR of digits in every frame.
     private static final int FUZZ_VARCHAR_TABLE = 2;
+    // The index of an iteration's materialized view, see addViewFrames().
+    private static final int FUZZ_VIEW_TABLE = 3;
+    // Seeds of testCommitBatchFuzzViewRefusalsFire*: the frames, then the view frames.
+    private static final long FUZZ_VIEW_SEED0 = 31_676L;
+    private static final long FUZZ_VIEW_SEED1 = 418_916L;
     // The receive buffer of a connection that takes a frame of PAGED_ROWS rows.
     private static final int PAGED_RECV_BUFFER_SIZE;
     // Rows of a LONG column that fill its first page of pagedConfiguration() and start its second.
@@ -428,6 +433,38 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
     public void testCommitBatchAckContractFuzzSync() throws Exception {
         // SYNC fdatasyncs every commit: fewer iterations keep the leg within the CI budget.
         assertCommitBatchAckContractFuzz(CommitMode.SYNC, 0, 60);
+    }
+
+    /**
+     * The ack-contract fuzz with a REFRESH LIMIT materialized view as a fourth table: some plain frames write the
+     * view instead, in its frozen zone, which commits like any table, or in its managed zone, which the view refuses
+     * at every replay, as a frame of the view alone or as a view block after a block of another table, see
+     * addViewFrames(). A managed-zone view frame is a data error: I3 holds for it as for any frame that fails on its
+     * own data, with SCHEMA_MISMATCH.
+     */
+    @Test
+    public void testCommitBatchAckContractFuzzViewAdaptive() throws Exception {
+        assertCommitBatchAckContractFuzzWithView(CommitMode.ADAPTIVE, 50_000, 40);
+    }
+
+    @Test
+    public void testCommitBatchAckContractFuzzViewNosync() throws Exception {
+        assertCommitBatchAckContractFuzzWithView(CommitMode.NOSYNC, 50_000, 40);
+    }
+
+    /**
+     * Under ADAPTIVE, the view frames of fixed seeds put a managed-zone view row in a frame after a batch formed and
+     * after another table's block of the same frame appended, and each is NACKed with SCHEMA_MISMATCH: a change that
+     * leaves the fuzz without those refusals fails this test.
+     */
+    @Test
+    public void testCommitBatchFuzzViewRefusalsFireAdaptive() throws Exception {
+        assertCommitBatchFuzzViewRefusalsFire(CommitMode.ADAPTIVE);
+    }
+
+    @Test
+    public void testCommitBatchFuzzViewRefusalsFireNosync() throws Exception {
+        assertCommitBatchFuzzViewRefusalsFire(CommitMode.NOSYNC);
     }
 
     /**
@@ -3740,6 +3777,20 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         };
     }
 
+    // The offset of a server BINARY frame's payload: 2 when its length fits the header's 7 bits, 4 when it takes the
+    // 16 bits after them, as an error with a long message does, such as a materialized view's frozen-zone refusal;
+    // -1 for any other frame.
+    private static int binaryPayloadOffset(byte[] frame) {
+        if (frame.length < 11 || (frame[0] & 0x0F) != WebSocketOpcode.BINARY || (frame[1] & 0x80) != 0) {
+            return -1;
+        }
+        final int length = frame[1] & 0x7F;
+        if (length < 126) {
+            return 2;
+        }
+        return length == 126 && frame.length >= 13 ? 4 : -1;
+    }
+
     private static SecurityContext denyCommitTo(String tableName) {
         // On the QWP path authorizeInsert runs for rows to commit: when a table joins a commit
         // batch, and in each table's commit (TableUpdateDetails.authorizeCommit).
@@ -3786,12 +3837,13 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
             return null;
         }
         final byte[] frame = frames.getQuick(index);
-        return new String(frame, 13, readLeShort(frame, 11), StandardCharsets.UTF_8);
+        final int payload = binaryPayloadOffset(frame);
+        return new String(frame, payload + 11, readLeShort(frame, payload + 9), StandardCharsets.UTF_8);
     }
 
     private static long errorStatusForSeq(ObjList<byte[]> frames, long seq) {
         final int index = indexOfErrorResponse(frames, seq);
-        return index < 0 ? -1 : frames.getQuick(index)[2];
+        return index < 0 ? -1 : frames.getQuick(index)[binaryPayloadOffset(frames.getQuick(index))];
     }
 
     private static SecurityContext failCommitAfterJoin(String tableName) {
@@ -3868,7 +3920,8 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
     private static int indexOfErrorResponse(ObjList<byte[]> frames, long seq) {
         for (int i = 0, n = frames.size(); i < n; i++) {
             byte[] f = frames.getQuick(i);
-            if (isBinaryFrame(f) && f[2] != QwpConstants.STATUS_OK && readLeLong(f, 3) == seq) {
+            final int payload = binaryPayloadOffset(f);
+            if (payload > -1 && f[payload] != QwpConstants.STATUS_OK && readLeLong(f, payload + 1) == seq) {
                 return i;
             }
         }
@@ -5520,6 +5573,7 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
                     valueTables.add(tableIndex);
                 }
             }
+            it.frameWireIndexes.add(it.wireFrames.size());
             it.wireFrames.add(createMaskedFrame(WebSocketOpcode.BINARY, message));
             it.frameKinds.add(kind);
             it.frameBlocks.add(blocks);
@@ -5560,6 +5614,67 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         blocks.add(tableIndex);
         blocks.add(FUZZ_BLOCK_V_LONG);
         return tableBlock(it.tables[tableIndex], value, tsMicros);
+    }
+
+    // Teaches the iteration a REFRESH LIMIT materialized view, its fourth table fv: replaces some of its plain one-row
+    // frames with frames of the view. A frozen-zone row commits like any table's; a managed-zone row, which the view
+    // refuses at every replay, makes the frame fail on its own data with SCHEMA_MISMATCH, as the view's block alone or,
+    // at the cap of 1,000,000, as the frame's second block after the plain block appended (the shape of
+    // FUZZ_BAD_SECOND_BLOCK). Only frames before the iteration's first bad frame change, up to the first managed-zone
+    // one: the connection answers no frame after a frame that fails on its own data. The view's base holds rows at
+    // 09:10 and 12:00 on 2024-09-10, so the frozen zone ends at the 11:00 bucket; frozen rows keep the frame's 1970
+    // timestamp, managed rows move to 12:00. Draws from viewRnd alone, so the iteration's own frames stay those of its
+    // seed.
+    private static void addViewFrames(Rnd viewRnd, FuzzIteration it) {
+        it.tables = Arrays.copyOf(it.tables, FUZZ_VIEW_TABLE + 1);
+        it.tables[FUZZ_VIEW_TABLE] = "fv" + it.iteration;
+        final String view = it.tables[FUZZ_VIEW_TABLE];
+        final long managedLo = parseFloorPartialTimestamp("2024-09-10T12:00");
+        it.kinds.append("view:");
+        final int firstBadFrame = it.firstBadFrame();
+        for (int s = 0, n = firstBadFrame < 0 ? it.frameKinds.size() : firstBadFrame; s < n; s++) {
+            if (it.frameKinds.getQuick(s) != FUZZ_PLAIN || it.frameValues.getQuick(s).size() != 1 || viewRnd.nextBoolean()) {
+                continue;
+            }
+            final long v = it.frameValues.getQuick(s).getQuick(0);
+            final int tableIndex = it.frameValueTables.getQuick(s).getQuick(0);
+            final long ts = 1_000_000L + s * 1_000L;
+            final IntList blocks = new IntList();
+            final byte[] message;
+            final int shape = viewRnd.nextInt(3);
+            if (shape == 0) {
+                message = qwpMessage(tableBlock(view, v, ts));
+                blocks.add(FUZZ_VIEW_TABLE);
+                blocks.add(FUZZ_BLOCK_V_LONG);
+                it.frameValueTables.getQuick(s).setQuick(0, FUZZ_VIEW_TABLE);
+                it.kinds.append(s).append('F').append(' ');
+            } else if (shape == 2 && it.cap == 1_000_000) {
+                message = qwpMessage(fuzzBlock(it, tableIndex, v, ts, blocks), tableBlock(view, v + 1, managedLo + s));
+                blocks.add(FUZZ_VIEW_TABLE);
+                blocks.add(FUZZ_BLOCK_V_LONG);
+                it.frameValues.getQuick(s).clear();
+                it.frameValueTables.getQuick(s).clear();
+                it.frameKinds.setQuick(s, FUZZ_BAD_SECOND_BLOCK);
+                it.frameErrorStatus.setQuick(s, QwpConstants.STATUS_SCHEMA_MISMATCH);
+                it.managedViewSecondBlockFrames.add(s);
+                it.kinds.append(s).append('B').append(' ');
+            } else {
+                message = qwpMessage(tableBlock(view, v, managedLo + s));
+                blocks.add(FUZZ_VIEW_TABLE);
+                blocks.add(FUZZ_BLOCK_V_LONG);
+                it.frameValues.getQuick(s).clear();
+                it.frameValueTables.getQuick(s).clear();
+                it.frameKinds.setQuick(s, FUZZ_SCHEMA_MISMATCH);
+                it.frameErrorStatus.setQuick(s, QwpConstants.STATUS_SCHEMA_MISMATCH);
+                it.managedViewFrames.add(s);
+                it.kinds.append(s).append('M').append(' ');
+            }
+            it.frameBlocks.setQuick(s, blocks);
+            it.wireFrames.setQuick(it.frameWireIndexes.getQuick(s), createMaskedFrame(WebSocketOpcode.BINARY, message));
+            if (shape > 0) {
+                break;
+            }
+        }
     }
 
     private void assertCommitBatchAckContractFuzz(int commitMode, long groupWindowUs, int iterationCount) throws Exception {
@@ -5638,6 +5753,60 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         });
     }
 
+    private void assertCommitBatchAckContractFuzzWithView(int commitMode, long groupWindowUs, int iterationCount) throws Exception {
+        assertMemoryLeak(() -> {
+            final Rnd rnd = TestUtils.generateRandom(LOG);
+            final Rnd viewRnd = TestUtils.generateRandom(LOG);
+            final ObjList<FuzzIteration> iterations = new ObjList<>();
+            // A local run raises the budget, see CLAUDE.md's fuzzing rule.
+            final int budget = Integer.getInteger("questdb.fuzz.qwp.batch.iterations", iterationCount);
+            for (int iteration = 0; iteration < budget; iteration++) {
+                final FuzzIteration it = generateCommitBatchFuzzIteration(rnd, iteration);
+                addViewFrames(viewRnd, it);
+                iterations.add(it);
+            }
+            runCommitBatchFuzz(iterations, commitMode, groupWindowUs);
+            int afterBatch = 0;
+            int afterBlock = 0;
+            for (int i = 0, n = iterations.size(); i < n; i++) {
+                afterBatch += iterations.getQuick(i).viewRefusalsAfterBatch;
+                afterBlock += iterations.getQuick(i).viewRefusalsAfterBlock;
+            }
+            LOG.info().$("commit batch fuzz view refusals [commitMode=").$(commitMode)
+                    .$(", iterations=").$(iterations.size())
+                    .$(", afterBatch=").$(afterBatch)
+                    .$(", afterBlock=").$(afterBlock)
+                    .I$();
+        });
+    }
+
+    private void assertCommitBatchFuzzViewRefusalsFire(int commitMode) throws Exception {
+        assertMemoryLeak(() -> {
+            final Rnd rnd = new Rnd(FUZZ_SHAPES_SEED0, FUZZ_SHAPES_SEED1);
+            final Rnd viewRnd = new Rnd(FUZZ_VIEW_SEED0, FUZZ_VIEW_SEED1);
+            final ObjList<FuzzIteration> iterations = new ObjList<>();
+            for (int iteration = 0; iteration < 40; iteration++) {
+                final FuzzIteration it = generateCommitBatchFuzzIteration(rnd, iteration);
+                addViewFrames(viewRnd, it);
+                iterations.add(it);
+            }
+            // No group window: the group flush runs at each commit, not on the clock, so every run takes the same paths.
+            runCommitBatchFuzz(iterations, commitMode, 0);
+            int afterBatch = 0;
+            int afterBlock = 0;
+            for (int i = 0, n = iterations.size(); i < n; i++) {
+                afterBatch += iterations.getQuick(i).viewRefusalsAfterBatch;
+                afterBlock += iterations.getQuick(i).viewRefusalsAfterBlock;
+            }
+            LOG.info().$("commit batch fuzz view refusals [commitMode=").$(commitMode)
+                    .$(", afterBatch=").$(afterBatch)
+                    .$(", afterBlock=").$(afterBlock)
+                    .I$();
+            Assert.assertTrue("a managed-zone view frame after a batch formed is NACKed with SCHEMA_MISMATCH", afterBatch > 0);
+            Assert.assertTrue("a managed-zone view block after another table's block is NACKed with SCHEMA_MISMATCH", afterBlock > 0);
+        });
+    }
+
     /**
      * Runs the fuzz iterations through an engine of the commit mode and group window whose read-only checks, writer
      * acquisitions and commit prepares fail as scripted. A prepare fails at the flush of the table's WAL column file,
@@ -5645,10 +5814,34 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
      */
     private void runCommitBatchFuzz(ObjList<FuzzIteration> iterations, int commitMode, long groupWindowUs) throws Exception {
         // The hook engine below shares the root but cannot create tables: create them first.
+        boolean hasViews = false;
         for (int i = 0, n = iterations.size(); i < n; i++) {
-            for (String table : iterations.getQuick(i).tables) {
-                execute("CREATE TABLE " + table + " (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final String[] tables = iterations.getQuick(i).tables;
+            for (int t = 0; t < tables.length; t++) {
+                if (t == FUZZ_VIEW_TABLE) {
+                    // the view's first column is v, as the other tables', and its base rows are negative, so they
+                    // never match a frame's value
+                    final String base = "fbase" + iterations.getQuick(i).iteration;
+                    execute("CREATE TABLE " + base + " (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                    execute("INSERT INTO " + base + " VALUES (-10, '2024-09-10T09:10'), (-20, '2024-09-10T12:00')");
+                    execute("CREATE MATERIALIZED VIEW " + tables[t] + " AS (SELECT last(v) v, ts FROM " + base + " SAMPLE BY 1h)");
+                    hasViews = true;
+                } else {
+                    execute("CREATE TABLE " + tables[t] + " (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                }
             }
+        }
+        if (hasViews) {
+            drainWalAndMatViewQueues();
+            for (int i = 0, n = iterations.size(); i < n; i++) {
+                final String[] tables = iterations.getQuick(i).tables;
+                if (tables.length > FUZZ_VIEW_TABLE) {
+                    execute("ALTER MATERIALIZED VIEW " + tables[FUZZ_VIEW_TABLE] + " SET REFRESH LIMIT 1 HOUR");
+                }
+            }
+            drainWalAndMatViewQueues();
+            // the hook engine's WAL apply opens the views' table writers, which this engine's apply left in its pool
+            engine.releaseAllWriters();
         }
         final AtomicReference<FuzzIteration> current = new AtomicReference<>();
         final PrepareFaultFacade ff = new PrepareFaultFacade(current);
@@ -5678,6 +5871,11 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
                 return it.readOnlyFromCall > 0 && (it.isReadOnlyTransient ? call == it.readOnlyFromCall : call >= it.readOnlyFromCall);
             }
         }) {
+            if (hasViews) {
+                // as at boot: the views and their definitions, which the backfill gate and the frozen-zone check read
+                hookEngine.load();
+                hookEngine.buildViewGraphs();
+            }
             try {
                 for (int i = 0, n = iterations.size(); i < n; i++) {
                     final FuzzIteration it = iterations.getQuick(i);
@@ -5721,6 +5919,17 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
             // a role-change CLOSE tells the dispatcher to drop the fd
         }
         drainWalQueue(hookEngine);
+        for (int i = 0, n = it.managedViewFrames.size(); i < n; i++) {
+            final int seq = it.managedViewFrames.getQuick(i);
+            if (errorStatusForSeq(sent, seq) == QwpConstants.STATUS_SCHEMA_MISMATCH && it.isBatchPendingAt(seq)) {
+                it.viewRefusalsAfterBatch++;
+            }
+        }
+        for (int i = 0, n = it.managedViewSecondBlockFrames.size(); i < n; i++) {
+            if (errorStatusForSeq(sent, it.managedViewSecondBlockFrames.getQuick(i)) == QwpConstants.STATUS_SCHEMA_MISMATCH) {
+                it.viewRefusalsAfterBlock++;
+            }
+        }
         // Read after the ingest: a drawn prepare fault makes the iteration commit-faulty only once it fired.
         final boolean isCommitFaulty = it.isCommitFaulty();
 
@@ -6117,7 +6326,13 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         final ObjList<IntList> frameValueTables = new ObjList<>();
         // Per frame with a sequence, the values it writes.
         final ObjList<LongList> frameValues = new ObjList<>();
+        // Per frame with a sequence, the index of its wire frame.
+        final IntList frameWireIndexes = new IntList();
         final StringBuilder kinds = new StringBuilder();
+        // The frames with a managed-zone view row: of the view's block alone, and of a view block after a block of
+        // another table, see addViewFrames().
+        final IntList managedViewFrames = new IntList();
+        final IntList managedViewSecondBlockFrames = new IntList();
         final ObjList<byte[]> wireFrames = new ObjList<>();
         long cap;
         boolean isDataErrorsOnly;
@@ -6140,6 +6355,10 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         long readOnlyFromCall;
         int refusedInsertCall;
         String[] tables;
+        // The managed-zone view frames NACKed with SCHEMA_MISMATCH: of the view's block alone with a batch pending
+        // before it, and of a view block after a block of another table.
+        int viewRefusalsAfterBatch;
+        int viewRefusalsAfterBlock;
         long writerCalls;
         long writerFaultFromCall;
         // The index of the table whose writer acquisitions fail, or -1.

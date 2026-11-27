@@ -265,10 +265,16 @@ public class LiveViewMatViewBaseTest extends AbstractLiveViewTest {
                 drainWalAndMatViewQueues(engine);
                 driveRefreshToQuiescence(job);
 
+                // A base TRUNCATE leaves mvbase valid: its refresh drops the intervals queued before
+                // the truncate, and with no row after it, commits no data. The FULL request goes
+                // ahead of the new base row's incremental refresh, so the rebuild's TRUNCATE is the
+                // first data-bearing commit after the rows the live view consumed, and the rebuild,
+                // whose reader includes the new row, leaves the incremental refresh nothing to do.
                 execute("TRUNCATE TABLE base");
+                drainWalAndMatViewQueues(engine);
+                execute("REFRESH MATERIALIZED VIEW mvbase FULL");
                 execute("INSERT INTO base (ts, k, v) VALUES ('2026-01-01T05:00:00.000000Z', 'a', 100.0)");
                 drainWalQueue();
-                execute("REFRESH MATERIALIZED VIEW mvbase FULL");
 
                 // Only the mat-view refresh job runs: the TRUNCATE and the re-materialised rows
                 // are now committed to mvbase's WAL but NOT applied to its table.

@@ -51,6 +51,16 @@ public class NoOpMatViewStateStore implements MatViewStateStore {
     }
 
     @Override
+    public void enqueueAddRefreshRange(
+            TableToken matViewToken,
+            TableToken baseTableToken,
+            long rangeFrom,
+            long rangeTo,
+            long baseTableTxn
+    ) {
+    }
+
+    @Override
     public void enqueueFullRefresh(TableToken matViewToken) {
     }
 
@@ -89,6 +99,11 @@ public class NoOpMatViewStateStore implements MatViewStateStore {
     }
 
     @Override
+    public long getLastBaseTableTruncateTxn(TableToken baseTableToken) {
+        return -1;
+    }
+
+    @Override
     public MatViewState getViewState(TableToken matViewToken) {
         return null;
     }
@@ -108,6 +123,10 @@ public class NoOpMatViewStateStore implements MatViewStateStore {
 
     @Override
     public void notifyBaseTableCommit(MatViewRefreshTask task, long seqTxn) {
+    }
+
+    @Override
+    public void notifyBaseTableTruncate(TableToken baseTableToken, long seqTxn) {
     }
 
     @Override

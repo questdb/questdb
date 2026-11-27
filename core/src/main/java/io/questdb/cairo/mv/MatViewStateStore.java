@@ -44,6 +44,17 @@ public interface MatViewStateStore extends QuietCloseable, Mutable {
     // Only creates the view state, no refresh initiated, no telemetry event logged.
     MatViewState addViewState(MatViewDefinition viewDefinition);
 
+    // Called by WAL apply job once it committed a batch that attached partitions to the base table or rewrote
+    // its rows with UPDATE. Queues the changed range, [rangeFrom, rangeTo] inclusive, for the view's
+    // refresh-interval cache. baseTableTxn is the seqTxn of the newest such operation in the batch.
+    void enqueueAddRefreshRange(
+            TableToken matViewToken,
+            TableToken baseTableToken,
+            long rangeFrom,
+            long rangeTo,
+            long baseTableTxn
+    );
+
     @TestOnly
     @Override
     void clear();
@@ -75,6 +86,10 @@ public interface MatViewStateStore extends QuietCloseable, Mutable {
     // That's to let WalPurgeJob make progress.
     void enqueueUpdateRefreshIntervals(TableToken matViewToken);
 
+    // Returns the seqTxn of the last TRUNCATE that WAL apply job applied to the base table, or -1 when it applied
+    // none since the store was built. In memory only.
+    long getLastBaseTableTruncateTxn(TableToken baseTableToken);
+
     @Nullable
     MatViewState getViewState(TableToken matViewToken);
 
@@ -93,6 +108,10 @@ public interface MatViewStateStore extends QuietCloseable, Mutable {
     // and wants to send refresh job an incremental refresh message.
     void notifyBaseTableCommit(MatViewRefreshTask task, long seqTxn);
 
+    // Called by WAL apply job before it applies a TRUNCATE to the base table, so that a range queued by
+    // enqueueAddRefreshRange() for an older operation never outlives the truncate.
+    void notifyBaseTableTruncate(TableToken baseTableToken, long seqTxn);
+
     // Called by refresh job once it deferred a refresh after a transient "table busy" error.
     // Wakes up the timer job at the given deadline to re-drive the deferred refresh.
     void notifyRefreshRetry(TableToken matViewToken, long retryAfterMicros);
@@ -100,8 +119,10 @@ public interface MatViewStateStore extends QuietCloseable, Mutable {
     // Re-publishes marker facets whose previous queue publication failed.
     void reenqueueFailedPendingTasks();
 
-    // Called after RESUME WAL succeeds. Re-publishes retained invalidation and full-refresh intent
-    // that a suspended view could not process.
+    // Called after RESUME WAL succeeds, and by the WAL apply job at the end of each apply batch of the view and as soon as
+    // it applied or skipped a definition event of the view. Wakes the refreshes that deferred on a pending definition
+    // once it no longer waits, and re-publishes retained invalidation and full-refresh intent that a suspended view, or
+    // one whose WAL was not applied, could not process.
     void reenqueuePendingOnResume(TableToken matViewToken);
 
     // Re-publishes a dequeued task verbatim so the refresh job can put one back when the

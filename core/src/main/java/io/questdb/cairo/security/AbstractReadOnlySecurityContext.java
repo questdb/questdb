@@ -42,6 +42,11 @@ public abstract class AbstractReadOnlySecurityContext extends AbstractPrincipalA
     }
 
     @Override
+    public void authorizeAlterMatView(TableToken tableToken) {
+        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
+    }
+
+    @Override
     public void authorizeAlterMatViewSetRefreshLimit(TableToken tableToken) {
         throw CairoException.authorization().put("Write permission denied").setCacheable(true);
     }

@@ -2018,6 +2018,52 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testViewBlockOutsideFrozenZoneDropsOnlyItsDatagram() throws Exception {
+        // A view block in the managed zone is refused as it appends: the receiver drops its datagram from that block
+        // on and counts it. The datagram's earlier blocks and the other datagrams' rows stay buffered and commit, the
+        // view's frozen-zone rows included.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base_price (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base_price VALUES (1.0, '2024-09-10T09:10'), (2.0, '2024-09-10T12:00')");
+            execute("CREATE MATERIALIZED VIEW v AS (SELECT last(price) price, ts FROM base_price SAMPLE BY 1h)");
+            drainWalAndMatViewQueues();
+            // base max 12:00 and the limit put the boundary bucket floor at 11:00
+            execute("ALTER MATERIALIZED VIEW v SET REFRESH LIMIT 1 HOUR");
+            execute("CREATE TABLE t (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalAndMatViewQueues();
+            Assert.assertTrue(engine.isBackfillableMatView(engine.verifyTableName("v")));
+            try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
+                final long parseErrorsBefore = receiver.getDroppedParseErrorCount();
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("v").doubleColumn("price", 7.0).at(parseFloorPartialTimestamp("2024-09-10T08:00"), ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver, 1);
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("t").longColumn("val", 1).at(parseFloorPartialTimestamp("2024-09-10T00:00"), ChronoUnit.MICROS);
+                    sender.table("v").doubleColumn("price", 95.0).at(parseFloorPartialTimestamp("2024-09-10T12:45"), ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
+                while (receiver.getDroppedParseErrorCount() == parseErrorsBefore && System.nanoTime() < deadline) {
+                    receiver.runSerially();
+                    Os.pause();
+                }
+                Assert.assertEquals(parseErrorsBefore + 1, receiver.getDroppedParseErrorCount());
+                Assert.assertEquals(2, receiver.getCachedTableCount());
+            }
+            drainWalAndMatViewQueues();
+            assertQuery("SELECT val FROM t").noLeakCheck().expectSize().returns("val\n1\n");
+            assertQuery("v").noLeakCheck().timestamp("ts").expectSize().returns("""
+                    price\tts
+                    7.0\t2024-09-10T08:00:00.000000Z
+                    1.0\t2024-09-10T09:00:00.000000Z
+                    2.0\t2024-09-10T12:00:00.000000Z
+                    """);
+        });
+    }
+
     private static double[][][] cube() {
         return new double[][][]{
                 {

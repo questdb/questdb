@@ -32,6 +32,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.pool.RecentWriteTracker;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
@@ -478,6 +479,9 @@ public class WalWriterPreparedCommitTest extends AbstractCairoTest {
                     w -> w.commitWithParams(0, 0, WalUtils.WAL_DEDUP_MODE_DEFAULT),
                     w -> w.commitWithParamsIfSeqTxn(0, 0, 0, WalUtils.WAL_DEDUP_MODE_DEFAULT),
                     w -> w.resetMatViewState(0, 0, false, null, 0, null, 0),
+                    w -> w.resetMatViewState(0, 0, false, null, 0, null, 0, MatViewState.BASE_TABLE_ID_UNKNOWN),
+                    w -> w.resetMatViewState(0, 0, true, "reason", 0, null, 0, MatViewState.BASE_TABLE_ID_UNKNOWN, "lost"),
+                    w -> w.appendMatViewDefinition("t", "SELECT 1", false),
                     w -> w.commitRebaseSeed(),
                     w -> w.goActive(),
                     w -> w.goActive(Long.MAX_VALUE),
@@ -500,6 +504,9 @@ public class WalWriterPreparedCommitTest extends AbstractCairoTest {
                     "commit with parameters",
                     "commit with parameters",
                     "reset the materialized view state",
+                    "reset the materialized view state",
+                    "reset the materialized view state",
+                    "append a materialized view definition",
                     "commit the rebase seed",
                     "apply structure changes",
                     "apply structure changes",

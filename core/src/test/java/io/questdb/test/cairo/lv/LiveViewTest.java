@@ -58,6 +58,7 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -1214,6 +1215,27 @@ public class LiveViewTest extends AbstractLiveViewTest {
                 "ALTER TABLE lv ADD COLUMN x INT",
                 "cannot modify live view [view=lv]"
         );
+    }
+
+    @Test
+    public void testRejectCopy() throws Exception {
+        // COPY imports into an existing target by attaching partitions through its TableWriter, so the
+        // compile-time gate refuses a live view for every spelling of its name.
+        final String csvRoot = inputRoot;
+        // COPY FROM is disabled while cairo.sql.copy.root is blank
+        inputRoot = TestUtils.getCsvRoot();
+        try {
+            assertMemoryLeak(() -> {
+                execute("CREATE TABLE base (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
+                        "SELECT val, ts, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
+                assertExceptionNoLeakCheck("COPY lv FROM 'test-numeric-headers.csv' WITH HEADER true", 5, "cannot modify live view [view=lv]");
+                assertExceptionNoLeakCheck("COPY 'lv' FROM 'test-numeric-headers.csv' WITH HEADER true", 5, "cannot modify live view [view=lv]");
+                execute("DROP LIVE VIEW lv");
+            });
+        } finally {
+            inputRoot = csvRoot;
+        }
     }
 
     @Test

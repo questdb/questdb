@@ -1301,6 +1301,228 @@ public class TextLoaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testImportIntoMatViewFailsAtBatchCommitAfterRefreshLimitRemoved() throws Exception {
+        // Every maxUncommittedRows rows an import commits through the writer it took when the backfill gate let it in.
+        // Once ALTER MATERIALIZED VIEW ... SET REFRESH LIMIT 0 has applied, the first of these commits is refused with
+        // the gate's message, and the refusal fails the import in every atomicity mode: no row lands and the view
+        // gains no WAL transaction. Once the limit is back, the same rows go through.
+        for (int atomicity : new int[]{Atomicity.SKIP_COL, Atomicity.SKIP_ROW, Atomicity.SKIP_ALL}) {
+            assertNoLeak(textLoader -> {
+                createBackfillableMatView();
+                final TableToken viewToken = engine.verifyTableName("test");
+                configureLoaderDefaults(textLoader, (byte) ',', atomicity, false);
+                textLoader.setForceHeaders(true);
+                textLoader.setMaxUncommittedRows(2);
+                // the structure analysis of the first chunk takes the writer through the gate
+                parseChunk(textLoader, "ts,cnt\n1970-01-01T00:01:40.000000Z,1\n");
+                execute("ALTER MATERIALIZED VIEW test SET REFRESH LIMIT 0 HOUR");
+                drainWalAndMatViewQueues();
+                final long txnBeforeBatchCommit = engine.getTableSequencerAPI().lastTxn(viewToken);
+                try {
+                    // frozen-zone rows; the first completes the import's first batch
+                    parseChunk(textLoader, """
+                            1970-01-01T00:01:41.000000Z,2
+                            1970-01-01T00:01:42.000000Z,3
+                            1970-01-01T00:01:43.000000Z,4
+                            """);
+                    Assert.fail("the import's batch commit must be refused once the view has no REFRESH LIMIT");
+                } catch (CairoException e) {
+                    TestUtils.assertEquals("cannot modify materialized view [view=test]", e.getFlyweightMessage());
+                }
+                textLoader.clear();
+                drainWalAndMatViewQueues();
+                Assert.assertEquals(txnBeforeBatchCommit, engine.getTableSequencerAPI().lastTxn(viewToken));
+                assertQuery("SELECT count() FROM test").noLeakCheck().noRandomAccess().expectSize().returns("count\n1\n");
+
+                execute("ALTER MATERIALIZED VIEW test SET REFRESH LIMIT 1 HOUR");
+                drainWalAndMatViewQueues();
+                configureLoaderDefaults(textLoader, (byte) ',', atomicity, false);
+                textLoader.setForceHeaders(true);
+                textLoader.setMaxUncommittedRows(2);
+                playText0(
+                        textLoader,
+                        """
+                                ts,cnt
+                                1970-01-01T00:01:40.000000Z,1
+                                1970-01-01T00:01:41.000000Z,2
+                                1970-01-01T00:01:42.000000Z,3
+                                1970-01-01T00:01:43.000000Z,4
+                                """,
+                        1024,
+                        NOOP_TRANSFORMER
+                );
+                textLoader.clear();
+                drainWalAndMatViewQueues();
+                assertQuery("SELECT count() FROM test").noLeakCheck().noRandomAccess().expectSize().returns("count\n5\n");
+
+                execute("DROP MATERIALIZED VIEW test");
+                execute("DROP TABLE base_price");
+                drainWalAndMatViewQueues();
+            });
+        }
+    }
+
+    @Test
+    public void testImportIntoMatViewFailsAtRejectedBatchInLaterChunk() throws Exception {
+        // A thousand frozen-zone rows with a managed-zone row in place of the 550th, imported 100 rows per batch and
+        // delivered a byte at a time after the first 1KB. The import commits five batches, then fails with the
+        // frozen-zone check's message when row 600 completes the sixth, and parses no row after it. The view keeps the
+        // five batches, one WAL transaction each.
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 10); // wal_transactions() reports row counts
+        assertNoLeak(textLoader -> {
+            createBackfillableMatView();
+            final long txnBeforeImport = engine.getTableSequencerAPI().lastTxn(engine.verifyTableName("test"));
+            final StringBuilder csv = new StringBuilder("ts,cnt\n");
+            final StringBuilder expectedRows = new StringBuilder("ts\tcnt\n");
+            final StringBuilder expectedTxns = new StringBuilder("minTimestamp\tmaxTimestamp\trowCount\n");
+            for (int row = 1; row <= 1_000; row++) {
+                // row N at N milliseconds
+                final String timestamp = String.format("1970-01-01T00:00:%02d.%03d000Z", row / 1_000, row % 1_000);
+                if (row == 550) {
+                    csv.append("1970-01-01T01:30:00.000000Z,7\n");
+                } else {
+                    csv.append(timestamp).append(',').append(row).append('\n');
+                }
+                if (row <= 500) {
+                    expectedRows.append(timestamp).append('\t').append(row).append('\n');
+                }
+            }
+            expectedRows.append("1970-01-01T02:00:00.000000Z\t1\n");
+            for (int batch = 0; batch < 5; batch++) {
+                expectedTxns.append(String.format("1970-01-01T00:00:00.%03d000Z\t1970-01-01T00:00:00.%03d000Z\t100\n", batch * 100 + 1, batch * 100 + 100));
+            }
+            configureLoaderDefaults(textLoader, (byte) ',', Atomicity.SKIP_COL, false);
+            textLoader.setForceHeaders(true);
+            textLoader.setMaxUncommittedRows(100);
+            try {
+                playText0(textLoader, csv.toString(), 1024, NOOP_TRANSFORMER);
+                Assert.fail("the import must fail at the rejected batch");
+            } catch (CairoException e) {
+                TestUtils.assertEquals(
+                        "backfill row falls in or past the managed zone of materialized view [view=test, " +
+                                "maxRowTs=1970-01-01T01:30:00.000000Z, " +
+                                "rowBucket=[1970-01-01T01:00:00.000000Z, 1970-01-01T02:00:00.000000Z), " +
+                                "boundaryBucketFloor=1970-01-01T01:00:00.000000Z]; " +
+                                "backfill bucket end must be at-or-before the boundary bucket floor",
+                        e.getFlyweightMessage()
+                );
+            }
+            Assert.assertEquals(600, textLoader.getParsedLineCount());
+            textLoader.clear();
+            drainWalAndMatViewQueues();
+            assertQuery("test")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns(expectedRows);
+            assertQuery("SELECT minTimestamp, maxTimestamp, rowCount FROM wal_transactions('test') WHERE sequencerTxn > " + txnBeforeImport)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(expectedTxns);
+        });
+    }
+
+    @Test
+    public void testImportIntoMatViewRejectedAfterRefreshLimitRemoved() throws Exception {
+        // An import keeps the writer it took when the backfill gate let it in. Once ALTER MATERIALIZED VIEW ... SET
+        // REFRESH LIMIT 0 has applied, the import's commit is refused with the gate's message and its row does not
+        // land; once the limit is back, the same import goes through.
+        assertNoLeak(textLoader -> {
+            createBackfillableMatView();
+            final String csv = "ts,cnt\n1970-01-01T00:01:40.000000Z,99\n";
+            configureLoaderDefaults(textLoader, (byte) ',', Atomicity.SKIP_ROW, false);
+            textLoader.setForceHeaders(true);
+            parseChunk(textLoader, csv);
+            execute("ALTER MATERIALIZED VIEW test SET REFRESH LIMIT 0 HOUR");
+            drainWalAndMatViewQueues();
+            try {
+                textLoader.wrapUp();
+                Assert.fail("the import's commit must be refused once the view has no REFRESH LIMIT");
+            } catch (CairoException e) {
+                TestUtils.assertEquals("cannot modify materialized view [view=test]", e.getFlyweightMessage());
+            }
+            textLoader.clear();
+            drainWalAndMatViewQueues();
+            assertQuery("SELECT count() FROM test").noLeakCheck().noRandomAccess().expectSize().returns("count\n1\n");
+
+            execute("ALTER MATERIALIZED VIEW test SET REFRESH LIMIT 1 HOUR");
+            drainWalAndMatViewQueues();
+            configureLoaderDefaults(textLoader, (byte) ',', Atomicity.SKIP_ROW, false);
+            textLoader.setForceHeaders(true);
+            playText0(textLoader, csv, 1024, NOOP_TRANSFORMER);
+            textLoader.clear();
+            drainWalAndMatViewQueues();
+            assertQuery("SELECT count() FROM test").noLeakCheck().noRandomAccess().expectSize().returns("count\n2\n");
+        });
+    }
+
+    @Test
+    public void testImportIntoWalTableFailsAtBatchCommitAfterDrop() throws Exception {
+        // A WAL table dropped under a running import: the import's next batch commit fails with the sequencer's error,
+        // and the failure ends the import in every atomicity mode, instead of passing for a row error and leaving every
+        // later row to a distressed writer. A table created again under the name takes the same rows.
+        for (int atomicity : new int[]{Atomicity.SKIP_COL, Atomicity.SKIP_ROW, Atomicity.SKIP_ALL}) {
+            assertNoLeak(textLoader -> {
+                execute("CREATE TABLE test (ts TIMESTAMP, cnt LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                final TableToken droppedToken = engine.verifyTableName("test");
+                configureLoaderDefaults(textLoader, (byte) ',', atomicity, false);
+                textLoader.setForceHeaders(true);
+                textLoader.setMaxUncommittedRows(2);
+                parseChunk(textLoader, "ts,cnt\n1970-01-01T00:01:40.000000Z,1\n");
+                execute("DROP TABLE test");
+                try {
+                    // the first row of the chunk completes the import's first batch
+                    parseChunk(textLoader, """
+                            1970-01-01T00:01:41.000000Z,2
+                            1970-01-01T00:01:42.000000Z,3
+                            1970-01-01T00:01:43.000000Z,4
+                            """);
+                    Assert.fail("the import's batch commit must fail once its table is dropped");
+                } catch (CairoException e) {
+                    TestUtils.assertEquals(
+                            "table is dropped [dirName=" + droppedToken.getDirName() + ", tableName=test]",
+                            e.getFlyweightMessage()
+                    );
+                }
+                textLoader.clear();
+                drainWalQueue();
+
+                execute("CREATE TABLE test (ts TIMESTAMP, cnt LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                configureLoaderDefaults(textLoader, (byte) ',', atomicity, false);
+                textLoader.setForceHeaders(true);
+                textLoader.setMaxUncommittedRows(2);
+                playText0(
+                        textLoader,
+                        """
+                                ts,cnt
+                                1970-01-01T00:01:40.000000Z,1
+                                1970-01-01T00:01:41.000000Z,2
+                                1970-01-01T00:01:42.000000Z,3
+                                1970-01-01T00:01:43.000000Z,4
+                                """,
+                        1024,
+                        NOOP_TRANSFORMER
+                );
+                textLoader.clear();
+                drainWalQueue();
+                assertQuery("test")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                ts\tcnt
+                                1970-01-01T00:01:40.000000Z\t1
+                                1970-01-01T00:01:41.000000Z\t2
+                                1970-01-01T00:01:42.000000Z\t3
+                                1970-01-01T00:01:43.000000Z\t4
+                                """);
+                execute("DROP TABLE test");
+                drainWalQueue();
+            });
+        }
+    }
+
+    @Test
     public void testImportNullForAllTypesWithDesignatedColumnWhenTableExists() throws Exception {
         assertNoLeak(
                 engine,
@@ -2544,6 +2766,37 @@ public class TextLoaderTest extends AbstractCairoTest {
                     12,
                     12
             );
+        });
+    }
+
+    @Test
+    public void testOverwriteBackfillableMatViewRejected() throws Exception {
+        assertNoLeak(textLoader -> {
+            execute("CREATE TABLE base_price (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base_price VALUES ('1970-01-01T02:00:00.000000Z', 1)");
+            drainWalQueue();
+            execute("CREATE MATERIALIZED VIEW test AS (SELECT ts, count() cnt FROM base_price SAMPLE BY 1h)");
+            drainWalAndMatViewQueues();
+            execute("ALTER MATERIALIZED VIEW test SET REFRESH LIMIT 1 HOUR");
+            drainWalAndMatViewQueues();
+            Assert.assertTrue(engine.isBackfillableMatView(engine.verifyTableName("test")));
+
+            configureLoaderDefaults(textLoader, (byte) ',', Atomicity.SKIP_ROW, true);
+            textLoader.setForceHeaders(true);
+            try {
+                playText0(
+                        textLoader,
+                        "ts,cnt\n1970-01-01T00:01:40.000000Z,99\n",
+                        1024,
+                        NOOP_TRANSFORMER
+                );
+                Assert.fail("overwrite import must reject materialized views");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "cannot modify materialized view [view=test]");
+            }
+
+            Assert.assertTrue(engine.verifyTableName("test").isMatView());
+            assertQuery("SELECT count() FROM test").noRandomAccess().expectSize().returns("count\n1\n");
         });
     }
 
@@ -3888,6 +4141,18 @@ public class TextLoaderTest extends AbstractCairoTest {
         });
     }
 
+    // A view `test` with REFRESH LIMIT 1 HOUR over a base row at 1970-01-01T02:00: its frozen zone ends at 01:00.
+    private static void createBackfillableMatView() throws Exception {
+        execute("CREATE TABLE base_price (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("INSERT INTO base_price VALUES ('1970-01-01T02:00:00.000000Z', 1)");
+        drainWalQueue();
+        execute("CREATE MATERIALIZED VIEW test AS (SELECT ts, count() cnt FROM base_price SAMPLE BY 1h)");
+        drainWalAndMatViewQueues();
+        execute("ALTER MATERIALIZED VIEW test SET REFRESH LIMIT 1 HOUR");
+        drainWalAndMatViewQueues();
+        Assert.assertTrue(engine.isBackfillableMatView(engine.verifyTableName("test")));
+    }
+
     private static String extractLast(Path path) {
         String nameStr = path.toString();
         String[] pathElements = nameStr.split(PATH_SEP_REGEX);
@@ -3930,6 +4195,20 @@ public class TextLoaderTest extends AbstractCairoTest {
         } finally {
             Unsafe.free(buf, len, MemoryTag.NATIVE_TEXT_PARSER_RSS);
             Unsafe.free(smallBuf, 1, MemoryTag.NATIVE_TEXT_PARSER_RSS);
+        }
+    }
+
+    // Parses one chunk of the text as an upload delivers it, without wrapping up the import.
+    private static void parseChunk(TextLoader textLoader, String chunk) throws TextException {
+        final byte[] bytes = chunk.getBytes(Files.UTF_8);
+        final long buf = Unsafe.malloc(bytes.length, MemoryTag.NATIVE_TEXT_PARSER_RSS);
+        try {
+            for (int i = 0; i < bytes.length; i++) {
+                Unsafe.putByte(buf + i, bytes[i]);
+            }
+            textLoader.parse(buf, buf + bytes.length, AllowAllSecurityContext.INSTANCE);
+        } finally {
+            Unsafe.free(buf, bytes.length, MemoryTag.NATIVE_TEXT_PARSER_RSS);
         }
     }
 

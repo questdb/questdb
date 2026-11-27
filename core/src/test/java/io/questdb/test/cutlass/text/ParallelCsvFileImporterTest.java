@@ -33,6 +33,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.RecordCursor;
@@ -42,6 +43,7 @@ import io.questdb.cairo.vm.MemoryCMARWImpl;
 import io.questdb.cutlass.text.Atomicity;
 import io.questdb.cutlass.text.CopyImportJob;
 import io.questdb.cutlass.text.CopyImportRequestJob;
+import io.questdb.cutlass.text.CopyImportTask;
 import io.questdb.cutlass.text.ParallelCsvFileImporter.PartitionInfo;
 import io.questdb.cutlass.text.ParallelCsvFileImporter;
 import io.questdb.cutlass.text.TextImportException;
@@ -1639,6 +1641,69 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testImportIntoViewRejected() throws Exception {
+        // The importer attaches partitions through the target's TableWriter, outside the target's WAL, so it
+        // refuses a view of any kind before it asks for a writer. COPY reaches it with the name of a materialized
+        // or live view that replaced the target table after the COPY compiled. The importer then still imports
+        // into a table.
+        final File dir = temp.newFolder("import-into-view" + System.nanoTime());
+        TestUtils.writeStringToFile(
+                new File(dir, "price.csv"),
+                """
+                        sym,price,ts
+                        a,77.0,2024-09-10T12:00:00.000000Z
+                        b,55.0,2024-09-10T08:00:00.000000Z
+                        """
+        );
+        inputRoot = dir.getAbsolutePath();
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base_price (sym SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE MATERIALIZED VIEW mv REFRESH MANUAL DEFERRED AS (SELECT sym, last(price) AS price, ts FROM base_price SAMPLE BY 1h) PARTITION BY DAY");
+            execute("CREATE VIEW v AS (SELECT sym, price, ts FROM base_price)");
+            execute("CREATE TABLE base (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
+                    "SELECT val, ts, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
+            execute("CREATE TABLE t (sym SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            drainWalAndMatViewQueues();
+
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 1)) {
+                assertImportIntoViewRejected(importer, "mv", "cannot modify materialized view [view=mv]");
+                // the refusal comes before the importer asks for the view's writer, which the test holds here
+                try (TableWriter ignore = engine.getWriter(engine.verifyTableName("mv"), "test")) {
+                    assertImportIntoViewRejected(importer, "mv", "cannot modify materialized view [view=mv]");
+                }
+                assertImportIntoViewRejected(importer, "lv", "cannot modify live view [view=lv]");
+                assertImportIntoViewRejected(importer, "v", "cannot modify view [view=v]");
+
+                importer.of("t", "price.csv", 1, PartitionBy.DAY, (byte) ',', "ts", null, true);
+                importer.process(AllowAllSecurityContext.INSTANCE);
+            }
+            drainWalAndMatViewQueues();
+
+            // the view created DEFERRED has no rows and no WAL txn
+            assertQuery("SELECT count() FROM mv")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n0\n");
+            assertQuery("SELECT writerTxn, sequencerTxn FROM wal_tables() WHERE name = 'mv'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("writerTxn\tsequencerTxn\n0\t0\n");
+            assertQuery("t")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            sym\tprice\tts
+                            b\t55.0\t2024-09-10T08:00:00.000000Z
+                            a\t77.0\t2024-09-10T12:00:00.000000Z
+                            """);
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testImportIsCancelled() throws Exception {
         executeWithPool(
                 4, 8, (CairoEngine engine, SqlCompiler _, SqlExecutionContext _) -> {
@@ -3050,6 +3115,17 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
             }
         };
         executeWithPool(4, 8, brokenRename, this::importAllIntoNew);
+    }
+
+    private static void assertImportIntoViewRejected(ParallelCsvFileImporter importer, String viewName, String expectedMessage) {
+        importer.of(viewName, "price.csv", 1, PartitionBy.DAY, (byte) ',', "ts", null, true);
+        try {
+            importer.process(AllowAllSecurityContext.INSTANCE);
+            Assert.fail("the import into a view must fail [view=" + viewName + ']');
+        } catch (TextImportException e) {
+            Assert.assertEquals(CopyImportTask.PHASE_ANALYZE_FILE_STRUCTURE, e.getPhase());
+            TestUtils.assertEquals(expectedMessage, e.getFlyweightMessage());
+        }
     }
 
     private static boolean stackContains(String klass) {

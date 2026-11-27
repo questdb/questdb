@@ -67,6 +67,7 @@ import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlParser;
 import io.questdb.griffin.TextPlanSink;
 import io.questdb.griffin.engine.functions.catalogue.DumpThreadStacksFunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
@@ -509,6 +510,8 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     @After
     public void tearDown() throws Exception {
+        // a test that failed half-way must not leave the next test's CREATE MATERIALIZED VIEW without the rules
+        SqlParser.setMatViewExplicitNamesCheckSkipped(false);
         try {
             tearDown(true);
             super.tearDown();
@@ -971,6 +974,20 @@ public abstract class AbstractCairoTest extends AbstractTest {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             compiler.setFullFatJoins(fullFatJoins);
             execute(compiler, ddlSql, sqlExecutionContext);
+        }
+    }
+
+    /**
+     * Runs a statement, typically CREATE MATERIALIZED VIEW, without the explicit column name rules that CREATE
+     * MATERIALIZED VIEW applies, the way versions before the rules ran it: the view's SQL may rely on generated
+     * column names and call zero-argument functions without parentheses.
+     */
+    protected static void executeWithoutExplicitNamesCheck(CharSequence sqlText) throws SqlException {
+        SqlParser.setMatViewExplicitNamesCheckSkipped(true);
+        try {
+            execute(sqlText);
+        } finally {
+            SqlParser.setMatViewExplicitNamesCheckSkipped(false);
         }
     }
 

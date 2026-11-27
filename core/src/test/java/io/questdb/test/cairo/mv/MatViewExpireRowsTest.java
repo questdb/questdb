@@ -1172,7 +1172,7 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
                     "AS (SELECT * FROM base), INDEX (k)",
                     "AS (SELECT k, v, ts FROM base) PARTITION BY DAY",
                     "AS (SELECT ts, k, sum(v) s FROM base SAMPLE BY 1h)",
-                    "AS (SELECT ts, k, count, pi FROM base SAMPLE BY 1h)",
+                    "AS (SELECT ts, k, count() AS count, pi() AS pi FROM base SAMPLE BY 1h)",
             };
             for (int i = 0; i < definitions.length; i++) {
                 final int onePassBorrows = createMatView("CREATE MATERIALIZED VIEW once" + i + " " + definitions[i], false);

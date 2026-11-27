@@ -26,6 +26,8 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.engine.ops.Operation;
@@ -37,6 +39,7 @@ import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Mutable;
+import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.Nullable;
@@ -44,9 +47,74 @@ import org.jetbrains.annotations.TestOnly;
 
 public interface SqlCompiler extends QuietCloseable, Mutable {
 
+    /**
+     * Returns the SQL of a materialized view with the explicit column names that CREATE MATERIALIZED VIEW
+     * requires, for SHOW CREATE: each bare zero-argument function name that the view's refresh reads as a call
+     * written with parentheses, and each generated column name, and each such call, aliased to the name the view's
+     * refresh maps the column by. That is the view column the column feeds when the refresh copies the SQL by
+     * position, which it does for a SQL that relies on generated names, and otherwise the column's own output
+     * name. Returns null when the SQL needs no change, and when it no longer compiles or the result would not
+     * feed the view's columns as the stored SQL does, so the caller shows the SQL as stored.
+     *
+     * @param viewDefinition   the definition of the view
+     * @param viewColumnNames  the names of the view's columns, in the order the view stores them
+     * @param executionContext the context to compile the SQL with, which the method leaves as it found it
+     * @param sqlColumns       receives the columns that CREATE MATERIALIZED VIEW without a column list, a TIMESTAMP
+     *                         clause or an INDEX clause builds from the returned SQL: the output columns of the SQL
+     *                         as CREATE compiles it, with the indexes that a passthrough view's columns inherit from
+     *                         the base table, and the designated timestamp; when the method returns null, those it
+     *                         builds from the stored SQL as the view's refresh compiles it, or none when the stored
+     *                         SQL does not compile
+     */
+    @Nullable
+    String addExplicitColumnNames(
+            MatViewDefinition viewDefinition,
+            ObjList<CharSequence> viewColumnNames,
+            SqlExecutionContext executionContext,
+            GenericRecordMetadata sqlColumns
+    );
+
+    /**
+     * Adds the bare select-list names of a materialized view's own SQL text to the sink: the unqualified column
+     * references in the select lists of the text, which the view's refresh reads as calls to the zero-argument
+     * functions of the same names when no column of that name exists. The models of a regular view that the SQL
+     * reads are not part of the text, and the method skips them. It only parses the SQL.
+     *
+     * @param viewDefinition   the definition of the view
+     * @param executionContext the context to parse the SQL with, which the method leaves as it found it
+     * @param sink             receives the names
+     * @throws SqlException when the SQL does not parse
+     */
+    void collectMatViewBareSelectNames(
+            MatViewDefinition viewDefinition,
+            SqlExecutionContext executionContext,
+            LowerCaseCharSequenceHashSet sink
+    ) throws SqlException;
+
     CompiledQuery compile(CharSequence sqlText, SqlExecutionContext ctx) throws SqlException;
 
     void compileBatch(CharSequence batchText, SqlExecutionContext sqlExecutionContext, BatchCallback batchCallback) throws Exception;
+
+    /**
+     * Compiles the SQL of a materialized view as CREATE MATERIALIZED VIEW compiles it, under the caller's context, for
+     * ALTER MATERIALIZED VIEW ... AS: every bare name is a column, the SQL may call no non-deterministic function and
+     * read no view with a row-expiry policy, and the cursor's open checks SELECT on every table the SQL reads, with no
+     * row read. The validator checks the optimised query and the columns it produces. Positions of errors point into
+     * the statement that holds the SQL.
+     *
+     * @param executionContext the context to compile the SQL with, which the method leaves as it found it
+     * @param matViewName      the name of the view, for the row-expiry policy check
+     * @param sql              the SQL text
+     * @param sqlPosition      the position of the SQL text in the statement
+     * @param validator        checks the query
+     */
+    void compileMatViewSql(
+            SqlExecutionContext executionContext,
+            CharSequence matViewName,
+            String sql,
+            int sqlPosition,
+            MatViewQueryValidator validator
+    ) throws SqlException;
 
     /**
      * SPI for operation execution. Typical execution will rely on the compiler infrastructure, such paths, engine, configuration etc.
@@ -171,6 +239,28 @@ public interface SqlCompiler extends QuietCloseable, Mutable {
             RecordMetadata metadata,
             CharSequence predicate,
             int position
+    ) throws SqlException;
+
+    /**
+     * Validates the SQL of a materialized view under the caller's context, for {@link MatViewSqlValidator}: parses
+     * it and, with {@code isCompiling} set, compiles it as the view's refresh reads it, then reports to the
+     * validator what it found. A SQL that does not parse or compile reports its error; the method throws only an
+     * authorization error, a cancellation or a timeout.
+     *
+     * @param viewDefinition              the definition of the view
+     * @param isCompiling                 false to only parse the SQL
+     * @param isReadingBareNamesAsColumns true to read every bare name as a column, as CREATE does, and fail a bare
+     *                                    name of a zero-argument function with the parentheses the call needs;
+     *                                    false to read bare names as the view's refresh does
+     * @param executionContext            the context to compile the SQL with, which the method leaves as it found it
+     * @param validator                   receives the outcome
+     */
+    void validateMatViewSql(
+            MatViewDefinition viewDefinition,
+            boolean isCompiling,
+            boolean isReadingBareNamesAsColumns,
+            SqlExecutionContext executionContext,
+            MatViewSqlValidator validator
     ) throws SqlException;
 
     @TestOnly

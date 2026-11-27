@@ -29,7 +29,10 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.cairo.mv.MatViewState;
+import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.client.Sender;
+import io.questdb.client.cutlass.line.LineSenderException;
 import io.questdb.client.cutlass.line.http.AbstractLineHttpSender;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -65,6 +68,9 @@ import static io.questdb.client.Sender.PROTOCOL_VERSION_V2;
 abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
 
     static final int UPPERCASE_TABLE_RANDOMIZE_FACTOR = 2;
+    // the REFRESH LIMIT materialized view and its base table, see initBackfillViewParameters()
+    private static final String BACKFILL_BASE = "backfill_base";
+    private static final String BACKFILL_VIEW = "backfill_view";
     private static final int MAX_NUM_OF_SKIPPED_COLS = 2;
     private static final int NEW_COLUMN_RANDOMIZE_FACTOR = 2;
     private static final int SEND_SYMBOLS_WITH_SPACE_RANDOMIZE_FACTOR = 2;
@@ -88,6 +94,13 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
     };
     private final String[] tagValueBases = new String[]{"us-midwest", "London"};
     private final AtomicLong timestampMicros = new AtomicLong(1465839830102300L);
+    // The frozen-zone view rows of the batches the server committed, the batches that committed some, and the
+    // refused batches with lines of other tables.
+    private final AtomicLong acceptedViewRows = new AtomicLong();
+    private final AtomicInteger acceptedViewBatches = new AtomicInteger();
+    private final AtomicInteger refusedMixedBatches = new AtomicInteger();
+    // A frozen-zone view row's timestamp: from 2024-09-08, before the view's 09:00 bucket of 2024-09-10.
+    private final AtomicLong viewRowTimestampMicros = new AtomicLong(1_725_753_600_000_000L);
     protected int numOfIterations;
     protected int numOfLines;
     protected int numOfTables;
@@ -96,6 +109,8 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
     protected Rnd random;
     protected LowerCaseCharSequenceObjHashMap<TableData> tables;
     protected long waitBetweenIterationsMillis;
+    // When above 0, one line in about this many is a view row, see initBackfillViewParameters().
+    private int backfillViewFactor = -1;
     private double columnConvertProb;
     private int columnReorderingFactor = -1;
     private int columnSkipFactor = -1;
@@ -143,6 +158,16 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
         TestUtils.assertCursor(expected, cursor, metadata, true, sink);
     }
 
+    // Waits until the table's WAL has applied.
+    private static void awaitWalApplied(CairoEngine engine, TableToken tableToken) {
+        final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
+        final long deadline = System.currentTimeMillis() + 60_000;
+        while (tracker.getWriterTxn() < tracker.getSeqTxn() && System.currentTimeMillis() < deadline) {
+            Os.sleep(10);
+        }
+        Assert.assertEquals("the WAL did not apply in time [table=" + tableToken.getTableName() + ']', tracker.getSeqTxn(), tracker.getWriterTxn());
+    }
+
     public void ingest(CairoEngine engine, int port, Rnd rnd) {
         int waitCount = numOfThreads;
         threadPushFinished.setCount(waitCount);
@@ -163,6 +188,17 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
             throw new RuntimeException(e);
         }
         Assert.assertEquals(0, failureCounter.get());
+    }
+
+    /**
+     * Mixes rows of a materialized view with REFRESH LIMIT 1 HOUR into the threads' batches: one line in about
+     * {@code backfillViewFactor} is a view row, a quarter of them in the view's managed zone. The server refuses a
+     * batch with a managed-zone row as a client error and commits none of its lines, those of other tables included;
+     * any other batch commits whole. The tables' expected rows follow that model, and the run asserts both kinds of
+     * batches occurred.
+     */
+    public void initBackfillViewParameters(int backfillViewFactor) {
+        this.backfillViewFactor = backfillViewFactor;
     }
 
     public void initFuzzParameters(
@@ -222,6 +258,9 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
                     }
 
                     try {
+                        if (backfillViewFactor > 0) {
+                            createBackfillView(serverMain);
+                        }
                         ingest(serverMain.getEngine(), serverMain.getHttpServerPort(), random);
 
                         for (int i = 0; i < numOfTables; i++) {
@@ -231,6 +270,9 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
                                 serverMain.awaitTable(tableName);
                                 assertTable(serverMain, table, tableName);
                             }
+                        }
+                        if (backfillViewFactor > 0) {
+                            assertBackfillView(serverMain);
                         }
                     } catch (Exception e) {
                         getLog().errorW().$(e).$();
@@ -348,6 +390,35 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
         return addColumnValue(SYMBOL, tagValueBases[index], colName, httpSender);
     }
 
+    // Writes a view row, a quarter of them in the managed zone: the 12:00 bucket, past the 11:00 frozen-zone floor.
+    private void addViewRow(AbstractLineHttpSender httpSender, BackfillBatch batch) {
+        final boolean isManaged = random.nextInt(4) == 0;
+        final long ts = isManaged
+                ? 1_725_969_600_000_000L + random.nextInt(1_000_000)
+                : viewRowTimestampMicros.incrementAndGet();
+        httpSender.table(BACKFILL_VIEW).symbol("sym", "a").doubleColumn("price", 1.0).at(ts, ChronoUnit.MICROS);
+        if (isManaged) {
+            batch.managedViewRows++;
+        } else {
+            batch.frozenViewRows++;
+        }
+    }
+
+    // The view's frozen-zone rows are those of the committed batches, and the run had a refused batch with lines of
+    // other tables and a committed batch with view rows.
+    private void assertBackfillView(TestServerMain serverMain) {
+        final CairoEngine engine = serverMain.getEngine();
+        awaitWalApplied(engine, engine.verifyTableName(BACKFILL_VIEW));
+        serverMain.assertSql(
+                "select count() from " + BACKFILL_VIEW + " where ts < '2024-09-10T09:00:00.000000Z'",
+                "count\n" + acceptedViewRows.get() + "\n"
+        );
+        getLog().info().$("backfill view batches [accepted=").$(acceptedViewBatches.get())
+                .$(", refusedMixed=").$(refusedMixedBatches.get()).I$();
+        Assert.assertTrue("a batch with a managed-zone view row and lines of other tables is refused", refusedMixedBatches.get() > 0);
+        Assert.assertTrue("a batch with frozen-zone view rows commits", acceptedViewBatches.get() > 0);
+    }
+
     private void assertTable(TestServerMain serverMain, TableData table, @NotNull String tableName) {
         if (table.size(sendSymbolsWithSpace) < 1) {
             return;
@@ -377,6 +448,61 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
                 throw new AssertionError("Table: " + table.getName(), e);
             }
         }
+    }
+
+    // A view of 1h buckets over a base table with rows at 09:10 and 12:00 on 2024-09-10, with REFRESH LIMIT 1 HOUR:
+    // base max 12:00 puts its frozen zone below the 11:00 bucket.
+    private void createBackfillView(TestServerMain serverMain) {
+        final CairoEngine engine = serverMain.getEngine();
+        serverMain.execute("CREATE TABLE " + BACKFILL_BASE + " (sym SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        serverMain.execute("INSERT INTO " + BACKFILL_BASE + " VALUES ('a', 1.0, '2024-09-10T09:10'), ('a', 2.0, '2024-09-10T12:00')");
+        serverMain.awaitTxn(BACKFILL_BASE, 1);
+        serverMain.execute("CREATE MATERIALIZED VIEW " + BACKFILL_VIEW + " AS (SELECT sym, last(price) price, ts FROM " + BACKFILL_BASE + " SAMPLE BY 1h)");
+        final TableToken viewToken = engine.verifyTableName(BACKFILL_VIEW);
+        final long deadline = System.currentTimeMillis() + 60_000;
+        while (System.currentTimeMillis() < deadline) {
+            final MatViewState viewState = engine.getMatViewStateStore().getViewState(viewToken);
+            if (viewState != null && viewState.getLastRefreshBaseTxn() >= 1) {
+                break;
+            }
+            Os.sleep(10);
+        }
+        serverMain.execute("ALTER MATERIALIZED VIEW " + BACKFILL_VIEW + " SET REFRESH LIMIT 1 HOUR");
+        while (!engine.isBackfillableMatView(viewToken) && System.currentTimeMillis() < deadline) {
+            Os.sleep(10);
+        }
+        Assert.assertTrue("the view did not take its REFRESH LIMIT in time", engine.isBackfillableMatView(viewToken));
+        awaitWalApplied(engine, viewToken);
+    }
+
+    // Flushes the batch. With the view on, the server refuses a batch with a managed-zone view row as a client error
+    // and commits none of its lines: they leave their tables' expected rows. Any other batch commits whole.
+    private void flushBatch(AbstractLineHttpSender httpSender, BackfillBatch batch) {
+        if (batch.managedViewRows > 0) {
+            try {
+                httpSender.flush();
+                throw new IllegalStateException("a batch with a managed-zone view row must be refused");
+            } catch (LineSenderException e) {
+                if (e.isRetryable() || !e.getMessage().contains("[http-status=400, ")
+                        || !e.getMessage().contains("backfill row falls in or past the managed zone of materialized view [view=" + BACKFILL_VIEW + ", ")) {
+                    throw new IllegalStateException("expected the batch's refusal as a client error [isRetryable=" + e.isRetryable() + ", message=" + e.getMessage() + ']');
+                }
+            }
+            httpSender.reset();
+            for (int i = 0, n = batch.lines.size(); i < n; i++) {
+                batch.tables.getQuick(i).removeLine(batch.lines.getQuick(i));
+            }
+            if (batch.lines.size() > 0) {
+                refusedMixedBatches.incrementAndGet();
+            }
+        } else {
+            httpSender.flush();
+            if (batch.frozenViewRows > 0) {
+                acceptedViewRows.addAndGet(batch.frozenViewRows);
+                acceptedViewBatches.incrementAndGet();
+            }
+        }
+        batch.clear();
     }
 
     private String generateColumnName(int index, boolean randomize) {
@@ -551,20 +677,27 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
 
             try (Sender sender = builder.build()) {
                 AbstractLineHttpSender httpSender = (AbstractLineHttpSender) sender;
+                final BackfillBatch batch = new BackfillBatch();
                 long points = 0;
                 for (int n = 0; n < numOfIterations; n++) {
                     for (int j = 0; j < numOfLines; j++) {
-                        final CharSequence tableName = pickTableName(threadId);
-                        final LineData line = generateLine(tableName, httpSender);
-                        final TableData table = tables.get(tableName);
-                        table.addLine(line);
+                        if (shouldFuzz(backfillViewFactor)) {
+                            addViewRow(httpSender, batch);
+                        } else {
+                            final CharSequence tableName = pickTableName(threadId);
+                            final LineData line = generateLine(tableName, httpSender);
+                            final TableData table = tables.get(tableName);
+                            table.addLine(line);
+                            batch.tables.add(table);
+                            batch.lines.add(line);
+                        }
 
                         if (++points % batchSize == 0) {
-                            httpSender.flush();
+                            flushBatch(httpSender, batch);
                         }
                     }
 
-                    httpSender.flush();
+                    flushBatch(httpSender, batch);
                     Os.sleep(waitBetweenIterationsMillis);
                 }
             } catch (Exception e) {
@@ -575,5 +708,20 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
                 Path.clearThreadLocals();
             }
         }).start();
+    }
+
+    // A thread's batch since its last flush: the lines of other tables, with their tables, and its view rows.
+    private static class BackfillBatch {
+        private final ObjList<LineData> lines = new ObjList<>();
+        private final ObjList<TableData> tables = new ObjList<>();
+        private int frozenViewRows;
+        private int managedViewRows;
+
+        private void clear() {
+            lines.clear();
+            tables.clear();
+            frozenViewRows = 0;
+            managedViewRows = 0;
+        }
     }
 }

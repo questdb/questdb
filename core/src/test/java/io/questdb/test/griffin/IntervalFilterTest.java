@@ -954,7 +954,7 @@ public class IntervalFilterTest extends AbstractCairoTest {
             assertOverMaxIntervalsError("SELECT ts, count() FROM t WHERE ts IN " + fiveDays + " SAMPLE BY 1h");
             assertOverMaxIntervalsError("EXPLAIN SELECT ts FROM t WHERE ts IN " + fiveDays);
             assertOverMaxIntervalsError("CREATE VIEW v AS (SELECT ts FROM t WHERE ts IN " + fiveDays + ")");
-            assertOverMaxIntervalsError("CREATE MATERIALIZED VIEW mv2 AS (SELECT ts, count() FROM base WHERE ts IN " + fiveDays + " SAMPLE BY 1h)");
+            assertOverMaxIntervalsError("CREATE MATERIALIZED VIEW mv2 AS (SELECT ts, count() cnt FROM base WHERE ts IN " + fiveDays + " SAMPLE BY 1h)");
             // the EXPIRE ROWS validator reports every predicate error at the name of the view
             assertExceptionNoLeakCheck(
                     "CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) EXPIRE ROWS WHEN ts IN " + fiveDays,

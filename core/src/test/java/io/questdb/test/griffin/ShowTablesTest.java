@@ -335,7 +335,7 @@ public class ShowTablesTest extends AbstractCairoTest {
     public void testTables() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table balances (ts timestamp, cust_id int, ccy symbol, balance double) timestamp(ts) partition by day wal");
-            execute("create materialized view balances_1h as (select ts, max(balance) from balances sample by 1h) partition by week");
+            execute("create materialized view balances_1h as (select ts, max(balance) as max from balances sample by 1h) partition by week");
             execute("create view balances_view as (select ts, max(balance) from balances sample by 1h)");
             drainWalAndViewQueues();
             assertQuery("tables()")

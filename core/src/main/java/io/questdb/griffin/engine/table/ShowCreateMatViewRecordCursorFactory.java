@@ -24,15 +24,18 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoColumn;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CairoTable;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
@@ -41,14 +44,20 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlUtil;
+import io.questdb.std.Chars;
+import io.questdb.std.IntList;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.griffin.engine.table.ShowCreateTableRecordCursorFactory.inVolumeToSink;
 
@@ -109,6 +118,9 @@ public class ShowCreateMatViewRecordCursorFactory extends AbstractRecordCursorFa
         protected final MatViewDefinition viewDefinition = new MatViewDefinition();
         private final Path path;
         private final ShowCreateMatViewRecord record = new ShowCreateMatViewRecord();
+        // the output columns of the SQL that SHOW CREATE prints, see SqlCompiler.addExplicitColumnNames()
+        private final GenericRecordMetadata sqlColumns = new GenericRecordMetadata();
+        private final ObjList<CharSequence> viewColumnNames = new ObjList<>();
         protected SqlExecutionContext executionContext;
         protected CairoTable table;
         private boolean hasRun;
@@ -123,6 +135,8 @@ public class ShowCreateMatViewRecordCursorFactory extends AbstractRecordCursorFa
         public void close() {
             sink.clear();
             viewDefinition.clear();
+            viewColumnNames.clear();
+            sqlColumns.clear();
             Misc.free(path);
             Misc.free(reader);
         }
@@ -220,10 +234,145 @@ public class ShowCreateMatViewRecordCursorFactory extends AbstractRecordCursorFa
             hasRun = false;
         }
 
+        // Returns the view's SQL as SHOW CREATE prints it, and puts its output columns into sqlColumns. The SQL of
+        // a view created before CREATE required explicit column names may rely on generated names or call
+        // zero-argument functions without parentheses; it comes with the names and parentheses that let it replay,
+        // see SqlCompiler.addExplicitColumnNames(). Any other SQL, and one that no longer compiles, comes as stored.
+        private CharSequence getShownSql() {
+            viewColumnNames.clear();
+            for (int i = 0, n = table.getColumnCount(); i < n; i++) {
+                viewColumnNames.add(table.getColumnQuiet(i).getName());
+            }
+            try (SqlCompiler compiler = executionContext.getCairoEngine().getSqlCompiler()) {
+                final String sql = compiler.addExplicitColumnNames(viewDefinition, viewColumnNames, executionContext, sqlColumns);
+                return sql != null ? sql : viewDefinition.getMatViewSql();
+            }
+        }
+
+        // True when the dense indexes of an index's covered columns name any column; DROP COLUMN leaves -1 in place of
+        // a covered column.
+        private static boolean isCovering(@Nullable IntList coveredColumns) {
+            if (coveredColumns != null) {
+                for (int i = 0, n = coveredColumns.size(); i < n; i++) {
+                    if (coveredColumns.getQuick(i) > -1) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        // True when the index of the view's column is the one the SQL's column gets from CREATE MATERIALIZED VIEW
+        // without a column list: none, or the base table's that a passthrough view's column inherits, see
+        // SqlCompiler.addExplicitColumnNames(). An index that covers columns comes with the list, whose INCLUDE
+        // states them, rather than with a CREATE that adds the designated timestamp to the covered columns under the
+        // rules of the server that runs it.
+        private static boolean isSqlBuildingIndex(CairoColumn column, TableColumnMetadata sqlColumn) {
+            if (column.isIndexed() != sqlColumn.isIndexed()) {
+                return false;
+            }
+            if (!column.isIndexed()) {
+                return true;
+            }
+            final byte indexType = column.getIndexType();
+            return indexType == sqlColumn.getIndexType()
+                    && (indexType != IndexType.BITMAP || column.getIndexBlockCapacity() == sqlColumn.getIndexValueBlockCapacity())
+                    && !isCovering(column.getCoveringColumnIndices())
+                    && !sqlColumn.isCovering();
+        }
+
+        // True when CREATE MATERIALIZED VIEW without a column list, from the SQL that SHOW CREATE prints, builds the
+        // view's columns: as many, with the same names in the same letter case, of the same types and indexes, in the
+        // same order, with the same designated timestamp. Such a CREATE makes every SYMBOL column NOCACHE. sqlColumns
+        // holds no column when the SQL does not compile.
+        private boolean isSqlBuildingViewColumns() {
+            final int columnCount = table.getColumnCount();
+            if (sqlColumns.getColumnCount() != columnCount || sqlColumns.getTimestampIndex() != table.getTimestampIndex()) {
+                return false;
+            }
+            for (int i = 0; i < columnCount; i++) {
+                final CairoColumn column = table.getColumnQuiet(i);
+                final int columnType = column.getType();
+                if (!Chars.equals(column.getName(), sqlColumns.getColumnName(i))
+                        || columnType != sqlColumns.getColumnType(i)
+                        || (ColumnType.isSymbol(columnType) && column.isSymbolCached())
+                        || !isSqlBuildingIndex(column, sqlColumns.getColumnMetadata(i))) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        // Prints the view's columns as the column list of CREATE MATERIALIZED VIEW. Each attribute the list states
+        // is spelled out, so that a CREATE that runs it takes no default of the server it runs on: the SYMBOL cache
+        // flag and the index with its type and BITMAP capacity. The symbol capacity is not stated, as SHOW CREATE
+        // TABLE does not state it: the writer scales it with the number of distinct values.
+        private void putColumnList() {
+            sink.putAscii(" (\n");
+            for (int i = 0, n = table.getColumnCount(); i < n; i++) {
+                final CairoColumn column = table.getColumnQuiet(i);
+                sink.putAscii('\t');
+                SqlUtil.putIdentifier(sink, column.getName());
+                sink.putAscii(' ').put(ColumnType.nameOf(column.getType()));
+                if (ColumnType.isSymbol(column.getType())) {
+                    sink.putAscii(column.isSymbolCached() ? " CACHE" : " NOCACHE");
+                    if (column.isIndexed()) {
+                        putIndex(column);
+                    }
+                }
+                if (i < n - 1) {
+                    sink.putAscii(',');
+                }
+                sink.putAscii('\n');
+            }
+            sink.putAscii(')');
+        }
+
+        private void putIndex(CairoColumn column) {
+            final byte indexType = column.getIndexType();
+            if (indexType == IndexType.BITMAP) {
+                // CAPACITY without TYPE means BITMAP whatever the server's default index type. The list takes
+                // capacities up to MAX_INDEX_VALUE_BLOCK_SIZE, ALTER statements store larger ones, and a larger one
+                // comes as the largest the list takes. A capacity below 2 never reaches the metadata cache:
+                // TableUtils.validateMeta() refuses it.
+                sink.putAscii(" INDEX CAPACITY ").put(Math.min(column.getIndexBlockCapacity(), TableUtils.MAX_INDEX_VALUE_BLOCK_SIZE));
+                return;
+            }
+            sink.putAscii(" INDEX TYPE ");
+            IndexType.putName(sink, indexType);
+            // the dense indexes of the covered columns, or none when the index covers no column
+            final IntList coveredColumns = column.getCoveringColumnIndices();
+            if (coveredColumns == null) {
+                return;
+            }
+            boolean isIncludeOpen = false;
+            for (int i = 0, n = coveredColumns.size(); i < n; i++) {
+                final int coveredIndex = coveredColumns.getQuick(i);
+                // DROP COLUMN leaves -1 in place of a covered column, and INCLUDE () does not parse
+                if (coveredIndex > -1) {
+                    sink.putAscii(isIncludeOpen ? ", " : " INCLUDE (");
+                    SqlUtil.putIdentifier(sink, table.getColumnQuiet(coveredIndex).getName());
+                    isIncludeOpen = true;
+                }
+            }
+            if (isIncludeOpen) {
+                sink.putAscii(')');
+            }
+        }
+
         private void showCreateMatView(CairoConfiguration configuration) {
+            final CharSequence sql = getShownSql();
+            // A view whose columns, indexes or designated timestamp differ from those its SQL builds comes with its
+            // column list, which CREATE builds the view's columns and indexes from, and with its designated
+            // timestamp, which CREATE would otherwise pick from the query.
+            final boolean isColumnListShown = !isSqlBuildingViewColumns();
             sink.putAscii("CREATE MATERIALIZED VIEW '")
                     .put(tableToken.getTableName())
-                    .putAscii("' WITH BASE '")
+                    .putAscii('\'');
+            if (isColumnListShown) {
+                putColumnList();
+            }
+            sink.putAscii(" WITH BASE '")
                     .put(viewDefinition.getBaseTableName());
             sink.putAscii("' REFRESH");
             if (viewDefinition.getRefreshType() == MatViewDefinition.REFRESH_TYPE_TIMER) {
@@ -270,9 +419,14 @@ public class ShowCreateMatViewRecordCursorFactory extends AbstractRecordCursorFa
                 sink.putAscii(')');
             }
             sink.putAscii(" AS (\n");
-            ShowCreateTableRecordCursorFactory.putTrimmed(sink, viewDefinition.getMatViewSql());
-            sink.putAscii('\n');
-            sink.putAscii(") PARTITION BY ").put(table.getPartitionByName());
+            ShowCreateTableRecordCursorFactory.putTrimmed(sink, sql);
+            sink.putAscii("\n)");
+            if (isColumnListShown) {
+                sink.putAscii(" TIMESTAMP(");
+                SqlUtil.putIdentifier(sink, table.getTimestampName());
+                sink.putAscii(')');
+            }
+            sink.putAscii(" PARTITION BY ").put(table.getPartitionByName());
             ttlToSink(sink);
             expireToSink(sink);
             inVolumeToSink(configuration, table, sink);

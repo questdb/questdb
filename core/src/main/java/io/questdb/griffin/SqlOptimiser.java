@@ -316,6 +316,9 @@ public class SqlOptimiser implements Mutable {
     private boolean hasOptimiserAndOffsets;
     // True when the execution-order anchors are valid (ordered join models are a full permutation).
     private boolean isNullingExecOrderValid;
+    // While true, rewriteTopLevelLiteralsToFunctions() rejects a bare name in the query's own text that names no
+    // column but a zero-argument function, asking for the parentheses; see setRejectingBareNoArgCalls().
+    private boolean isRejectingBareNoArgCalls;
     // Whether the optimiser optimises a sub-query nested in a PIVOT IN subquery that derives an ordinary
     // view's metadata, see optimiseExpressionModels()
     private boolean isViewMetadataCheckDeferred;
@@ -15126,8 +15129,14 @@ public class SqlOptimiser implements Mutable {
     // if columns do not exist. ownText is false for a model from the SQL of a regular view inlined into the
     // query, which always reads such a name as a function call, so the view means the same wherever it is read.
     // In the query's own text a bare name becomes a function call only while allowBareNoArgCalls is true;
-    // otherwise it stays a column reference and fails to resolve when the column does not exist.
-    private void rewriteTopLevelLiteralsToFunctions(IQueryModel model, boolean ownText, boolean allowBareNoArgCalls) {
+    // otherwise it stays a column reference and fails to resolve when the column does not exist. While
+    // isRejectingBareNoArgCalls is set, a bare name in the query's own text that names a zero-argument function
+    // instead fails at once, with the parentheses the call needs in the message.
+    private void rewriteTopLevelLiteralsToFunctions(
+            IQueryModel model,
+            boolean ownText,
+            boolean allowBareNoArgCalls
+    ) throws SqlException {
         if (!model.isOptimisable()) {
             return;
         }
@@ -15147,6 +15156,12 @@ public class SqlOptimiser implements Mutable {
                     if (node.type == LITERAL) {
                         if (nested.getAliasToColumnMap().contains(node.token)) {
                             continue;
+                        }
+
+                        if (ownText && isRejectingBareNoArgCalls
+                                && functionParser.getFunctionFactoryCache().isValidNoArgFunction(node)) {
+                            throw SqlException.$(node.position, node.token).put(" is not a column; write ")
+                                    .put(node.token).put("() to call the function");
                         }
 
                         if ((!ownText || allowBareNoArgCalls)
@@ -16913,6 +16928,15 @@ public class SqlOptimiser implements Mutable {
 
     void setPendingExpiryReadVersions(IntLongHashMap pendingExpiryReadVersions) {
         this.pendingExpiryReadVersions = pendingExpiryReadVersions;
+    }
+
+    // Makes rewriteTopLevelLiteralsToFunctions() reject each bare name in the query's own text that matches no
+    // column of the query's source but a zero-argument function, until called again with false. The
+    // materialized view statements that require explicit column names compile with it, so that their error asks
+    // for the parentheses rather than reporting a missing column. clear() leaves it as it is: the caller that
+    // sets it resets it.
+    void setRejectingBareNoArgCalls(boolean isRejectingBareNoArgCalls) {
+        this.isRejectingBareNoArgCalls = isRejectingBareNoArgCalls;
     }
 
     void validateUpdateColumns(

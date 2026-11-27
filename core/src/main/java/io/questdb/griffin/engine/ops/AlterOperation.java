@@ -35,6 +35,7 @@ import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.MemoryFCRImpl;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryCR;
@@ -46,9 +47,11 @@ import io.questdb.log.LogRecord;
 import io.questdb.std.Chars;
 import io.questdb.std.LongList;
 import io.questdb.std.Mutable;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.DirectString;
 import io.questdb.tasks.TableWriterTask;
+import org.jetbrains.annotations.Nullable;
 
 public class AlterOperation extends AbstractOperation implements Mutable {
     public final static short DO_NOTHING = 0;
@@ -112,9 +115,16 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     private final LongList extraInfo;
     private final ObjCharSequenceList extraStrInfo;
     private CharSequenceList activeExtraStrInfo;
+    // The highest and the lowest partition timestamp an ATTACH PARTITION attached, LONG_NULL before it
+    // attached any. The WAL apply job queues the attached range for the base's materialized views.
+    private long attachedPartitionTimestampHi = Numbers.LONG_NULL;
+    private long attachedPartitionTimestampLo = Numbers.LONG_NULL;
+    // The EXPIRE ROWS predicate, null for none, that the compiler checked a materialized view DROP COLUMN against,
+    // see verifyCompiledState()
+    private String checkedExpiryPredicate;
     private short command;
     private MemoryFCRImpl deserializeMem;
-    private boolean keepMatViewsValid;
+    private boolean isExpiryPolicyChecked;
 
     public AlterOperation() {
         this(new LongList(), new ObjList<>());
@@ -165,7 +175,8 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     @Override
     public long apply(MetadataService svc, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
         final QueryRegistry queryRegistry = sqlExecutionContext != null ? getCairoEngine().getQueryRegistry() : null;
-        keepMatViewsValid = false;
+        attachedPartitionTimestampLo = Numbers.LONG_NULL;
+        attachedPartitionTimestampHi = Numbers.LONG_NULL;
         long queryId = -1;
         try {
             if (queryRegistry != null) {
@@ -250,7 +261,9 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         directExtraStrInfo.clear();
         activeExtraStrInfo = extraStrInfo;
         extraInfo.clear();
-        keepMatViewsValid = false;
+        attachedPartitionTimestampLo = Numbers.LONG_NULL;
+        attachedPartitionTimestampHi = Numbers.LONG_NULL;
+        clearCheckedState();
         clearCommandCorrelationId();
     }
 
@@ -265,6 +278,8 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         alterOperation.command = this.command;
         alterOperation.activeExtraStrInfo = alterOperation.extraStrInfo;
         alterOperation.init(this.getCmdType(), this.getCommandName(), this.tableToken, this.getTableId(), this.getTableVersion(), this.tableNamePosition);
+        alterOperation.isExpiryPolicyChecked = this.isExpiryPolicyChecked;
+        alterOperation.checkedExpiryPredicate = this.checkedExpiryPredicate;
         return alterOperation;
     }
 
@@ -320,6 +335,38 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         activeExtraStrInfo = directExtraStrInfo;
     }
 
+    /**
+     * Returns the highest partition timestamp that the last {@link #apply} of an ATTACH PARTITION attached, or
+     * {@link Numbers#LONG_NULL} when it attached none or the command is another one. An ATTACH that fails part-way
+     * reports the partitions it attached before the failure.
+     */
+    public long getAttachedPartitionTimestampHi() {
+        return attachedPartitionTimestampHi;
+    }
+
+    /**
+     * Returns the lowest partition timestamp that the last {@link #apply} of an ATTACH PARTITION attached, or
+     * {@link Numbers#LONG_NULL}, see {@link #getAttachedPartitionTimestampHi()}.
+     */
+    public long getAttachedPartitionTimestampLo() {
+        return attachedPartitionTimestampLo;
+    }
+
+    @Override
+    public CharSequence getChangedColumnName(int index) {
+        assert index > -1 && index < getChangedColumnNameCount();
+        // ADD and DROP COLUMN store the column names, RENAME COLUMN the old and the new name of each column
+        return activeExtraStrInfo.getStrA(index);
+    }
+
+    @Override
+    public int getChangedColumnNameCount() {
+        return switch (command) {
+            case ADD_COLUMN, DROP_COLUMN, RENAME_COLUMN -> activeExtraStrInfo.size();
+            default -> 0;
+        };
+    }
+
     public short getCommand() {
         return command;
     }
@@ -357,20 +404,14 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     }
 
     @Override
-    public String matViewInvalidationReason() {
-        // Don't invalidate mat views in case when the operation was "harmless".
-        if (keepMatViewsValid) {
-            return null;
-        }
-        // Table rename is not in the list since it's handled by the engine directly. That's because the invalidation
-        // looks up dependent views by table name which has already changed at this point, not directory name.
+    public String liveViewInvalidationReason() {
+        // Only DROP, RENAME and CHANGE COLUMN TYPE can remove or retype a column that a live view reads.
+        // The partition operations commit as non-structural SQL transactions, and the WAL apply job
+        // invalidates no live view for those.
         return switch (command) {
             case DROP_COLUMN -> "drop column operation";
             case RENAME_COLUMN -> "rename column operation";
             case CHANGE_COLUMN_TYPE -> "change column type operation";
-            case DROP_PARTITION -> "drop partition operation";
-            case DETACH_PARTITION -> "detach partition operation";
-            case ATTACH_PARTITION -> "attach partition operation";
             default -> null;
         };
     }
@@ -465,6 +506,58 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     public void startAsync() {
     }
 
+    /**
+     * Throws {@link TableReferenceOutOfDateException} when the materialized view state that the compiler checked
+     * this operation against has changed since. A caller that runs a compiled operation again, as pg-wire does for a
+     * prepared statement, then compiles the statement again and gets the checks and the refusal of a fresh compile.
+     * The WAL apply of the operation cannot repeat these checks: a SET EXPIRE whose policy no longer binds fails
+     * there and suspends the view's WAL, and a DROP COLUMN of a column that the view's EXPIRE ROWS policy reads
+     * leaves a view that no query can read.
+     * <p>
+     * SET EXPIRE checked the columns of its policy at the view's column structure version that
+     * {@link #withCheckedColumnStructureVersion(long)} keeps, and view DROP COLUMN checked the column against the
+     * EXPIRE ROWS policy that {@link #withCheckedExpiryPredicate(String)} keeps. Other operations check nothing here.
+     *
+     * @param columnStructureVersion the column structure version that the table's sequencer is at
+     */
+    public void verifyCompiledState(long columnStructureVersion) {
+        final long checkedColumnStructureVersion = getTableVersion();
+        if (command == SET_EXPIRE && checkedColumnStructureVersion > -1 && checkedColumnStructureVersion != columnStructureVersion) {
+            throw TableReferenceOutOfDateException.of(
+                    getTableToken(),
+                    getTableId(),
+                    getTableId(),
+                    columnStructureVersion,
+                    checkedColumnStructureVersion
+            );
+        }
+        if (isExpiryPolicyChecked) {
+            final String expiryPredicate = getCairoEngine().getMetadataCache().lookupExpiryPolicy(getTableToken()).getPredicate();
+            if (!Chars.equalsNullable(checkedExpiryPredicate, expiryPredicate)) {
+                throw TableReferenceOutOfDateException.ofExpiryPolicyChange(getTableToken());
+            }
+        }
+    }
+
+    /**
+     * Keeps the column structure version of the materialized view's sequencer metadata that the compiler checked
+     * the columns of this SET EXPIRE policy against, see {@link #verifyCompiledState(long)}.
+     */
+    public void withCheckedColumnStructureVersion(long columnStructureVersion) {
+        assert command == SET_EXPIRE;
+        setTableVersion(columnStructureVersion);
+    }
+
+    /**
+     * Keeps the EXPIRE ROWS predicate, null for none, of the materialized view that the compiler checked this
+     * DROP COLUMN against, see {@link #verifyCompiledState(long)}.
+     */
+    public void withCheckedExpiryPredicate(@Nullable String expiryPredicate) {
+        assert command == DROP_COLUMN;
+        isExpiryPolicyChecked = true;
+        checkedExpiryPredicate = expiryPredicate;
+    }
+
     private void applyAddColumn(MetadataService svc) {
         int lParam = 0;
         for (int i = 0, n = activeExtraStrInfo.size(); i < n; i++) {
@@ -541,6 +634,12 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                     );
                 }
                 attached = true;
+                if (attachedPartitionTimestampLo == Numbers.LONG_NULL || partitionTimestamp < attachedPartitionTimestampLo) {
+                    attachedPartitionTimestampLo = partitionTimestamp;
+                }
+                if (partitionTimestamp > attachedPartitionTimestampHi) {
+                    attachedPartitionTimestampHi = partitionTimestamp;
+                }
             }
         } finally {
             // An attach consumes its .attachable directory, so no WAL replay can redo it. One durable epoch covers
@@ -804,6 +903,11 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         svc.changeSymbolCapacity(columnName, newCapacity, securityContext);
     }
 
+    private void clearCheckedState() {
+        isExpiryPolicyChecked = false;
+        checkedExpiryPredicate = null;
+    }
+
     private void doApply(MetadataService svc, boolean contextAllowsAnyStructureChanges) {
         switch (command) {
             case ADD_COLUMN:
@@ -873,10 +977,10 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                 squashPartitions(svc);
                 break;
             case SET_DEDUP_ENABLE:
-                keepMatViewsValid = enableDeduplication(svc, false);
+                enableDeduplication(svc, false);
                 break;
             case SET_DEDUP_ENABLE_WITH_MODE:
-                keepMatViewsValid = enableDeduplication(svc, true);
+                enableDeduplication(svc, true);
                 break;
             case SET_DEDUP_DISABLE:
                 svc.disableDeduplication();
@@ -915,7 +1019,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         }
     }
 
-    private boolean enableDeduplication(MetadataService svc, boolean hasMode) {
+    private void enableDeduplication(MetadataService svc, boolean hasMode) {
         // SET_DEDUP_ENABLE_WITH_MODE carries the dedup mode ahead of the dedup key writer indexes,
         // SET_DEDUP_ENABLE carries the indexes only and implies UPSERT
         final int keyColumnIndexesLo = hasMode ? 1 : 0;
@@ -933,7 +1037,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         for (int i = keyColumnIndexesLo, n = extraInfo.size(); i < n; i++) {
             dedupKeyColumnIndexes.add(extraInfo.getQuick(i));
         }
-        return svc.enableDeduplication(dedupKeyColumnIndexes, dedupMode);
+        svc.enableDeduplication(dedupKeyColumnIndexes, dedupMode);
     }
 
     private ObjList<CharSequence> getAuthColumnNames() {

@@ -34,20 +34,26 @@ import io.questdb.cairo.TxnScoreboard;
 import io.questdb.cairo.TxnScoreboardV2;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
+import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractTest;
+import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cairo.view.ViewCompileParker;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.LogCapture;
@@ -57,11 +63,19 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.Timeout;
 
+import java.nio.charset.StandardCharsets;
+import java.time.Instant;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.Map;
+import java.util.TreeMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.test.tools.TestUtils.getSendDelayNetworkFacade;
 
@@ -206,6 +220,76 @@ public class ImportIODispatcherTest extends AbstractTest {
             "B00014,,,,2017-02-01 15:33:00\r\n" +
             "B00014,,,,2017-02-01 15:45:00\r\n" +
             REQUEST_FOOTER;
+    // Backfill CSV rows, {designated timestamp, cnt}, in file order. A REFRESH LIMIT 1 HOUR view over a base row at
+    // 02:00 takes backfill only into the 1h buckets that end at or before 01:00: rows at 01:00 and 01:30 fall in its
+    // managed zone, the others in its frozen zone. With maxUncommittedRows=2 the import commits every two rows it
+    // appends, then the rest.
+    private static final String[][] BACKFILL_ROWS_ALL_FROZEN = {
+            {"1970-01-01T00:01:41.000000Z", "2"},
+            {"1970-01-01T00:01:42.000000Z", "3"},
+            {"1970-01-01T00:01:43.000000Z", "4"},
+            {"1970-01-01T00:01:44.000000Z", "5"},
+            {"1970-01-01T00:01:45.000000Z", "6"}
+    };
+    // the latest frozen instant in the first batch, the first managed one in the second
+    private static final String[][] BACKFILL_ROWS_BOUNDARY = {
+            {"1970-01-01T00:59:59.999999Z", "2"},
+            {"1970-01-01T00:01:42.000000Z", "3"},
+            {"1970-01-01T01:00:00.000000Z", "7"},
+            {"1970-01-01T00:01:43.000000Z", "4"},
+            {"1970-01-01T00:01:44.000000Z", "5"}
+    };
+    // a row without its designated timestamp before the batch with the managed-zone row
+    private static final String[][] BACKFILL_ROWS_EMPTY_TIMESTAMP = {
+            {"1970-01-01T00:01:41.000000Z", "2"},
+            {"", "9"},
+            {"1970-01-01T00:01:42.000000Z", "3"},
+            {"1970-01-01T01:30:00.000000Z", "7"},
+            {"1970-01-01T00:01:43.000000Z", "4"}
+    };
+    private static final String[][] BACKFILL_ROWS_FOLLOW_UP = {
+            {"1970-01-01T00:30:00.000000Z", "11"},
+            {"1970-01-01T00:30:01.000000Z", "12"}
+    };
+    private static final String[][] BACKFILL_ROWS_MANAGED_IN_FIRST_BATCH = {
+            {"1970-01-01T01:30:00.000000Z", "7"},
+            {"1970-01-01T00:01:41.000000Z", "2"},
+            {"1970-01-01T00:01:42.000000Z", "3"},
+            {"1970-01-01T00:01:43.000000Z", "4"},
+            {"1970-01-01T00:01:44.000000Z", "5"}
+    };
+    // the last batch is full, so an intermediate commit takes it, not the final one
+    private static final String[][] BACKFILL_ROWS_MANAGED_IN_LAST_FULL_BATCH = {
+            {"1970-01-01T00:01:41.000000Z", "2"},
+            {"1970-01-01T00:01:42.000000Z", "3"},
+            {"1970-01-01T00:01:43.000000Z", "4"},
+            {"1970-01-01T01:30:00.000000Z", "7"}
+    };
+    // the last batch is a single row, which the final commit takes
+    private static final String[][] BACKFILL_ROWS_MANAGED_IN_LAST_PARTIAL_BATCH = {
+            {"1970-01-01T00:01:41.000000Z", "2"},
+            {"1970-01-01T00:01:42.000000Z", "3"},
+            {"1970-01-01T01:30:00.000000Z", "7"}
+    };
+    private static final String[][] BACKFILL_ROWS_MANAGED_IN_MIDDLE_BATCH = {
+            {"1970-01-01T00:01:41.000000Z", "2"},
+            {"1970-01-01T00:01:42.000000Z", "3"},
+            {"1970-01-01T01:30:00.000000Z", "7"},
+            {"1970-01-01T00:01:43.000000Z", "4"},
+            {"1970-01-01T00:01:44.000000Z", "5"}
+    };
+    private static final String MULTIPART_BOUNDARY = "------------------------27d997ca93d2689d";
+    // Four rows that an import sends in two writes: the first ends inside the second row, so the server takes the
+    // structure, the writer and the first row before the test changes the target.
+    private static final String[][] SPLIT_UPLOAD_ROWS = {
+            {"1970-01-01T00:01:40.000000Z", "1"},
+            {"1970-01-01T00:01:41.000000Z", "2"},
+            {"1970-01-01T00:01:42.000000Z", "3"},
+            {"1970-01-01T00:01:43.000000Z", "4"}
+    };
+    private static final String SPLIT_UPLOAD_SECOND_WRITE_START = ".000000Z,2\r\n";
+    // the view's own maxUncommittedRows under the test configuration, above the row count of every case
+    private static final int VIEW_MAX_UNCOMMITTED_ROWS = 1000;
     private final String DdlCols1 = "(Col1+STRING,Pickup_DateTime+TIMESTAMP,DropOff_datetime+VARCHAR)";
     private final String DdlCols2 = "(Col1+STRING,Col2+STRING,Col3+STRING,Col4+STRING,Pickup_DateTime+TIMESTAMP)+timestamp(Pickup_DateTime)";
     private final String ImportCreateParamRequestFalse = ValidImportRequest1
@@ -649,6 +733,266 @@ public class ImportIODispatcherTest extends AbstractTest {
                         );
                     });
                 });
+    }
+
+    @Test
+    public void testImportIntoMatViewFailsAfterRefreshLimitRemovedMidImport() throws Exception {
+        // An import keeps the writer it took when the backfill gate let it in. ALTER MATERIALIZED VIEW ... SET REFRESH
+        // LIMIT 0 applies while the upload is under way: the import's next batch commit is refused with the gate's
+        // message and the refusal fails the import, so no row lands and the view gains no WAL transaction. Once the
+        // limit is back, the same upload goes through.
+        getSimpleTester().run((engine, context) -> {
+            // the materialized view state store
+            engine.load();
+            createBaseTable(engine, context, "base_price", "TIMESTAMP");
+            createBackfillableMatViews(engine, context, "base_price", new ObjList<>("v"));
+            final TableToken viewToken = engine.verifyTableName("v");
+            final AtomicLong txnAfterAlter = new AtomicLong();
+            final String request = importRequest("name=v&fmt=json&maxUncommittedRows=2", SPLIT_UPLOAD_ROWS);
+            executeSplitUpload(
+                    engine,
+                    "v",
+                    request,
+                    () -> {
+                        engine.execute("ALTER MATERIALIZED VIEW v SET REFRESH LIMIT 0 HOUR", context);
+                        drainWalAndMatViewQueues(engine);
+                        txnAfterAlter.set(engine.getTableSequencerAPI().lastTxn(viewToken));
+                    },
+                    importErrorResponse(true, "cannot modify materialized view [view=v]")
+            );
+            drainWalAndMatViewQueues(engine);
+            Assert.assertEquals(txnAfterAlter.get(), engine.getTableSequencerAPI().lastTxn(viewToken));
+            assertQuery("SELECT ts, cnt FROM v")
+                    .withEngine(engine)
+                    .withContext(context)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tcnt
+                            1970-01-01T02:00:00.000000Z\t1
+                            """);
+
+            engine.execute("ALTER MATERIALIZED VIEW v SET REFRESH LIMIT 1 HOUR", context);
+            drainWalAndMatViewQueues(engine);
+            new SendAndReceiveRequestBuilder().execute(request, importResponse(true, importOkJson("v", "TIMESTAMP", 4)));
+            drainWalAndMatViewQueues(engine);
+            assertQuery("SELECT ts, cnt FROM v")
+                    .withEngine(engine)
+                    .withContext(context)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tcnt
+                            1970-01-01T00:01:40.000000Z\t1
+                            1970-01-01T00:01:41.000000Z\t2
+                            1970-01-01T00:01:42.000000Z\t3
+                            1970-01-01T00:01:43.000000Z\t4
+                            1970-01-01T02:00:00.000000Z\t1
+                            """);
+        });
+    }
+
+    @Test
+    public void testImportIntoMatViewFailsAtRejectedBatch() throws Exception {
+        // Each case imports into a fresh REFRESH LIMIT 1 HOUR view over a base row at 02:00 and commits every
+        // maxUncommittedRows rows. The first batch the frozen-zone check rejects fails the import with the check's
+        // message, in every atomicity mode and both response formats; the batches committed before it stay and no
+        // row after it is written. MatViewBackfillModel derives the answer, the view's rows and its new WAL
+        // transactions from the documented rule. The view then takes a clean import through its writer pool.
+        final ImportAtomicity[] allModes = ImportAtomicity.values();
+        final ImportAtomicity[] defaultMode = {ImportAtomicity.SKIP_COL};
+        final ImportIntoMatViewCase[] cases = {
+                new ImportIntoMatViewCase("first", BACKFILL_ROWS_MANAGED_IN_FIRST_BATCH, 2, true, false, allModes),
+                new ImportIntoMatViewCase("middle", BACKFILL_ROWS_MANAGED_IN_MIDDLE_BATCH, 2, true, false, allModes),
+                new ImportIntoMatViewCase("last", BACKFILL_ROWS_MANAGED_IN_LAST_FULL_BATCH, 2, true, false, allModes),
+                new ImportIntoMatViewCase("boundary", BACKFILL_ROWS_BOUNDARY, 2, true, false, allModes),
+                new ImportIntoMatViewCase("empty_ts", BACKFILL_ROWS_EMPTY_TIMESTAMP, 2, true, false, allModes),
+                // the TIMESTAMP_NS view and the plain-text answer
+                new ImportIntoMatViewCase("middle_ns", BACKFILL_ROWS_MANAGED_IN_MIDDLE_BATCH, 2, true, true, defaultMode),
+                new ImportIntoMatViewCase("first_text", BACKFILL_ROWS_MANAGED_IN_FIRST_BATCH, 2, false, false, defaultMode),
+                // controls, in one mode as the mode reaches neither path: the final commit of a single batch or of
+                // the last one, and a clean import
+                new ImportIntoMatViewCase("final_commit", BACKFILL_ROWS_MANAGED_IN_LAST_PARTIAL_BATCH, 2, true, false, defaultMode),
+                new ImportIntoMatViewCase("one_batch", BACKFILL_ROWS_MANAGED_IN_FIRST_BATCH, 0, true, false, defaultMode),
+                new ImportIntoMatViewCase("view_batch_size", BACKFILL_ROWS_MANAGED_IN_FIRST_BATCH, -1, true, false, defaultMode),
+                new ImportIntoMatViewCase("clean", BACKFILL_ROWS_ALL_FROZEN, 2, true, false, defaultMode)
+        };
+        getSimpleTester().run(newChunkedTxnLogConfiguration(), (engine, context) -> {
+            // the materialized view state store
+            engine.load();
+            createBaseTable(engine, context, "base_price", "TIMESTAMP");
+            createBaseTable(engine, context, "base_price_ns", "TIMESTAMP_NS");
+            // a fresh view for every import, all built together
+            final ObjList<String> microsViews = new ObjList<>();
+            final ObjList<String> nanosViews = new ObjList<>();
+            for (ImportIntoMatViewCase importCase : cases) {
+                for (ImportAtomicity atomicity : importCase.atomicities) {
+                    (importCase.isNanos ? nanosViews : microsViews).add(importCase.getView(atomicity));
+                }
+            }
+            createBackfillableMatViews(engine, context, "base_price", microsViews);
+            createBackfillableMatViews(engine, context, "base_price_ns", nanosViews);
+
+            for (ImportIntoMatViewCase importCase : cases) {
+                for (ImportAtomicity atomicity : importCase.atomicities) {
+                    final String view = importCase.getView(atomicity);
+                    final TableToken viewToken = engine.verifyTableName(view);
+                    int maxUncommittedRows = importCase.maxUncommittedRows;
+                    String maxUncommittedRowsParam = "&maxUncommittedRows=" + maxUncommittedRows;
+                    if (maxUncommittedRows < 0) {
+                        try (TableMetadata metadata = engine.getTableMetadata(viewToken)) {
+                            maxUncommittedRows = metadata.getMaxUncommittedRows();
+                        }
+                        Assert.assertEquals(VIEW_MAX_UNCOMMITTED_ROWS, maxUncommittedRows);
+                        maxUncommittedRowsParam = "";
+                    }
+                    final long txnBeforeImports = engine.getTableSequencerAPI().lastTxn(viewToken);
+                    final MatViewBackfillModel model = new MatViewBackfillModel(view, importCase.isNanos);
+                    new SendAndReceiveRequestBuilder().execute(
+                            importRequest(
+                                    "name=" + view + (importCase.isJson ? "&fmt=json" : "") + maxUncommittedRowsParam + atomicity.urlParam,
+                                    importCase.rows
+                            ),
+                            model.replayImport(importCase.rows, maxUncommittedRows, atomicity == ImportAtomicity.ABORT, importCase.isJson)
+                    );
+                    drainWalAndMatViewQueues(engine);
+                    assertMatViewBackfill(engine, context, model, txnBeforeImports);
+
+                    // the writer the import returned to the pool takes the next import
+                    new SendAndReceiveRequestBuilder().execute(
+                            importRequest("name=" + view + "&fmt=json&maxUncommittedRows=2", BACKFILL_ROWS_FOLLOW_UP),
+                            model.replayImport(BACKFILL_ROWS_FOLLOW_UP, 2, false, true)
+                    );
+                    drainWalAndMatViewQueues(engine);
+                    assertMatViewBackfill(engine, context, model, txnBeforeImports);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testImportIntoNonWalTableFailsAtFailedO3Commit() throws Exception {
+        // A non-WAL table whose intermediate O3 commit fails on storage: the import fails at that commit with its
+        // error, in every atomicity mode, rather than going on while the writer's next commit silently rolls the
+        // failed batch back. The import's writer returns to the pool, which rolls the batch back, so the table keeps
+        // only its own row and takes the same upload afterwards.
+        final AtomicReference<String> failingTable = new AtomicReference<>();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                // the first open of a cnt column file of the armed table, which the O3 merge makes
+                final String table = failingTable.get();
+                if (table != null
+                        && Utf8s.containsAscii(name, Files.SEPARATOR + table + Files.SEPARATOR)
+                        && Utf8s.endsWithAscii(name, Files.SEPARATOR + "cnt.d")
+                        && failingTable.compareAndSet(table, null)) {
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        };
+        getSimpleTester().withFilesFacade(ff).run((engine, context) -> {
+            for (ImportAtomicity atomicity : ImportAtomicity.values()) {
+                final String table = "t_" + atomicity.name().toLowerCase();
+                engine.execute("CREATE TABLE " + table + " (ts TIMESTAMP, cnt LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", context);
+                engine.execute("INSERT INTO " + table + " VALUES ('1970-01-01T05:00:00.000000Z', 99)", context);
+                final String request = importRequest(
+                        "name=" + table + "&fmt=json&maxUncommittedRows=2" + atomicity.urlParam,
+                        BACKFILL_ROWS_MANAGED_IN_FIRST_BATCH
+                );
+                // every imported row is older than the table's row, so the first batch commit merges into its partition
+                failingTable.set(table);
+                new SendAndReceiveRequestBuilder().execute(
+                        request,
+                        importErrorResponse(true, "bulk update failed and will be rolled back")
+                );
+                Assert.assertNull("the import did not reach the O3 merge", failingTable.get());
+                Assert.assertEquals(0, engine.getBusyWriterCount());
+                assertQuery("SELECT ts, cnt FROM " + table)
+                        .withEngine(engine)
+                        .withContext(context)
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                ts\tcnt
+                                1970-01-01T05:00:00.000000Z\t99
+                                """);
+
+                new SendAndReceiveRequestBuilder().execute(request, importResponse(true, importOkJson(table, "TIMESTAMP", 5)));
+                assertQuery("SELECT ts, cnt FROM " + table)
+                        .withEngine(engine)
+                        .withContext(context)
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                ts\tcnt
+                                1970-01-01T00:01:41.000000Z\t2
+                                1970-01-01T00:01:42.000000Z\t3
+                                1970-01-01T00:01:43.000000Z\t4
+                                1970-01-01T00:01:44.000000Z\t5
+                                1970-01-01T01:30:00.000000Z\t7
+                                1970-01-01T05:00:00.000000Z\t99
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testImportIntoTableFailsAtRenameMidImport() throws Exception {
+        // A WAL table renamed while an import uploads into it: the import's next commit, an intermediate batch commit
+        // or the final one, finds the table under another name. The import answers with that error in every
+        // atomicity mode, rather than dropping the connection or failing later with a distressed writer, and imports
+        // no row; the renamed table takes the same upload afterwards.
+        getSimpleTester().run((engine, context) -> {
+            final String[] params = {
+                    "&maxUncommittedRows=2",
+                    "&maxUncommittedRows=0",
+                    "&maxUncommittedRows=2" + ImportAtomicity.ABORT.urlParam
+            };
+            for (String param : params) {
+                engine.execute("CREATE TABLE t (ts TIMESTAMP, cnt LONG) TIMESTAMP(ts) PARTITION BY DAY WAL", context);
+                executeSplitUpload(
+                        engine,
+                        "t",
+                        importRequest("name=t&fmt=json" + param, SPLIT_UPLOAD_ROWS),
+                        () -> engine.execute("RENAME TABLE t TO t2", context),
+                        importErrorResponse(true, "cached query plan cannot be used because table schema has changed [table=t]")
+                );
+                drainWalQueue(engine);
+                assertQuery("SELECT ts, cnt FROM t2")
+                        .withEngine(engine)
+                        .withContext(context)
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("ts\tcnt\n");
+
+                new SendAndReceiveRequestBuilder().execute(
+                        importRequest("name=t2&fmt=json" + param, SPLIT_UPLOAD_ROWS),
+                        importResponse(true, importOkJson("t2", "TIMESTAMP", 4))
+                );
+                drainWalQueue(engine);
+                assertQuery("SELECT ts, cnt FROM t2")
+                        .withEngine(engine)
+                        .withContext(context)
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                ts\tcnt
+                                1970-01-01T00:01:40.000000Z\t1
+                                1970-01-01T00:01:41.000000Z\t2
+                                1970-01-01T00:01:42.000000Z\t3
+                                1970-01-01T00:01:43.000000Z\t4
+                                """);
+                engine.execute("DROP TABLE t2", context);
+                drainWalQueue(engine);
+            }
+        });
     }
 
     @Test
@@ -1300,6 +1644,146 @@ public class ImportIODispatcherTest extends AbstractTest {
                 });
     }
 
+    // Views of the base table with REFRESH LIMIT 1 HOUR: over the base row at 02:00 their frozen zone ends at 01:00.
+    private static void createBackfillableMatViews(
+            CairoEngine engine,
+            SqlExecutionContext context,
+            String baseTable,
+            ObjList<String> views
+    ) throws SqlException {
+        for (int i = 0, n = views.size(); i < n; i++) {
+            engine.execute("CREATE MATERIALIZED VIEW " + views.getQuick(i) + " AS (SELECT ts, count() cnt FROM " + baseTable + " SAMPLE BY 1h) PARTITION BY DAY", context);
+        }
+        drainWalAndMatViewQueues(engine);
+        for (int i = 0, n = views.size(); i < n; i++) {
+            engine.execute("ALTER MATERIALIZED VIEW " + views.getQuick(i) + " SET REFRESH LIMIT 1 HOUR", context);
+        }
+        drainWalAndMatViewQueues(engine);
+        for (int i = 0, n = views.size(); i < n; i++) {
+            Assert.assertTrue(engine.isBackfillableMatView(engine.verifyTableName(views.getQuick(i))));
+        }
+    }
+
+    private static void createBaseTable(
+            CairoEngine engine,
+            SqlExecutionContext context,
+            String baseTable,
+            String timestampType
+    ) throws SqlException {
+        engine.execute("CREATE TABLE " + baseTable + " (ts " + timestampType + ", val INT) TIMESTAMP(ts) PARTITION BY DAY WAL", context);
+        engine.execute("INSERT INTO " + baseTable + " VALUES ('1970-01-01T02:00:00.000000Z', 1)", context);
+        drainWalQueue(engine);
+    }
+
+    // Sends the import request in two writes on one connection, the first ending inside the second CSV row. Runs the
+    // action between the writes, once the import has taken the target's writer, then reads the answer.
+    private static void executeSplitUpload(
+            CairoEngine engine,
+            String target,
+            String request,
+            SplitUploadAction betweenWrites,
+            String expectedResponse
+    ) throws Exception {
+        final SOCountDownLatch importTookWriter = new SOCountDownLatch(1);
+        final AtomicBoolean isWriterTaken = new AtomicBoolean();
+        engine.setPoolListener((factoryType, _, tableToken, event, _, _) -> {
+            if (tableToken != null && Chars.equals(target, tableToken.getTableName())) {
+                if (factoryType == PoolListener.SRC_WAL_WRITER && (event == PoolListener.EV_GET || event == PoolListener.EV_CREATE)) {
+                    isWriterTaken.set(true);
+                } else if (factoryType == PoolListener.SRC_TABLE_METADATA && event == PoolListener.EV_RETURN && isWriterTaken.get()) {
+                    // CairoTextWriter.prepareTable() reads the target's partitioning after it took the writer; the
+                    // import makes no other engine call before it parses the rows
+                    importTookWriter.countDown();
+                }
+            }
+        });
+        final int splitAt = request.indexOf(SPLIT_UPLOAD_SECOND_WRITE_START);
+        final SendAndReceiveRequestBuilder client = new SendAndReceiveRequestBuilder();
+        final long fd = client.connectAndSendRequest(request.substring(0, splitAt));
+        try {
+            Assert.assertTrue("the import did not take the writer", importTookWriter.await(TimeUnit.SECONDS.toNanos(30)));
+            engine.setPoolListener(null);
+            betweenWrites.run();
+            final String secondWrite = request.substring(splitAt);
+            final int bufSize = Math.max(expectedResponse.length(), secondWrite.length()) * 2;
+            final long buf = Unsafe.malloc(bufSize, MemoryTag.NATIVE_DEFAULT);
+            try {
+                client.executeExplicit(secondWrite, fd, expectedResponse, bufSize, buf, null);
+            } finally {
+                Unsafe.free(buf, bufSize, MemoryTag.NATIVE_DEFAULT);
+            }
+        } finally {
+            engine.setPoolListener(null);
+            NetworkFacadeImpl.INSTANCE.close(fd);
+        }
+    }
+
+    private static String importErrorResponse(boolean isJson, String message) {
+        return importResponse(isJson, isJson ? "{\"status\":\"" + message + "\"}" : message);
+    }
+
+    private static String importOkJson(String table, String timestampType, int rowsImported) {
+        return "{\"status\":\"OK\"," +
+                "\"location\":\"" + table + "\"," +
+                "\"rowsRejected\":0," +
+                "\"rowsImported\":" + rowsImported + "," +
+                "\"header\":true," +
+                "\"partitionBy\":\"DAY\"," +
+                "\"timestamp\":\"ts\"," +
+                "\"columns\":[" +
+                "{\"name\":\"ts\",\"type\":\"" + timestampType + "\",\"size\":8,\"errors\":0}," +
+                "{\"name\":\"cnt\",\"type\":\"LONG\",\"size\":8,\"errors\":0}" +
+                "]}";
+    }
+
+    // A POST /imp of a CSV with the header ts,cnt and the rows, each {ts, cnt}.
+    private static String importRequest(String urlQuery, String[][] rows) {
+        final StringBuilder body = new StringBuilder()
+                .append("--").append(MULTIPART_BOUNDARY).append("\r\n")
+                .append("Content-Disposition: form-data; name=\"data\"; filename=\"backfill.csv\"\r\n")
+                .append("Content-Type: application/octet-stream\r\n")
+                .append("\r\n")
+                .append("ts,cnt\r\n");
+        for (String[] row : rows) {
+            body.append(row[0]).append(',').append(row[1]).append("\r\n");
+        }
+        body.append("\r\n--").append(MULTIPART_BOUNDARY).append("--");
+        return "POST /imp?" + urlQuery + " HTTP/1.1\r\n" +
+                "Host: localhost:9001\r\n" +
+                "User-Agent: curl/7.64.0\r\n" +
+                "Accept: */*\r\n" +
+                "Content-Length: " + body.length() + "\r\n" +
+                "Content-Type: multipart/form-data; boundary=" + MULTIPART_BOUNDARY + "\r\n" +
+                "\r\n" +
+                body;
+    }
+
+    // The /imp answer: HTTP 200 with the body in one chunk, whose size goes in an even number of hex digits.
+    private static String importResponse(boolean isJson, String body) {
+        final String chunkSize = Integer.toHexString(body.getBytes(StandardCharsets.UTF_8).length);
+        return "HTTP/1.1 200 OK\r\n" +
+                "Server: questDB/1.0\r\n" +
+                "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                "Transfer-Encoding: chunked\r\n" +
+                "Content-Type: " + (isJson ? "application/json" : "text/plain") + "; charset=utf-8\r\n" +
+                "\r\n" +
+                (chunkSize.length() % 2 == 0 ? "" : "0") + chunkSize + "\r\n" +
+                body + "\r\n" +
+                "00\r\n" +
+                "\r\n";
+    }
+
+    // wal_transactions() reports the row count and the timestamp range of a WAL transaction only from the chunked
+    // sequencer transaction log
+    private static DefaultTestCairoConfiguration newChunkedTxnLogConfiguration() {
+        return new DefaultTestCairoConfiguration(root) {
+            @Override
+            public int getDefaultSeqPartTxnCount() {
+                return 10;
+            }
+        };
+    }
+
     private static int stringLen(int number) {
         int length = 1;
         long temp = 10;
@@ -1308,6 +1792,27 @@ public class ImportIODispatcherTest extends AbstractTest {
             temp *= 10;
         }
         return length;
+    }
+
+    private void assertMatViewBackfill(
+            CairoEngine engine,
+            SqlExecutionContext context,
+            MatViewBackfillModel model,
+            long txnBeforeImports
+    ) throws Exception {
+        assertQuery("SELECT ts, cnt FROM " + model.view)
+                .withEngine(engine)
+                .withContext(context)
+                .noLeakCheck()
+                .timestamp("ts")
+                .expectSize()
+                .returns(model.getExpectedViewRows());
+        assertQuery("SELECT minTimestamp, maxTimestamp, rowCount FROM wal_transactions('" + model.view + "') WHERE sequencerTxn > " + txnBeforeImports)
+                .withEngine(engine)
+                .withContext(context)
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns(model.getExpectedTxns());
     }
 
     private String generateImportCsv(int low, int hi, String... columnTemplates) {
@@ -1543,5 +2048,142 @@ public class ImportIODispatcherTest extends AbstractTest {
                             success.get()
                     );
                 });
+    }
+
+    // /imp's atomicity modes and the URL parameter that selects each; skipCol, the default, is the absent parameter.
+    private enum ImportAtomicity {
+        SKIP_COL(""),
+        SKIP_ROW("&atomicity=skipRow"),
+        ABORT("&atomicity=abort");
+
+        private final String urlParam;
+
+        ImportAtomicity(String urlParam) {
+            this.urlParam = urlParam;
+        }
+    }
+
+    @FunctionalInterface
+    private interface SplitUploadAction {
+        void run() throws Exception;
+    }
+
+    // maxUncommittedRows below zero leaves the parameter out, so the import takes the view's own.
+    private record ImportIntoMatViewCase(
+            String name,
+            String[][] rows,
+            int maxUncommittedRows,
+            boolean isJson,
+            boolean isNanos,
+            ImportAtomicity... atomicities
+    ) {
+        String getView(ImportAtomicity atomicity) {
+            return "v_" + name + '_' + atomicity.name().toLowerCase();
+        }
+    }
+
+    /**
+     * The frozen-zone rule of a view with REFRESH LIMIT 1 HOUR over a base table whose latest row is at 02:00, as
+     * the view documents it: a backfill commit lands only when the 1h bucket of its latest row ends at or before the
+     * boundary bucket floor, floor_1h(02:00 - 1h) = 01:00; otherwise the whole commit is refused. Replays imports into
+     * the view commit by commit and keeps what the view holds afterwards: its rows and the WAL transactions the
+     * imports added.
+     */
+    private static class MatViewBackfillModel {
+        private static final long BOUNDARY_BUCKET_FLOOR = Micros.HOUR_MICROS;
+        private static final DateTimeFormatter MICROS_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSSSSS")
+                .withZone(ZoneOffset.UTC);
+        private final StringBuilder expectedTxns = new StringBuilder("minTimestamp\tmaxTimestamp\trowCount\n");
+        private final boolean isNanos;
+        private final String view;
+        private final TreeMap<Long, Long> viewRows = new TreeMap<>();
+
+        MatViewBackfillModel(String view, boolean isNanos) {
+            this.view = view;
+            this.isNanos = isNanos;
+            // the row the refresh built from the base row at 02:00
+            viewRows.put(2 * Micros.HOUR_MICROS, 1L);
+        }
+
+        String getExpectedTxns() {
+            return expectedTxns.toString();
+        }
+
+        String getExpectedViewRows() {
+            final StringBuilder rows = new StringBuilder("ts\tcnt\n");
+            for (Map.Entry<Long, Long> row : viewRows.entrySet()) {
+                rows.append(format(row.getKey(), isNanos)).append('\t').append(row.getValue()).append('\n');
+            }
+            return rows.toString();
+        }
+
+        // Replays an import of the rows in file order: commits every maxUncommittedRows appended rows, then the rest.
+        // Returns the answer the import gets.
+        String replayImport(String[][] rows, int maxUncommittedRows, boolean isAbort, boolean isJson) {
+            final ArrayList<long[]> batch = new ArrayList<>();
+            int skippedRowCount = 0;
+            for (int line = 0; line < rows.length; line++) {
+                if (rows[line][0].isEmpty()) {
+                    // a row without its designated timestamp is a row error: the import skips the row, or in abort
+                    // mode rolls back the open batch and fails with the row's position
+                    if (isAbort) {
+                        return importErrorResponse(isJson, "bad syntax [line=" + line + ", col=0]");
+                    }
+                    skippedRowCount++;
+                    continue;
+                }
+                batch.add(new long[]{parseMicros(rows[line][0]), Long.parseLong(rows[line][1])});
+                if (batch.size() == maxUncommittedRows) {
+                    final String rejection = commit(batch);
+                    if (rejection != null) {
+                        return importErrorResponse(isJson, rejection);
+                    }
+                }
+            }
+            final String rejection = batch.isEmpty() ? null : commit(batch);
+            if (rejection != null) {
+                return importErrorResponse(isJson, rejection);
+            }
+            Assert.assertTrue("no case expects a text answer or skipped rows from a clean import", isJson && skippedRowCount == 0);
+            return importResponse(true, importOkJson(view, isNanos ? "TIMESTAMP_NS" : "TIMESTAMP", rows.length));
+        }
+
+        private static String format(long micros, boolean isNanos) {
+            final Instant instant = Instant.ofEpochSecond(Math.floorDiv(micros, Micros.SECOND_MICROS), Math.floorMod(micros, Micros.SECOND_MICROS) * 1000);
+            return MICROS_FORMAT.format(instant) + (isNanos ? "000Z" : "Z");
+        }
+
+        private static long parseMicros(String timestamp) {
+            final Instant instant = Instant.parse(timestamp);
+            return instant.getEpochSecond() * Micros.SECOND_MICROS + instant.getNano() / 1000;
+        }
+
+        // Returns the refusal of the batch, or null when it lands.
+        private String commit(ArrayList<long[]> batch) {
+            long minTimestamp = Long.MAX_VALUE;
+            long maxTimestamp = Long.MIN_VALUE;
+            for (int i = 0, n = batch.size(); i < n; i++) {
+                minTimestamp = Math.min(minTimestamp, batch.get(i)[0]);
+                maxTimestamp = Math.max(maxTimestamp, batch.get(i)[0]);
+            }
+            final long bucketLo = maxTimestamp - Math.floorMod(maxTimestamp, Micros.HOUR_MICROS);
+            final long bucketHi = bucketLo + Micros.HOUR_MICROS;
+            if (bucketHi > BOUNDARY_BUCKET_FLOOR) {
+                return "backfill row falls in or past the managed zone of materialized view [view=" + view
+                        + ", maxRowTs=" + format(maxTimestamp, isNanos)
+                        + ", rowBucket=[" + format(bucketLo, isNanos) + ", " + format(bucketHi, isNanos)
+                        + "), boundaryBucketFloor=" + format(BOUNDARY_BUCKET_FLOOR, isNanos)
+                        + "]; backfill bucket end must be at-or-before the boundary bucket floor";
+            }
+            for (int i = 0, n = batch.size(); i < n; i++) {
+                viewRows.put(batch.get(i)[0], batch.get(i)[1]);
+            }
+            // wal_transactions() reports microseconds whatever the timestamp type of the table
+            expectedTxns.append(format(minTimestamp, false)).append('\t')
+                    .append(format(maxTimestamp, false)).append('\t')
+                    .append(batch.size()).append('\n');
+            batch.clear();
+            return null;
+        }
     }
 }

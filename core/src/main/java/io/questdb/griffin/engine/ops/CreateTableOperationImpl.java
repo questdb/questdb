@@ -858,6 +858,42 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         }
     }
 
+    // Resolves the INCLUDE names of the column at columnIndex of a CREATE column list to positions in the list, or
+    // returns null when the column has no INCLUDE. CREATE MATERIALIZED VIEW checks its column list with it too.
+    static @Nullable IntList resolveCoveringColumnIndices(
+            int columnIndex,
+            CreateTableColumnModel model,
+            LowerCaseCharSequenceIntHashMap nameToIndex
+    ) throws SqlException {
+        final ObjList<CharSequence> coverNames = model.getCoveringColumnNames();
+        if (coverNames.size() == 0) {
+            return null;
+        }
+        final IntList coverPositions = model.getCoveringColumnPositions();
+        final IntList indices = new IntList(coverNames.size());
+        for (int j = 0, m = coverNames.size(); j < m; j++) {
+            CharSequence covName = coverNames.get(j);
+            int covPos = coverPositions.getQuick(j);
+            int idx = nameToIndex.get(covName);
+            if (idx < 0) {
+                throw SqlException.position(covPos)
+                        .put("INCLUDE column doesn't exist [column=").put(covName).put(']');
+            }
+            if (idx == columnIndex) {
+                throw SqlException.position(covPos)
+                        .put("INCLUDE must not contain the indexed column [column=").put(covName).put(']');
+            }
+            for (int k = 0; k < j; k++) {
+                if (indices.getQuick(k) == idx) {
+                    throw SqlException.position(covPos)
+                            .put("duplicate column in INCLUDE [column=").put(covName).put(']');
+                }
+            }
+            indices.add(idx);
+        }
+        return indices;
+    }
+
     private static void maybeAppendTimestamp(IntList indices, int timestampIndex) {
         if (!indices.contains(timestampIndex)) {
             indices.add(timestampIndex);
@@ -909,32 +945,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         }
         for (int i = 0, n = allColumnNames.size(); i < n; i++) {
             CreateTableColumnModel model = modelMap.get(allColumnNames.get(i));
-            ObjList<CharSequence> coverNames = model.getCoveringColumnNames();
-            IntList coverPositions = model.getCoveringColumnPositions();
-            IntList indices = null;
-            if (coverNames.size() > 0) {
-                indices = new IntList(coverNames.size());
-                for (int j = 0, m = coverNames.size(); j < m; j++) {
-                    CharSequence covName = coverNames.get(j);
-                    int covPos = coverPositions.getQuick(j);
-                    int idx = nameToIndex.get(covName);
-                    if (idx < 0) {
-                        throw SqlException.position(covPos)
-                                .put("INCLUDE column doesn't exist [column=").put(covName).put(']');
-                    }
-                    if (idx == i) {
-                        throw SqlException.position(covPos)
-                                .put("INCLUDE must not contain the indexed column [column=").put(covName).put(']');
-                    }
-                    for (int k = 0; k < j; k++) {
-                        if (indices.getQuick(k) == idx) {
-                            throw SqlException.position(covPos)
-                                    .put("duplicate column in INCLUDE [column=").put(covName).put(']');
-                        }
-                    }
-                    indices.add(idx);
-                }
-            }
+            IntList indices = resolveCoveringColumnIndices(i, model, nameToIndex);
             // Auto-append the designated timestamp on POSTING indexes, but only
             // when the user gave an INCLUDE clause with at least one column -- a
             // bare INDEX TYPE POSTING (no INCLUDE) stays non-covering. Skip when

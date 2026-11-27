@@ -1610,7 +1610,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testExplainCreateMatView() throws Exception {
-        assertQuery("create materialized view test as (select ts, k, avg(v) from tab sample by 30s) partition by day")
+        assertQuery("create materialized view test as (select ts, k, avg(v) as avg from tab sample by 30s) partition by day")
                 .ddl("create table tab (ts timestamp, k symbol, v long) timestamp(ts) partition by day wal")
                 .assertsPlan("""
                         Create materialized view: test
@@ -1630,8 +1630,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table tab (ts timestamp, k symbol, v long) timestamp(ts) partition by day wal");
             assertExplainAfterCompilerReuse(
-                    "create materialized view test as (select ts, k, avg(v) from tab sample by 30s) partition by day",
-                    "create materialized view other as (select ts, k, avg(v) from tab sample by 30s) partition by day"
+                    "create materialized view test as (select ts, k, avg(v) as avg from tab sample by 30s) partition by day",
+                    "create materialized view other as (select ts, k, avg(v) as avg from tab sample by 30s) partition by day"
             );
         });
     }
@@ -1745,7 +1745,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
                 assertNotSupportedByExplain("EXPLAIN ALTER TABLE reference_prices ADD COLUMN col1 LONG", executionContext);
 
-                assertWritePermissionDenied("EXPLAIN CREATE MATERIALIZED VIEW prices_1h AS (\n" + "SELECT venue, symbol, avg(referencePrice) FROM reference_prices sample by 1h" + ") partition by day", executionContext);
+                assertWritePermissionDenied("EXPLAIN CREATE MATERIALIZED VIEW prices_1h AS (\n" + "SELECT venue, symbol, avg(referencePrice) AS avg FROM reference_prices sample by 1h" + ") partition by day", executionContext);
 
                 assertNotSupportedByExplain("EXPLAIN REFRESH MATERIALIZED VIEW prices_1h FULL", executionContext);
 

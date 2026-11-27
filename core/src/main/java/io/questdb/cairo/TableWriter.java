@@ -43,6 +43,7 @@ import io.questdb.cairo.idx.PostingIndexChainWriter;
 import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.idx.PostingIndexWriter;
 import io.questdb.cairo.mv.MatViewDefinition;
+import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.cairo.sql.PartitionFormat;
@@ -183,6 +184,8 @@ import static io.questdb.tasks.TableWriterTask.*;
 public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // Sink slot 8 when the write left the partition's geometry alone.
     public static final long NO_GEOMETRY_REF = 0L;
+    // A row that discards every value written to it.
+    public static final Row NOOP_ROW = new NoOpRow();
     public static final int O3_BLOCK_DATA = 2;
     public static final int O3_BLOCK_MERGE = 3;
     public static final int O3_BLOCK_NONE = -1;
@@ -260,7 +263,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      */
     private static final Runnable NOOP = () -> {
     };
-    private static final Row NOOP_ROW = new NoOpRow();
     private static final int O3_ERRNO_FATAL = Integer.MAX_VALUE - 1;
     private static final int POSTING_SEAL_PURGE_CLOSE_QUEUE_RETRY_COUNT = 32;
     private static final String POSTING_SEAL_PURGE_PENDING_FILE_NAME = "_posting_seal_purge_pending.d";
@@ -5460,6 +5462,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         updateMatViewDefinition(newDefinition);
     }
 
+    /**
+     * Applies {@code ALTER MATERIALIZED VIEW ... AS}: derives the view's new definition from the current one, which the
+     * caller looked up to check the event against, with the base table name and the SQL text replaced, and writes it.
+     * The view's own designated timestamp type stands for the base table's, which the statement requires to match, so
+     * the base table is never opened.
+     */
+    public void setMatViewSql(@NotNull MatViewDefinition oldDefinition, @NotNull String baseTableName, @NotNull String matViewSql) {
+        assert tableToken.isMatView();
+        final MatViewDefinition newDefinition = oldDefinition.updateSql(baseTableName, matViewSql, metadata.getTimestampType());
+        updateMatViewDefinition(newDefinition);
+    }
+
     @Override
     public void setMatViewRefreshLimit(int limitHoursOrMonths) {
         assert tableToken.isMatView();
@@ -5786,6 +5800,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
         }
         commitSeqTxn(seqTxn);
+        if (tableToken.isMatView()) {
+            // RESUME WAL FROM TXN skipped the view's WAL past seqTxn, definition events included: the refreshes that
+            // deferred on one run with the definition the view keeps, and RESUME WAL wakes them once it lifted the
+            // suspension, see MatViewState.recordAppliedDefinitionSeqTxn().
+            final MatViewState viewState = engine.getMatViewStateStore().getViewState(tableToken);
+            if (viewState != null) {
+                viewState.recordAppliedDefinitionSeqTxn(seqTxn);
+            }
+        }
     }
 
     @TestOnly
@@ -24465,7 +24488,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private static class NoOpRow implements Row {
+    // A row that discards the values. Public so that a row which checks some of the values before it discards them,
+    // as the cast error replay of materialized view refresh does, overrides only the methods that take those.
+    public static class NoOpRow implements Row {
         @Override
         public void append() {
             // no-op

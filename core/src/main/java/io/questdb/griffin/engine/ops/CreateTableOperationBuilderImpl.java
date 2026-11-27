@@ -281,6 +281,24 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         return walEnabled;
     }
 
+    // Prints the column definitions, as CREATE TABLE and the column list of CREATE MATERIALIZED VIEW write them.
+    void columnsToSink(CharSink<?> sink) {
+        for (int i = 0, n = columnNames.size(); i < n; i++) {
+            if (i > 0) {
+                sink.putAscii(", ");
+            }
+            final CharSequence columnName = columnNames.getQuick(i);
+            final CreateTableColumnModel model = columnModels.get(columnName);
+            sink.put(columnName);
+            sink.putAscii(' ');
+            sink.put(ColumnType.nameOf(model.getColumnType()));
+            if (ColumnType.isSymbol(model.getColumnType())) {
+                symbolClauseToSink(sink, model);
+            }
+            parquetClauseToSink(sink, model);
+        }
+    }
+
     void ttlToSink(CharSink<?> sink) {
         if (ttlToSinkOverride != null) {
             ttlToSinkOverride.toSink(sink);
@@ -429,21 +447,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
                 sink.putAscii("like ");
                 sink.put(likeTableNameExpr.token);
             } else {
-                int count = columnNames.size();
-                for (int i = 0; i < count; i++) {
-                    if (i > 0) {
-                        sink.putAscii(", ");
-                    }
-                    CharSequence columnName = columnNames.getQuick(i);
-                    CreateTableColumnModel model = columnModels.get(columnName);
-                    sink.put(columnName);
-                    sink.putAscii(' ');
-                    sink.put(ColumnType.nameOf(model.getColumnType()));
-                    if (ColumnType.isSymbol(model.getColumnType())) {
-                        symbolClauseToSink(sink, model);
-                    }
-                    parquetClauseToSink(sink, model);
-                }
+                columnsToSink(sink);
             }
             sink.putAscii(')');
         }

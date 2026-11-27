@@ -260,6 +260,87 @@ public class DependentViewGraphAndStateStoreTest extends AbstractCairoTest {
         }
     }
 
+    @Test
+    public void testLoopTolerantAddViewKeepsEdgeAndOrderTerminates() {
+        // The startup load and the rebase registration keep a view on a loop with its edge, for the caller to mark
+        // invalid, while the strict mode, CREATE's, refuses it. The checkpoint ordering walk terminates on the loop
+        // and emits every table once, the loop's views ahead of the table outside it.
+        TableToken table1 = newTableToken("table1");
+        TableToken viewA = newMatViewToken("viewA");
+        TableToken viewB = newMatViewToken("viewB");
+        TableToken viewC = newMatViewToken("viewC");
+        addDefinition(viewA, viewB);
+        addDefinition(viewC, table1);
+        final MatViewDefinition definitionB = createDefinition(viewB, viewA);
+        Assert.assertTrue(graph.isOnDependencyLoop(definitionB));
+        Assert.assertTrue(graph.addView(definitionB, true));
+        Assert.assertFalse(graph.addView(definitionB, true));
+        Assert.assertTrue(graph.isOnDependencyLoop(definitionB));
+        Assert.assertTrue(graph.isOnDependencyLoop(graph.getViewDefinition(viewA)));
+        Assert.assertFalse(graph.isOnDependencyLoop(graph.getViewDefinition(viewC)));
+        assertDependents(viewA, "viewB");
+        assertDependents(viewB, "viewA");
+
+        graph.orderByDependentViews(tableTokens, ordered);
+        Assert.assertEquals(4, ordered.size());
+        for (String name : new String[]{"table1", "viewA", "viewB", "viewC"}) {
+            Assert.assertTrue(name, indexOf(ordered, name) > -1);
+        }
+        Assert.assertTrue(indexOf(ordered, "viewC") < indexOf(ordered, "table1"));
+    }
+
+    @Test
+    public void testUpdateViewDefinitionMovesEdge() {
+        // A new definition that names another base table moves the view's edge, also when it closes a loop; one that
+        // names the same base table, in any case, leaves the edges as they are.
+        TableToken table1 = newTableToken("table1");
+        TableToken table2 = newTableToken("table2");
+        TableToken view1 = newMatViewToken("view1");
+        TableToken view2 = newMatViewToken("view2");
+        addDefinition(view1, table1);
+        addDefinition(view2, table1);
+        assertDependents(table1, "view1", "view2");
+
+        graph.updateViewDefinition(view2, createDefinition(view2, table2));
+        assertDependents(table1, "view1");
+        assertDependents(table2, "view2");
+        Assert.assertEquals("table2", graph.getViewDefinition(view2).getBaseTableName());
+
+        graph.updateViewDefinition(view2, createDefinition(view2, new TableToken("TABLE2", "TABLE2", null, 0, TableToken.Type.TABLE, true, false, false, true)));
+        assertDependents(table2, "view2");
+
+        // view1 on view2 and view2 on view1: the second move closes a loop, which the graph keeps
+        graph.updateViewDefinition(view1, createDefinition(view1, view2));
+        graph.updateViewDefinition(view2, createDefinition(view2, view1));
+        assertDependents(view2, "view1");
+        assertDependents(view1, "view2");
+        Assert.assertTrue(graph.isOnDependencyLoop(graph.getViewDefinition(view1)));
+        graph.orderByDependentViews(tableTokens, ordered);
+        Assert.assertTrue(indexOf(ordered, "view1") > -1 && indexOf(ordered, "view2") > -1);
+
+        // the removal of a moved view finds its edge under the new base table
+        graph.removeView(view2);
+        assertDependents(view1);
+
+        final TableToken missing = newMatViewToken("missing");
+        try {
+            graph.updateViewDefinition(missing, createDefinition(missing, table1));
+            Assert.fail("a view the graph does not hold has no definition to replace");
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "previous view definition was not found: missing");
+        }
+        assertDependents(table1);
+    }
+
+    private void assertDependents(TableToken baseTableToken, String... expected) {
+        final ObjList<TableToken> sink = new ObjList<>();
+        graph.getDependentViews(baseTableToken, sink);
+        Assert.assertEquals(expected.length, sink.size());
+        for (int i = 0; i < expected.length; i++) {
+            Assert.assertEquals(expected[i], sink.getQuick(i).getTableName());
+        }
+    }
+
     private static int indexOf(ObjList<TableToken> list, String name) {
         for (int i = 0, n = list.size(); i < n; i++) {
             if (name.contentEquals(list.getQuick(i).getTableName())) {

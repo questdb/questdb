@@ -64,6 +64,64 @@ public class MatViewReaderPoolRetryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPartitionClipCommitsEachGapWhenViewReaderPoolIsExhausted() throws Exception {
+        // A refresh reads the view's rows to tell the base partition gaps it can commit across, here 2024-01-02 and
+        // 2024-01-04, which never held rows. With the view's reader pool full, a user RANGE commits each gap
+        // separately instead, as for gaps that hold view rows, and completes without an error. With a reader free,
+        // the same RANGE commits across both gaps.
+        assertMemoryLeak(() -> {
+            final long now = 1_704_499_200_000_000L; // 2024-01-06
+            setCurrentMicros(now);
+            try {
+                execute("CREATE TABLE base (sym SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("CREATE MATERIALIZED VIEW mv REFRESH MANUAL AS (SELECT ts, sym, last(price) AS price FROM base SAMPLE BY 1h) PARTITION BY DAY");
+                execute("""
+                        INSERT INTO base VALUES
+                        ('a', 1.0, '2024-01-01T00:10:00.000000Z'),
+                        ('c', 3.0, '2024-01-03T00:10:00.000000Z'),
+                        ('e', 5.0, '2024-01-05T00:10:00.000000Z')
+                        """);
+                drainWalQueue();
+                execute("REFRESH MATERIALIZED VIEW mv INCREMENTAL");
+                drainWalAndMatViewQueues();
+
+                final TableToken viewToken = engine.verifyTableName("mv");
+                final String range = "REFRESH MATERIALIZED VIEW mv RANGE FROM '2024-01-01T00:00:00.000000Z' TO '2024-01-06T00:00:00.000000Z'";
+                long viewTxn = engine.getTableSequencerAPI().lastTxn(viewToken);
+                try (
+                        TableReader ignored1 = engine.getReader(viewToken);
+                        TableReader ignored2 = engine.getReader(viewToken)
+                ) {
+                    execute(range);
+                    drainMatViewQueue(engine);
+                }
+                // a commit for each of the base's three days
+                Assert.assertEquals(viewTxn + 3, engine.getTableSequencerAPI().lastTxn(viewToken));
+                drainWalQueue();
+                final String expectedRows = """
+                        ts\tsym\tprice
+                        2024-01-01T00:00:00.000000Z\ta\t1.0
+                        2024-01-03T00:00:00.000000Z\tc\t3.0
+                        2024-01-05T00:00:00.000000Z\te\t5.0
+                        """;
+                assertQuery("mv").noLeakCheck().timestamp("ts").expectSize().returns(expectedRows);
+
+                viewTxn = engine.getTableSequencerAPI().lastTxn(viewToken);
+                execute(range);
+                drainWalAndMatViewQueues();
+                Assert.assertEquals(viewTxn + 1, engine.getTableSequencerAPI().lastTxn(viewToken));
+                assertQuery("mv").noLeakCheck().timestamp("ts").expectSize().returns(expectedRows);
+                assertQuery("SELECT view_status, invalidation_reason, last_refresh_error FROM materialized_views()")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("view_status\tinvalidation_reason\tlast_refresh_error\nvalid\t\t\n");
+            } finally {
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
     public void testSetExpireSurvivesViewReaderPoolExhaustionDuringApply() throws Exception {
         // WAL apply re-compiles a stored SET EXPIRE. A full reader pool on the view during that apply
         // must not cost the view the policy the statement already reported as set.

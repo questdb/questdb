@@ -107,6 +107,13 @@ public class LineProtocolException extends CairoException {
                 .put("; ").put(cause);
     }
 
+    public static LineProtocolException matViewColumnNotFound(String columnName, String tableNameUtf16) {
+        return instance()
+                .put("table: ").put(tableNameUtf16)
+                .put(", column: ").put(columnName)
+                .put(" does not exist; add columns to a materialized view with ALTER MATERIALIZED VIEW ... ADD COLUMN");
+    }
+
     public static LineProtocolException newColumnsNotAllowed(String columnName, String tableNameUtf16) {
         return instance()
                 .put("table: ").put(tableNameUtf16)

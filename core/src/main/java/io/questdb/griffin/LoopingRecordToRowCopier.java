@@ -28,7 +28,7 @@ import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnFilter;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
-import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
@@ -36,8 +36,10 @@ import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.DoubleArrayParser;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.std.Chars;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
+import io.questdb.std.IntList;
 import io.questdb.std.Transient;
 import io.questdb.std.str.Utf8Sequence;
 
@@ -54,7 +56,12 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
     private final ColumnTypes fromTypes;
     private final int timestampIndex;
     private final ColumnFilter toColumnFilter;
-    private final RecordMetadata toMetadata;
+    // The type and the writer index of the target column at each position of the column filter. The copier keeps
+    // these rather than a copy of the target metadata: a table writer's metadata keeps a dropped column next to a
+    // column added later under the same name, and a metadata copy, which indexes columns by name, refuses the
+    // pair as a duplicate column.
+    private final IntList toColumnTypes;
+    private final IntList toColumnWriterIndexes;
 
     public LoopingRecordToRowCopier(
             @Transient ColumnTypes fromTypes,
@@ -63,23 +70,85 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
     ) {
         // Deep copy all mutable objects to avoid retaining references
         this.fromTypes = copyColumnTypes(fromTypes);
-        this.toMetadata = GenericRecordMetadata.copyOfNew(toMetadata);
         this.toColumnFilter = copyColumnFilter(toColumnFilter);
         this.timestampIndex = toMetadata.getTimestampIndex();
+        final int columnCount = toColumnFilter.getColumnCount();
+        this.toColumnTypes = new IntList(columnCount);
+        this.toColumnWriterIndexes = new IntList(columnCount);
+        for (int i = 0; i < columnCount; i++) {
+            final int toColumnIndex = toColumnFilter.getColumnIndexFactored(i);
+            toColumnTypes.add(toMetadata.getColumnType(toColumnIndex));
+            toColumnWriterIndexes.add(toMetadata.getWriterIndex(toColumnIndex));
+        }
 
         // Only create array parser if needed (for STRING/VARCHAR → ARRAY conversions)
-        this.arrayParser = isArrayParserRequired(this.fromTypes, this.toMetadata, this.toColumnFilter)
+        this.arrayParser = isArrayParserRequired(this.fromTypes, this.toColumnTypes)
                 ? new DoubleArrayParser()
                 : null;
     }
 
     @Override
     public void copy(SqlExecutionContext context, Record record, TableWriter.Row row) {
-        final int n = toColumnFilter.getColumnCount();
+        copy(context, record, row, 0, toColumnFilter.getColumnCount());
+    }
+
+    /**
+     * Copies the record column by column, as {@link #copy(SqlExecutionContext, Record, TableWriter.Row)} does,
+     * up to the first column whose value fails to convert, and returns that column's position in the column filter
+     * when it fails with the given error message, or -1 otherwise. Materialized view refresh replays a row that
+     * failed its copier through this method, into a row that discards the values, to name the column it could not
+     * convert. A first failure with another message means that the replay does not reproduce the error, and that
+     * no column can be named with certainty.
+     */
+    public int findFailingColumn(SqlExecutionContext context, Record record, TableWriter.Row row, CharSequence errorMessage) {
+        for (int i = 0, n = toColumnFilter.getColumnCount(); i < n; i++) {
+            try {
+                copy(context, record, row, i, i + 1);
+            } catch (ImplicitCastException e) {
+                return Chars.equals(e.getFlyweightMessage(), errorMessage) ? i : -1;
+            }
+        }
+        return -1;
+    }
+
+    private static ColumnFilter copyColumnFilter(ColumnFilter from) {
+        ListColumnFilter copy = new ListColumnFilter();
+        for (int i = 0, n = from.getColumnCount(); i < n; i++) {
+            copy.add(from.getColumnIndex(i));
+        }
+        return copy;
+    }
+
+    private static ColumnTypes copyColumnTypes(ColumnTypes from) {
+        ArrayColumnTypes copy = new ArrayColumnTypes();
+        for (int i = 0, n = from.getColumnCount(); i < n; i++) {
+            copy.add(from.getColumnType(i));
+        }
+        return copy;
+    }
+
+    private static boolean isArrayParserRequired(ColumnTypes from, IntList toColumnTypes) {
+        for (int i = 0, n = toColumnTypes.size(); i < n; i++) {
+            int toColumnType = toColumnTypes.getQuick(i);
+            int fromColumnType = from.getColumnType(i);
+            int fromTag = ColumnType.tagOf(fromColumnType);
+            if (fromTag == ColumnType.VARCHAR_SLICE) {
+                fromTag = ColumnType.VARCHAR;
+            }
+            if (ColumnType.tagOf(toColumnType) == ColumnType.ARRAY &&
+                    (fromTag == ColumnType.STRING || fromTag == ColumnType.VARCHAR)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // Copies the columns at positions [lo, hi) of the column filter.
+    private void copy(SqlExecutionContext context, Record record, TableWriter.Row row, int lo, int hi) {
         final Decimal128 decimal128 = context.getDecimal128();
         final Decimal256 decimal256 = context.getDecimal256();
 
-        for (int i = 0; i < n; i++) {
+        for (int i = lo; i < hi; i++) {
             final int toColumnIndex = toColumnFilter.getColumnIndexFactored(i);
 
             // Skip timestamp column (handled externally)
@@ -95,10 +164,10 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
                 // it with NULL.
                 continue;
             }
-            final int toColumnType = toMetadata.getColumnType(toColumnIndex);
+            final int toColumnType = toColumnTypes.getQuick(i);
             int fromColumnTypeTag = ColumnType.tagOf(fromColumnType);
             final int toColumnTypeTag = ColumnType.tagOf(toColumnType);
-            final int toColumnWriterIndex = toMetadata.getWriterIndex(toColumnIndex);
+            final int toColumnWriterIndex = toColumnWriterIndexes.getQuick(i);
 
             // VARCHAR_SLICE is a transient in-memory type (from read_parquet)
             // accessed through the same getVarcharA() interface as VARCHAR.
@@ -123,40 +192,6 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
             copyColumn(record, row, i, toColumnWriterIndex, fromColumnTypeTag, toColumnTypeTag,
                     fromColumnType, toColumnType, timestampDriver, decimal128, decimal256);
         }
-    }
-
-    private static ColumnFilter copyColumnFilter(ColumnFilter from) {
-        ListColumnFilter copy = new ListColumnFilter();
-        for (int i = 0, n = from.getColumnCount(); i < n; i++) {
-            copy.add(from.getColumnIndex(i));
-        }
-        return copy;
-    }
-
-    private static ColumnTypes copyColumnTypes(ColumnTypes from) {
-        ArrayColumnTypes copy = new ArrayColumnTypes();
-        for (int i = 0, n = from.getColumnCount(); i < n; i++) {
-            copy.add(from.getColumnType(i));
-        }
-        return copy;
-    }
-
-    private static boolean isArrayParserRequired(ColumnTypes from, RecordMetadata to, ColumnFilter toColumnFilter) {
-        int n = toColumnFilter.getColumnCount();
-        for (int i = 0; i < n; i++) {
-            int toColumnIndex = toColumnFilter.getColumnIndexFactored(i);
-            int toColumnType = to.getColumnType(toColumnIndex);
-            int fromColumnType = from.getColumnType(i);
-            int fromTag = ColumnType.tagOf(fromColumnType);
-            if (fromTag == ColumnType.VARCHAR_SLICE) {
-                fromTag = ColumnType.VARCHAR;
-            }
-            if (ColumnType.tagOf(toColumnType) == ColumnType.ARRAY &&
-                    (fromTag == ColumnType.STRING || fromTag == ColumnType.VARCHAR)) {
-                return true;
-            }
-        }
-        return false;
     }
 
     private void copyColumn(

@@ -194,7 +194,7 @@ public class ViewsFunctionTest extends AbstractViewTest {
     public void testShowCreateViewFailMatView() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
-            createMatView("test_mv", "select ts, k, avg(v) from " + TABLE1 + " sample by 30s");
+            createMatView("test_mv", "select ts, k, avg(v) as avg from " + TABLE1 + " sample by 30s");
             assertExceptionNoLeakCheck(
                     "show create view test_mv",
                     17,
@@ -299,6 +299,8 @@ public class ViewsFunctionTest extends AbstractViewTest {
                             """
             );
 
+            // each materialized view's first refresh writes the view state event that persists its base table id
+            // and the data commit
             assertQueryAndPlan(
                     """
                             name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tdurableEpochSeqTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochTs
@@ -306,8 +308,8 @@ public class ViewsFunctionTest extends AbstractViewTest {
                             table2\tfalse\t9\t0\t9\t\t\t0\t0\t0\t-1\t
                             view1\tfalse\t0\t0\t0\t\t\t0\t0\t0\t-1\t
                             view2\tfalse\t0\t0\t0\t\t\t0\t0\t0\t-1\t
-                            view3\tfalse\t1\t0\t1\t\t\t0\t0\t0\t-1\t
-                            view4\tfalse\t1\t0\t1\t\t\t0\t0\t0\t-1\t
+                            view3\tfalse\t2\t0\t2\t\t\t0\t0\t0\t-1\t
+                            view4\tfalse\t2\t0\t2\t\t\t0\t0\t0\t-1\t
                             """,
                     "wal_tables() order by 1",
                     null,

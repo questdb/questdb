@@ -354,6 +354,10 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
             if (exception.isAuthorizationError()) {
                 errorRec = LOG.error();
                 status = Status.SECURITY_ERROR;
+            } else if (exception.isSchemaMismatch()) {
+                // the request's rows are refused, and would be again at every retry: a client error
+                errorRec = LOG.error();
+                status = Status.APPEND_ERROR;
             } else {
                 errorRec = LOG.critical();
                 status = Status.INTERNAL_ERROR;

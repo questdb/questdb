@@ -41,10 +41,17 @@ import io.questdb.std.Numbers;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cairo.wal.WalUtils.*;
 
 public class WalTxnRangeLoader implements QuietCloseable {
+    // The scan starts txnIntervals at this capacity, in longs, so that it holds 1,024 transactions without growing,
+    // and drops a larger buffer for one of this capacity after the load, so that a scan over a long backlog does not
+    // hold its buffer until restart.
+    public static final int TXN_INTERVALS_RETAINED_CAPACITY = 3 * 1024;
+    // the data intervals of the scanned transactions as triples: min timestamp, max timestamp, transaction index
+    private final LongList txnIntervals = new LongList(TXN_INTERVALS_RETAINED_CAPACITY);
     private final WalEventReader walEventReader;
     private boolean hasTruncate;
     private long maxTimestamp;
@@ -68,14 +75,23 @@ public class WalTxnRangeLoader implements QuietCloseable {
         return minTimestamp;
     }
 
-    // True when the last load() scan saw a base-table TRUNCATE in the scanned (txnLo, txnHi] range.
-    // A truncate carries no data interval (it is skipped for interval computation), but it is an
-    // invalidating barrier for an incremental mat-view refresh: the caller must not advance the
-    // refresh base txn past it.
+    @TestOnly
+    public int getTxnIntervalsCapacity() {
+        return txnIntervals.capacity();
+    }
+
+    // True when the last load() scan saw a base-table TRUNCATE in the scanned (txnLo, txnHi] range. The scan
+    // then keeps only the intervals of the transactions after the last truncate (the TRUNCATE cut), and the
+    // caller must drop the intervals it collected before the scan too, since they all predate the truncate.
     public boolean hasTruncate() {
         return hasTruncate;
     }
 
+    /**
+     * Loads the data intervals of the base table's transactions in {@code (txnLo, txnHi]} into {@code intervals},
+     * which the caller passes empty. A TRUNCATE drops the intervals of the transactions sequenced before it, see
+     * {@link #hasTruncate()}.
+     */
     public void load(
             @NotNull CairoEngine engine,
             @NotNull Path tempPath,
@@ -106,6 +122,10 @@ public class WalTxnRangeLoader implements QuietCloseable {
         minTimestamp = Long.MAX_VALUE;
         maxTimestamp = Long.MIN_VALUE;
         hasTruncate = false;
+        txnIntervals.clear();
+        // WalTxnDetails.loadTxns() sorts the transactions by WAL and segment, so the scan reads them out of their
+        // sequencer order, and the TRUNCATE cut compares transaction indexes instead of reading order.
+        int lastTruncateTxnIndex = -1;
 
         try (WalEventReader eventReader = walEventReader) {
             final int maxLoadTxnCount = (int) (txnHi - txnLo);
@@ -122,7 +142,8 @@ public class WalTxnRangeLoader implements QuietCloseable {
                     long long1 = txnDetails.get(2L * i);
                     long long2 = txnDetails.get(2L * i + 1);
 
-                    long seqTxn = Numbers.decodeHighInt(long2) + txnLo;
+                    final int txnIndex = Numbers.decodeHighInt(long2);
+                    long seqTxn = txnIndex + txnLo;
                     int walId = Numbers.decodeHighInt(long1) + MIN_WAL_ID;
                     int segmentId = Numbers.decodeLowInt(long1);
                     int segmentTxn = Numbers.decodeLowInt(long2);
@@ -147,15 +168,15 @@ public class WalTxnRangeLoader implements QuietCloseable {
                         }
 
                         if (!WalTxnType.isDataType(walEventCursor.getType())) {
-                            // Skip non-inserts for interval computation, but flag a TRUNCATE: it carries
-                            // no data interval yet is an invalidating barrier for an incremental mat-view
-                            // refresh. The caller must not advance the refresh base txn past a truncate.
-                            // Scoped to TRUNCATE only for now: DROP/DETACH PARTITION and rows-affected
-                            // UPDATE also delete base rows and likewise commit as non-data SQL txns the
-                            // interval scan skips, so they share the same gap-skip loss class. Treating any
-                            // invalidating non-data txn in the gap as a barrier is a tracked follow-up.
+                            // Skip non-inserts for interval computation. A TRUNCATE cuts: the base no longer
+                            // holds the rows of the transactions before it, and recomputing their intervals
+                            // would delete the view's rows there, so the scan drops them. DROP / DETACH
+                            // PARTITION get no cut: the partition clip keeps a refresh out of the removed
+                            // range while it stays removed. ATTACH PARTITION and UPDATE reach the view's cache
+                            // through the range tasks of the WAL apply job instead.
                             if (walEventCursor.getType() == WalTxnType.TRUNCATE) {
                                 hasTruncate = true;
+                                lastTruncateTxnIndex = Math.max(lastTruncateTxnIndex, txnIndex);
                             }
                             continue;
                         }
@@ -171,7 +192,14 @@ public class WalTxnRangeLoader implements QuietCloseable {
                             // No rows, e.g. a REBASE WAL seed: nothing to refresh.
                             continue;
                         }
-                        intervals.add(minTimestamp1, maxTimestamp1);
+                        txnIntervals.add(minTimestamp1, maxTimestamp1);
+                        txnIntervals.add(txnIndex);
+                    }
+                }
+
+                for (int i = 0, n = txnIntervals.size(); i < n; i += 3) {
+                    if (txnIntervals.getQuick(i + 2) > lastTruncateTxnIndex) {
+                        intervals.add(txnIntervals.getQuick(i), txnIntervals.getQuick(i + 1));
                         IntervalUtils.unionInPlace(intervals, intervals.size() - 2);
                     }
                 }
@@ -183,6 +211,11 @@ public class WalTxnRangeLoader implements QuietCloseable {
             }
         } finally {
             txnDetails.resetCapacity();
+            if (txnIntervals.capacity() > TXN_INTERVALS_RETAINED_CAPACITY) {
+                txnIntervals.restoreInitialCapacity();
+            } else {
+                txnIntervals.clear();
+            }
         }
     }
 }

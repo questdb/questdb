@@ -57,6 +57,16 @@ final class RoleSwitchReadWriteLock {
         return delegate.getReadLockCount();
     }
 
+    /**
+     * Returns true when the calling execution holds the read lock while another thread waits for the write lock: that
+     * writer cannot get through until the caller's read hold goes away.
+     */
+    boolean isWriterWaitingForCurrentReadHold() {
+        return pendingWriterCount.get() != 0
+                && !writeLock.isHeldByCurrentThread()
+                && SuspensionScope.hasRoleSwitchReadLock(SuspensionScope.scope(), readLock);
+    }
+
     Lock readLock() {
         return readLock;
     }

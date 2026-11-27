@@ -1111,6 +1111,17 @@ public class SqlUtil {
         return null;
     }
 
+    /**
+     * Returns the position of the first reference to the table in the query, in the order
+     * {@link #collectAllTableNames(IQueryModel, LowerCaseCharSequenceHashSet, IntList)} walks the models, or -1 when
+     * the query does not reference the table. A reference in the body of a regular view that the parse expanded gives
+     * the position of the query's reference to the outermost such view, since the body's positions point into the
+     * view's own SQL.
+     */
+    public static int findTableNamePosition(@NotNull IQueryModel model, @NotNull CharSequence tableName) {
+        return findTableNamePosition(model, tableName, -1);
+    }
+
     public static RecordCursorFactory generateFactory(SqlCompiler compiler, ExecutionModel model, SqlExecutionContext executionContext) throws SqlException {
         final IQueryModel queryModel = model.getQueryModel();
         assert queryModel != null;
@@ -1248,6 +1259,17 @@ public class SqlUtil {
             return ast.args.getQuick(ast.paramCount - 1);
         }
         return ast.lhs;
+    }
+
+    /**
+     * Extracts the expression a timestamp_floor or timestamp_floor_utc function call floors, its second argument,
+     * handling 2/3/5-param overloads.
+     */
+    public static ExpressionNode getTimestampFloorTimestamp(ExpressionNode ast) {
+        if (ast.paramCount == 3 || ast.paramCount == 5) {
+            return ast.args.getQuick(ast.paramCount - 2);
+        }
+        return ast.rhs;
     }
 
     /**
@@ -2186,6 +2208,20 @@ public class SqlUtil {
     }
 
     /**
+     * Writes a column name as an identifier that SQL reads back as the same name: as it is when it is a plain
+     * identifier and not a keyword, and double-quoted otherwise. The parser's side of the rule is
+     * {@link SqlKeywords#isKeyword(CharSequence)}, which decides where a name has to be quoted. No column name has a
+     * double quote.
+     */
+    public static void putIdentifier(CharSink<?> sink, CharSequence name) {
+        if (isPlainIdentifier(name) && !SqlKeywords.isKeyword(name)) {
+            sink.put(name);
+        } else {
+            sink.putAscii('"').put(name).putAscii('"');
+        }
+    }
+
+    /**
      * Classifies the {@code [lo, hi)} slice as a compiler-protected alias and, when it is, locates
      * the unquoted dot in its interior. This is the shared primitive behind
      * {@link #isQuoteProtectedAlias(CharSequence, int, int)}; callers that also need to know whether
@@ -2436,6 +2472,46 @@ public class SqlUtil {
         return k;
     }
 
+    // viewPosition is the position of the query's reference to the expanded view whose body the walk is in, or -1
+    private static int findTableNamePosition(IQueryModel model, CharSequence tableName, int viewPosition) {
+        IQueryModel m = model;
+        do {
+            final ExpressionNode viewNameExpr = m.getOriginatingViewNameExpr();
+            if (viewNameExpr != null && viewPosition == -1) {
+                // every model the walk reaches from here lies in the view's body
+                viewPosition = viewNameExpr.position;
+            }
+
+            final ExpressionNode tableNameExpr = m.getTableNameExpr();
+            if (tableNameExpr != null && tableNameExpr.type == ExpressionNode.LITERAL
+                    && Chars.equalsIgnoreCase(unquote(tableNameExpr.token), tableName)) {
+                return viewPosition > -1 ? viewPosition : tableNameExpr.position;
+            }
+
+            final ObjList<IQueryModel> joinModels = m.getJoinModels();
+            for (int i = 0, n = joinModels.size(); i < n; i++) {
+                final IQueryModel joinModel = joinModels.getQuick(i);
+                if (joinModel != m) {
+                    final int position = findTableNamePosition(joinModel, tableName, viewPosition);
+                    if (position > -1) {
+                        return position;
+                    }
+                }
+            }
+
+            final IQueryModel unionModel = m.getUnionModel();
+            if (unionModel != null) {
+                final int position = findTableNamePosition(unionModel, tableName, viewPosition);
+                if (position > -1) {
+                    return position;
+                }
+            }
+
+            m = m.getNestedModel();
+        } while (m != null);
+        return -1;
+    }
+
     /**
      * Tests whether {@code alias} (a freshly generated candidate, {@code quoted} when it carries the
      * compiler's protective double quotes) is free of a result-set name collision in the already
@@ -2464,6 +2540,18 @@ public class SqlUtil {
             return takenAliases.excludes(alias, 1, alias.length() - 1);
         }
         return bareQuotedSibling == null || takenAliases.excludes(bareQuotedSibling);
+    }
+
+    private static boolean isPlainIdentifier(CharSequence name) {
+        for (int i = 0, n = name.length(); i < n; i++) {
+            final char c = name.charAt(i);
+            final boolean isLetter = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_';
+            if (!isLetter && (i == 0 || c < '0' || c > '9')) {
+                return false;
+            }
+        }
+        // a column name is never empty
+        return true;
     }
 
     /**

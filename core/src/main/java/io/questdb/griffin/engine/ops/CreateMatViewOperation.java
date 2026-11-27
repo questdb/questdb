@@ -67,6 +67,14 @@ public interface CreateMatViewOperation extends TableStructure, Operation {
 
     CharSequence getBaseTableName();
 
+    /**
+     * Returns the columns the statement lists for the view, in the list's order, with the view's designated
+     * timestamp once {@link #validateAndUpdateMetadataFromSelect} has resolved it, or null when the statement has no
+     * column list and the view takes the query's columns.
+     */
+    @Nullable
+    RecordMetadata getColumnListMetadata();
+
     CreateTableOperation getCreateTableOperation();
 
     int getRefreshType();
@@ -87,14 +95,6 @@ public interface CreateMatViewOperation extends TableStructure, Operation {
      * True for a non-aggregating "passthrough" view (e.g. {@code SELECT * FROM base}, no SAMPLE BY).
      */
     boolean isPassthrough();
-
-    /**
-     * Replaces the SQL text the view definition stores with {@code matViewSql}. CREATE calls it on every
-     * compile pass with the query it rewrites: a passthrough view's top-level wildcard expanded into the
-     * columns the view has, and bare zero-argument function names written as calls. Null stores the text
-     * the user wrote.
-     */
-    void setMatViewSql(@Nullable String matViewSql);
 
     void updateOperationFutureTableToken(TableToken tableToken);
 

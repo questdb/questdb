@@ -26,6 +26,7 @@ package io.questdb.test.cairo.mv;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.mv.MatViewStateStoreImpl;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
@@ -145,6 +146,39 @@ public class MatViewHydrateTargetTest extends AbstractCairoTest {
             try {
                 engine.hydrateMatViewStateStore(target);
                 Assert.assertEquals("base table is not WAL table", target.invalidationReasonFor(viewToken));
+            } finally {
+                target.close();
+            }
+        });
+    }
+
+    /**
+     * A promote hydrates its store while the WAL apply runs, and the WAL apply raises the applied definition seqTxn
+     * only on the state of the installed store. So the hydrate records no pending definition: an event that the WAL
+     * apply applies before the install would leave it pending, and every refresh deferring.
+     */
+    @Test
+    public void pendingDefinitionNotRecordedOnDistinctTarget() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table base_def (sym symbol, val double, ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute("insert into base_def values ('a', 1.0, '2024-09-10T12:00')");
+            execute("create materialized view mv_def as (select ts, sym, last(val) val from base_def sample by 1h) partition by DAY");
+            drainWalAndMatViewQueues();
+            execute("alter materialized view mv_def as (select ts, sym, max(val) val from base_def sample by 1h)");
+            final TableToken viewToken = engine.verifyTableName("mv_def");
+            final MatViewState installedState = engine.getMatViewStateStore().getViewState(viewToken);
+            final long definitionSeqTxn = installedState.getPendingDefinitionSeqTxn();
+            Assert.assertEquals(engine.getTableSequencerAPI().lastTxn(viewToken), definitionSeqTxn);
+            final RecordingMatViewStateStore target = new RecordingMatViewStateStore(engine);
+            try {
+                engine.hydrateMatViewStateStore(target);
+                // the WAL apply runs before the install, and raises the applied definition seqTxn on the installed state
+                drainWalQueue();
+                Assert.assertEquals(definitionSeqTxn, installedState.getAppliedDefinitionSeqTxnForTesting());
+                final MatViewState targetState = target.getViewState(viewToken);
+                Assert.assertEquals(-1, targetState.getPendingDefinitionSeqTxn());
+                Assert.assertEquals(-1, targetState.getAppliedDefinitionSeqTxnForTesting());
+                Assert.assertFalse(targetState.isDefinitionPending());
             } finally {
                 target.close();
             }

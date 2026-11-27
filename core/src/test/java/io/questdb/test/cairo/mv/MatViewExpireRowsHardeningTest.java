@@ -3166,6 +3166,9 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
                     ('NEW', 4.0, '2024-01-20T00:00:00.000000Z')""");
             execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) EXPIRE ROWS WHEN v < 2");
             drainWalAndMatViewQueues();
+            // the backfill below lands in the frozen zone: base max 2024-01-20 less 1 day
+            execute("ALTER MATERIALIZED VIEW mv SET REFRESH LIMIT 1 DAY");
+            drainWalAndMatViewQueues();
 
             final TableToken token = engine.verifyTableName("mv");
             final String predicate = expiryPredicate("mv");
@@ -3295,6 +3298,9 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
                     ('NEW', 3.0, '2024-01-20T00:00:00.000000Z')""");
             drainWalAndMatViewQueues();
             execute("create materialized view mv as (select * from base) expire rows when v < 2");
+            drainWalAndMatViewQueues();
+            // the competing backfill below lands in the frozen zone: base max 2024-01-20 less 1 day
+            execute("alter materialized view mv set refresh limit 1 day");
             drainWalAndMatViewQueues();
 
             final TableToken token = engine.verifyTableName("mv");

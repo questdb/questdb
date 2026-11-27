@@ -44,6 +44,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cutlass.SelectCacheKey;
 import io.questdb.griffin.CharacterStore;
 import io.questdb.griffin.CharacterStoreEntry;
@@ -476,6 +477,15 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 throw kaput().put((Throwable) CairoException.readOnlyAccess());
             }
             try {
+                // The loop below commits one table at a time and undoes none, so a materialized view whose commit
+                // refuses the transaction's rows would refuse them after the tables ahead of it committed. Run the
+                // check the view's commit runs on every pending writer first, so that a refusal fails COMMIT before
+                // any table commits. The check does nothing on writers without a pre-commit validator.
+                for (ObjObjHashMap.Entry<TableToken, TableWriterAPI> pendingWriter : pendingWriters) {
+                    if (pendingWriter.value instanceof WalWriter walWriter) {
+                        walWriter.validateUncommittedUserRows();
+                    }
+                }
                 for (ObjObjHashMap.Entry<TableToken, TableWriterAPI> pendingWriter : pendingWriters) {
                     final TableWriterAPI w = pendingWriter.value;
                     if (w != null) {

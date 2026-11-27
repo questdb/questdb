@@ -74,8 +74,11 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.io.File;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.Lock;
 
 import static io.questdb.cairo.TableUtils.TABLE_EXISTS;
 import static io.questdb.cairo.TableUtils.TABLE_RESERVED;
@@ -644,6 +647,112 @@ public class CairoEngineTest extends AbstractCairoTest {
                 assertWriter(engine, y);
             }
         });
+    }
+
+    @Test
+    public void testRoleSwitchWaitingForCurrentReadHold() throws Exception {
+        // Only an execution that holds the role-switch read lock while another thread waits for the write lock learns
+        // that the role switch waits for it: not without a waiting writer, not without a read hold of its own, and not
+        // on the writer's own thread, whose read acquire under the write lock is a downgrade.
+        final long hangBoundSeconds = 60;
+        final Lock readLock = engine.getRoleSwitchReadLock();
+        final Lock writeLock = engine.getRoleSwitchWriteLock();
+        Assert.assertFalse(engine.isRoleSwitchWaitingForCurrentReadHold());
+
+        // the writer's own thread
+        writeLock.lock();
+        try {
+            Assert.assertFalse(engine.isRoleSwitchWaitingForCurrentReadHold());
+            readLock.lock();
+            try {
+                Assert.assertFalse(engine.isRoleSwitchWaitingForCurrentReadHold());
+            } finally {
+                readLock.unlock();
+            }
+        } finally {
+            writeLock.unlock();
+        }
+
+        final AtomicReference<Throwable> error = new AtomicReference<>();
+        final AtomicBoolean isWriterLocked = new AtomicBoolean();
+        final Thread writer = new Thread(() -> {
+            try {
+                if (writeLock.tryLock(hangBoundSeconds, TimeUnit.SECONDS)) {
+                    isWriterLocked.set(true);
+                    writeLock.unlock();
+                }
+            } catch (Throwable th) {
+                error.compareAndSet(null, th);
+            }
+        }, "role-switch-writer");
+
+        // this thread holds the read lock
+        readLock.lock();
+        try {
+            Assert.assertFalse(engine.isRoleSwitchWaitingForCurrentReadHold());
+            writer.start();
+            final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(hangBoundSeconds);
+            while (!engine.isRoleSwitchWaitingForCurrentReadHold()) {
+                Assert.assertTrue("the writer did not wait for the read hold", System.nanoTime() < deadline);
+                Os.pause();
+            }
+        } finally {
+            readLock.unlock();
+        }
+        writer.join();
+        Assert.assertNull(error.get());
+        Assert.assertTrue(isWriterLocked.get());
+        Assert.assertFalse(engine.isRoleSwitchWaitingForCurrentReadHold());
+
+        // another thread holds the read lock, this one none
+        final CountDownLatch isReadHeld = new CountDownLatch(1);
+        final CountDownLatch isReadReleaseRequested = new CountDownLatch(1);
+        final Thread reader = new Thread(() -> {
+            try {
+                readLock.lock();
+                try {
+                    isReadHeld.countDown();
+                    if (!isReadReleaseRequested.await(hangBoundSeconds, TimeUnit.SECONDS)) {
+                        throw new AssertionError("the read hold was not released in time");
+                    }
+                } finally {
+                    readLock.unlock();
+                }
+            } catch (Throwable th) {
+                error.compareAndSet(null, th);
+            }
+        }, "role-switch-reader");
+        isWriterLocked.set(false);
+        final Thread secondWriter = new Thread(() -> {
+            try {
+                if (writeLock.tryLock(hangBoundSeconds, TimeUnit.SECONDS)) {
+                    isWriterLocked.set(true);
+                    writeLock.unlock();
+                }
+            } catch (Throwable th) {
+                error.compareAndSet(null, th);
+            }
+        }, "role-switch-writer");
+        reader.start();
+        try {
+            Assert.assertTrue(isReadHeld.await(hangBoundSeconds, TimeUnit.SECONDS));
+            secondWriter.start();
+            // a new reader is refused once the writer waits
+            final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(hangBoundSeconds);
+            while (readLock.tryLock()) {
+                readLock.unlock();
+                Assert.assertTrue("the writer did not wait for the read hold", System.nanoTime() < deadline);
+                Os.pause();
+            }
+            Assert.assertFalse(engine.isRoleSwitchWaitingForCurrentReadHold());
+        } finally {
+            isReadReleaseRequested.countDown();
+            reader.join();
+            secondWriter.join();
+        }
+        Assert.assertNull(error.get());
+        Assert.assertTrue(isWriterLocked.get());
+        Assert.assertEquals(0, engine.getRoleSwitchReadLockCount());
     }
 
     @Test

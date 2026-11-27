@@ -73,7 +73,7 @@ public class InformationSchemaTablesFunctionFactoryTest extends AbstractCairoTes
         // live view "LIVE VIEW", and none of the three accept INSERTs.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE MATERIALIZED VIEW mat_v AS (SELECT ts, max(v) FROM base SAMPLE BY 1h) PARTITION BY DAY");
+            execute("CREATE MATERIALIZED VIEW mat_v AS (SELECT ts, max(v) AS max FROM base SAMPLE BY 1h) PARTITION BY DAY");
             execute("CREATE VIEW plain_v AS (SELECT ts, max(v) FROM base SAMPLE BY 1h)");
             execute("CREATE LIVE VIEW live_v FLUSH EVERY 1s START FROM NOW AS SELECT ts, v, count(*) OVER (PARTITION BY v ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn FROM base");
 

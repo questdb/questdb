@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.mv;
 
 import io.questdb.PropertyKey;
+import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
@@ -136,6 +137,42 @@ public class RowExpiryPolicyAcceptanceTest extends AbstractCairoTest {
     };
 
     /**
+     * The clauses {@link #testColumnListViewVerdictsMatchAlter} runs by default besides {@link #MUST_REJECT} and the
+     * policies keyed by the list-only columns of the types the base has no column of: each form of
+     * {@link #ANY_VERDICT} those keyed policies leave out, with the verdict the full matrix gives it, and the refusals
+     * that only the list-only columns of the base's types reach.
+     */
+    private static final String[] COLUMN_LIST_CLAUSES = {
+            // forms the list view accepts: KEEP LOWEST, the top-N form with a key, quoted names, composite and
+            // repeated keys, and KEEP LATEST ON
+            "KEEP LOWEST ON v PARTITION BY k",
+            "KEEP 2 HIGHEST ON l256 PARTITION BY k",
+            "KEEP 2 LOWEST ON sym PARTITION BY k",
+            "KEEP HIGHEST ON \"my val\" PARTITION BY k",
+            "KEEP HIGHEST ON v PARTITION BY k, sym",
+            "KEEP LATEST ON ts PARTITION BY k",
+            "KEEP LATEST PARTITION BY k, k",
+            "KEEP LATEST PARTITION BY \"end\"",
+            // a key whose unquoted name is a SQL keyword, which the probe refuses, in both modes that take a key list
+            "KEEP LATEST PARTITION BY end",
+            "KEEP HIGHEST ON v PARTITION BY end",
+            // refusals that only list-only columns of the base's types reach: a top-N keep column that does not
+            // order, and IS NULL on an array
+            "KEEP 2 HIGHEST ON x_bin",
+            "WHEN x_arr2 IS NULL",
+    };
+
+    /**
+     * Makes {@link #testColumnListViewVerdictsMatchAlter} run its full matrix: every clause of {@link #ANY_VERDICT},
+     * and the policies keyed by the list-only column of every type rather than of the types the base has no column
+     * of. Each policy the view accepts costs a CREATE, refresh, read and DROP of a view with a column of every type,
+     * so the full matrix takes several times as long as the default, more than CI's time budget allows. Run it with
+     * {@code -Dquestdb.fuzz.matview.expire.fullMatrix=true} after changing how CREATE MATERIALIZED VIEW checks an
+     * EXPIRE ROWS policy against a column list.
+     */
+    private static final String COLUMN_LIST_FULL_MATRIX_PROP = "questdb.fuzz.matview.expire.fullMatrix";
+
+    /**
      * Text that is not a policy. CREATE and ALTER must both refuse it.
      */
     private static final String[] MUST_REJECT = {
@@ -183,6 +220,90 @@ public class RowExpiryPolicyAcceptanceTest extends AbstractCairoTest {
     public void setUp() {
         super.setUp();
         setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
+    }
+
+    @Test
+    public void testColumnListViewVerdictsMatchAlter() throws Exception {
+        // CREATE with a column list probes the policy over the listed columns, which differ from the query's: a
+        // listed column the query does not produce, of every type a list can declare. ALTER ... SET EXPIRE on the same
+        // view probes the view itself, so both reach the same verdict, with the same message for a refusal. By
+        // default the test keys policies only by the list-only columns of the types the base has no column of, and
+        // runs COLUMN_LIST_CLAUSES and MUST_REJECT besides; COLUMN_LIST_FULL_MATRIX_PROP runs the full matrix.
+        final boolean isFullMatrix = Boolean.getBoolean(COLUMN_LIST_FULL_MATRIX_PROP);
+        assertMemoryLeak(() -> {
+            createBase();
+            // list-only columns of the types the base has no column of, which key policies in every run
+            final String[][] newTypeColumns = {
+                    {"x_l128", "LONG128"}, {"x_symi", "SYMBOL INDEX"}, {"x_d76", "DECIMAL(76,10)"},
+                    {"x_d4", "DECIMAL(4,2)"}, {"x_g60", "GEOHASH(60b)"}, {"x_g2", "GEOHASH(2c)"},
+            };
+            // list-only columns of the base's types, which key policies in the full matrix only
+            final String[][] baseTypeColumns = {
+                    {"x_sym", "SYMBOL"}, {"x_bin", "BINARY"}, {"x_arr2", "DOUBLE[][]"}, {"x_u", "UUID"},
+                    {"x_ip", "IPv4"}, {"x_l256", "LONG256"}, {"x_c", "CHAR"}, {"x_s", "STRING"}, {"x_vc", "VARCHAR"},
+                    {"x_by", "BYTE"}, {"x_sh", "SHORT"}, {"x_i", "INT"}, {"x_l", "LONG"}, {"x_f", "FLOAT"},
+                    {"x_d", "DOUBLE"}, {"x_dt", "DATE"}, {"x_t", "TIMESTAMP"}, {"x_tn", "TIMESTAMP_NS"},
+                    {"x_b", "BOOLEAN"},
+            };
+            final StringBuilder list = new StringBuilder("""
+                    (k SYMBOL, sym SYMBOL, v DOUBLE, i INT, l LONG, s STRING, vc VARCHAR, c CHAR,
+                    l256 LONG256, b BOOLEAN, u UUID, dt DATE, "my val" DOUBLE, d DECIMAL(10, 2),
+                    bin BINARY, arr DOUBLE[], "end" SYMBOL, f FLOAT, sh SHORT, by BYTE, ip IPV4,
+                    g GEOHASH(4c), tsn TIMESTAMP_NS, arr2 DOUBLE[][], ts2 TIMESTAMP, ts TIMESTAMP,
+                    x_arr3 DOUBLE[][][]""");
+            final ObjList<String> clauses = new ObjList<>();
+            for (String clause : isFullMatrix ? ANY_VERDICT : COLUMN_LIST_CLAUSES) {
+                clauses.add(clause);
+            }
+            for (String clause : MUST_REJECT) {
+                clauses.add(clause);
+            }
+            for (String[] column : newTypeColumns) {
+                list.append(", ").append(column[0]).append(' ').append(column[1]);
+                addKeyedPolicies(clauses, column[0]);
+            }
+            for (String[] column : baseTypeColumns) {
+                list.append(", ").append(column[0]).append(' ').append(column[1]);
+                if (isFullMatrix) {
+                    addKeyedPolicies(clauses, column[0]);
+                }
+            }
+            // x_arr3 is carried but keys no policy: a window keyed by an array of three or more dimensions fails an
+            // assertion of the record sink code generator, on CREATE and ALTER alike, a known gap tracked separately
+            list.append(')');
+            final String create = "CREATE MATERIALIZED VIEW %s " + list + " AS (SELECT * FROM base)";
+            execute(String.format(create, "mv_alter"));
+            drainWalAndMatViewQueues();
+            for (int i = 0, n = clauses.size(); i < n; i++) {
+                final String clause = clauses.getQuick(i);
+                String createRejection = null;
+                try {
+                    execute(String.format(create, "mv_create") + " EXPIRE ROWS " + clause);
+                } catch (Throwable e) {
+                    createRejection = flyweightMessage(e);
+                }
+                drainWalAndMatViewQueues();
+                if (createRejection == null) {
+                    assertReadable("mv_create", "CREATE", clause);
+                    execute("DROP MATERIALIZED VIEW mv_create");
+                    drainWalAndMatViewQueues();
+                }
+
+                String alterRejection = null;
+                try {
+                    execute("ALTER MATERIALIZED VIEW mv_alter SET EXPIRE ROWS " + clause);
+                } catch (Throwable e) {
+                    alterRejection = flyweightMessage(e);
+                }
+                if (alterRejection == null) {
+                    drainWalAndMatViewQueues();
+                    assertReadable("mv_alter", "ALTER", clause);
+                    execute("ALTER MATERIALIZED VIEW mv_alter DROP EXPIRE");
+                    drainWalAndMatViewQueues();
+                }
+                Assert.assertEquals("CREATE and ALTER disagree on: " + clause, alterRejection, createRejection);
+            }
+        });
     }
 
     @Test
@@ -290,6 +411,16 @@ public class RowExpiryPolicyAcceptanceTest extends AbstractCairoTest {
         });
     }
 
+    // the policies testColumnListViewVerdictsMatchAlter keys by a list-only column
+    private static void addKeyedPolicies(ObjList<String> clauses, String column) {
+        clauses.add("KEEP LATEST PARTITION BY " + column);
+        clauses.add("KEEP HIGHEST ON " + column);
+        clauses.add("KEEP 2 HIGHEST ON " + column);
+        clauses.add("KEEP HIGHEST ON v PARTITION BY " + column);
+        clauses.add("WHEN row_number() OVER (PARTITION BY " + column + " ORDER BY ts DESC) > 1");
+        clauses.add("WHEN " + column + " IS NULL");
+    }
+
     private static void assertNamesExpireRows(String statement, String clause, String rejection) {
         // refusing a policy is always allowed, but the message must say what it is about
         Assert.assertTrue(
@@ -357,6 +488,14 @@ public class RowExpiryPolicyAcceptanceTest extends AbstractCairoTest {
         }
         drainWalAndMatViewQueues();
         return null;
+    }
+
+    // the message without the position, which CREATE and ALTER report at different tokens
+    private static String flyweightMessage(Throwable e) {
+        if (e instanceof FlyweightMessageContainer container) {
+            return container.getFlyweightMessage().toString();
+        }
+        return message(e);
     }
 
     private static String message(Throwable e) {

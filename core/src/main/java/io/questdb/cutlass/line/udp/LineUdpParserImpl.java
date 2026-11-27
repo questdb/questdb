@@ -287,6 +287,18 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
     }
 
     private void cacheWriter(CacheEntry entry, CachedCharSequence tableName, TableToken tableToken) {
+        if (tableToken != null && tableToken.isView()) {
+            throw CairoException.nonCritical()
+                    .put("cannot modify view [view=")
+                    .put(tableToken.getTableName())
+                    .put(']');
+        }
+        if (tableToken != null && tableToken.isMatView()) {
+            throw CairoException.nonCritical()
+                    .put("cannot modify materialized view [view=")
+                    .put(tableToken.getTableName())
+                    .put(']');
+        }
         // Re-checked here, not only on first resolve: an entry left in state 1 by a failed
         // cacheWriter re-resolves the token, and the table may since have been re-created as WAL.
         if (tableToken != null && tableToken.isWal()) {
@@ -366,7 +378,10 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
                 int exists = engine.getTableStatus(path, tableToken);
                 switch (exists) {
                     case TABLE_EXISTS:
-                        if (tableToken != null && tableToken.getType() != TableToken.Type.TABLE) {
+                        // A mat view with a REFRESH LIMIT accepts direct backfill into its frozen
+                        // zone, so it is the one non-TABLE kind this gate lets through.
+                        if (tableToken != null && tableToken.getType() != TableToken.Type.TABLE
+                                && !engine.isBackfillableMatView(tableToken)) {
                             throw CairoException.nonCritical()
                                     .put("cannot modify ").put(tableToken.getType().keyword()).put(" [view=")
                                     .put(tableToken.getTableName())

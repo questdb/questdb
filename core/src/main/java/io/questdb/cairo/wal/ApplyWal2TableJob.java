@@ -31,15 +31,23 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CairoKeywords;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.ErrorTag;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.mv.MatViewRefreshTask;
+import io.questdb.cairo.mv.MatViewBackfillValidator;
+import io.questdb.cairo.mv.MatViewBareNameGuard;
+import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewState;
+import io.questdb.cairo.mv.MatViewStateReader;
+import io.questdb.cairo.mv.MatViewStateStore;
 import io.questdb.cairo.pool.RecentWriteTracker;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
@@ -48,21 +56,25 @@ import io.questdb.cairo.wal.seq.TableMetadataChangeLog;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.mp.Job;
+import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.Micros;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
@@ -92,7 +104,14 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     private static Log LOG = LogFactory.getLog(ApplyWal2TableJob.class);
     private final BlockFileWriter blockFileWriter;
     private final CairoConfiguration config;
+    private final ObjList<TableToken> dependentViewSink = new ObjList<>();
     private final CairoEngine engine;
+    private final MatViewBareNameGuard matViewBareNameGuard;
+    // Reader + reusable state reader for the backfill-frontier read-modify-write of the _mv.s
+    // state file (preserves the existing refresh state + invalidation reason while bumping the
+    // persisted frozen-zone frontier). Lazily allocated on first backfill persist.
+    private final BlockFileReader matViewStateBlockReader;
+    private final MatViewStateReader matViewStateReader = new MatViewStateReader();
     private final WalMetrics metrics;
     private final MicrosecondClock microClock;
     private final MatViewRefreshTask mvRefreshTask = new MatViewRefreshTask();
@@ -111,6 +130,13 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     private boolean lastCommitDiverged;
     private long lastAttemptSeqTxn;
     private long lastCommittedRows;
+    // The union of the base ranges, inclusive, that the ATTACH PARTITION and UPDATE operations of the current apply
+    // batch changed, and the seqTxn of the newest of them; LONG_NULL while the batch has none. The WAL interval scan
+    // of a mat view refresh skips these SQL transactions, so the batch queues the range for the dependent views once
+    // it commits. A TRUNCATE in the batch clears the range collected before it.
+    private long changedRangeHi = Numbers.LONG_NULL;
+    private long changedRangeLo = Numbers.LONG_NULL;
+    private long changedRangeSeqTxn = Numbers.LONG_NULL;
 
     public ApplyWal2TableJob(CairoEngine engine, int sharedQueryWorkerCount) {
         super(engine.getMessageBus().getWalTxnNotificationQueue(), engine.getMessageBus().getWalTxnNotificationSubSequence());
@@ -128,6 +154,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         tableTimeQuotaMicros = configuration.getWalApplyTableTimeQuota() >= 0 ? configuration.getWalApplyTableTimeQuota() * 1000L : Micros.DAY_MICROS;
         config = engine.getConfiguration();
         blockFileWriter = new BlockFileWriter(config.getFilesFacade(), engine.getResolvedCommitMode());
+        matViewStateBlockReader = new BlockFileReader(config);
+        matViewBareNameGuard = new MatViewBareNameGuard(engine);
     }
 
     @Override
@@ -140,6 +168,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         Misc.free(operationExecutor);
         Misc.free(walEventReader);
         Misc.free(blockFileWriter);
+        Misc.free(matViewStateBlockReader);
+        Misc.free(matViewBareNameGuard);
     }
 
     @Override
@@ -214,14 +244,19 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     // a later TRUNCATE or covering REPLACE_RANGE can still skip the data before it. An SQL
                     // transaction stays a hard barrier even for a mat view, as it may read existing data.
                     //
-                    // This mat-view exemption is safe only because no row-order-dependent structural change
-                    // can reach a mat view: a column type conversion - the one such operation - is rejected on
-                    // a mat view (SqlCompilerImpl.checkViewModification), and the column alters that a mat view
-                    // does permit (ADD INDEX, DROP INDEX, SYMBOL CAPACITY) are non-structural, so they commit
-                    // as walId > 0 SQL transactions and stay hard barriers via the futureType != SQL check
-                    // below. Making a row-dependent op structural and allowing it on a mat view would reopen
-                    // the cross-instance divergence; WalWriterReplaceRangeTest's
-                    // testMatViewPermittedColumnAltersStayNonStructural guards the non-structural half.
+                    // This mat-view exemption is safe only because no structural change a mat view takes reads
+                    // the rows before it. The structural changes a mat view takes are view ADD COLUMN and DROP
+                    // COLUMN (ALTER MATERIALIZED VIEW ... ADD | DROP COLUMN): a new column starts empty behind a
+                    // column top, and a dropped column goes without its rows being read, so skipping an insert
+                    // across either leaves the same rows as applying it. The one row-order-dependent structural
+                    // change, a column type conversion, is rejected on a mat view
+                    // (SqlCompilerImpl.checkViewModification), and the column alters that a mat view does permit
+                    // (ADD INDEX, DROP INDEX, SYMBOL CAPACITY) are non-structural, so they commit as walId > 0 SQL
+                    // transactions and stay hard barriers via the futureType != SQL check below. Making a
+                    // row-dependent op structural and allowing it on a mat view would reopen the cross-instance
+                    // divergence; WalWriterReplaceRangeTest's testMatViewPermittedColumnAltersStayNonStructural
+                    // pins which alters are structural, and testReplaceRangeSkipsInsertAcrossViewColumnChanges
+                    // that a skip across view ADD and DROP COLUMN leaves the rows a full apply leaves.
                     if (isMatView && futureType != SQL) {
                         firstNonSkippableTxn = Math.min(firstNonSkippableTxn, futureSeqTxn);
                         continue;
@@ -420,10 +455,11 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         boolean finishedAll = true;
         long initialSeqTxn = writer.getSeqTxn();
         final long initialAppliedSeqTxn = writer.getAppliedSeqTxn();
-        // Default to incremental mat view refresh.
+        // Every apply batch notifies the dependent mat views with an incremental refresh.
         mvRefreshTask.clear();
         mvRefreshTask.operation = MatViewRefreshTask.INCREMENTAL_REFRESH;
         mvRefreshTask.baseTableToken = writer.getTableToken();
+        clearChangedRange();
         // Before anything is applied lazily, match the table's adaptive durable-epoch anchor to the local
         // durability policy: no anchor on a replica, where it would go stale behind purged WAL, and a real one
         // once the node is primary again. A no-op until the policy changes.
@@ -507,18 +543,28 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                     writer.setSeqTxn(seqTxn);
                                     try {
                                         final TableMetadataChange metadataChangeOp = structuralChangeCursor.next();
+                                        // A column change under the name of a zero-argument function can switch a
+                                        // dependent mat view's bare name between a column and a call. The guard
+                                        // publishes such a view's invalidation before the change applies, so no
+                                        // refresh whose base reader sees the change compiles the switched reading.
+                                        matViewBareNameGuard.beforeColumnChange(writer.getTableToken(), metadataChangeOp, seqTxn);
                                         metadataChangeOp.apply(writer, true);
-                                        final String matViewInvalidationReason = metadataChangeOp.matViewInvalidationReason();
-                                        if (matViewInvalidationReason != null) {
-                                            mvRefreshTask.operation = MatViewRefreshTask.INVALIDATE;
-                                            mvRefreshTask.invalidationReason = matViewInvalidationReason;
+                                        // A view created, or given a new SQL, while the change applied missed the
+                                        // guard's check above, and its refreshes may have read the base without
+                                        // the change: the guard checks it now that the change is visible.
+                                        matViewBareNameGuard.afterColumnChange(writer.getTableToken(), seqTxn);
+                                        // No column change invalidates a mat view here: its next refresh that
+                                        // recomputes rows compiles its SQL and decides. Live views keep their
+                                        // invalidation on a column they read.
+                                        final String liveViewInvalidationReason = metadataChangeOp.liveViewInvalidationReason();
+                                        if (liveViewInvalidationReason != null) {
                                             // Narrow live-view invalidation: only views that read a
                                             // column missing from the post-change writer metadata
                                             // need to be invalidated.
                                             engine.invalidateLiveViewsForBaseSchemaChange(
                                                     tableToken,
                                                     writer.getMetadata(),
-                                                    matViewInvalidationReason
+                                                    liveViewInvalidationReason
                                             );
                                         }
                                         if (metadataChangeOp.shouldCompileDependentViews()) {
@@ -686,13 +732,9 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 }
 
                 if (initialSeqTxn < writer.getSeqTxn()) {
-                    if (mvRefreshTask.operation == MatViewRefreshTask.INVALIDATE) {
-                        // One INVALIDATE notification replaces every incremental notification in this
-                        // apply batch. Treat the batch end as the covered frontier so a full snapshot may
-                        // consume it only when it also includes later transactions that got no notification.
-                        mvRefreshTask.invalidationBaseTableToken = mvRefreshTask.baseTableToken;
-                        mvRefreshTask.invalidationBaseTxn = writer.getSeqTxn();
-                    }
+                    // The batch has committed. The range tasks go out in addition to the incremental
+                    // notification, and the refresh job handles them in either order.
+                    publishChangedRange(writer.getTableToken());
                     engine.notifyMatViewBaseTableCommit(mvRefreshTask, writer.getSeqTxn());
                 }
             } catch (Throwable th) {
@@ -780,6 +822,35 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
      */
     private void advance(TableWriter writer, long nowMs) {
         writer.advanceDurableEpoch(nowMs);
+    }
+
+    private void clearChangedRange() {
+        changedRangeLo = Numbers.LONG_NULL;
+        changedRangeHi = Numbers.LONG_NULL;
+        changedRangeSeqTxn = Numbers.LONG_NULL;
+    }
+
+    // Adds the partitions that the SQL transaction just applied attached or rewrote to the batch's changed range.
+    private void collectChangedRange(TableWriter writer, OperationExecutor operationExecutor, long seqTxn) {
+        final long partitionTimestampLo = operationExecutor.getChangedPartitionTimestampLo();
+        if (partitionTimestampLo == Numbers.LONG_NULL) {
+            return;
+        }
+        final long partitionTimestampHi = operationExecutor.getChangedPartitionTimestampHi();
+        final TimestampDriver.TimestampCeilMethod partitionCeilMethod = ColumnType.getTimestampDriver(writer.getTimestampType())
+                .getPartitionCeilMethod(writer.getPartitionBy());
+        // A WAL table is always partitioned by time.
+        assert partitionCeilMethod != null;
+        // The ceiling of the highest partition is exclusive, while the range is inclusive.
+        final long rangeHi = partitionCeilMethod.ceil(partitionTimestampHi) - 1;
+        if (changedRangeSeqTxn == Numbers.LONG_NULL) {
+            changedRangeLo = partitionTimestampLo;
+            changedRangeHi = rangeHi;
+        } else {
+            changedRangeLo = Math.min(changedRangeLo, partitionTimestampLo);
+            changedRangeHi = Math.max(changedRangeHi, rangeHi);
+        }
+        changedRangeSeqTxn = seqTxn;
     }
 
     private void doStoreTelemetry(short event, short origin) {
@@ -875,6 +946,22 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             case LIVE_VIEW_DATA:
                 TableToken tableToken = writer.getTableToken();
                 walTelemetryFacade.store(WAL_TXN_APPLY_START, tableToken, walId, seqTxn, -1L, -1L, start - commitTimestamp, txnDetails.getMinTimestamp(seqTxn), txnDetails.getMaxTimestamp(seqTxn));
+                if (walTxnType == DATA && tableToken.isMatView()) {
+                    // Durability ordering for the backfill frontier (frozen zone): derive it from the
+                    // pending user-backfill txns and persist it to _mv.s BEFORE the data is committed,
+                    // so the frontier is durable no later than the data it protects. A post-commit-only
+                    // persist leaves a window where a crash after the data commit but before the state
+                    // write loses the frontier -- the txn is already applied, so a restart never re-runs
+                    // reconstruct for it, and a later max(base_ts) retreat could then wipe a (pre-first-
+                    // refresh) backfill. Persisting first degrades that window to harmless over-protection
+                    // (frontier durable ahead of the data it guards). Reconstructing over the loaded range,
+                    // a superset of what this commit seals, is safe: the extra txns are durable in the WAL
+                    // and will apply, and advanceBackfillFrontier is a monotonic CAS-max. No-op for
+                    // non-backfill DATA (refresh REPLACE_RANGE is filtered out) and when nothing advanced
+                    // the frontier, so refresh-only and ordinary workloads pay nothing.
+                    reconstructBackfillFrontier(tableToken, txnDetails, seqTxn, txnDetails.getLastSeqTxn());
+                    persistMatViewBackfillFrontier(tableToken);
+                }
                 long skipTxnCount = 0;
                 // A transaction into a Delta-active partition is never skipped, so the O(pending) scan would be wasted.
                 if (!writer.walTxnRangeOverlapsDeltaActivePartition(seqTxn, seqTxn)) {
@@ -930,13 +1017,24 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 lastCommitDiverged = skipped || dedupRowsRemoved > 0 || writer.hasTtlEvictedPartitionsSinceLastCommit();
 
                 if (writer.getTableToken().isMatView()) {
+                    final TableToken token = writer.getTableToken();
+                    // Reconstruct the backfill frontier from any user-backfill txns just applied.
+                    // The validator advances the in-memory frontier only on the commit path
+                    // (WalWriter.commit0), which never runs during WAL replay after a crash or on a
+                    // replica applying replicated backfills. Deriving it here from the applied txns
+                    // makes the frontier a deterministic function of the WAL, so it survives both.
+                    reconstructBackfillFrontier(token, txnDetails, seqTxn, lastCommittedSeqTxn);
+                    boolean refreshStateWritten = false;
                     for (long s = lastCommittedSeqTxn; s >= seqTxn; s--) {
                         byte txnType = txnDetails.getWalTxnType(s);
                         if (txnType == MAT_VIEW_DATA) {
                             try {
                                 final Path path = Path.PATH2.get();
-                                final TableToken token = writer.getTableToken();
                                 path.of(engine.getConfiguration().getDbRoot()).concat(token);
+                                final long backfillFrontier = matViewBackfillFrontier(token);
+                                // A data commit carries no base table id, so the rewrite keeps the one the state
+                                // file holds: the id of the newest applied view state event.
+                                final int baseTableId = readMatViewBaseTableId(path, token);
                                 updateMatViewRefreshState(
                                         path,
                                         txnDetails.getMatViewRefreshTxn(s),
@@ -946,8 +1044,20 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                         txnDetails.getMatViewPeriodHi(s),
                                         // Mat view data commit means that cached intervals were applied and should be evicted.
                                         null,
-                                        -1
+                                        -1,
+                                        backfillFrontier,
+                                        matViewFrozenBoundaryFloor(token),
+                                        matViewFrozenBoundaryLimitHoursOrMonths(token),
+                                        baseTableId,
+                                        // A data commit makes the view valid, which drops the backlog-lost marker
+                                        // along with the cached intervals.
+                                        null
                                 );
+                                final MatViewState state = engine.getMatViewStateStore().getViewState(token);
+                                if (state != null) {
+                                    state.setPersistedBackfillFrontier(backfillFrontier);
+                                }
+                                refreshStateWritten = true;
                             } catch (CairoException e) {
                                 engine.handleDataSyncFailure(e);
                                 LOG.error().$("could not update state for materialized view [view=").$(writer.getTableToken())
@@ -956,6 +1066,19 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                         .I$();
                             }
                             break; // we've found the latest mat view state, not need to check earlier transactions
+                        }
+                    }
+                    if (!refreshStateWritten) {
+                        // No refresh state landed in this batch. If a user backfill (plain DATA txn)
+                        // advanced the frozen-zone frontier, persist it so it survives a restart --
+                        // the only place a pre-first-refresh backfill becomes durable.
+                        try {
+                            persistMatViewBackfillFrontier(token);
+                        } catch (CairoException e) {
+                            LOG.error().$("could not persist backfill frontier for materialized view [view=").$(token)
+                                    .$(", msg=").$safe(e.getFlyweightMessage())
+                                    .$(", errno=").$(e.getErrno())
+                                    .I$();
                         }
                     }
                 }
@@ -973,6 +1096,9 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     final WalEventCursor.SqlInfo sqlInfo = walEventCursor.getSqlInfo();
                     walTelemetryFacade.store(WAL_TXN_APPLY_START, writer.getTableToken(), walId, seqTxn, -1L, -1L, start - commitTimestamp, Numbers.LONG_NULL, Numbers.LONG_NULL);
                     processWalSql(writer, sqlInfo, operationExecutor, seqTxn);
+                    // An ATTACH PARTITION or an UPDATE that changed rows reports the partitions it changed,
+                    // including an ATTACH whose WAL-tolerable failure skipped the rest of its list.
+                    collectChangedRange(writer, operationExecutor, seqTxn);
                     walTelemetryFacade.store(WAL_TXN_SQL_APPLIED, writer.getTableToken(), walId, seqTxn, -1L, -1L, microClock.getTicks() - start, Numbers.LONG_NULL, Numbers.LONG_NULL);
                     lastCommittedRows = 0;
                     return 1;
@@ -998,6 +1124,15 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             "base materialized view was rebuilt"
                     );
                 }
+                // A TRUNCATE invalidates no dependent mat view: the views keep their rows, and their refreshes
+                // drop the intervals queued before it (the TRUNCATE cut of the WAL interval scan). The ranges
+                // that ATTACH and UPDATE operations queued before it must go too. A range collected earlier in
+                // this batch goes here, and the refresh job drops a range of an older batch by comparing its
+                // seqTxn with this record. It is written before the truncate commits, so a range task never sees
+                // the truncate applied and the record missing; a truncate that then fails is applied again later
+                // under the same seqTxn.
+                engine.getMatViewStateStore().notifyBaseTableTruncate(writer.getTableToken(), seqTxn);
+                clearChangedRange();
                 long txn = writer.getTxn();
                 writer.setSeqTxn(seqTxn);
                 writer.removeAllPartitions();
@@ -1006,9 +1141,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     writer.markSeqTxnCommitted(seqTxn);
                 }
                 lastCommittedRows = 0;
-                // Invalidate dependent materialized views on truncate.
-                mvRefreshTask.operation = MatViewRefreshTask.INVALIDATE;
-                mvRefreshTask.invalidationReason = "truncate operation";
                 return 1;
             case MAT_VIEW_INVALIDATE:
                 try (WalEventReader eventReader = walEventReader) {
@@ -1027,7 +1159,12 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             info.getInvalidationReason(),
                             info.getLastPeriodHi(),
                             info.getRefreshIntervals(),
-                            info.getRefreshIntervalsBaseTxn()
+                            info.getRefreshIntervalsBaseTxn(),
+                            matViewBackfillFrontier(token),
+                            matViewFrozenBoundaryFloor(token),
+                            matViewFrozenBoundaryLimitHoursOrMonths(token),
+                            info.getBaseTableId(),
+                            info.getBacklogLostReason()
                     );
                 } catch (CairoException e) {
                     engine.handleDataSyncFailure(e);
@@ -1038,6 +1175,13 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 }
                 // WAL-E files can be deleted by the purge job after a commit.
                 // Update the materialized view state before committing the transaction.
+                writer.markSeqTxnCommitted(seqTxn);
+                lastCommittedRows = 0;
+                return 1;
+            case MAT_VIEW_DEFINITION:
+                applyMatViewDefinition(writer, walId, segmentId, segmentTxn, seqTxn);
+                // WAL-E files can be deleted by the purge job after a commit.
+                // Update the view definition before committing the transaction.
                 writer.markSeqTxnCommitted(seqTxn);
                 lastCommittedRows = 0;
                 return 1;
@@ -1083,6 +1227,87 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         }
     }
 
+    // Applies ALTER MATERIALIZED VIEW ... AS: the event's base table name and SQL text replace the view's, as stored,
+    // with no parse or compile, so every node ends with the same definition. An event without a base change that names
+    // a base other than the current definition's is stale: its statement validated against the definition before a
+    // base change, and a RESUME on the new base, got into the view's WAL ahead of it. Applying it would move the view
+    // back to the old base and keep the new base's refresh position, so every node skips it, judging by the view's own
+    // WAL alone. A failure to write the definition suspends the view's WAL, so no node goes on without it.
+    private void applyMatViewDefinition(TableWriter writer, int walId, int segmentId, long segmentTxn, long seqTxn) {
+        final TableToken viewToken = writer.getTableToken();
+        try (WalEventReader eventReader = walEventReader) {
+            final Path path = Path.PATH2.get();
+            path.of(engine.getConfiguration().getDbRoot()).concat(viewToken);
+            path.slash().putAscii(WAL_NAME_BASE).put(walId).slash().put(segmentId);
+            final WalEventCursor walEventCursor = eventReader.of(path, segmentTxn);
+            final WalEventCursor.MatViewDefinitionInfo info = walEventCursor.getMatViewDefinitionInfo();
+            final MatViewDefinition currentDefinition = engine.getDependentViewGraph().getViewDefinition(viewToken);
+            if (currentDefinition == null) {
+                throw CairoException.nonCritical().put("could not find definition [view=").put(viewToken.getTableName()).put(']');
+            }
+            if (!info.isBaseTableChange() && !Chars.equalsIgnoreCase(info.getBaseTableName(), currentDefinition.getBaseTableName())) {
+                LOG.info().$("skipping stale materialized view definition, its base table is no longer the view's [view=").$(viewToken)
+                        .$(", seqTxn=").$(seqTxn)
+                        .$(", eventBaseTable=").$safe(info.getBaseTableName())
+                        .$(", baseTable=").$safe(currentDefinition.getBaseTableName())
+                        .I$();
+            } else {
+                writer.setMatViewSql(currentDefinition, Chars.toString(info.getBaseTableName()), Chars.toString(info.getMatViewSql()));
+                LOG.info().$("applied materialized view definition [view=").$(viewToken)
+                        .$(", seqTxn=").$(seqTxn)
+                        .$(", baseTable=").$safe(info.getBaseTableName())
+                        .$(", baseTableChange=").$(info.isBaseTableChange())
+                        .I$();
+            }
+            // The refreshes that deferred on the event, and a FULL that parked on it, can run now. They are woken here,
+            // before the rest of the batch, which can fail, or end without the batch end's redelivery.
+            final MatViewState state = engine.getMatViewStateStore().getViewState(viewToken);
+            if (state != null) {
+                state.recordAppliedDefinitionSeqTxn(seqTxn);
+                redeliverParkedMatViewWork(viewToken);
+            }
+        } catch (CairoException e) {
+            LOG.error().$("could not update materialized view definition [view=").$(viewToken)
+                    .$(", msg=").$safe(e.getFlyweightMessage())
+                    .$(", errno=").$(e.getErrno())
+                    .I$();
+            throw e;
+        }
+    }
+
+    // Queues the batch's changed range, one task per dependent mat view. A view whose task gets lost recomputes the
+    // range only when a later change covers it, as after a restart, so a failure to queue it is logged and does not
+    // fail the batch, which has committed already.
+    private void publishChangedRange(TableToken baseTableToken) {
+        if (changedRangeSeqTxn == Numbers.LONG_NULL) {
+            return;
+        }
+        dependentViewSink.clear();
+        engine.getDependentViewGraph().getDependentViews(baseTableToken, dependentViewSink);
+        for (int i = 0, n = dependentViewSink.size(); i < n; i++) {
+            final TableToken viewToken = dependentViewSink.getQuick(i);
+            if (!viewToken.isMatView()) {
+                continue;
+            }
+            try {
+                engine.getMatViewStateStore().enqueueAddRefreshRange(
+                        viewToken,
+                        baseTableToken,
+                        changedRangeLo,
+                        changedRangeHi,
+                        changedRangeSeqTxn
+                );
+            } catch (Throwable th) {
+                LOG.error().$("could not queue base table range for materialized view refresh [view=").$(viewToken)
+                        .$(", baseTable=").$(baseTableToken)
+                        .$(", seqTxn=").$(changedRangeSeqTxn)
+                        .$(", error=").$(th)
+                        .I$();
+            }
+        }
+        dependentViewSink.clear();
+    }
+
     private void processWalSql(TableWriter tableWriter, WalEventCursor.SqlInfo sqlInfo, OperationExecutor operationExecutor, long seqTxn) {
         final int cmdType = sqlInfo.getCmdType();
         final CharSequence sql = sqlInfo.getSql();
@@ -1093,31 +1318,26 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 try {
                     switch (cmdType) {
                         case CMD_ALTER_TABLE:
-                            final String matViewInvalidationReason = operationExecutor.executeAlter(tableWriter, sql, seqTxn);
-                            if (matViewInvalidationReason != null) {
-                                mvRefreshTask.operation = MatViewRefreshTask.INVALIDATE;
-                                mvRefreshTask.invalidationReason = matViewInvalidationReason;
-                                // Mat views re-aggregate base data, so base data removal
-                                // legitimately invalidates them above. Live views must NOT
-                                // be invalidated here: the non-structural alters routed
-                                // through this branch (DROP/DETACH/ATTACH PARTITION, SET
-                                // PARAM, ...) never change a live view's column projection,
-                                // and base data removal (DROP PARTITION, base TTL) is
-                                // transparent to live views. A live view is a forward-computed
-                                // row stream, not a re-derivable aggregate, so removing old
-                                // base data does not retract its already-computed rows; the
-                                // refresh worker walks past these non-data commits on its own.
-                                // Schema changes that DO touch a referenced column travel the
-                                // structural path and invalidate live views narrowly via
-                                // invalidateLiveViewsForBaseSchemaChange.
-                            }
+                            // No ALTER applied here invalidates a view. Mat views keep their rows across
+                            // DROP / DETACH PARTITION, and the refresh's partition clip stops later refreshes
+                            // from deleting them; an ATTACH PARTITION queues its range for the mat views (see
+                            // collectChangedRange). Live views must NOT be invalidated here either: the
+                            // non-structural alters routed through this branch (DROP/DETACH/ATTACH PARTITION,
+                            // SET PARAM, ...) never change a live view's column projection, and base data
+                            // removal (DROP PARTITION, base TTL) is transparent to live views. A live view is
+                            // a forward-computed row stream, not a re-derivable aggregate, so removing old base
+                            // data does not retract its already-computed rows; the refresh worker walks past
+                            // these non-data commits on its own. Schema changes that DO touch a referenced
+                            // column travel the structural path and invalidate live views narrowly via
+                            // invalidateLiveViewsForBaseSchemaChange.
+                            operationExecutor.executeAlter(tableWriter, sql, seqTxn);
                             return;
                         case CMD_UPDATE_TABLE:
                             final long rowsAffected = operationExecutor.executeUpdate(tableWriter, sql, seqTxn);
                             if (rowsAffected > 0) {
-                                mvRefreshTask.operation = MatViewRefreshTask.INVALIDATE;
-                                mvRefreshTask.invalidationReason = UpdateOperation.MAT_VIEW_INVALIDATION_REASON;
-                                // Live views must be invalidated too. An UPDATE rewrites base rows in
+                                // Mat views stay valid: the UPDATE queues the range of the partitions it
+                                // rewrote for them (see collectChangedRange), and their refresh recomputes it.
+                                // Live views must be invalidated. An UPDATE rewrites base rows in
                                 // place, which the data-removal operations routed through the ALTER
                                 // branch above never do: those only retire settled data below the view's
                                 // replay window, so the view's already-computed rows stay consistent with
@@ -1132,7 +1352,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                 // recreate it.
                                 engine.invalidateLiveViewsForBaseTable(
                                         tableWriter.getTableToken(),
-                                        UpdateOperation.MAT_VIEW_INVALIDATION_REASON
+                                        UpdateOperation.LIVE_VIEW_INVALIDATION_REASON
                                 );
                             }
                             return;
@@ -1221,6 +1441,55 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         }
     }
 
+    // Reads the base table id from the view's _mv.s state file, the table directory path given. A state file that is
+    // missing or cannot be read gives an unknown id, which skips the base identity check: only a stale id is harmful.
+    private int readMatViewBaseTableId(Path tablePath, TableToken viewToken) {
+        final int tablePathLen = tablePath.size();
+        try {
+            final LPSZ statePath = tablePath.concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$();
+            if (!config.getFilesFacade().exists(statePath)) {
+                return MatViewState.BASE_TABLE_ID_UNKNOWN;
+            }
+            try {
+                matViewStateBlockReader.of(statePath);
+                return MatViewStateReader.readBaseTableId(matViewStateBlockReader);
+            } finally {
+                matViewStateBlockReader.close();
+            }
+        } catch (Throwable th) {
+            LOG.error().$("could not read base table id of materialized view, keeping it unknown [view=").$(viewToken)
+                    .$(", ex=").$(th)
+                    .I$();
+            return MatViewState.BASE_TABLE_ID_UNKNOWN;
+        } finally {
+            tablePath.trimTo(tablePathLen);
+        }
+    }
+
+    // A FULL refresh of an invalid view waits until the view's own WAL is applied, so that it rebuilds under the
+    // latest definition, and parks its request on the view's pending marker meanwhile. Once this job has applied the
+    // view's WAL, the store redelivers it, as RESUME WAL does. The store also wakes the refreshes that deferred on a
+    // definition event, which this job does as soon as it applied or skipped one, too. The WAL apply goes on, so a task
+    // the store could not enqueue goes to the refresh job's retry scan, which redelivers whatever the view's marker
+    // still holds.
+    private void redeliverParkedMatViewWork(TableToken viewToken) {
+        final MatViewStateStore stateStore = engine.getMatViewStateStore();
+        final MatViewState state = stateStore.getViewState(viewToken);
+        if (state == null) {
+            // the view is being dropped, or the node refreshes no views
+            return;
+        }
+        try {
+            stateStore.reenqueuePendingOnResume(viewToken);
+        } catch (Throwable th) {
+            stateStore.requestPendingInvalidationReenqueue(state);
+            stateStore.requestPendingFullRefreshReenqueue(state);
+            LOG.error().$("could not redeliver materialized view work after applying its WAL, the retry scan delivers it [view=").$(viewToken)
+                    .$(", ex=").$(th)
+                    .I$();
+        }
+    }
+
     private void storeTelemetryNoOp(short event, short origin) {
     }
 
@@ -1236,7 +1505,12 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             @Nullable CharSequence invalidationReason,
             long lastPeriodHi,
             @Nullable LongList refreshIntervals,
-            long refreshIntervalsBaseTxn
+            long refreshIntervalsBaseTxn,
+            long backfillFrontier,
+            long frozenBoundaryFloor,
+            int frozenBoundaryLimitHoursOrMonths,
+            int baseTableId,
+            @Nullable CharSequence backlogLostReason
     ) {
         try (BlockFileWriter stateWriter = blockFileWriter) {
             stateWriter.of(tablePath.concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$());
@@ -1249,9 +1523,208 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     lastPeriodHi,
                     refreshIntervals,
                     refreshIntervalsBaseTxn,
+                    backfillFrontier,
+                    frozenBoundaryFloor,
+                    frozenBoundaryLimitHoursOrMonths,
+                    baseTableId,
+                    backlogLostReason,
                     stateWriter
             );
         }
+    }
+
+    /**
+     * Minimal backfill-frontier anchor that keeps a backfill whose sample-by bucket ends at
+     * {@code bucketEnd} frozen: the smallest {@code A} for which
+     * {@code boundaryFromAnchor(driver, A, limit) >= bucketEnd}. The refresh job folds the frontier
+     * into its boundary anchor, so recording this guarantees the refresh boundary floor stays
+     * at-or-above {@code bucketEnd} and the bucket is never recomputed. Saturates to
+     * {@link Long#MAX_VALUE} on overflow (an absurd multi-century limit), which the refresh job's own
+     * {@code boundaryFromAnchor} then treats as the whole view frozen -- the conservative direction.
+     * <p>
+     * For an hours limit the inverse is exact ({@code fromHours} is linear). For a MONTHS limit it is
+     * not: {@code addMonths} clamps day-of-month, so {@code addMonths(addMonths(bucketEnd,+L),-L)} can
+     * land strictly below {@code bucketEnd} at a month-end bucket (e.g. Jul-31 +2 -> Sep-30, then -2
+     * -> Jul-30). A naive anchor would let the refresh boundary retreat below the frozen bucket and a
+     * REPLACE_RANGE would wipe the backfill. We therefore advance the months anchor by whole days
+     * until its inverse no longer underflows; the clamp deficit is under one month so it converges in
+     * a few steps, and the small overshoot only freezes a little extra (the conservative direction).
+     */
+    private static long safeBackfillAnchor(TimestampDriver driver, long bucketEnd, int limitHoursOrMonths) {
+        if (limitHoursOrMonths > 0) {
+            final long anchor = bucketEnd + driver.fromHours(limitHoursOrMonths);
+            // anchor must be >= bucketEnd (we add a positive limit); a smaller value means the
+            // arithmetic overflowed -- saturate so we never record a wrapped (too-low) frontier.
+            return anchor < bucketEnd ? Long.MAX_VALUE : anchor;
+        }
+        long anchor = driver.addMonths(bucketEnd, -limitHoursOrMonths);
+        if (anchor < bucketEnd) {
+            return Long.MAX_VALUE; // overflow (absurd multi-century limit) -> whole view frozen
+        }
+        final long oneDay = driver.fromHours(24);
+        // 62 days bounds any single-month day-of-month clamp deficit with margin. Fail safe: never
+        // return an anchor whose boundary still underflows bucketEnd (that would under-protect the
+        // accepted bucket) and never overflow the day-bump -- saturate to Long.MAX_VALUE (whole view
+        // frozen, conservative) instead. In practice the deficit is resolved in a single step and the
+        // anchor is far from overflow; this is defence-in-depth against a future change to the loop.
+        for (int i = 0; i < 62; i++) {
+            if (MatViewBackfillValidator.boundaryFromAnchor(driver, anchor, limitHoursOrMonths) >= bucketEnd) {
+                return anchor;
+            }
+            if (Long.MAX_VALUE - anchor < oneDay) {
+                return Long.MAX_VALUE;
+            }
+            anchor += oneDay;
+        }
+        return MatViewBackfillValidator.boundaryFromAnchor(driver, anchor, limitHoursOrMonths) >= bucketEnd ? anchor : Long.MAX_VALUE;
+    }
+
+    /**
+     * Advances the in-memory backfill frontier of {@code viewToken} from the user-backfill txns in
+     * {@code [fromSeqTxn, toSeqTxn]} just applied. Gated identically to
+     * {@link MatViewBackfillValidator#validate} -- only generic {@link WalTxnType#DATA} with the
+     * default dedup mode (user INSERT, ILP, QWP and HTTP /imp) is considered; refresh writes (MAT_VIEW_DATA, or
+     * DATA + REPLACE_RANGE) are skipped. No-op when the view has no {@code REFRESH LIMIT} or the
+     * wall-clock escape-hatch is on. This is the single advance point for the frontier (the
+     * commit-time validator does not advance it -- see {@link MatViewBackfillValidator#validate}),
+     * so it runs uniformly for local commits, crash replay, and replicas. CAS-max, so repeated
+     * calls over an overlapping txn range are idempotent.
+     */
+    private void reconstructBackfillFrontier(TableToken viewToken, WalTxnDetails txnDetails, long fromSeqTxn, long toSeqTxn) {
+        final MatViewState state = engine.getMatViewStateStore().getViewState(viewToken);
+        if (state == null) {
+            return;
+        }
+        final MatViewDefinition def = state.getViewDefinition();
+        if (def == null || def.getRefreshLimitHoursOrMonths() == 0) {
+            return;
+        }
+        if (config.isMatViewRefreshLimitWallClockEnabled()) {
+            return;
+        }
+        final int limit = def.getRefreshLimitHoursOrMonths();
+        final TimestampDriver driver = def.getBaseTableTimestampDriver();
+        TimestampSampler sampler = null; // built lazily on the first user-backfill txn in the batch
+        for (long s = fromSeqTxn; s <= toSeqTxn; s++) {
+            if (txnDetails.getWalTxnType(s) != DATA || txnDetails.getDedupMode(s) != WAL_DEDUP_MODE_DEFAULT) {
+                continue;
+            }
+            final long maxTs = txnDetails.getMaxTimestamp(s);
+            if (maxTs < 0) {
+                continue; // empty txn
+            }
+            if (sampler == null) {
+                // tz-aware grid (matches the validator + refresh) so the reconstructed bucketEnd
+                // is consistent for ALIGN TO CALENDAR TIME ZONE views.
+                sampler = MatViewBackfillValidator.createBucketSampler(def);
+                if (sampler == null) {
+                    return; // stored sampler params unreadable (corruption); refresh would skip too
+                }
+            }
+            final long bucketEnd = sampler.nextTimestamp(sampler.round(maxTs));
+            state.advanceBackfillFrontier(safeBackfillAnchor(driver, bucketEnd, limit));
+        }
+    }
+
+    private long matViewBackfillFrontier(TableToken viewToken) {
+        final MatViewState state = engine.getMatViewStateStore().getViewState(viewToken);
+        return state != null ? state.getBackfillFrontier() : Long.MIN_VALUE;
+    }
+
+    private long matViewFrozenBoundaryFloor(TableToken viewToken) {
+        final MatViewState state = engine.getMatViewStateStore().getViewState(viewToken);
+        return state != null ? state.getLastRefreshFrozenBoundaryFloor() : Numbers.LONG_NULL;
+    }
+
+    private int matViewFrozenBoundaryLimitHoursOrMonths(TableToken viewToken) {
+        final MatViewState state = engine.getMatViewStateStore().getViewState(viewToken);
+        return state != null ? state.getLastRefreshFrozenBoundaryLimitHoursOrMonths() : 0;
+    }
+
+    /**
+     * Persists the live backfill frontier (and boundary floor) of a mat view to its {@code _mv.s}
+     * state file when a user backfill has advanced it since the last persist. This is the only place
+     * a pre-first-refresh backfill becomes durable: a plain user {@code DATA} txn carries no mat-view
+     * state, so neither the WAL event nor the refresh-driven state writes capture the frontier.
+     * <p>
+     * Reads the existing state file first (preserving the refresh state + invalidation reason) and
+     * rewrites it with the bumped frontier; when no state file exists yet (never refreshed, never
+     * invalidated -> not invalid) it writes a default record carrying just the frozen-zone fields.
+     * No-op when the frontier has not advanced, so refresh-only workloads pay nothing.
+     */
+    private void persistMatViewBackfillFrontier(TableToken viewToken) {
+        final MatViewState state = engine.getMatViewStateStore().getViewState(viewToken);
+        if (state == null) {
+            return;
+        }
+        final long frontier = state.getBackfillFrontier();
+        if (frontier <= state.getPersistedBackfillFrontier()) {
+            return; // nothing new to persist
+        }
+        final long floor = state.getLastRefreshFrozenBoundaryFloor();
+        final int floorLimit = state.getLastRefreshFrozenBoundaryLimitHoursOrMonths();
+        final Path path = Path.PATH2.get();
+        path.of(engine.getConfiguration().getDbRoot()).concat(viewToken);
+        final int rootLen = path.size();
+        final LPSZ statePath = path.concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$();
+        boolean haveExisting = false;
+        if (config.getFilesFacade().exists(statePath)) {
+            try {
+                matViewStateBlockReader.of(statePath);
+                matViewStateReader.of(matViewStateBlockReader, viewToken);
+                haveExisting = true;
+            } catch (Throwable th) {
+                // The state file exists but could not be read (corruption, or a concurrent
+                // writer mid-rewrite). Skip this persist rather than overwrite the file with
+                // default refresh fields -- that would discard the existing refresh state and
+                // invalidation reason. The next accepted backfill retries; the in-memory
+                // frontier is unaffected, so no protection is lost in this process.
+                LOG.error().$("could not read materialized view state for backfill-frontier persist; skipping to avoid clobbering [view=").$(viewToken)
+                        .$(", msg=").$safe(th.getMessage())
+                        .I$();
+                return;
+            } finally {
+                matViewStateBlockReader.close();
+            }
+        }
+        path.trimTo(rootLen);
+        try (BlockFileWriter stateWriter = blockFileWriter) {
+            stateWriter.of(path.concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$());
+            if (haveExisting) {
+                MatViewState.append(
+                        matViewStateReader.getLastRefreshTimestampUs(),
+                        matViewStateReader.getLastRefreshBaseTxn(),
+                        matViewStateReader.isInvalid(),
+                        matViewStateReader.getInvalidationReason(),
+                        matViewStateReader.getLastPeriodHi(),
+                        matViewStateReader.getRefreshIntervals(),
+                        matViewStateReader.getRefreshIntervalsBaseTxn(),
+                        frontier,
+                        floor,
+                        floorLimit,
+                        matViewStateReader.getBaseTableId(),
+                        matViewStateReader.getBacklogLostReason(),
+                        stateWriter
+                );
+            } else {
+                // No prior state file: the view was never refreshed and never invalidated (invalidation
+                // always writes the state file), so default refresh fields + null reason are correct.
+                MatViewState.append(
+                        Numbers.LONG_NULL,
+                        -1,
+                        false,
+                        null,
+                        Numbers.LONG_NULL,
+                        null,
+                        -1,
+                        frontier,
+                        floor,
+                        floorLimit,
+                        stateWriter
+                );
+            }
+        }
+        state.setPersistedBackfillFrontier(frontier);
     }
 
     /**
@@ -1413,6 +1886,9 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     } else {
                         engine.notifyWalTxnCommitted(tableToken);
                     }
+                }
+                if (updatedToken.isMatView()) {
+                    redeliverParkedMatViewWork(updatedToken);
                 }
             }
         } catch (Throwable ex) {

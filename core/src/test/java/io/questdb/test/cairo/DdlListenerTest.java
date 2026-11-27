@@ -251,7 +251,7 @@ public class DdlListenerTest extends AbstractCairoTest {
             execute("CREATE TABLE tab1 (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE TABLE tab2 (ts TIMESTAMP, y DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
             drainWalQueue();
-            execute("CREATE MATERIALIZED VIEW mv AS (SELECT ts, avg(x) FROM tab1 SAMPLE BY 1m) PARTITION BY DAY");
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT ts, avg(x) AS avg FROM tab1 SAMPLE BY 1m) PARTITION BY DAY");
             drainWalQueue();
             execute("CREATE VIEW v AS (SELECT ts, avg(x) FROM tab1 SAMPLE BY 1m)");
             drainWalQueue();
@@ -615,7 +615,7 @@ public class DdlListenerTest extends AbstractCairoTest {
                 }
             });
 
-            execute("CREATE MATERIALIZED VIEW mv AS (SELECT ts, avg(x) FROM tab SAMPLE BY 1m) PARTITION BY DAY");
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT ts, avg(x) AS avg FROM tab SAMPLE BY 1m) PARTITION BY DAY");
             drainWalQueue();
             execute("DROP MATERIALIZED VIEW mv");
             drainWalQueue();
@@ -810,7 +810,7 @@ public class DdlListenerTest extends AbstractCairoTest {
 
             execute("CREATE TABLE IF NOT EXISTS tab(ts TIMESTAMP, x LONG, y BYTE) TIMESTAMP(ts) PARTITION BY DAY WAL");
             drainWalQueue();
-            execute("CREATE MATERIALIZED VIEW IF NOT EXISTS mv AS (SELECT ts, avg(x) FROM tab SAMPLE BY 1m) PARTITION BY DAY");
+            execute("CREATE MATERIALIZED VIEW IF NOT EXISTS mv AS (SELECT ts, avg(x) AS avg FROM tab SAMPLE BY 1m) PARTITION BY DAY");
             drainWalQueue();
             execute("CREATE VIEW IF NOT EXISTS v AS (SELECT ts, avg(x) FROM tab SAMPLE BY 1m)");
             drainWalQueue();
@@ -932,7 +932,7 @@ public class DdlListenerTest extends AbstractCairoTest {
 
             execute("CREATE TABLE IF NOT EXISTS tab(ts TIMESTAMP, x LONG, y BYTE) TIMESTAMP(ts) PARTITION BY DAY WAL");
             drainWalQueue();
-            execute("CREATE MATERIALIZED VIEW IF NOT EXISTS mv AS (SELECT ts, avg(x) FROM tab SAMPLE BY 1m) PARTITION BY DAY");
+            execute("CREATE MATERIALIZED VIEW IF NOT EXISTS mv AS (SELECT ts, avg(x) AS avg FROM tab SAMPLE BY 1m) PARTITION BY DAY");
             drainWalQueue();
             execute("CREATE VIEW IF NOT EXISTS v AS (SELECT ts, avg(x) FROM tab SAMPLE BY 1m)");
             drainWalQueue();
@@ -950,7 +950,7 @@ public class DdlListenerTest extends AbstractCairoTest {
             // second time should not fire
             execute("CREATE TABLE IF NOT EXISTS tab(ts TIMESTAMP, x LONG, y BYTE) TIMESTAMP(ts) PARTITION BY DAY WAL");
             drainWalQueue();
-            execute("CREATE MATERIALIZED VIEW IF NOT EXISTS mv AS (SELECT ts, avg(x) FROM tab SAMPLE BY 1m) PARTITION BY DAY");
+            execute("CREATE MATERIALIZED VIEW IF NOT EXISTS mv AS (SELECT ts, avg(x) AS avg FROM tab SAMPLE BY 1m) PARTITION BY DAY");
             drainWalQueue();
             execute("CREATE VIEW IF NOT EXISTS v AS (SELECT ts, avg(x) FROM tab SAMPLE BY 1m)");
             drainWalQueue();

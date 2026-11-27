@@ -162,7 +162,15 @@ public class FunctionFactoryCache {
     }
 
     public boolean isValidNoArgFunction(ExpressionNode node) {
-        final ObjList<FunctionFactoryDescriptor> overload = getOverloadList(node.token);
+        return isValidNoArgFunction(node.token);
+    }
+
+    /**
+     * Returns true when a function of the given name, compared case-insensitively, takes no arguments, so that a
+     * bare select-list name that matches no column reads as a call to it.
+     */
+    public boolean isValidNoArgFunction(CharSequence name) {
+        final ObjList<FunctionFactoryDescriptor> overload = getOverloadList(name);
         if (overload == null) {
             return false;
         }

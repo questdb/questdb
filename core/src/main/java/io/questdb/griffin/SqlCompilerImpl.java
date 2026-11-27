@@ -58,8 +58,12 @@ import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.TxReader;
 import io.questdb.cairo.VacuumColumnVersions;
 import io.questdb.cairo.file.BlockFileWriter;
+import io.questdb.cairo.mv.DependentViewGraph;
+import io.questdb.cairo.mv.MatViewAlter;
+import io.questdb.cairo.mv.MatViewColumnMapping;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewRefreshJob;
+import io.questdb.cairo.mv.MatViewResume;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.mv.MatViewStateStore;
 import io.questdb.cairo.sql.BindVariableService;
@@ -86,6 +90,7 @@ import io.questdb.griffin.engine.StaleViewCheckFactory;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
+import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.griffin.engine.ops.CopyCancelFactory;
 import io.questdb.griffin.engine.ops.CopyExportFactory;
@@ -94,6 +99,7 @@ import io.questdb.griffin.engine.ops.CreateLiveViewOperation;
 import io.questdb.griffin.engine.ops.CreateLiveViewOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateMatViewOperation;
 import io.questdb.griffin.engine.ops.CreateMatViewOperationBuilder;
+import io.questdb.griffin.engine.ops.CreateMatViewOperationImpl;
 import io.questdb.griffin.engine.ops.CreateTableOperation;
 import io.questdb.griffin.engine.ops.CreateTableOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateViewOperation;
@@ -106,6 +112,7 @@ import io.questdb.griffin.engine.ops.InsertOperationImpl;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.griffin.model.CompileViewModel;
+import io.questdb.griffin.model.CreateTableColumnModel;
 import io.questdb.griffin.model.DateExpressionEvaluator;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExplainModel;
@@ -148,7 +155,6 @@ import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.millitime.Dates;
-import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
@@ -168,6 +174,10 @@ import static io.questdb.std.GenericLexer.unquote;
 
 
 public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallback {
+    // The forms of ALTER MATERIALIZED VIEW, for the error that a statement of no known form gets. Enterprise's
+    // override of compileAlterMatViewExt() reports the same list.
+    public static final String ALTER_MAT_VIEW_EXPECTED_TOKEN_DESCR =
+            "'add', 'alter', 'as', 'drop', 'rename', 'resume', 'set', 'suspend' or 'with'";
     public static final String ALTER_TABLE_EXPECTED_TOKEN_DESCR =
             "'add', 'alter', 'attach', 'detach', 'drop', 'convert', 'resume', 'rename', 'set' or 'squash'";
     static final ObjList<String> sqlControlSymbols = new ObjList<>(8);
@@ -188,6 +198,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     // function leaves the policy FILTER_ONLY: that costs disk, while the read filter keeps results correct.
     private static final LowerCaseCharSequenceHashSet EXPIRY_ROW_ONLY_FUNCTIONS = new LowerCaseCharSequenceHashSet();
     private static final Log LOG = LogFactory.getLog(SqlCompilerImpl.class);
+    // A materialized view is a WAL table, and a WAL table takes one structural change per statement.
+    private static final String MAT_VIEW_ONE_COLUMN_PER_STATEMENT = "materialized views accept one column per statement";
+    // A materialized view's columns follow its SQL by name, so a view column cannot be renamed in place.
+    private static final String MAT_VIEW_RENAME_COLUMN_HINT = "cannot modify materialized view: renaming materialized view columns is not supported; "
+            + "add the new column, change the view SQL with ALTER MATERIALIZED VIEW ... AS, then drop the old column";
     // Raised from two places: once on the parsed model, where it has to win over the more general
     // cross-table rejection, and once on the optimised one, for the joins the optimiser itself
     // introduces. Shared so the two cannot drift apart.
@@ -216,14 +231,18 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final FilesFacade ff;
     private final FunctionParser functionParser;
     private final ListColumnFilter listColumnFilter = new ListColumnFilter();
-    // Name and position of each bare name in the last materialized view query compiled by compileMatViewQuery()
-    // that the optimiser read as a call to a zero-argument function, such as `version`; see
-    // buildStoredMatViewSql().
+    // Name and position of each bare name in the last materialized view query addExplicitColumnNames() compiled
+    // that the optimiser read as a call to a zero-argument function, such as `count`.
     private final ObjList<String> matViewBareNoArgCallNames = new ObjList<>();
     private final IntList matViewBareNoArgCallPositions = new IntList();
-    // (projection index, start, end) of each top-level wildcard in the last materialized view query parsed
-    // by compileMatViewQuery(); see captureMatViewWildcards().
-    private final IntList matViewWildcards = new IntList();
+    // the names addExplicitColumnNames() requires of the columns of the SQL it returns
+    private final ObjList<CharSequence> matViewColumnNames = new ObjList<>();
+    private final MatViewExplicitColumnNames matViewExplicitColumnNames = new MatViewExplicitColumnNames();
+    // the indexes the columns of the last materialized view query addExplicitColumnNames() compiled inherit from the
+    // base table under CREATE MATERIALIZED VIEW, keyed by column name, see collectMatViewCreateFacts()
+    private final LowerCaseCharSequenceObjHashMap<CreateTableColumnModel> matViewInheritedIndexes = new LowerCaseCharSequenceObjHashMap<>();
+    private final MatViewSqlValidator matViewSqlValidator = new MatViewSqlValidator();
+    private final AlterMatViewQueryValidator alterMatViewQueryValidator = new AlterMatViewQueryValidator();
     private final int maxRecompileAttempts;
     private final MemoryMARW mem = Vm.getCMARWInstance();
     private final MessageBus messageBus;
@@ -240,18 +259,17 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final VacuumColumnVersions vacuumColumnVersions;
     protected CharSequence sqlText;
     private boolean closed = false;
+    // Created on first use, see isColumnNamedInExpiryPolicy().
+    private GenericLexer expiryPolicyLexer;
     // Helper var used to pass back count in cases it can't be done via method result.
     private long insertCount;
-    // True when the wildcard of the last materialized view query parsed by compileMatViewQuery() is one the
-    // parser added to a query written without SELECT, such as `base WHERE v > 0`.
-    private boolean isMatViewWildcardArtificial;
     //determines how compiler parses query text
     //true - compiler treats whole input as single query and doesn't stop on ';'. Default mode.
     //false - compiler treats input as list of statements and stops processing statement on ';'. Used in batch processing.
     private boolean isSingleQueryMode = true;
-    // Number of items in the top-level select list of the last materialized view query parsed by
-    // compileMatViewQuery(), wildcards counted as one item each.
-    private int matViewProjectionSize;
+    // the column of the GROUP BY timestamp_floor() of the last materialized view query addExplicitColumnNames()
+    // compiled, which CREATE MATERIALIZED VIEW makes the view's designated timestamp, see collectMatViewCreateFacts()
+    private String matViewTimestampFloorColumnName;
 
     public SqlCompilerImpl(CairoEngine engine) {
         try {
@@ -445,6 +463,110 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         viewFactoryGenerationBarrier = barrier;
     }
 
+    /**
+     * {@inheritDoc}
+     * <p>
+     * Compiles the view's SQL as its refresh reads it, with the parse recording where each column's expression
+     * ends and the optimiser reporting the bare names it reads as calls, edits the text, see
+     * {@link MatViewExplicitColumnNames}, and compiles the result once more under the rules of CREATE
+     * MATERIALIZED VIEW. A cancelled or timed-out compile throws; any other failure returns null.
+     */
+    @Override
+    public @Nullable String addExplicitColumnNames(
+            MatViewDefinition viewDefinition,
+            ObjList<CharSequence> viewColumnNames,
+            SqlExecutionContext executionContext,
+            GenericRecordMetadata sqlColumns
+    ) {
+        sqlColumns.clear();
+        final String viewSql = viewDefinition.getMatViewSql();
+        final TableToken viewToken = viewDefinition.getMatViewToken();
+        final ExpiryReadPolicy previousExpiryReadPolicy = executionContext.getExpiryReadPolicy();
+        final CharSequence previousMaterializingViewName = executionContext.getExpiryMaterializingViewName();
+        final boolean previousAllowBareNoArgFunctionCalls = executionContext.allowBareNoArgFunctionCalls();
+        executionContext.setExpiryReadPolicy(ExpiryReadPolicy.REJECT, viewToken.getTableName());
+        try {
+            // A passthrough view's refresh reads every bare name as a column, an aggregating view's reads a bare
+            // name that matches no column as a call to the zero-argument function of that name.
+            executionContext.setAllowBareNoArgFunctionCalls(!viewDefinition.isPassthrough());
+            clear();
+            lexer.of(viewSql);
+            parser.setRecordingColumnExprEnds(true);
+            final ExecutionModel model;
+            try {
+                model = parser.parse(lexer, executionContext, this);
+            } finally {
+                parser.setRecordingColumnExprEnds(false);
+            }
+            if (model.getModelType() != ExecutionModel.QUERY) {
+                return null;
+            }
+            // The optimiser renames and wraps models, so only the parsed model shows the names the SQL wrote.
+            matViewExplicitColumnNames.collect((IQueryModel) model);
+            // the rule the refresh picks its copy by, see SqlParser.parse()
+            final boolean isCopiedByPosition = !SqlParser.isNamingItsColumns((IQueryModel) model);
+            // Armed through generateSelectWithRetries() too: a retry optimises the query again, and the calls
+            // recorded have to come from the pass that builds the factory.
+            optimiser.setBareNoArgCallSink(matViewBareNoArgCallNames, matViewBareNoArgCallPositions);
+            try {
+                final IQueryModel queryModel = optimiser.optimise((IQueryModel) model, executionContext, this);
+                collectMatViewCreateFacts(queryModel, viewDefinition);
+                try (RecordCursorFactory factory = generateSelectWithRetries(queryModel, null, executionContext, false)) {
+                    putMatViewCreateColumns(factory.getMetadata(), sqlColumns);
+                }
+            } finally {
+                optimiser.setBareNoArgCallSink(null, null);
+            }
+            final String sql = matViewExplicitColumnNames.edit(
+                    viewSql,
+                    sqlColumns,
+                    viewColumnNames,
+                    matViewBareNoArgCallNames,
+                    matViewBareNoArgCallPositions,
+                    isCopiedByPosition
+            );
+            if (sql == null) {
+                return null;
+            }
+            // The edit adds names and parentheses, so the result produces as many columns as the SQL. The refresh
+            // copies a SQL that relies on generated names by position, and the result has to name each column
+            // after the view column at its position. It maps any other SQL by name, and the result has to keep
+            // the SQL's names.
+            final ObjList<CharSequence> columnNames = matViewColumnNames;
+            columnNames.clear();
+            if (isCopiedByPosition) {
+                columnNames.addAll(viewColumnNames);
+            } else {
+                for (int i = 0, n = sqlColumns.getColumnCount(); i < n; i++) {
+                    columnNames.add(sqlColumns.getColumnName(i));
+                }
+            }
+            return isMatViewSqlProducingColumns(sql, viewDefinition, columnNames, executionContext, sqlColumns) ? sql : null;
+        } catch (SqlException e) {
+            logExplicitColumnNamesFailure(viewToken, e.getFlyweightMessage());
+            return null;
+        } catch (TableReferenceOutOfDateException e) {
+            logExplicitColumnNamesFailure(viewToken, e.getFlyweightMessage());
+            return null;
+        } catch (CairoException e) {
+            // a cancelled statement is interrupted too
+            if (e.isInterruption()) {
+                throw e;
+            }
+            logExplicitColumnNamesFailure(viewToken, e.getFlyweightMessage());
+            return null;
+        } finally {
+            optimiser.setRejectingBareNoArgCalls(false);
+            executionContext.setAllowBareNoArgFunctionCalls(previousAllowBareNoArgFunctionCalls);
+            executionContext.setExpiryReadPolicy(previousExpiryReadPolicy, previousMaterializingViewName);
+            matViewExplicitColumnNames.clear();
+            matViewColumnNames.clear();
+            matViewInheritedIndexes.clear();
+            matViewTimestampFloorColumnName = null;
+            clear();
+        }
+    }
+
     @Override
     public void clear() {
         clearExceptSqlText();
@@ -469,6 +591,80 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         Misc.freeObjList(tableWriters);
         Misc.free(blockFileWriter);
         Misc.free(compileViewContext);
+    }
+
+    /**
+     * {@inheritDoc}
+     * <p>
+     * The compile runs in view-SQL compile mode, which reports whether the SQL relies on generated column names.
+     */
+    @Override
+    public void compileMatViewSql(
+            SqlExecutionContext executionContext,
+            CharSequence matViewName,
+            String sql,
+            int sqlPosition,
+            MatViewQueryValidator validator
+    ) throws SqlException {
+        final boolean wasViewSqlCompile = executionContext.isViewSqlCompile();
+        final boolean hadViewSqlGeneratedColumnNames = executionContext.hasViewSqlGeneratedColumnNames();
+        executionContext.setViewSqlCompile(true);
+        // The parser reports only on a query; anything else counts as relying on generated names.
+        executionContext.setViewSqlGeneratedColumnNames(true);
+        RecordCursorFactory factory = null;
+        try {
+            compileMatViewQuery(
+                    executionContext,
+                    matViewName,
+                    sql,
+                    sqlPosition,
+                    queryModel -> validator.validateModel(queryModel, optimiser.getFunctionFactoryCache())
+            );
+            factory = compiledQuery.getRecordCursorFactory();
+            final boolean hasGeneratedColumnNames = executionContext.hasViewSqlGeneratedColumnNames();
+            // As in CREATE MATERIALIZED VIEW, the cursor's open checks SELECT on every table the SQL reads, and the
+            // cursor closes with no row read.
+            final boolean wasMetadataProbe = executionContext.isMetadataProbe();
+            executionContext.setMetadataProbe(true);
+            try (RecordCursor ignore = factory.getCursor(executionContext)) {
+                validator.validateMetadata(factory.getMetadata(), hasGeneratedColumnNames);
+            } finally {
+                executionContext.setMetadataProbe(wasMetadataProbe);
+            }
+        } finally {
+            Misc.free(factory);
+            executionContext.setViewSqlGeneratedColumnNames(hadViewSqlGeneratedColumnNames);
+            executionContext.setViewSqlCompile(wasViewSqlCompile);
+            clear();
+        }
+    }
+
+    /**
+     * {@inheritDoc}
+     * <p>
+     * Parses the SQL as the view's refresh does, so that the SQL may read no view with a row-expiry policy, and
+     * walks the parsed query, see {@link MatViewBareSelectNames}.
+     */
+    @Override
+    public void collectMatViewBareSelectNames(
+            MatViewDefinition viewDefinition,
+            SqlExecutionContext executionContext,
+            LowerCaseCharSequenceHashSet sink
+    ) throws SqlException {
+        final ExpiryReadPolicy previousExpiryReadPolicy = executionContext.getExpiryReadPolicy();
+        final CharSequence previousMaterializingViewName = executionContext.getExpiryMaterializingViewName();
+        executionContext.setExpiryReadPolicy(ExpiryReadPolicy.REJECT, viewDefinition.getMatViewToken().getTableName());
+        try {
+            clear();
+            lexer.of(viewDefinition.getMatViewSql());
+            final ExecutionModel model = parser.parse(lexer, executionContext, this);
+            if (model.getModelType() == ExecutionModel.QUERY) {
+                MatViewBareSelectNames.collect((IQueryModel) model, sink);
+            }
+        } finally {
+            executionContext.setExpiryReadPolicy(previousExpiryReadPolicy, previousMaterializingViewName);
+            clear();
+        }
     }
 
     @Override
@@ -958,6 +1154,81 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
+    /**
+     * {@inheritDoc}
+     * <p>
+     * Parses and compiles the SQL as the view's refresh does, see {@link #addExplicitColumnNames}: a passthrough
+     * view reads every bare name as a column, an aggregating view reads a bare name that matches no column as a
+     * call to the zero-argument function of that name, and the SQL may read no view with a row-expiry policy. The
+     * parse runs in view-SQL compile mode, which reports whether the SQL names its columns. With
+     * {@code isReadingBareNamesAsColumns} set, as for RESUME, every bare name is a column, as in CREATE, and the
+     * validator keeps the bare select-list names of the parsed SQL of a view that is not passthrough.
+     */
+    @Override
+    public void validateMatViewSql(
+            MatViewDefinition viewDefinition,
+            boolean isCompiling,
+            boolean isReadingBareNamesAsColumns,
+            SqlExecutionContext executionContext,
+            MatViewSqlValidator validator
+    ) throws SqlException {
+        final ExpiryReadPolicy previousExpiryReadPolicy = executionContext.getExpiryReadPolicy();
+        final CharSequence previousMaterializingViewName = executionContext.getExpiryMaterializingViewName();
+        final boolean previousAllowBareNoArgFunctionCalls = executionContext.allowBareNoArgFunctionCalls();
+        final boolean wasViewSqlCompile = executionContext.isViewSqlCompile();
+        final boolean hadViewSqlGeneratedColumnNames = executionContext.hasViewSqlGeneratedColumnNames();
+        executionContext.setExpiryReadPolicy(ExpiryReadPolicy.REJECT, viewDefinition.getMatViewToken().getTableName());
+        executionContext.setAllowBareNoArgFunctionCalls(!isReadingBareNamesAsColumns && !viewDefinition.isPassthrough());
+        // A bare name of a zero-argument function fails with the parentheses the call needs, as in CREATE.
+        optimiser.setRejectingBareNoArgCalls(isReadingBareNamesAsColumns);
+        executionContext.setViewSqlCompile(true);
+        // The parser reports only on a query; anything else counts as relying on generated names.
+        executionContext.setViewSqlGeneratedColumnNames(true);
+        try {
+            clear();
+            lexer.of(viewDefinition.getMatViewSql());
+            final ExecutionModel model = parser.parse(lexer, executionContext, this);
+            if (model.getModelType() != ExecutionModel.QUERY) {
+                validator.ofError("materialized view SQL is not a query");
+                return;
+            }
+            validator.ofParsed(executionContext.hasViewSqlGeneratedColumnNames());
+            // A passthrough view's refresh reads every bare name as a column, so no column change switches one.
+            if (isReadingBareNamesAsColumns && !viewDefinition.isPassthrough()) {
+                validator.ofBareSelectNames((IQueryModel) model);
+            }
+            if (isCompiling) {
+                final IQueryModel queryModel = optimiser.optimise((IQueryModel) model, executionContext, this);
+                try (RecordCursorFactory factory = generateSelectWithRetries(queryModel, null, executionContext, false)) {
+                    // As in CREATE MATERIALIZED VIEW, the cursor's open checks SELECT on every table the SQL
+                    // reads, and the cursor closes with no row read.
+                    final boolean wasMetadataProbe = executionContext.isMetadataProbe();
+                    executionContext.setMetadataProbe(true);
+                    try (RecordCursor ignore = factory.getCursor(executionContext)) {
+                        validator.ofCompiled(factory.getMetadata());
+                    } finally {
+                        executionContext.setMetadataProbe(wasMetadataProbe);
+                    }
+                }
+            }
+        } catch (SqlException | TableReferenceOutOfDateException | ImplicitCastException e) {
+            validator.ofError(e.getFlyweightMessage());
+        } catch (CairoException e) {
+            // the caller may not read a table the SQL reads, or the statement was cancelled or timed out
+            if (e.isAuthorizationError() || e.isInterruption()) {
+                throw e;
+            }
+            validator.ofError(e.getFlyweightMessage());
+        } finally {
+            optimiser.setRejectingBareNoArgCalls(false);
+            executionContext.setViewSqlGeneratedColumnNames(hadViewSqlGeneratedColumnNames);
+            executionContext.setViewSqlCompile(wasViewSqlCompile);
+            executionContext.setAllowBareNoArgFunctionCalls(previousAllowBareNoArgFunctionCalls);
+            executionContext.setExpiryReadPolicy(previousExpiryReadPolicy, previousMaterializingViewName);
+            clear();
+        }
+    }
+
     private static void addExpiryRowOnlyFunctions(String... names) {
         for (String name : names) {
             EXPIRY_ROW_ONLY_FUNCTIONS.add(name);
@@ -972,18 +1243,26 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
-    // Appends a column name the way an expanded materialized view query spells it: always double-quoted, so
-    // no name can read as a keyword or start another clause, whatever the grammar treats as a keyword.
-    private static void appendMatViewColumnName(CharSink<?> sink, CharSequence name) {
-        sink.putAscii('"');
-        for (int i = 0, n = name.length(); i < n; i++) {
-            final char c = name.charAt(i);
-            if (c == '"') {
-                sink.putAscii('"');
+    /**
+     * Approximate REFRESH LIMIT duration in microseconds. Positive value means hours,
+     * negative means months. Months are approximated as 30 days. Used only for ordering
+     * (warning emission), never for refresh boundary computation. Uses
+     * {@link Math#multiplyExact} so a corrupted out-of-range input throws rather than
+     * silently overflowing and flipping the sign of the ordering comparison.
+     */
+    private static long approxRefreshLimitMicros(int hoursOrMonths) {
+        try {
+            if (hoursOrMonths > 0) {
+                return Math.multiplyExact((long) hoursOrMonths, 3_600L * 1_000_000L);
             }
-            sink.put(c);
+            return Math.multiplyExact((long) -hoursOrMonths, 30L * 86_400L * 1_000_000L);
+        } catch (ArithmeticException ignored) {
+            // Cap at Long.MAX_VALUE -- treat the extreme value as "very large" so
+            // any finite limit compares as smaller. SqlParser caps inputs well
+            // below the overflow threshold, so this is a defensive guard against
+            // corrupted state.
+            return Long.MAX_VALUE;
         }
-        sink.putAscii('"');
     }
 
     // returns number of copied rows
@@ -1223,71 +1502,18 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return null;
     }
 
-    // Returns where the name written at pos in text ends, or -1 when the text at pos does not spell the name.
-    // The name matches ignoring case, either plain and followed by the end of the text or by a character that
-    // is not a letter, digit or underscore, or double-quoted with pos on the opening quote.
-    private static int findBareNameEnd(String text, int pos, String name) {
-        final int len = name.length();
-        final int textLen = text.length();
-        if (pos < 0 || pos >= textLen) {
-            return -1;
-        }
-        if (text.charAt(pos) == '"') {
-            final int hi = pos + 1 + len;
-            return hi < textLen && text.regionMatches(true, pos + 1, name, 0, len) && text.charAt(hi) == '"' ? hi + 1 : -1;
-        }
-        final int hi = pos + len;
-        if (!text.regionMatches(true, pos, name, 0, len)) {
-            return -1;
-        }
-        if (hi < textLen && (Character.isLetterOrDigit(text.charAt(hi)) || text.charAt(hi) == '_')) {
-            return -1;
-        }
-        return hi;
-    }
-
-    // End (exclusive) of the wildcard item that starts at lo: the first '*' outside a quoted name, so `*`,
-    // `b.*` and `"my table".*` all end right after their asterisk. Returns -1 when the text has none.
-    private static int findWildcardEnd(CharSequence text, int lo) {
-        for (int i = lo, n = text.length(); i < n; i++) {
-            final char c = text.charAt(i);
-            if (c == '*') {
-                return i + 1;
-            }
-            if (c == '"' || c == '\'') {
-                // Skip to the closing quote; a doubled quote stays inside the name.
-                for (i++; i < n; i++) {
-                    if (text.charAt(i) == c) {
-                        if (i + 1 < n && text.charAt(i + 1) == c) {
-                            i++;
-                        } else {
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-        return -1;
-    }
-
     private static CharSequence formatPartitionName(TableReader reader, long partitionTimestamp) {
         final StringSink sink = Misc.getThreadLocalSink();
         PartitionBy.setSinkForPartition(sink, reader.getMetadata().getTimestampType(), reader.getPartitionedBy(), partitionTimestamp);
         return sink;
     }
 
-    // True if both metadata have the same column names and types, in the same order, and the same
-    // designated timestamp.
-    private static boolean hasSameColumns(@Nullable RecordMetadata a, RecordMetadata b) {
-        if (a == null || a.getColumnCount() != b.getColumnCount() || a.getTimestampIndex() != b.getTimestampIndex()) {
-            return false;
-        }
-        for (int i = 0, n = a.getColumnCount(); i < n; i++) {
-            if (!Chars.equals(a.getColumnName(i), b.getColumnName(i)) || a.getColumnType(i) != b.getColumnType(i)) {
-                return false;
-            }
-        }
-        return true;
+    // True when the token is the column's name, ignoring case, with or without double quotes, see
+    // isColumnNamedInExpiryPolicy(). A quoted name in a policy that passed validation has its quotes at both ends.
+    private static boolean isColumnToken(CharSequence tok, CharSequence columnName) {
+        final int len = tok.length();
+        return Chars.equalsIgnoreCase(columnName, tok)
+                || (len > 2 && tok.charAt(0) == '"' && Chars.equalsIgnoreCase(columnName, tok, 1, len - 1));
     }
 
     private static boolean isIPv4UpdateCast(int from, int to) {
@@ -1295,11 +1521,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 || (from == ColumnType.IPv4 && to == ColumnType.STRING)
                 || (from == ColumnType.VARCHAR && to == ColumnType.IPv4)
                 || (from == ColumnType.IPv4 && to == ColumnType.VARCHAR);
-    }
-
-    // True for a character that already separates the expanded column list from its neighbour.
-    private static boolean isMatViewSpliceSeparator(char c) {
-        return Character.isWhitespace(c) || c == ',' || c == '(' || c == ')';
     }
 
     /**
@@ -1326,8 +1547,21 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 || engine.getConfiguration().isAllPartitionOperationsAllowed();
     }
 
+    private static boolean isSameNullableName(@Nullable CharSequence l, @Nullable CharSequence r) {
+        return l == null ? r == null : r != null && Chars.equalsIgnoreCase(l, r);
+    }
+
     private static boolean isTimestampUpdateCast(int from, int to) {
         return ColumnType.isTimestamp(to) && ColumnType.isConvertibleFrom(from, to);
+    }
+
+    private static void logExplicitColumnNamesFailure(TableToken viewToken, CharSequence error) {
+        LOG.info().$("could not write explicit column names into materialized view SQL, showing it as stored [view=")
+                .$(viewToken).$(", error=").$safe(error).I$();
+    }
+
+    private static CharSequence nullToEmpty(@Nullable CharSequence value) {
+        return value != null ? value : "";
     }
 
     /**
@@ -1690,11 +1924,238 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return columnType;
     }
 
+    // ALTER MATERIALIZED VIEW v ADD [COLUMN] ...: ALTER TABLE's ADD COLUMN, one column per statement, on a view whose
+    // SQL names its columns. When the SQL produces a column of the new column's name, refresh writes it into the new
+    // column, so its type needs a copier conversion to the new column's, RecordToRowCopierUtils.isCopierConvertible(),
+    // as refresh checks it. A SQL that does not compile, say after a base table change, skips that check, so that the
+    // view can take the column its fixed SQL will produce. The SQL is the one the statement's WAL entry applies after,
+    // see awaitMatViewDefinition().
+    private void alterMatViewAddColumn(
+            SqlExecutionContext executionContext,
+            int matViewNamePosition,
+            TableToken matViewToken,
+            TableRecordMetadata viewMetadata
+    ) throws SqlException {
+        executionContext.getSecurityContext().authorizeAlterTableAddColumn(matViewToken);
+        alterTableAddColumn(executionContext, matViewNamePosition, matViewToken, viewMetadata, true);
+        if (alterOperationBuilder.getExtraStrInfo().size() == 0) {
+            // IF NOT EXISTS named a column the view has, so the statement changes nothing
+            return;
+        }
+        final MatViewDefinition viewDefinition = awaitMatViewDefinition(executionContext, matViewToken, matViewNamePosition);
+        validateMatViewColumnChange(executionContext, matViewNamePosition, viewDefinition, true);
+        final CharSequence columnName = alterOperationBuilder.getExtraStrInfo().getQuick(0);
+        if (!matViewSqlValidator.isCompiled()) {
+            LOG.info().$("could not compile materialized view SQL, skipping the type check of the new column [view=").$(matViewToken)
+                    .$(", column=").$safe(columnName)
+                    .$(", error=").$safe(matViewSqlValidator.getError())
+                    .I$();
+            setMatViewColumnMappingSummary(executionContext, matViewToken, null);
+            return;
+        }
+        final RecordMetadata queryMetadata = matViewSqlValidator.getQueryMetadata();
+        final int queryColumnIndex = queryMetadata.getColumnIndexQuiet(columnName);
+        if (queryColumnIndex > -1) {
+            final int queryColumnType = queryMetadata.getColumnType(queryColumnIndex);
+            final int columnType = alterOperationBuilder.getAddColumnType(0);
+            if (!RecordToRowCopierUtils.isCopierConvertible(queryColumnType, columnType)) {
+                // the error refresh gives the same pair, see MatViewColumnMapping
+                throw SqlException.$(alterOperationBuilder.getAddColumnNamePosition(0), "inconvertible types: ")
+                        .put(ColumnType.nameOf(queryColumnType)).put(" -> ").put(ColumnType.nameOf(columnType))
+                        .put(" [from=").put(queryMetadata.getColumnName(queryColumnIndex))
+                        .put(", to=").put(columnName).put(']');
+            }
+        }
+        setMatViewColumnMappingSummary(
+                executionContext,
+                matViewToken,
+                MatViewColumnMapping.summarize(queryMetadata, viewMetadata, columnName)
+        );
+    }
+
+    // ALTER MATERIALIZED VIEW v [WITH BASE b] AS (<select>): replaces the view's SQL and, with WITH BASE naming another
+    // table, its base table, keeping the view's rows. The statement checks the new SQL with the rules of CREATE
+    // MATERIALIZED VIEW and against the view (AlterMatViewQueryValidator), under the caller's context, and then writes
+    // the definition event to the view's WAL, see MatViewAlter. The new definition takes effect when the event applies.
+    // The base table it compares with is the one of the definition the event applies after, see awaitMatViewDefinition().
+    private void alterMatViewAs(
+            SqlExecutionContext executionContext,
+            CharSequence tok,
+            int matViewNamePosition,
+            TableToken matViewToken,
+            TableRecordMetadata viewMetadata
+    ) throws SqlException {
+        executionContext.getSecurityContext().authorizeAlterMatView(matViewToken);
+        final MatViewDefinition viewDefinition = awaitMatViewDefinition(executionContext, matViewToken, matViewNamePosition);
+        final DependentViewGraph dependentViewGraph = engine.getDependentViewGraph();
+        String baseTableName = viewDefinition.getBaseTableName();
+        int baseTableNamePosition = -1;
+        TableToken baseTableToken = null;
+        if (isWithKeyword(tok)) {
+            expectKeyword(lexer, "base");
+            tok = expectToken(lexer, "base table name");
+            baseTableNamePosition = lexer.lastTokenPosition();
+            assertNameIsQuotedOrNotAKeyword(tok, baseTableNamePosition);
+            final CharSequence name = unquote(tok);
+            baseTableToken = executionContext.getVisibleTableTokenIfExists(name);
+            if (baseTableToken == null) {
+                throw SqlException.tableDoesNotExist(baseTableNamePosition, name);
+            }
+            checkAlterMatViewBaseTable(matViewToken, viewMetadata, baseTableToken, baseTableNamePosition);
+            // WITH BASE naming the current base table is no base table change
+            if (!Chars.equalsIgnoreCase(baseTableToken.getTableName(), baseTableName)) {
+                baseTableName = baseTableToken.getTableName();
+                if (dependentViewGraph.isOnDependencyLoop(baseTableName, matViewToken)) {
+                    throw SqlException.$(baseTableNamePosition, "circular dependency detected for materialized view [view=")
+                            .put(matViewToken.getTableName()).put(", baseTable=").put(baseTableName).put(']');
+                }
+            }
+            tok = expectToken(lexer, "'as'");
+        }
+        if (!isAsKeyword(tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "'as' expected");
+        }
+        final boolean isBaseTableChange = !Chars.equalsIgnoreCase(baseTableName, viewDefinition.getBaseTableName());
+        final SqlParser.AlterMatViewQuery query = parser.parseAlterMatViewQuery(
+                lexer,
+                executionContext,
+                this,
+                matViewToken.getTableName(),
+                baseTableName,
+                baseTableNamePosition
+        );
+        tok = SqlUtil.fetchNext(lexer);
+        if (tok != null) {
+            if (!isSemicolon(tok)) {
+                throw SqlException.unexpectedToken(lexer.lastTokenPosition(), tok);
+            }
+            lexer.unparseLast();
+        }
+        // The SAMPLE BY grid of the view stays: its time zone and offset here, its interval in the compile's checks. A
+        // non-aggregating view has no grid, and takes no SAMPLE BY, see AlterMatViewQueryValidator.
+        final boolean isTimeZoneKept = isSameNullableName(query.timeZone, viewDefinition.getTimeZone());
+        if (!viewDefinition.isPassthrough()
+                && (!isTimeZoneKept || !isSameNullableName(query.timeZoneOffset, viewDefinition.getTimeZoneOffset()))) {
+            throw SqlException.$(isTimeZoneKept ? query.timeZoneOffsetPosition : query.timeZonePosition, "materialized view query must keep the view's SAMPLE BY time zone and offset [timeZone=")
+                    .put(nullToEmpty(viewDefinition.getTimeZone()))
+                    .put(", offset=").put(nullToEmpty(viewDefinition.getTimeZoneOffset()))
+                    .put(']');
+        }
+        if (baseTableToken == null) {
+            // Without WITH BASE, the view keeps its base table, which the view's refresh can use only while it exists.
+            baseTableToken = executionContext.getVisibleTableTokenIfExists(baseTableName);
+            if (baseTableToken == null) {
+                throw SqlException.$(query.baseTableReferencePosition, "base table does not exist, name the new base table with WITH BASE [baseTable=")
+                        .put(baseTableName).put(']');
+            }
+            checkAlterMatViewBaseTable(matViewToken, viewMetadata, baseTableToken, query.baseTableReferencePosition);
+        }
+        if (executionContext.isValidationOnly()) {
+            compiledQuery.ofAlterView();
+            return;
+        }
+        if (engine.isReadOnlyMode()) {
+            throw CairoException.readOnlyAccess();
+        }
+
+        final String matViewSql = query.sql;
+        final int matViewSqlPosition = query.sqlPosition;
+        final MatViewColumnMapping.Summary columnMappingSummary;
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            final AlterMatViewQueryValidator validator = alterMatViewQueryValidator.of(
+                    matViewToken,
+                    viewDefinition,
+                    viewMetadata,
+                    query,
+                    baseTableToken,
+                    asm,
+                    engine
+            );
+            compiler.compileMatViewSql(executionContext, matViewToken.getTableName(), matViewSql, matViewSqlPosition, validator);
+            columnMappingSummary = validator.getColumnMappingSummary();
+        }
+        MatViewAlter.alter(
+                engine,
+                executionContext,
+                matViewToken,
+                matViewNamePosition,
+                baseTableName,
+                matViewSql,
+                isBaseTableChange,
+                columnMappingSummary
+        );
+        compiledQuery.ofAlterView();
+    }
+
+    // The base table of ALTER MATERIALIZED VIEW ... AS must be a WAL table or a materialized view, not a regular or live
+    // view, with the view's designated timestamp type, as for CREATE MATERIALIZED VIEW and RESUME.
+    private void checkAlterMatViewBaseTable(
+            TableToken matViewToken,
+            TableRecordMetadata viewMetadata,
+            TableToken baseTableToken,
+            int position
+    ) throws SqlException {
+        if (baseTableToken.isView()) {
+            throw SqlException.$(position, "base table should be a physical table, cannot be a view: ").put(baseTableToken.getTableName());
+        }
+        if (baseTableToken.isLiveView()) {
+            throw SqlException.$(position, "live views are not allowed as base tables [name=").put(baseTableToken.getTableName()).put(']');
+        }
+        if (!baseTableToken.isWal()) {
+            throw SqlException.$(position, "base table has to be WAL enabled");
+        }
+        if (Chars.equalsIgnoreCase(baseTableToken.getTableName(), matViewToken.getTableName())) {
+            throw SqlException.$(position, "circular dependency detected for materialized view [view=")
+                    .put(matViewToken.getTableName()).put(", baseTable=").put(baseTableToken.getTableName()).put(']');
+        }
+        final int baseTableTimestampType;
+        try (TableMetadata baseTableMetadata = engine.getTableMetadata(baseTableToken)) {
+            baseTableTimestampType = baseTableMetadata.getTimestampType();
+        }
+        final CharSequence refusal = MatViewRefreshJob.getBaseTableTimestampRefusal(
+                matViewToken,
+                baseTableToken,
+                viewMetadata.getTimestampType(),
+                baseTableTimestampType
+        );
+        if (refusal != null) {
+            throw SqlException.$(position, refusal);
+        }
+    }
+
+    // ALTER MATERIALIZED VIEW v DROP COLUMN c: ALTER TABLE's DROP COLUMN, one column per statement and not the
+    // designated timestamp, on a view whose SQL names its columns, as the definition the statement's WAL entry applies
+    // after has it, see awaitMatViewDefinition(). Refresh then ignores the query column of the name. The statement only
+    // parses the SQL, which reads no table, and takes the column out of the mapping of the SQL's last compile.
+    private void alterMatViewDropColumn(
+            SqlExecutionContext executionContext,
+            int matViewNamePosition,
+            TableToken matViewToken,
+            TableRecordMetadata viewMetadata
+    ) throws SqlException {
+        alterTableDropColumn(executionContext, matViewNamePosition, matViewToken, viewMetadata, true);
+        final MatViewDefinition viewDefinition = awaitMatViewDefinition(executionContext, matViewToken, matViewNamePosition);
+        validateMatViewColumnChange(executionContext, matViewNamePosition, viewDefinition, false);
+        if (executionContext.isValidationOnly()) {
+            return;
+        }
+        final MatViewState viewState = engine.getMatViewStateStore().getViewState(matViewToken);
+        if (viewState != null) {
+            viewState.setColumnMappingSummary(MatViewColumnMapping.summarizeWithoutViewColumn(
+                    viewState.getColumnMappingSummary(),
+                    viewMetadata,
+                    alterOperationBuilder.getExtraStrInfo().getQuick(0)
+            ));
+        }
+    }
+
+    // With isMatView set, the statement adds one column, see MAT_VIEW_ONE_COLUMN_PER_STATEMENT.
     private void alterTableAddColumn(
             SqlExecutionContext executionContext,
             int tableNamePosition,
             TableToken tableToken,
-            TableRecordMetadata tableMetadata
+            TableRecordMetadata tableMetadata,
+            boolean isMatView
     ) throws SqlException {
         // add columns to table
         CharSequence tok = SqlUtil.fetchNext(lexer);
@@ -1755,6 +2216,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             if (semicolonPos < 0 && !Chars.equals(tok, ',')) {
                                 throw SqlException.$(lexer.lastTokenPosition(), "',' expected");
                             }
+                            if (isMatView && semicolonPos < 0) {
+                                throw SqlException.$(lexer.lastTokenPosition(), MAT_VIEW_ONE_COLUMN_PER_STATEMENT);
+                            }
                             continue;
                         }
                     } else {
@@ -1791,6 +2255,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 addColumnSuffix(executionContext, tok, tableToken, alterOperationBuilder);
                 compiledQuery.ofAlter(alterOperationBuilder.build());
                 return;
+            }
+            if (isMatView && semicolonPos < 0) {
+                throw SqlException.$(lexer.lastTokenPosition(), MAT_VIEW_ONE_COLUMN_PER_STATEMENT);
             }
         } while (true);
 
@@ -2132,13 +2599,17 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         compiledQuery.ofAlter(setDedup.build());
     }
 
+    // With isMatView set, the statement drops one column, see MAT_VIEW_ONE_COLUMN_PER_STATEMENT, and not the designated
+    // timestamp, which a materialized view cannot be without.
     private void alterTableDropColumn(
             SqlExecutionContext executionContext,
             int tableNamePosition,
             TableToken tableToken,
-            TableRecordMetadata metadata
+            TableRecordMetadata metadata,
+            boolean isMatView
     ) throws SqlException {
         AlterOperationBuilder dropColumnStatement = alterOperationBuilder.ofDropColumn(tableNamePosition, tableToken, metadata.getTableId());
+        String checkedExpiryPredicate = null;
         int semicolonPos = -1;
         do {
             CharSequence tok = unquote(maybeExpectToken(lexer, "column name", semicolonPos < 0));
@@ -2149,8 +2620,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 break;
             }
 
-            if (metadata.getColumnIndexQuiet(tok) == -1) {
+            final int columnIndex = metadata.getColumnIndexQuiet(tok);
+            if (columnIndex == -1) {
                 throw SqlException.invalidColumn(lexer.lastTokenPosition(), tok);
+            }
+            if (isMatView && columnIndex == metadata.getTimestampIndex()) {
+                throw SqlException.$(lexer.lastTokenPosition(), "cannot drop the designated timestamp column of a materialized view");
+            }
+            if (isMatView) {
+                checkedExpiryPredicate = checkMatViewDropColumnExpiryPolicy(tableToken, metadata.getColumnName(columnIndex), lexer.lastTokenPosition());
             }
 
             CharSequence columnName = tok;
@@ -2165,10 +2643,19 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             if (semicolonPos < 0 && !Chars.equals(tok, ',')) {
                 throw SqlException.$(lexer.lastTokenPosition(), "',' expected");
             }
+            if (isMatView && semicolonPos < 0) {
+                throw SqlException.$(lexer.lastTokenPosition(), MAT_VIEW_ONE_COLUMN_PER_STATEMENT);
+            }
         } while (true);
 
         executionContext.getSecurityContext().authorizeAlterTableDropColumn(tableToken, dropColumnStatement.getExtraStrInfo());
-        compiledQuery.ofAlter(alterOperationBuilder.build());
+        final AlterOperation dropColumn = alterOperationBuilder.build();
+        if (isMatView) {
+            // A view takes one column per statement. The operation keeps the policy that the check above read, and the
+            // WAL writer asks for a fresh compile when a prepared statement runs it again after the policy changed.
+            dropColumn.withCheckedExpiryPredicate(checkedExpiryPredicate);
+        }
+        compiledQuery.ofAlter(dropColumn);
     }
 
     private void alterTableDropConvertDetachOrAttachPartition(
@@ -2814,39 +3301,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
-    // Writes the columns a passthrough view's top-level wildcard expands to now, which are the view's columns,
-    // each double-quoted, in place of the wildcard at [wildcardLo, wildcardHi) of selectText. A query written
-    // without SELECT gets `select <columns> from ` in front of where it starts.
-    private void appendMatViewWildcardExpansion(
-            StringSink sink,
-            String selectText,
-            int wildcardLo,
-            int wildcardHi,
-            RecordMetadata metadata,
-            int wildcardIndex,
-            int expandedCount
-    ) {
-        if (isMatViewWildcardArtificial) {
-            // The query has no SELECT of its own: write one in front of where the query starts.
-            sink.putAscii("select ");
-        } else if (wildcardLo > 0 && !isMatViewSpliceSeparator(selectText.charAt(wildcardLo - 1))) {
-            // `SELECT*FROM t`: keep the column list from running into the token before it.
-            sink.putAscii(' ');
-        }
-        for (int i = 0; i < expandedCount; i++) {
-            if (i > 0) {
-                sink.putAscii(", ");
-            }
-            appendMatViewColumnName(sink, metadata.getColumnName(wildcardIndex + i));
-        }
-        if (isMatViewWildcardArtificial) {
-            sink.putAscii(" from ");
-        } else if (wildcardHi < selectText.length() && !isMatViewSpliceSeparator(selectText.charAt(wildcardHi))) {
-            // `SELECT *FROM t`: keep the column list from running into the token after it.
-            sink.putAscii(' ');
-        }
-    }
-
     private TableToken authorizeCompileView(SqlExecutionContext executionContext, CompileViewModel model) {
         final CharSequence viewName = unquote(model.getTableName());
         // an object the principal may not see fails exactly like a missing one, before the kind check
@@ -2925,176 +3379,85 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
-    // Returns the query a materialized view stores, or null to store the query as written. A passthrough view's
-    // refresh compiles the stored query with every bare name read as a column (see
-    // SqlExecutionContext.allowBareNoArgFunctionCalls()), so once the base table drops or renames a column the
-    // query reads, refresh fails instead of calling a function of the same name. Two edits keep the stored query
-    // meaning what it means at CREATE:
-    // - Each bare name the optimiser read as a call to a zero-argument function gets its parentheses, so
-    //   `version` is stored as `version()`.
-    // - The top-level wildcard of a passthrough view is replaced by the columns it expands to now. The view's
-    //   schema is fixed at CREATE, so a column the base table gains later stays out of the view instead of
-    //   widening the query past that schema and invalidating the view on its next refresh. The names come from
-    //   the view's columns, so a wildcard that repeats a column the select list also names
-    //   (`SELECT ts, * FROM base`) expands to the deduplicated name ts1, which the base does not have, and
-    //   CREATE rejects it.
-    // The stored query, edited or not, is compiled with bare names read as columns and has to produce exactly the
-    // same column names, types and designated timestamp as the original, so the stored query stays equivalent to
-    // what the user wrote at CREATE. The check runs on every CREATE: a bare name read as a call that the edits
-    // missed fails it with an invalid column, rather than leaving a view whose refresh fails, or whose refresh
-    // reads a column the base table gains later under that name. An aggregating view's refresh reads a bare
-    // name that matches no column as a call, and the check covers it too: CREATE compiles the user's query with
-    // that same reading, so every bare name CREATE reads as a call is already stored with its parentheses.
-    private @Nullable String buildStoredMatViewSql(
+    // Returns the definition that the WAL entry of a view ADD COLUMN, DROP COLUMN or ALTER ... AS applies after, which
+    // the statement checks itself against. An ALTER ... AS that this node ran may still wait in the view's WAL, so the
+    // statement waits until the WAL applies its definition event, see MatViewAlter.awaitPendingDefinitionOrRefuse(),
+    // and reads the definition then. A read-only node refuses first, as it may never apply the event. A validation-only
+    // compile, which writes nothing, checks the definition the view's WAL applied, as REFRESH does not wait there either.
+    // The caller authorized the statement. A DROP of the view that ran meanwhile removed the definition.
+    private MatViewDefinition awaitMatViewDefinition(
             SqlExecutionContext executionContext,
-            CreateMatViewOperation createMatViewOp,
-            RecordMetadata metadata
+            TableToken matViewToken,
+            int matViewNamePosition
     ) throws SqlException {
-        final boolean expandWildcard = createMatViewOp.isPassthrough() && matViewWildcards.size() > 0;
-        final int callCount = matViewBareNoArgCallPositions.size();
-        final CreateTableOperation createTableOp = createMatViewOp.getCreateTableOperation();
-        final int selectTextPosition = createTableOp.getSelectTextPosition();
-        final String selectText = createTableOp.getSelectText();
-        final int selectTextLen = selectText.length();
-
-        // Each edit is a (start, end, call index) triple over the query text; the wildcard has call index -1.
-        final IntList edits = new IntList();
-        int wildcardIndex = -1;
-        int wildcardLo = -1;
-        int wildcardHi = -1;
-        int expandedCount = 0;
-        if (expandWildcard) {
-            if (matViewWildcards.size() > 3) {
-                // The parser already rejects a second wildcard: its synthesized name *1 is not a valid column
-                // name. Were one to get through, its columns would carry deduplicated names (k1, v1, ...) that
-                // the base table does not have, so they could not be written back as column references.
-                throw SqlException.$(selectTextPosition + matViewWildcards.getQuick(4),
-                        "passthrough materialized view query can have only one wildcard in the select list");
+        if (!executionContext.isValidationOnly()) {
+            if (engine.isReadOnlyMode()) {
+                throw CairoException.readOnlyAccess();
             }
-            wildcardIndex = matViewWildcards.getQuick(0);
-            wildcardLo = matViewWildcards.getQuick(1);
-            wildcardHi = matViewWildcards.getQuick(2);
-            final int columnCount = metadata.getColumnCount();
-            expandedCount = columnCount - (matViewProjectionSize - 1);
-            if (wildcardLo < 0 || wildcardHi < wildcardLo || wildcardHi > selectTextLen
-                    || expandedCount < 1 || wildcardIndex + expandedCount > columnCount) {
-                throw SqlException.$(selectTextPosition + Math.max(wildcardLo, 0),
-                        "could not expand the wildcard of the materialized view query, list the columns explicitly");
-            }
-            edits.add(wildcardLo);
-            edits.add(wildcardHi);
-            edits.add(-1);
+            MatViewAlter.awaitPendingDefinitionOrRefuse(engine, executionContext, matViewToken, matViewNamePosition);
         }
-        for (int i = 0; i < callCount; i++) {
-            final String name = matViewBareNoArgCallNames.getQuick(i);
-            final int pos = matViewBareNoArgCallPositions.getQuick(i);
-            final int end = findBareNameEnd(selectText, pos, name);
-            if (end < 0) {
-                throw SqlException.$(selectTextPosition + Math.max(pos, 0),
-                                "could not store the function call of the materialized view query, write it as ")
-                        .put(name).put("()");
-            }
-            edits.add(pos);
-            edits.add(end);
-            edits.add(i);
+        final MatViewDefinition viewDefinition = engine.getDependentViewGraph().getViewDefinition(matViewToken);
+        if (viewDefinition == null) {
+            throw SqlException.matViewDoesNotExist(matViewNamePosition, matViewToken.getTableName());
         }
-        edits.sortGroups(3);
-
-        final StringSink sink = new StringSink();
-        int copied = 0;
-        int prevLo = -1;
-        for (int i = 0, n = edits.size(); i < n; i += 3) {
-            final int lo = edits.getQuick(i);
-            final int hi = edits.getQuick(i + 1);
-            final int call = edits.getQuick(i + 2);
-            if (lo < copied) {
-                if (call >= 0 && lo == prevLo && hi == copied) {
-                    // The optimiser read the same name twice.
-                    continue;
-                }
-                throw SqlException.$(selectTextPosition + lo,
-                        "could not store the function call of the materialized view query, write it with parentheses");
-            }
-            sink.put(selectText, copied, lo);
-            if (call < 0) {
-                appendMatViewWildcardExpansion(sink, selectText, wildcardLo, wildcardHi, metadata, wildcardIndex, expandedCount);
-            } else {
-                sink.put(matViewBareNoArgCallNames.getQuick(call)).putAscii("()");
-            }
-            prevLo = lo;
-            copied = hi;
-        }
-        sink.put(selectText, copied, selectTextLen);
-        final String storedSql = sink.toString();
-
-        RecordMetadata storedMetadata = null;
-        String compileError = null;
-        final ExpiryReadPolicy previousExpiryReadPolicy = executionContext.getExpiryReadPolicy();
-        final CharSequence previousMaterializingViewName = executionContext.getExpiryMaterializingViewName();
-        final boolean previousAllowBareNoArgFunctionCalls = executionContext.allowBareNoArgFunctionCalls();
-        executionContext.setExpiryReadPolicy(ExpiryReadPolicy.REJECT, createMatViewOp.getTableName());
-        executionContext.setAllowBareNoArgFunctionCalls(false);
-        // A compiler of its own, whose optimiser has no sink armed, so the recorded calls stay as they are.
-        try (
-                SqlCompiler compiler = engine.getSqlCompiler();
-                RecordCursorFactory factory = compiler.compile(storedSql, executionContext).getRecordCursorFactory()
-        ) {
-            storedMetadata = GenericRecordMetadata.copyOf(factory.getMetadata());
-        } catch (SqlException e) {
-            compileError = e.getFlyweightMessage().toString();
-        } finally {
-            executionContext.setAllowBareNoArgFunctionCalls(previousAllowBareNoArgFunctionCalls);
-            executionContext.setExpiryReadPolicy(previousExpiryReadPolicy, previousMaterializingViewName);
-        }
-        if (compileError != null || !hasSameColumns(storedMetadata, metadata)) {
-            final SqlException e;
-            if (expandWildcard) {
-                e = SqlException.$(selectTextPosition + wildcardLo,
-                        "could not expand the wildcard of the materialized view query, list the columns explicitly");
-            } else if (callCount > 0) {
-                e = SqlException.$(selectTextPosition + matViewBareNoArgCallPositions.getQuick(0),
-                        "could not store the function calls of the materialized view query, write them with parentheses");
-            } else {
-                e = SqlException.$(selectTextPosition, "could not store the materialized view query");
-            }
-            if (compileError != null) {
-                e.put(" [error=").put(compileError).put(']');
-            }
-            throw e;
-        }
-        return edits.size() > 0 ? storedSql : null;
+        return viewDefinition;
     }
 
-    // Records each wildcard in the top-level select list of a materialized view query as a
-    // (projection index, start, end) triple, with start and end positions in the query text. The
-    // optimizer expands wildcards in place, so this runs on the parsed model, before optimise().
-    // A query written without SELECT, such as `base WHERE v > 0`, gets a wildcard from the parser that
-    // has no text of its own; its start and end are both the position where the query starts.
-    private void captureMatViewWildcards(IQueryModel queryModel, CharSequence selectText) {
-        matViewWildcards.clear();
-        isMatViewWildcardArtificial = queryModel.isArtificialStar();
-        final ObjList<QueryColumn> columns = queryModel.getColumns();
-        matViewProjectionSize = columns.size();
-        for (int i = 0, n = columns.size(); i < n; i++) {
-            final ExpressionNode ast = columns.getQuick(i).getAst();
-            if (ast != null && ast.isWildcard()) {
-                matViewWildcards.add(i);
-                if (isMatViewWildcardArtificial) {
-                    matViewWildcards.add(queryModel.getModelPosition());
-                    matViewWildcards.add(queryModel.getModelPosition());
-                } else {
-                    matViewWildcards.add(ast.position);
-                    matViewWildcards.add(findWildcardEnd(selectText, ast.position));
-                }
+    // Refuses ALTER MATERIALIZED VIEW v DROP COLUMN c when the view's EXPIRE ROWS policy reads c. Every read of the
+    // view goes through the policy's rewrite, a keep-filter, a LATEST ON or a window query, which names the policy's
+    // columns, so without c no query could read the view until DROP EXPIRE. The check reads the policy that reads of
+    // the view apply, so a SET EXPIRE still in the view's WAL does not count yet. It looks for c in the policy's text:
+    // a name, quoted or not, that is not a function call. The SQL lexer splits a name with a table prefix at the dot,
+    // and it reads a string, quotes included, as one token, which never equals a column name. The check errs on the
+    // side of refusal: it also refuses a column whose name the policy uses otherwise, such as a type name in a cast
+    // or a table prefix. Changing the policy with SET EXPIRE, or removing it with DROP EXPIRE, lets the column go.
+    // Returns the predicate of the policy it checked, null for none.
+    private String checkMatViewDropColumnExpiryPolicy(
+            TableToken matViewToken,
+            CharSequence columnName,
+            int position
+    ) throws SqlException {
+        final String predicate = engine.getMetadataCache().lookupExpiryPolicy(matViewToken).getPredicate();
+        if (predicate == null) {
+            return null;
+        }
+        final CharSequence policyText;
+        if (RowExpiryUtil.isKeepLatest(predicate)) {
+            // the designated timestamp, which LATEST ON reads too, cannot be dropped
+            policyText = RowExpiryUtil.keepLatestKeys(predicate);
+        } else if (RowExpiryUtil.isKeepBy(predicate) || RowExpiryUtil.isWindow(predicate)) {
+            policyText = RowExpiryUtil.windowPredicate(predicate, null);
+        } else {
+            policyText = predicate;
+        }
+        if (isColumnNamedInExpiryPolicy(policyText, columnName)) {
+            throw SqlException.$(position, "the EXPIRE ROWS policy of the materialized view reads the column [column=")
+                    .put(columnName)
+                    .put("], change the policy with SET EXPIRE or remove it with DROP EXPIRE first, and retry once that has applied");
+        }
+        return predicate;
+    }
+
+    // Reads the statement that follows the name of a materialized view and fails RENAME COLUMN with the hint how to
+    // rename a view column. Leaves the lexer past what it read.
+    private void checkMatViewRenameColumn() throws SqlException {
+        CharSequence tok = SqlUtil.fetchNext(lexer);
+        if (tok != null && isRenameKeyword(tok)) {
+            final int renamePosition = lexer.lastTokenPosition();
+            tok = SqlUtil.fetchNext(lexer);
+            if (tok != null && isColumnKeyword(tok)) {
+                throw SqlException.$(renamePosition, MAT_VIEW_RENAME_COLUMN_HINT);
             }
         }
     }
 
     // COPY FROM creates the table when it is missing, so its target collides with any existing object,
-    // visible or not, the way CREATE TABLE does.
+    // visible or not, the way CREATE TABLE does. The check resolves the name the import resolves: the parser
+    // leaves a single-quoted target quoted, and the import unquotes it. Unlike INSERT, COPY FROM refuses a
+    // materialized view even with REFRESH LIMIT: the import attaches partitions through the view's
+    // TableWriter, outside the view's WAL, where MatViewBackfillValidator checks backfill at commit.
     private void checkViewModification(ExecutionModel executionModel) throws SqlException {
-        final CharSequence name = executionModel.getTableName();
-        final TableToken tableToken = engine.getTableTokenIfExists(name);
+        final TableToken tableToken = engine.getTableTokenIfExists(unquote(executionModel.getTableName()));
         checkViewModification(tableToken, executionModel.getTableNameExpr().position);
     }
 
@@ -3116,6 +3479,21 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         checkViewModification(tableToken, executionModel.getTableNameExpr().position);
     }
 
+    /**
+     * INSERT variant of {@link #checkVisibleViewModification}: it does not disclose an object the
+     * principal may not see as a view either, and it lets rows be backfilled into the frozen zone
+     * of a materialized view that carries a {@code REFRESH LIMIT}, which MatViewBackfillValidator
+     * checks when the view's WAL commits. COPY FROM keeps the strict
+     * {@link #checkViewModification(ExecutionModel)}: its import writes outside the view's WAL.
+     */
+    private void checkVisibleViewModificationForInsert(ExecutionModel executionModel, SqlExecutionContext executionContext) throws SqlException {
+        final TableToken tableToken = executionContext.getVisibleTableTokenIfExists(executionModel.getTableName());
+        if (tableToken != null && engine.isBackfillableMatView(tableToken)) {
+            return;
+        }
+        checkViewModification(tableToken, executionModel.getTableNameExpr().position);
+    }
+
     private void clearExceptSqlText() {
         // Close what the discarded attempt still owns while its models are still enumerable.
         // ObjectPool.clear() only rewinds the position, after which the attempt's models are gone from
@@ -3134,6 +3512,22 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         functionParser.clear();
         compiledQuery.clear();
         columnNames.clear();
+        matViewSqlValidator.clear();
+    }
+
+    // Reads from the optimised query of a materialized view what CREATE MATERIALIZED VIEW without a column list, a
+    // TIMESTAMP clause or an INDEX clause takes from it besides its columns' names and types, for
+    // putMatViewCreateColumns(). It reads the model before the factory's generation, whose retry may recycle it. The
+    // view's SQL is passthrough for CREATE as it was when the view took it.
+    private void collectMatViewCreateFacts(IQueryModel queryModel, MatViewDefinition viewDefinition) {
+        matViewInheritedIndexes.clear();
+        matViewTimestampFloorColumnName = CreateMatViewOperationImpl.findTimestampFloorColumnName(queryModel);
+        if (viewDefinition.isPassthrough()) {
+            final String baseTableName = viewDefinition.getBaseTableName();
+            try (TableMetadata baseTableMetadata = engine.getTableMetadata(engine.verifyTableName(baseTableName))) {
+                CreateMatViewOperationImpl.inheritBaseSymbolColumnIndexes(queryModel, baseTableName, baseTableMetadata, matViewInheritedIndexes);
+            }
+        }
     }
 
     private void compileAlter(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
@@ -3199,18 +3593,65 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         if (!matViewToken.isMatView()) {
             throw SqlException.$(lexer.lastTokenPosition(), "materialized view name expected");
         }
+        // ADD COLUMN, DROP COLUMN and ALTER ... AS read the definition again once an ALTER ... AS still in the view's WAL
+        // applied, see awaitMatViewDefinition(); the other forms read only what ALTER ... AS keeps.
         final MatViewDefinition viewDefinition = engine.getDependentViewGraph().getViewDefinition(matViewToken);
         if (viewDefinition == null) {
             throw SqlException.$(lexer.lastTokenPosition(), "materialized view does not exist");
         }
 
-        try (TableRecordMetadata tableMetadata = engine.getTableMetadata(matViewToken)) {
-            tok = SqlUtil.fetchNext(lexer);
-            if (tok == null || (!isAlterKeyword(tok) && !isResumeKeyword(tok) && !isRebaseKeyword(tok) && !isSuspendKeyword(tok) && !isSetKeyword(tok) && !isDropKeyword(tok))) {
+        tok = SqlUtil.fetchNext(lexer);
+        // ADD and DROP read the view's sequencer metadata, as ALTER TABLE does: it holds the schema changes still in the
+        // view's WAL, so DROP COLUMN c works while the ADD COLUMN c before it waits to apply. The WAL apply context
+        // gives the metadata of the view's table instead. The other forms read the view's table metadata, apart from
+        // SET EXPIRE, which opens the sequencer metadata itself. ALTER ... AS checks the new SQL against the same
+        // metadata, so that it sees a column added or dropped just before it.
+        final boolean isSchemaChange = tok != null && (isAddKeyword(tok) || isDropKeyword(tok) || isAsKeyword(tok) || isWithKeyword(tok));
+        try (TableRecordMetadata tableMetadata = isSchemaChange ? executionContext.getMetadataForWrite(matViewToken) : engine.getTableMetadata(matViewToken)) {
+            if (tok != null && (isAsKeyword(tok) || isWithKeyword(tok))) {
+                alterMatViewAs(executionContext, tok, matViewNamePosition, matViewToken, tableMetadata);
+                return;
+            }
+            if (tok != null && isDropKeyword(tok)) {
+                final int dropPosition = lexer.lastTokenPosition();
+                final CharSequence dropTarget = SqlUtil.fetchNext(lexer);
+                if (dropTarget != null && isColumnKeyword(dropTarget)) {
+                    alterMatViewDropColumn(executionContext, matViewNamePosition, matViewToken, tableMetadata);
+                    return;
+                }
+                if (dropTarget != null && isPartitionKeyword(dropTarget)) {
+                    // ALTER TABLE's DROP PARTITION. The view's WAL keeps the statement, which every node compiles
+                    // again when it applies it and drops the partitions the view has at that point of its WAL.
+                    executionContext.getSecurityContext().authorizeAlterTableDropPartition(matViewToken);
+                    alterTableDropConvertDetachOrAttachPartition(tableMetadata, matViewToken, PartitionAction.DROP, executionContext);
+                    return;
+                }
+                if (dropTarget != null && isExpireKeyword(dropTarget)) {
+                    // ALTER MATERIALIZED VIEW <v> DROP EXPIRE - object-type-agnostic, reuse the table path.
+                    executionContext.getSecurityContext().authorizeAlterTableSetParam(matViewToken);
+                    alterTableDropExpire(matViewToken, matViewNamePosition, tableMetadata);
+                    return;
+                }
+                // Any other DROP goes to the hook below, back on DROP, so that lastTokenPosition() points at DROP and
+                // the hook reads the token after it itself, as Enterprise does for DROP STORAGE POLICY.
+                lexer.backTo(dropPosition, null);
+                tok = SqlUtil.fetchNext(lexer);
+            }
+            if (tok == null || isDropKeyword(tok) || (!isAddKeyword(tok) && !isAlterKeyword(tok) && !isRenameKeyword(tok)
+                    && !isResumeKeyword(tok) && !isRebaseKeyword(tok) && !isSuspendKeyword(tok) && !isSetKeyword(tok))) {
                 compileAlterMatViewExt(executionContext, tok, matViewToken, matViewNamePosition);
                 return;
             }
-            if (isAlterKeyword(tok)) {
+            if (isAddKeyword(tok)) {
+                alterMatViewAddColumn(executionContext, matViewNamePosition, matViewToken, tableMetadata);
+            } else if (isRenameKeyword(tok)) {
+                final int renamePosition = lexer.lastTokenPosition();
+                tok = expectToken(lexer, "'column'");
+                if (!isColumnKeyword(tok)) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "'column' expected");
+                }
+                throw SqlException.$(renamePosition, MAT_VIEW_RENAME_COLUMN_HINT);
+            } else if (isAlterKeyword(tok)) {
                 expectKeyword(lexer, "column");
                 final int columnNamePosition = lexer.getPosition();
                 tok = expectToken(lexer, "column name");
@@ -3348,13 +3789,56 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     // the clause, validates the predicate against the view, and builds SET_EXPIRE ->
                     // setMetaExpiry), so we route the mat-view token straight through it.
                     executionContext.getSecurityContext().authorizeAlterTableSetParam(matViewToken);
-                    alterTableSetExpire(executionContext, matViewToken, matViewNamePosition, tableMetadata);
+                    // It checks the columns of a scalar WHEN or KEEP policy against the view's sequencer metadata, as
+                    // ADD and DROP COLUMN do, so that a policy reading a column that a view DROP COLUMN still in the
+                    // view's WAL removes fails here, not at apply, where it would suspend the view's WAL, and a policy
+                    // reading a column that a pending ADD COLUMN adds passes. The read probe of a KEEP or window WHEN
+                    // policy still compiles against the view's applied columns.
+                    try (TableRecordMetadata writeMetadata = executionContext.getMetadataForWrite(matViewToken)) {
+                        alterTableSetExpire(executionContext, matViewToken, matViewNamePosition, writeMetadata);
+                    }
                 } else if (isRefreshKeyword(tok)) {
                     tok = expectToken(lexer, "'immediate' or 'manual' or 'period' or 'every' or 'limit'");
                     if (isLimitKeyword(tok)) {
                         // SET REFRESH LIMIT
                         executionContext.getSecurityContext().authorizeAlterMatViewSetRefreshLimit(matViewToken);
                         final int limitHoursOrMonths = SqlParser.parseTtlHoursOrMonths(lexer);
+                        // Warn whenever the new limit moves the managed/frozen split, in
+                        // either direction. Each direction has different user-visible
+                        // consequences and warrants its own message; without an explicit
+                        // warning a silent extend can overwrite previously-frozen
+                        // backfill on the next refresh.
+                        final MatViewDefinition existing = engine.getDependentViewGraph().getViewDefinition(matViewToken);
+                        if (existing != null) {
+                            final int oldLimit = existing.getRefreshLimitHoursOrMonths();
+                            if (oldLimit != limitHoursOrMonths) {
+                                if (oldLimit == 0) {
+                                    // Adding a limit -- creates a frozen zone where there was none.
+                                    LOG.advisory().$("REFRESH LIMIT added on materialized view [view=").$(matViewToken)
+                                            .$(", to=").$(limitHoursOrMonths)
+                                            .$("]; buckets older than the new boundary become frozen and will no longer be refreshed").$();
+                                } else if (limitHoursOrMonths == 0) {
+                                    // Removing the limit -- the next FULL refresh wipes all buckets.
+                                    LOG.advisory().$("REFRESH LIMIT removed on materialized view [view=").$(matViewToken)
+                                            .$(", from=").$(oldLimit)
+                                            .$("]; the frozen zone disappears and the next FULL refresh will wipe and rebuild every bucket, including any user backfill").$();
+                                } else if (approxRefreshLimitMicros(limitHoursOrMonths) < approxRefreshLimitMicros(oldLimit)) {
+                                    // Shrink -- managed zone narrows, frozen zone grows.
+                                    LOG.advisory().$("REFRESH LIMIT shrunk on materialized view [view=").$(matViewToken)
+                                            .$(", from=").$(oldLimit)
+                                            .$(", to=").$(limitHoursOrMonths)
+                                            .$("]; previously-managed buckets become frozen and stop being refreshed").$();
+                                } else {
+                                    // Extend -- managed zone widens, frozen zone shrinks. Any rows the
+                                    // user backfilled into what used to be the frozen zone may be
+                                    // overwritten by the next refresh's REPLACE_RANGE.
+                                    LOG.advisory().$("REFRESH LIMIT extended on materialized view [view=").$(matViewToken)
+                                            .$(", from=").$(oldLimit)
+                                            .$(", to=").$(limitHoursOrMonths)
+                                            .$("]; previously-frozen buckets become managed and any backfill in the newly-managed range may be overwritten on the next refresh").$();
+                                }
+                            }
+                        }
                         final AlterOperationBuilder setRefreshLimit = alterOperationBuilder.ofSetMatViewRefreshLimit(
                                 matViewNamePosition,
                                 matViewToken,
@@ -3537,15 +4021,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 } else {
                     throw SqlException.$(lexer.lastTokenPosition(), "'ttl', 'expire' or 'refresh' expected");
                 }
-            } else if (isDropKeyword(tok)) {
-                tok = SqlUtil.fetchNext(lexer);
-                if (tok == null || !isExpireKeyword(tok)) {
-                    compileAlterMatViewDropExt(executionContext, tok, matViewToken, matViewNamePosition);
-                    return;
-                }
-                // ALTER MATERIALIZED VIEW <v> DROP EXPIRE — object-type-agnostic, reuse the table path.
-                executionContext.getSecurityContext().authorizeAlterTableSetParam(matViewToken);
-                alterTableDropExpire(matViewToken, matViewNamePosition, tableMetadata);
             } else if (isResumeKeyword(tok)) {
                 parseResumeWal(matViewToken, matViewNamePosition, executionContext);
             } else if (isRebaseKeyword(tok)) {
@@ -3573,7 +4048,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         // Before any resolution, for the same reason as in compileExecutionModel0's UPDATE case.
         executionContext.setStatementTargetTableName(targetTableName);
         final TableToken tableToken = tableExistsOrFailForWal(tableNamePosition, targetTableName, executionContext);
-        checkViewModification(tableToken);
+        final int tableNameTokenPosition = lexer.lastTokenPosition();
+        if (tableToken.isMatView()) {
+            // ALTER TABLE modifies no materialized view. RENAME COLUMN fails with the hint that ALTER MATERIALIZED
+            // VIEW gives it, any other statement as on every other view, below.
+            checkMatViewRenameColumn();
+        }
+        checkViewModification(tableToken, tableNameTokenPosition);
         final SecurityContext securityContext = executionContext.getSecurityContext();
 
         try (TableRecordMetadata tableMetadata = executionContext.getMetadataForWrite(tableToken)) {
@@ -3581,7 +4062,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
             if (isAddKeyword(tok)) {
                 executionContext.getSecurityContext().authorizeAlterTableAddColumn(tableToken);
-                alterTableAddColumn(executionContext, tableNamePosition, tableToken, tableMetadata);
+                alterTableAddColumn(executionContext, tableNamePosition, tableToken, tableMetadata, false);
             } else if (isConvertKeyword(tok)) {
                 tok = expectToken(lexer, "'partition'");
                 if (!isPartitionKeyword(tok)) {
@@ -3610,7 +4091,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     return;
                 }
                 if (isColumnKeyword(tok)) {
-                    alterTableDropColumn(executionContext, tableNamePosition, tableToken, tableMetadata);
+                    alterTableDropColumn(executionContext, tableNamePosition, tableToken, tableMetadata, false);
                 } else if (isPartitionKeyword(tok)) {
                     executionContext.getSecurityContext().authorizeAlterTableDropPartition(tableToken);
                     alterTableDropConvertDetachOrAttachPartition(tableMetadata, tableToken, PartitionAction.DROP, executionContext);
@@ -4940,7 +5421,26 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             @NotNull CreateMatViewOperation createMatViewOp
     ) throws SqlException {
         final CreateTableOperation createTableOp = createMatViewOp.getCreateTableOperation();
-        lexer.of(createTableOp.getSelectText());
+        compileMatViewQuery(
+                executionContext,
+                createMatViewOp.getTableName(),
+                createTableOp.getSelectText(),
+                createTableOp.getSelectTextPosition(),
+                queryModel -> createMatViewOp.validateAndUpdateMetadataFromModel(executionContext, optimiser.getFunctionFactoryCache(), queryModel)
+        );
+    }
+
+    // Compiles the SQL of a materialized view under the rules of CREATE MATERIALIZED VIEW, which ALTER MATERIALIZED
+    // VIEW ... AS shares: every bare name is a column, no non-deterministic function, no view with a row-expiry policy.
+    // The check runs on the optimised query. Leaves the factory in compiledQuery, for the caller to free.
+    private void compileMatViewQuery(
+            @Transient @NotNull SqlExecutionContext executionContext,
+            @NotNull CharSequence matViewName,
+            @NotNull String selectText,
+            int selectTextPosition,
+            @NotNull MatViewModelCheck modelCheck
+    ) throws SqlException {
+        lexer.of(selectText);
         clear();
 
         SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
@@ -4953,19 +5453,24 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
         lexer.unparseLast();
 
-        sqlText = createTableOp.getSelectText();
+        sqlText = selectText;
         compiledQuery.withContext(executionContext);
 
         final int startPos = lexer.getPosition();
         final long beginNanos = configuration.getNanosecondClock().getTicks();
 
-        final int selectTextPosition = createTableOp.getSelectTextPosition();
         final ExpiryReadPolicy previousExpiryReadPolicy = executionContext.getExpiryReadPolicy();
         final CharSequence previousMaterializingViewName = executionContext.getExpiryMaterializingViewName();
-        executionContext.setExpiryReadPolicy(ExpiryReadPolicy.REJECT, createMatViewOp.getTableName());
-        // Armed through generateSelectWithRetries() too: a retry optimises the query again, and the calls
-        // recorded have to come from the pass that builds the factory.
-        optimiser.setBareNoArgCallSink(matViewBareNoArgCallNames, matViewBareNoArgCallPositions);
+        final boolean previousAllowBareNoArgFunctionCalls = executionContext.allowBareNoArgFunctionCalls();
+        executionContext.setExpiryReadPolicy(ExpiryReadPolicy.REJECT, matViewName);
+        // The view's SQL must name its columns: a bare name is a column, and one that names a zero-argument
+        // function instead fails with the parentheses the call needs. Refresh keeps reading such a name as a
+        // call, for the views created before the rule. The rule holds through generateSelectWithRetries() too,
+        // since a retry optimises the query again.
+        if (!SqlParser.isMatViewExplicitNamesCheckSkipped()) {
+            executionContext.setAllowBareNoArgFunctionCalls(false);
+            optimiser.setRejectingBareNoArgCalls(true);
+        }
         try {
             final IQueryModel queryModel;
             final boolean cacheable;
@@ -4975,7 +5480,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     if (executionModel.getModelType() != ExecutionModel.QUERY) {
                         throw SqlException.$(startPos, "SELECT query expected");
                     }
-                    captureMatViewWildcards((IQueryModel) executionModel, createTableOp.getSelectText());
                     queryModel = optimiser.optimise((IQueryModel) executionModel, executionContext, this);
                     // The optimiser created the FROM/JOIN cursor functions and the SHOW statements while
                     // non-deterministic functions were still allowed, so FunctionParser did not check them
@@ -4985,7 +5489,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     e.setPosition(e.getPosition() + selectTextPosition);
                     throw e;
                 }
-                createMatViewOp.validateAndUpdateMetadataFromModel(executionContext, optimiser.getFunctionFactoryCache(), queryModel);
+                modelCheck.check(queryModel);
                 // See compileUsingModel(): read before generation, so a throw here cannot orphan the generated
                 // factory tree, and the read cannot land on a model the retry path has already recycled. Inside
                 // this try on purpose -- a throw must still free the table factories optimise() left in flight.
@@ -5013,7 +5517,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             QueryProgress.logError(th, -1, sqlText, executionContext, beginNanos);
             throw th;
         } finally {
-            optimiser.setBareNoArgCallSink(null, null);
+            optimiser.setRejectingBareNoArgCalls(false);
+            executionContext.setAllowBareNoArgFunctionCalls(previousAllowBareNoArgFunctionCalls);
             executionContext.setExpiryReadPolicy(previousExpiryReadPolicy, previousMaterializingViewName);
         }
     }
@@ -5041,6 +5546,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
         assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
 
+        final int matViewNamePosition = lexer.lastTokenPosition();
         final CharSequence matViewName = unquote(tok);
         // an object the principal may not see fails exactly like a missing one, before the kind check
         final TableToken matViewToken = executionContext.getVisibleTableTokenIfExists(matViewName);
@@ -5057,12 +5563,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
         final TimestampDriver driver = matViewDefinition.getBaseTableTimestampDriver();
 
-        tok = expectToken(lexer, "'full' or 'incremental' or 'range' or 'stats'");
+        tok = expectToken(lexer, "'full' or 'incremental' or 'range' or 'resume' or 'stats'");
         final boolean fullRefresh = isFullKeyword(tok);
         // STATS is a sentinel for "reset the cost-model EMA values" -- not a
         // data refresh. Handled inline here rather than through the refresh
         // queue because it's a synchronous metadata-only operation.
         final boolean isStatsReset = SqlKeywords.isStatsKeyword(tok);
+        // RESUME makes an invalid view valid again, synchronously, see MatViewResume.
+        final boolean isResume = isResumeKeyword(tok);
+        boolean isSkipBacklog = false;
         long from = Numbers.LONG_NULL;
         long to = Numbers.LONG_NULL;
         if (isRangeKeyword(tok)) {
@@ -5083,8 +5592,17 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             if (from > to) {
                 throw SqlException.$(lexer.lastTokenPosition(), "TO timestamp must not be earlier than FROM timestamp");
             }
+        } else if (isResume) {
+            // RESUME [SKIP BACKLOG]: SKIP BACKLOG jumps over the view's backlog instead of catching up on it.
+            tok = SqlUtil.fetchNext(lexer);
+            if (tok != null && isSkipKeyword(tok)) {
+                expectKeyword(lexer, "backlog");
+                isSkipBacklog = true;
+            } else if (tok != null) {
+                lexer.unparseLast();
+            }
         } else if (!fullRefresh && !isStatsReset && !isIncrementalKeyword(tok)) {
-            throw SqlException.$(lexer.lastTokenPosition(), "'full', 'incremental', 'range' or 'stats' expected");
+            throw SqlException.$(lexer.lastTokenPosition(), "'full', 'incremental', 'range', 'resume' or 'stats' expected");
         }
 
         tok = SqlUtil.fetchNext(lexer);
@@ -5103,6 +5621,40 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 throw CairoException.readOnlyAccess();
             }
             final MatViewStateStore matViewStateStore = engine.getMatViewStateStore();
+            if (isResume) {
+                MatViewResume.resume(engine, executionContext, matViewToken, matViewNamePosition, matViewSqlValidator, isSkipBacklog);
+                compiledQuery.ofRefreshMatView();
+                return;
+            }
+            if (!isStatsReset) {
+                // FULL, INCREMENTAL and RANGE run the view's SQL as its WAL applied it, so one issued right after
+                // ALTER MATERIALIZED VIEW ... AS waits for the statement's definition event to apply. While the WAL
+                // apply of the view is suspended short of the event, FULL and INCREMENTAL go to the refresh job, which
+                // waits for the event there, and RANGE refuses: its bounds cannot wait in the refresh job. Each refuses
+                // with "retry later" when a role switch waits for the statement meanwhile.
+                if (from != Numbers.LONG_NULL) {
+                    MatViewAlter.awaitPendingDefinitionOrRefuse(engine, executionContext, matViewToken, matViewNamePosition);
+                } else {
+                    MatViewAlter.awaitPendingDefinition(engine, executionContext, matViewToken, matViewNamePosition);
+                }
+            }
+            if (!isStatsReset && !fullRefresh) {
+                // INCREMENTAL and RANGE on an invalid view would be skipped; RESUME makes the view valid first.
+                final MatViewState viewState = matViewStateStore.getViewState(matViewToken);
+                if (viewState != null && viewState.isInvalid()) {
+                    throw SqlException.$(matViewNamePosition, "materialized view is invalid, run REFRESH MATERIALIZED VIEW ")
+                            .put(matViewToken.getTableName()).put(" RESUME first [reason=")
+                            .put(viewState.getInvalidationReasonForReport()).put(']');
+                }
+            }
+            if (fullRefresh) {
+                final MatViewDefinition currentDefinition = engine.getDependentViewGraph().getViewDefinition(matViewToken);
+                checkMatViewFullRefreshBaseTable(
+                        matViewToken,
+                        currentDefinition != null ? currentDefinition : matViewDefinition,
+                        matViewNamePosition
+                );
+            }
             if (isStatsReset) {
                 final MatViewState viewState = matViewStateStore.getViewState(matViewToken);
                 if (viewState != null) {
@@ -5137,6 +5689,39 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
         }
         compiledQuery.ofRefreshMatView();
+    }
+
+    // REFRESH ... FULL refuses a base table the view cannot be refreshed from: one that is not a WAL table or a
+    // materialized view, or has another designated timestamp type than the view's, and a view on a dependency loop. The
+    // refresh job checks again before it truncates. A missing base table is left to the refresh job, which invalidates
+    // the view.
+    private void checkMatViewFullRefreshBaseTable(
+            TableToken matViewToken,
+            MatViewDefinition matViewDefinition,
+            int matViewNamePosition
+    ) throws SqlException {
+        if (engine.getDependentViewGraph().isOnDependencyLoop(matViewDefinition)) {
+            throw SqlException.$(matViewNamePosition, MatViewRefreshJob.getDependencyLoopRefusal(matViewToken, matViewDefinition.getBaseTableName()));
+        }
+        final TableToken baseTableToken = engine.getTableTokenIfExists(matViewDefinition.getBaseTableName());
+        if (baseTableToken == null) {
+            return;
+        }
+        CharSequence refusal = MatViewRefreshJob.getBaseTableKindRefusal(matViewToken, baseTableToken);
+        if (refusal == null) {
+            final int viewTimestampType;
+            try (TableMetadata viewMetadata = engine.getTableMetadata(matViewToken)) {
+                viewTimestampType = viewMetadata.getTimestampType();
+            }
+            final int baseTableTimestampType;
+            try (TableMetadata baseTableMetadata = engine.getTableMetadata(baseTableToken)) {
+                baseTableTimestampType = baseTableMetadata.getTimestampType();
+            }
+            refusal = MatViewRefreshJob.getBaseTableTimestampRefusal(matViewToken, baseTableToken, viewTimestampType, baseTableTimestampType);
+        }
+        if (refusal != null) {
+            throw SqlException.$(matViewNamePosition, refusal);
+        }
     }
 
     private void compileReindex(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
@@ -5653,7 +6238,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     QueryProgress.logEnd(sqlId, sqlText, executionContext, beginNanos);
                     break;
                 default:
-                    checkVisibleViewModification(executionModel, executionContext);
+                    checkVisibleViewModificationForInsert(executionModel, executionContext);
                     final InsertModel insertModel = (InsertModel) executionModel;
                     // we use SQL Compiler state (reusing objects) to generate InsertOperation
                     if (insertModel.getQueryModel() != null) {
@@ -6116,9 +6701,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             }
                             // Reject a bad EXPIRE ROWS policy before the view exists.
                             validateCreateMatViewExpiryPolicy(executionContext, createMatViewOp, createTableOp, metadata);
-                            // Each pass calls setMatViewSql(), even with null, so the view stores what the pass
-                            // that creates it built.
-                            createMatViewOp.setMatViewSql(buildStoredMatViewSql(executionContext, createMatViewOp, metadata));
 
                             if (initialExpiryPolicyVersion != engine.getMetadataCache().getExpiryPolicyVersion()) {
                                 if (retryCount == maxRecompileAttempts) {
@@ -7089,8 +7671,63 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return viewDefinition != null && viewDefinition.isAudited();
     }
 
+    // True when a token of an EXPIRE ROWS policy's text names the column, see isColumnToken(), and is not the name of
+    // a function call, which the next token, '(', marks.
+    private boolean isColumnNamedInExpiryPolicy(CharSequence policyText, CharSequence columnName) throws SqlException {
+        GenericLexer policyLexer = expiryPolicyLexer;
+        if (policyLexer == null) {
+            policyLexer = expiryPolicyLexer = new GenericLexer(configuration.getSqlLexerPoolCapacity());
+            configureLexer(policyLexer);
+        }
+        policyLexer.of(policyText);
+        boolean isNamed = false;
+        for (CharSequence tok = SqlUtil.fetchNext(policyLexer); tok != null; tok = SqlUtil.fetchNext(policyLexer)) {
+            if (isNamed && !Chars.equals(tok, '(')) {
+                return true;
+            }
+            isNamed = isColumnToken(tok, columnName);
+        }
+        return isNamed;
+    }
+
     private boolean isCompatibleColumnTypeChange(int from, int to) {
         return columnConversionSupport[ColumnType.tagOf(from)][ColumnType.tagOf(to)];
+    }
+
+    // True when the SQL of a materialized view compiles under the explicit column name rules of CREATE
+    // MATERIALIZED VIEW, as a CREATE that replays it would compile it, and produces columns of the given names,
+    // ignoring case, in the same order. Then sqlColumns receives its output columns, and is left as it is otherwise.
+    private boolean isMatViewSqlProducingColumns(
+            String sql,
+            MatViewDefinition viewDefinition,
+            ObjList<CharSequence> columnNames,
+            SqlExecutionContext executionContext,
+            GenericRecordMetadata sqlColumns
+    ) throws SqlException {
+        clear();
+        lexer.of(sql);
+        executionContext.setAllowBareNoArgFunctionCalls(false);
+        optimiser.setRejectingBareNoArgCalls(true);
+        final ExecutionModel model = parser.parse(lexer, executionContext, this);
+        // the SQL is the view's own with names added, which parses to a query as the view's own does
+        assert model.getModelType() == ExecutionModel.QUERY;
+        parser.validateMatViewSql((IQueryModel) model, viewDefinition.getBaseTableName());
+        final IQueryModel queryModel = optimiser.optimise((IQueryModel) model, executionContext, this);
+        collectMatViewCreateFacts(queryModel, viewDefinition);
+        final RecordCursorFactory factory = generateSelectWithRetries(queryModel, null, executionContext, false);
+        try {
+            // each name has to come at its own position
+            final RecordMetadata metadata = factory.getMetadata();
+            for (int i = 0, n = columnNames.size(); i < n; i++) {
+                if (metadata.getColumnIndexQuiet(columnNames.getQuick(i)) != i) {
+                    return false;
+                }
+            }
+            putMatViewCreateColumns(metadata, sqlColumns);
+            return true;
+        } finally {
+            Misc.free(factory);
+        }
     }
 
     private void lightlyValidateInsertModel(InsertModel model) throws SqlException {
@@ -7329,6 +7966,37 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         alterTableSuspend(tableNamePosition, tableToken, errorTag, errorMessage, executionContext);
     }
 
+    // Puts into sqlColumns the columns that CREATE MATERIALIZED VIEW without a column list, a TIMESTAMP clause or an
+    // INDEX clause builds from the query whose output queryMetadata describes, as collectMatViewCreateFacts() read the
+    // query: the query's names and types, the index each column inherits from the base table, and the designated
+    // timestamp, the column of GROUP BY timestamp_floor() or the query's own. An inherited index keeps the columns it
+    // covers in the query, which tells the caller that it covers any.
+    private void putMatViewCreateColumns(RecordMetadata queryMetadata, GenericRecordMetadata sqlColumns) {
+        sqlColumns.clear();
+        for (int i = 0, n = queryMetadata.getColumnCount(); i < n; i++) {
+            final String columnName = queryMetadata.getColumnName(i);
+            final CreateTableColumnModel index = matViewInheritedIndexes.get(columnName);
+            final TableColumnMetadata column;
+            if (index != null) {
+                column = new TableColumnMetadata(columnName, queryMetadata.getColumnType(i), index.getIndexType(), index.getIndexValueBlockSize(), false, null);
+                final ObjList<CharSequence> coveredColumnNames = index.getCoveringColumnNames();
+                final IntList coveredColumns = new IntList(coveredColumnNames.size());
+                for (int j = 0, m = coveredColumnNames.size(); j < m; j++) {
+                    coveredColumns.add(queryMetadata.getColumnIndexQuiet(coveredColumnNames.getQuick(j)));
+                }
+                column.setCoveringColumnIndices(coveredColumns);
+            } else {
+                column = new TableColumnMetadata(columnName, queryMetadata.getColumnType(i), IndexType.NONE, 0, false, null);
+            }
+            sqlColumns.add(column);
+        }
+        sqlColumns.setTimestampIndex(
+                matViewTimestampFloorColumnName != null
+                        ? queryMetadata.getColumnIndexQuiet(matViewTimestampFloorColumnName)
+                        : queryMetadata.getTimestampIndex()
+        );
+    }
+
     private void refreshViewDefinitionAfterExpiryPolicyChange(
             String viewSql,
             int viewSqlPosition,
@@ -7464,6 +8132,23 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     .put(tableToken.getTableName())
                     .put(", partition=").put(formatPartitionName(reader, logicalTimestamp))
                     .put(']');
+        }
+    }
+
+    // Keeps the column mapping that a view's ADD COLUMN check built, or null for a check whose compile failed, in the
+    // view's state, for materialized_views(). A statement that is only validated changes nothing, and a view that a
+    // concurrent DROP removed has no state.
+    private void setMatViewColumnMappingSummary(
+            SqlExecutionContext executionContext,
+            TableToken matViewToken,
+            @Nullable MatViewColumnMapping.Summary summary
+    ) {
+        if (executionContext.isValidationOnly()) {
+            return;
+        }
+        final MatViewState viewState = engine.getMatViewStateStore().getViewState(matViewToken);
+        if (viewState != null) {
+            viewState.setColumnMappingSummary(summary);
         }
     }
 
@@ -7682,14 +8367,17 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             authorizeExpiryPredicateSelect(executionContext, tableToken, tableMetadata, validationResult);
         }
         warnIfExpiryKeepsDisk(validationResult, clause.predicate, tableToken.getTableName());
-        final AlterOperationBuilder setExpire = alterOperationBuilder.ofSetExpire(
+        final AlterOperation setExpire = alterOperationBuilder.ofSetExpire(
                 tableNamePosition,
                 tableToken,
                 tableMetadata.getTableId(),
                 clause.predicate,
                 clause.cleanupIntervalMicros
-        );
-        compiledQuery.ofAlter(setExpire.build());
+        ).build();
+        // Once a column is added to or dropped from the view, the WAL writer asks for a fresh compile, so a prepared
+        // statement that runs the operation again gets its policy checked against the view's columns at that point.
+        setExpire.withCheckedColumnStructureVersion(tableMetadata.getMetadataVersion());
+        compiledQuery.ofAlter(setExpire);
     }
 
     /**
@@ -7715,26 +8403,26 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
      * it needs no SELECT permission (unlike ALTER ... SET EXPIRE, see {@link #authorizeExpiryPredicateSelect})
      * and, running before {@code createMatView}, cannot leave a half-created object behind on failure.
      * Only a CREATE MATERIALIZED VIEW scalar WHEN policy reaches this (EXPIRE ROWS is rejected on plain
-     * CREATE TABLE / CTAS / LIKE at parse time), so {@code selectMetadata} is always the view's defining-
-     * SELECT output metadata.
+     * CREATE TABLE / CTAS / LIKE at parse time), so {@code viewMetadata} holds the view's columns: the
+     * statement's column list, or the defining SELECT's output columns.
      */
     private ExpiryValidationResult validateCreateExpiryPredicate(
             SqlExecutionContext executionContext,
             CreateTableOperation createTableOp,
-            RecordMetadata selectMetadata
+            RecordMetadata viewMetadata
     ) throws SqlException {
         final String predicate = createTableOp.getExpiryPredicate();
         if (predicate == null) {
             return ExpiryValidationResult.MONOTONIC;
         }
         // Only reachable for a CREATE MATERIALIZED VIEW scalar WHEN policy (EXPIRE ROWS is rejected on plain
-        // CREATE TABLE / CTAS / LIKE), so selectMetadata is always the view's defining-SELECT metadata.
+        // CREATE TABLE / CTAS / LIKE), so viewMetadata always holds the view's columns.
         // Borrow a separate compiler so we don't disturb this one's in-flight CREATE (lexer/parser state).
         // The error caret points at the table name rather than the predicate: the predicate's source
         // position is not threaded through CreateTableOperation, and the message already names the cause.
         try (SqlCompiler validationCompiler = engine.getSqlCompiler()) {
             return validationCompiler.validateExpiryPredicateOnMetadata(
-                    executionContext, selectMetadata, predicate, createTableOp.getTableNamePosition());
+                    executionContext, viewMetadata, predicate, createTableOp.getTableNamePosition());
         }
     }
 
@@ -7767,19 +8455,37 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             LOG.advisory().$("EXPIRE ROWS on an aggregating (non-passthrough) materialized view; a later refresh may regenerate expired rows - align base-table retention (TTL) with the expiry horizon [view=")
                     .$safe(createTableOp.getTableName()).I$();
         }
+        // The view's columns: the statement's column list, or the defining SELECT's output columns.
+        final RecordMetadata columnListMetadata = createMatViewOp.getColumnListMetadata();
+        final RecordMetadata viewMetadata = columnListMetadata != null ? columnListMetadata : selectMetadata;
         final ExpiryValidationResult validationResult;
         if (RowExpiryUtil.isStructuralPolicy(predicate)) {
-            // The view does not exist yet, so the probe reads its defining SELECT and selects every column.
+            // The view does not exist yet, so the probe reads its defining SELECT and selects every column. With a
+            // column list, it reads the listed columns over the SELECT instead.
+            final String source;
+            if (columnListMetadata != null) {
+                final int queryTimestampIndex = selectMetadata.getColumnIndexQuiet(
+                        columnListMetadata.getColumnName(columnListMetadata.getTimestampIndex())
+                );
+                assert queryTimestampIndex > -1;
+                source = RowExpiryUtil.buildColumnListProbeSource(
+                        columnListMetadata,
+                        selectMetadata.getColumnName(queryTimestampIndex),
+                        createTableOp.getSelectText()
+                );
+            } else {
+                source = "(" + createTableOp.getSelectText() + ")";
+            }
             validationResult = validateStructuralExpiryPolicy(
                     executionContext,
-                    "(" + createTableOp.getSelectText() + ")",
-                    selectMetadata,
+                    source,
+                    viewMetadata,
                     predicate,
                     false,
                     pos
             );
         } else {
-            validationResult = validateCreateExpiryPredicate(executionContext, createTableOp, selectMetadata);
+            validationResult = validateCreateExpiryPredicate(executionContext, createTableOp, viewMetadata);
         }
         warnIfExpiryKeepsDisk(validationResult, predicate, createTableOp.getTableName());
     }
@@ -7820,9 +8526,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         // The mat-view target check (and the aggregating-view advisory) is handled for ALL modes by the
         // caller (alterTableSetExpire); this only resolves the relative policy against the view.
         // The probe opens a reader on the view, so a schema change to the view that applies between the
-        // probe's code generation and its getCursor() (an index, SYMBOL CAPACITY, TTL, another SET EXPIRE)
-        // fails it with TableReferenceOutOfDateException. No such change alters the view's column names or
-        // types, so the probe runs again against the new metadata version. A view dropped and re-created
+        // probe's code generation and its getCursor() (an index, SYMBOL CAPACITY, TTL, another SET EXPIRE, a
+        // view ADD or DROP COLUMN) fails it with TableReferenceOutOfDateException, and the probe runs again
+        // against the view's columns at the new metadata version. A view dropped and re-created
         // under the same name has a new table id, and the WAL writer rejects the ALTER when it executes.
         // The probe reads the view without its current policy, the way a read sees the view once the new
         // policy replaces it, so it asks for SELECT on the new policy's columns and not on the columns of
@@ -7989,7 +8695,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
      * included, until {@code DROP EXPIRE}, and reports an error naming a clause its author never wrote.
      *
      * @param source             what the probe selects from: the view's defining SELECT, parenthesised, at
-     *                           CREATE (the view does not exist yet); the quoted view name at ALTER
+     *                           CREATE (the view does not exist yet), or the listed columns over it, see
+     *                           {@link RowExpiryUtil#buildColumnListProbeSource}; the quoted view name at ALTER
      * @param isNarrowProjection true when the probe selects only the policy's own output instead of every
      *                           column, which ALTER needs; see {@link #probeExpiryPolicyRead}
      */
@@ -8010,10 +8717,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
         }
         // The probe runs when the user submits the statement, and not when WAL apply replays the stored
-        // SET EXPIRE. By then the probe has already accepted the policy for this view, and a view's column
-        // names and types cannot change in between, so running it again checks nothing new. A second run
-        // can fail only for reasons unrelated to the policy: the probe borrows a compiler and a view reader
-        // and opens the view's files, and any of these can fail when the server is under load.
+        // SET EXPIRE. By then the probe has already accepted the policy for this view. A second run can fail for
+        // reasons unrelated to the policy: the probe borrows a compiler and a view reader and opens the view's
+        // files, and any of these can fail when the server is under load. A view's columns can change in
+        // between, through a view ADD or DROP COLUMN still in the view's WAL when the user submitted the SET
+        // EXPIRE. At ALTER, the column checks above read the view's sequencer metadata, so they see such a
+        // change; a window WHEN policy has no column check here, so one that reads a column a pending DROP
+        // COLUMN removes applies, and reads of the view fail until the policy changes.
         if (!executionContext.isWalApplication()) {
             probeExpiryPolicyRead(executionContext, source, tsName(metadata), predicate, isNarrowProjection, position);
         }
@@ -8201,6 +8911,28 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
         if (!validateKeepPartitionByColumns(metadata, RowExpiryUtil.keepLatestKeys(stored), "KEEP LATEST", position)) {
             throw SqlException.$(position, "EXPIRE ROWS KEEP LATEST requires a PARTITION BY column list");
+        }
+    }
+
+    // Refuses a column change on a view whose SQL relies on generated column names. Refresh copies such a view's
+    // query columns into its columns by position, which a column added or dropped would shift; ALTER MATERIALIZED
+    // VIEW ... AS with explicit names makes the view map them by name. A SQL that does not parse may rely on
+    // generated names too. The check needs the parse only, so it holds for a SQL that no longer compiles. With
+    // isCompiling set, the validation also compiles the SQL, for the caller's checks.
+    private void validateMatViewColumnChange(
+            SqlExecutionContext executionContext,
+            int matViewNamePosition,
+            MatViewDefinition viewDefinition,
+            boolean isCompiling
+    ) throws SqlException {
+        matViewSqlValidator.validate(viewDefinition, isCompiling, executionContext);
+        if (!matViewSqlValidator.isParsed()) {
+            throw SqlException.$(matViewNamePosition, "could not parse materialized view SQL, replace it with ALTER MATERIALIZED VIEW ... AS first [error=")
+                    .put(matViewSqlValidator.getError()).put(']');
+        }
+        if (matViewSqlValidator.hasGeneratedColumnNames()) {
+            throw SqlException.$(matViewNamePosition, "materialized view SQL relies on generated column names, "
+                    + "give its columns explicit names with ALTER MATERIALIZED VIEW ... AS first");
         }
     }
 
@@ -8675,24 +9407,31 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         throw SqlException.position(lexer.lastTokenPosition()).put("'table' or 'materialized' or 'live' or 'view' expected");
     }
 
-    protected void compileAlterMatViewDropExt(SqlExecutionContext executionContext, CharSequence tok, TableToken matViewToken, int matViewNamePosition) throws SqlException {
-        LOG.debug().$("'expire' expected [matViewToken=").$(matViewToken)
-                .$(", matViewNamePosition=").$(matViewNamePosition)
-                .$(']').$();
-        if (tok == null) {
-            throw SqlException.$(lexer.getPosition(), "'expire' expected");
-        }
-        throw SqlException.$(lexer.lastTokenPosition(), "'expire' expected");
-    }
-
+    /**
+     * Compiles an ALTER MATERIALIZED VIEW statement that the open-source grammar does not know: an action token,
+     * {@code tok}, of no known form, null at the end of the statement, or DROP followed by neither COLUMN,
+     * PARTITION nor EXPIRE. For DROP, the lexer stands right after DROP: {@code lastTokenPosition()} points at
+     * DROP, and the next token is the one after it, which the method reads itself. The error lists the known forms,
+     * {@link #ALTER_MAT_VIEW_EXPECTED_TOKEN_DESCR}, or those of DROP.
+     */
     protected void compileAlterMatViewExt(SqlExecutionContext executionContext, CharSequence tok, TableToken matViewToken, int matViewNamePosition) throws SqlException {
-        LOG.debug().$("'alter' or 'resume' or 'suspend' or 'set' or 'drop' expected [matViewToken=").$(matViewToken)
+        if (tok != null && isDropKeyword(tok)) {
+            LOG.debug().$("'column', 'partition' or 'expire' expected [matViewToken=").$(matViewToken)
+                    .$(", matViewNamePosition=").$(matViewNamePosition)
+                    .$(']').$();
+            tok = SqlUtil.fetchNext(lexer);
+            if (tok == null) {
+                throw SqlException.$(lexer.getPosition(), "'column', 'partition' or 'expire' expected");
+            }
+            throw SqlException.$(lexer.lastTokenPosition(), "'column', 'partition' or 'expire' expected");
+        }
+        LOG.debug().$(ALTER_MAT_VIEW_EXPECTED_TOKEN_DESCR).$(" expected [matViewToken=").$(matViewToken)
                 .$(", matViewNamePosition=").$(matViewNamePosition)
                 .$(']').$();
         if (tok == null) {
-            throw SqlException.$(lexer.getPosition(), "'alter' or 'resume' or 'suspend' or 'set' or 'drop' expected");
+            throw SqlException.$(lexer.getPosition(), ALTER_MAT_VIEW_EXPECTED_TOKEN_DESCR).put(" expected");
         }
-        throw SqlException.$(lexer.lastTokenPosition(), "'alter' or 'resume' or 'suspend' or 'set' or 'drop' expected");
+        throw SqlException.$(lexer.lastTokenPosition(), ALTER_MAT_VIEW_EXPECTED_TOKEN_DESCR).put(" expected");
     }
 
     protected void compileAlterMatViewSetExt(SqlExecutionContext executionContext, CharSequence tok, TableToken matViewToken, int matViewNamePosition) throws SqlException {
@@ -9009,6 +9748,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     @FunctionalInterface
     public interface KeywordBasedExecutor {
         void execute(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException;
+    }
+
+    // A check of the optimised query of a materialized view's SQL, see compileMatViewQuery().
+    @FunctionalInterface
+    private interface MatViewModelCheck {
+        void check(IQueryModel queryModel) throws SqlException;
     }
 
     public final static class PartitionAction {

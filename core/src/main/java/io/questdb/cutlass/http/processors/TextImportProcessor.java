@@ -34,6 +34,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cutlass.http.HttpChunkedResponse;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpException;
@@ -128,7 +129,8 @@ public class TextImportProcessor implements HttpMultipartContentProcessor, HttpR
                 }
             } catch (EntryUnavailableException e) {
                 throw RetryOperationException.INSTANCE;
-            } catch (TextException | CairoException | CairoError e) {
+            } catch (TextException | CairoException | CairoError | TableReferenceOutOfDateException e) {
+                // a WAL writer's commit throws TableReferenceOutOfDateException once its table is renamed
                 sendErrorAndThrowDisconnect(e.getFlyweightMessage());
             }
         }
@@ -161,7 +163,8 @@ public class TextImportProcessor implements HttpMultipartContentProcessor, HttpR
             if (transientState.messagePart == MESSAGE_DATA) {
                 sendResponse(transientContext);
             }
-        } catch (TextException | CairoException | CairoError e) {
+        } catch (TextException | CairoException | CairoError | TableReferenceOutOfDateException e) {
+            // a WAL writer's commit throws TableReferenceOutOfDateException once its table is renamed
             sendErrorAndThrowDisconnect(e.getFlyweightMessage());
         }
     }

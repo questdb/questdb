@@ -39,6 +39,10 @@ public class QueryColumn implements Mutable, Sinkable {
     private int aliasPosition;
     private ExpressionNode ast;
     private int columnType = -1;
+    // Where the column's expression ends in the parsed text, -1 when the parser did not record it.
+    private int exprEndPosition = -1;
+    // Where the column's expression starts in the parsed text, -1 when the parser did not record it.
+    private int exprStartPosition = -1;
     private boolean includeIntoWildcard = true;
     private boolean isGenerated;
     private final IntList groupingArgKeyPositions = new IntList();
@@ -54,6 +58,8 @@ public class QueryColumn implements Mutable, Sinkable {
         includeIntoWildcard = true;
         isGenerated = false;
         columnType = -1;
+        exprEndPosition = -1;
+        exprStartPosition = -1;
         groupingArgKeyPositions.clear();
     }
 
@@ -71,6 +77,23 @@ public class QueryColumn implements Mutable, Sinkable {
 
     public int getColumnType() {
         return columnType;
+    }
+
+    /**
+     * Returns the position right after the last character of the column's expression in the text the parser
+     * read, or -1 when the parser did not record it. The parser records it only when asked to, see
+     * {@code SqlParser.setRecordingColumnExprEnds()}, so that an alias can be written after the expression.
+     */
+    public int getExprEndPosition() {
+        return exprEndPosition;
+    }
+
+    /**
+     * Returns the position of the first character of the column's expression in the text the parser read, or -1
+     * when the parser did not record it, see {@link #getExprEndPosition()}.
+     */
+    public int getExprStartPosition() {
+        return exprStartPosition;
     }
 
     public IntList getGroupingArgKeyPositions() {
@@ -115,6 +138,14 @@ public class QueryColumn implements Mutable, Sinkable {
         }
         this.alias = alias;
         this.aliasPosition = aliasPosition;
+    }
+
+    public void setExprEndPosition(int exprEndPosition) {
+        this.exprEndPosition = exprEndPosition;
+    }
+
+    public void setExprStartPosition(int exprStartPosition) {
+        this.exprStartPosition = exprStartPosition;
     }
 
     public void setGenerated(boolean isGenerated) {

@@ -944,6 +944,14 @@ public class QwpWalAppender implements QuietCloseable {
                 }
             }
 
+            if (walWriter.getTableToken().isMatView()) {
+                // The view's commit refuses rows outside its frozen zone, at every replay. Refusing the block as it
+                // appends keeps that refusal from coming after other tables of the frame or batch committed. Runs
+                // what the commit runs, the insert authorization, then the check, and only once every value of the
+                // block passed its own checks.
+                tud.authorizeCommit();
+                walWriter.validateUserRows(minTimestamp, maxTimestamp);
+            }
             appender.endColumnarWrite(minTimestamp, maxTimestamp, outOfOrder);
             tud.commitIfMaxUncommittedRowsCountReached();
         } catch (Throwable t) {
@@ -1039,6 +1047,17 @@ public class QwpWalAppender implements QuietCloseable {
                         return false;
                     }
                     if (autoCreateNewColumns && TableUtils.isValidColumnName(columnName, maxFileNameLength)) {
+                        if (writer.getTableToken().isMatView()) {
+                            // A backfill into a materialized view writes the view's columns. The view's columns
+                            // change only through ALTER MATERIALIZED VIEW, which checks the change against the view's
+                            // SQL. The refusal repeats under byte-identical replay.
+                            throw CairoException.schemaMismatch()
+                                    .put("materialized view has no such column, add it with ALTER MATERIALIZED VIEW ... ADD COLUMN [table=")
+                                    .put(tud.getTableNameUtf16())
+                                    .put(", column=")
+                                    .put(columnName)
+                                    .put(']');
+                        }
                         final int newColumnType;
                         if (colType == TYPE_DOUBLE_ARRAY) {
                             newColumnType = batchDims > 0
