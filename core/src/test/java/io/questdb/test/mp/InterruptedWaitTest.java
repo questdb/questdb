@@ -75,14 +75,14 @@ public class InterruptedWaitTest {
         TestUtils.assertInterruptedWaitDoesNotSpin("SimpleWaitingLock tryLock", () -> {
             Assert.assertTrue(lock.tryLock(30, TimeUnit.SECONDS));
             lock.unlock();
-        }, lock, lock::unlock);
+        }, lock.getWaitBlocker(), lock::unlock);
 
         final SimpleWaitingLock nonInterruptedLock = new SimpleWaitingLock();
         Assert.assertTrue(nonInterruptedLock.tryLock());
         TestUtils.assertNonInterruptedWaitDoesNotSpin("non-interrupted SimpleWaitingLock tryLock", () -> {
             Assert.assertTrue(nonInterruptedLock.tryLock(30, TimeUnit.SECONDS));
             nonInterruptedLock.unlock();
-        }, nonInterruptedLock, nonInterruptedLock::unlock);
+        }, nonInterruptedLock.getWaitBlocker(), nonInterruptedLock::unlock);
     }
 
     @Test
