@@ -9222,7 +9222,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             int covType = metadata.getColumnType(covCol);
             coveringNames.add(metadata.getColumnName(covCol));
             coveringNameTxns.add(columnVersionWriter.getColumnNameTxn(partitionTimestamp, covCol));
-            coveringTops.add(columnVersionWriter.getColumnTopQuick(partitionTimestamp, covCol));
+            coveringTops.add(columnVersionWriter.getColumnDataTop(partitionTimestamp, covCol));
             coveringShifts.add(ColumnType.pow2SizeOf(covType));
             coveringIndices.add(covCol);
             coveringTypes.add(covType);
@@ -13700,10 +13700,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * Opens, validates, and mmaps every covering column file for the given
-     * partition, populating the {@code o3Seal*} scratch lists that will be
-     * passed to {@code indexer.configureCovering(...)}. Tombstoned slots
-     * (covCol &lt; 0) get sentinel entries with zero address.
+     * Opens, validates, and mmaps the file of every covering column the given
+     * partition holds rows of, populating the {@code o3Seal*} scratch lists that
+     * will be passed to {@code indexer.configureCovering(...)}. Tombstoned slots
+     * (covCol &lt; 0) get sentinel entries with zero address. A column without
+     * rows in the partition keeps a zero address as well: it may have no file
+     * there, and the index writer reads NULL for an address of zero.
      * <p>
      * The path object must already be positioned at the partition directory
      * up to {@code pathLen}; the helper only trims back to that length.
@@ -13714,10 +13716,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      *
      * @param coveringCols       cover column indices; entries &lt; 0 are tombstones
      * @param partitionTimestamp partition this seal targets
+     * @param partitionRowCount  rows of the partition, file rows of a composite one
      * @param pathLen            length to trim {@code path} to before resolving each cover file
      * @param coverCount         length of the covering set
      */
-    private void mapCoveringColumnsForSeal(IntList coveringCols, long partitionTimestamp, int pathLen, int coverCount) {
+    private void mapCoveringColumnsForSeal(IntList coveringCols, long partitionTimestamp, long partitionRowCount, int pathLen, int coverCount) {
         o3SealAddrs.setPos(coverCount);
         o3SealAuxAddrs.setPos(coverCount);
         o3SealAuxMappedSizes.setPos(coverCount);
@@ -13745,6 +13748,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             o3SealTops.setQuick(c, columnVersionWriter.getColumnTopQuick(partitionTimestamp, covCol));
             long covColNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, covCol);
             o3SealNameTxns.setQuick(c, covColNameTxn);
+            if (columnVersionWriter.getColumnDataTop(partitionTimestamp, covCol) >= partitionRowCount) {
+                continue;
+            }
             LPSZ colFile = TableUtils.dFile(path.trimTo(pathLen), metadata.getColumnName(covCol), covColNameTxn);
             long fd = ff.openRO(colFile);
             if (fd < 0) {
@@ -18568,7 +18574,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     path.trimTo(coveringPathLen);
                     int coverCount = coveringCols.size();
                     try {
-                        mapCoveringColumnsForSeal(coveringCols, lastPartitionTimestamp, coveringPathLen, coverCount);
+                        mapCoveringColumnsForSeal(coveringCols, lastPartitionTimestamp, txWriter.getTransientRowCount(), coveringPathLen, coverCount);
                         // configureFollowerAndWriter would close+reopen the
                         // writer, dropping pending entries from
                         // updateIndexesParallel. configureCovering wires the
@@ -21304,7 +21310,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     int coverCount = coveringCols.size();
 
                     try {
-                        mapCoveringColumnsForSeal(coveringCols, partitionTimestamp, plen, coverCount);
+                        mapCoveringColumnsForSeal(coveringCols, partitionTimestamp, partitionSize, plen, coverCount);
 
                         indexer.configureFollowerAndWriter(
                                 path.trimTo(plen), colName, colNameTxn,

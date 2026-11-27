@@ -39,6 +39,7 @@ import io.questdb.cairo.PostingSealPurgeJob;
 import io.questdb.cairo.PostingSealPurgeOperator;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TxReader;
 import io.questdb.cairo.idx.BitpackUtils;
@@ -9729,6 +9730,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                 IntList coverTypes = new IntList();
                 coverTypes.add(ColumnType.LONG);
 
+                createCoveredLongColumnFile(path.trimTo(plen), 100);
                 try (PostingIndexWriter writer = new PostingIndexWriter(
                         configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
                     writer.configureCovering(coverNames, coverNameTxns, coverTops, coverShifts, coverIndices, coverTypes, -1);
@@ -9958,6 +9960,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                 IntList coverTypes = new IntList();
                 coverTypes.add(ColumnType.LONG);
 
+                createCoveredLongColumnFile(path.trimTo(plen), 100);
                 try (PostingIndexWriter writer = new PostingIndexWriter(
                         configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
                     writer.configureCovering(
@@ -13031,6 +13034,25 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         // Advancing just once leaves the older recovery generation pinned to the superseded posting files.
         try (TableWriter writer = getWriter(tableName)) {
             writer.completeDurableEpochAfter("test posting seal cleanup");
+        }
+    }
+
+    // The writer reads the covered column by name and refuses to publish NULL for a row the column holds, so the
+    // column needs its file: rowCount longs, all zero.
+    private static void createCoveredLongColumnFile(Path partitionDir, int rowCount) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        final int dirLen = partitionDir.size();
+        final long fd = TableUtils.openRW(
+                ff,
+                TableUtils.dFile(partitionDir, "covered_long", COLUMN_NAME_TXN_NONE),
+                LOG,
+                configuration.getWriterFileOpenOpts()
+        );
+        try {
+            Assert.assertTrue(ff.truncate(fd, (long) rowCount * Long.BYTES));
+        } finally {
+            ff.close(fd);
+            partitionDir.trimTo(dirLen);
         }
     }
 
