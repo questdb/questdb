@@ -590,9 +590,8 @@ where
         while count >= 32 {
             self.unpack_next()?;
             let min_delta = self.iterator.min_delta;
-            for i in 0..32 {
-                current_value =
-                    current_value.wrapping_add(&min_delta.wrapping_add(&self.values[i]));
+            for (i, value) in self.values.iter().enumerate() {
+                current_value = current_value.wrapping_add(&min_delta.wrapping_add(value));
                 // SAFETY: destination pointer stays in-bounds because decode paths reserve output upfront.
                 unsafe {
                     *buffers_ptr.add(buffers_offset + i) = current_value.as_();

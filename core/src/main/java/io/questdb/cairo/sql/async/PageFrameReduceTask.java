@@ -51,6 +51,7 @@ import org.jetbrains.annotations.Nullable;
 
 public class PageFrameReduceTask implements QuietCloseable, Mutable {
     public static final byte TYPE_FILTER = 0;
+    public static final byte TYPE_GROUP_BY = 4;
     public static final byte TYPE_HORIZON_JOIN = 3;
     public static final byte TYPE_TOP_K = 1;
     public static final byte TYPE_WINDOW_JOIN = 2;
@@ -81,6 +82,11 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
     private PageFrameMemory frameMemory;
     private PageFrameSequence<?> frameSequence;
     private long frameSequenceId = -1;
+    private long groupByFirstKey;
+    private boolean groupByFirstKeyInSpan;
+    private long groupByLastKey;
+    private boolean groupByLastKeyInSpan;
+    private long groupBySegmentCount;
     private int interruptionReason = SqlExecutionCircuitBreaker.STATE_OK;
     // Valid for TYPE_FILTER and TYPE_HORIZON_JOIN only. When set, the reducer sets filteredRowCount
     // and the collecting cursor must not read filteredRows: a filtered TYPE_HORIZON_JOIN reducer
@@ -236,6 +242,26 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
 
     public long getFrameSequenceId() {
         return frameSequenceId;
+    }
+
+    public long getGroupByFirstKey() {
+        return groupByFirstKey;
+    }
+
+    public long getGroupByLastKey() {
+        return groupByLastKey;
+    }
+
+    public long getGroupBySegmentCount() {
+        return groupBySegmentCount;
+    }
+
+    public boolean isGroupByFirstKeyInSpan() {
+        return groupByFirstKeyInSpan;
+    }
+
+    public boolean isGroupByLastKeyInSpan() {
+        return groupByLastKeyInSpan;
     }
 
     /**
@@ -444,7 +470,7 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
             errorMessagePosition = fmc.getPosition();
         } else {
             final String msg = th.getMessage();
-            errorMsg.put(msg != null ? msg : exceptionMessage);
+            errorMsg.put(msg != null ? msg : taskType == TYPE_GROUP_BY ? "unexpected reduce error" : exceptionMessage);
         }
 
         if (th instanceof CairoException ce) {
@@ -458,6 +484,26 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
 
     public void setFilteredRowCount(long filteredRowCount) {
         this.filteredRowCount = filteredRowCount;
+    }
+
+    public void setGroupByFirstKey(long groupByFirstKey) {
+        this.groupByFirstKey = groupByFirstKey;
+    }
+
+    public void setGroupByFirstKeyInSpan(boolean groupByFirstKeyInSpan) {
+        this.groupByFirstKeyInSpan = groupByFirstKeyInSpan;
+    }
+
+    public void setGroupByLastKey(long groupByLastKey) {
+        this.groupByLastKey = groupByLastKey;
+    }
+
+    public void setGroupByLastKeyInSpan(boolean groupByLastKeyInSpan) {
+        this.groupByLastKeyInSpan = groupByLastKeyInSpan;
+    }
+
+    public void setGroupBySegmentCount(long groupBySegmentCount) {
+        this.groupBySegmentCount = groupBySegmentCount;
     }
 
     public void setTaskType(byte taskType) {

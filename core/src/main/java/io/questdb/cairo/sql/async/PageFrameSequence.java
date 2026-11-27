@@ -60,6 +60,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.millitime.MillisecondClock;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -297,6 +298,16 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
         return sqlExecutionContext.getCircuitBreaker();
     }
 
+    @TestOnly
+    public int getDispatchedTaskCount() {
+        return dispatchStartTaskIndex;
+    }
+
+    @TestOnly
+    public int getReducedTaskCount() {
+        return reduceFinishedCounter.get();
+    }
+
     public int getFrameCount() {
         return frameCount;
     }
@@ -367,8 +378,10 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
         } else {
             task = reduceQueue.get(cursor);
         }
-        // Present the current sub-frame of the run as a standalone frame to the unchanged collector.
-        task.positionAtSubFrame(collectSubFrame);
+        // Stream GROUP BY collects aggregate state without reading the input frame again.
+        if (taskType != PageFrameReduceTask.TYPE_GROUP_BY) {
+            task.positionAtSubFrame(collectSubFrame);
+        }
         return task;
     }
 
@@ -410,6 +423,36 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
 
     public long next() {
         return next(Integer.MAX_VALUE, false);
+    }
+
+    /**
+     * Publishes tasks up to the limit without stealing, so that the workers keep reducing while the
+     * caller works through the frames it collected.
+     */
+    public void dispatchAhead(int dispatchLimit) {
+        final PageFrameReduceDispatcher dispatcher = messageBus.getPageFrameReduceDispatcher();
+        if (!isActive() || (dispatcher != null && !dispatcher.tryAcquirePublication())) {
+            return;
+        }
+        try {
+            final MPSequence reducePubSeq = messageBus.getPageFrameReducePubSeq(shard);
+            final int collectedTaskCount = collectedTaskIndex + 1;
+            while (dispatchStartTaskIndex < taskCount && dispatchStartTaskIndex - collectedTaskCount < dispatchLimit) {
+                final long cursor = reducePubSeq.next();
+                if (cursor == -1) {
+                    return;
+                }
+                if (cursor > -1) {
+                    reduceQueue.get(cursor).of(this, dispatchStartTaskIndex, false);
+                    reducePubSeq.done(cursor);
+                    dispatchStartTaskIndex++;
+                }
+            }
+        } finally {
+            if (dispatcher != null) {
+                dispatcher.releasePublication();
+            }
+        }
     }
 
     /**
@@ -712,7 +755,9 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
             final boolean customDecode = rowGroup >= 0
                     && frame.getPartitionFrameState() != 0
                     && PartitionFrameState.requiresMaterialization(frame.getPartitionFrameState(), rowGroup);
-            final boolean isSameRun = frameCount > 0
+            // Stream GROUP BY has one result slot per in-flight frame and keeps each frame as a task.
+            final boolean isSameRun = taskType != PageFrameReduceTask.TYPE_GROUP_BY
+                    && frameCount > 0
                     && customDecode
                     && prevCustomDecode
                     && rowGroup == prevRowGroup

@@ -42,15 +42,17 @@ import io.questdb.test.tools.TestUtils;
 public class FuzzDropPartitionOperation implements FuzzTransactionOperation {
 
     private final long cutoffTimestamp;
-    // drops every partition from cutoffTimestamp on, rather than the day before it
+    // drops every partition from cutoffTimestamp on, rather than the partition before it
     private final boolean isDroppingNewest;
+    private final long partitionDuration;
 
-    public FuzzDropPartitionOperation(long cutoffTimestamp) {
-        this(cutoffTimestamp, false);
-    }
-
-    public FuzzDropPartitionOperation(long cutoffTimestamp, boolean isDroppingNewest) {
+    /**
+     * Applies to the partitions starting in (cutoffTimestamp - partitionDuration, cutoffTimestamp), or, when
+     * isDroppingNewest is set, to every partition from cutoffTimestamp on.
+     */
+    public FuzzDropPartitionOperation(long cutoffTimestamp, long partitionDuration, boolean isDroppingNewest) {
         this.cutoffTimestamp = cutoffTimestamp;
+        this.partitionDuration = partitionDuration;
         this.isDroppingNewest = isDroppingNewest;
     }
 
@@ -64,7 +66,7 @@ public class FuzzDropPartitionOperation implements FuzzTransactionOperation {
             String sql = "ALTER TABLE " + TestUtils.randomiseCase(tempRnd, wApi.getTableToken().getTableName())
                     + " DROP PARTITION WHERE " + (isDroppingNewest
                     ? FuzzTransactionOperation.partitionsFromFilter(metadata, cutoffTimestamp)
-                    : FuzzTransactionOperation.partitionDayBeforeFilter(metadata, cutoffTimestamp));
+                    : FuzzTransactionOperation.partitionBeforeFilter(metadata, cutoffTimestamp, partitionDuration));
 
             try {
                 CompiledQuery query = sqlCompiler.compile(sql, context);

@@ -424,6 +424,32 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetFileD
 
 #[no_mangle]
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetFileDecoder_areRowGroupsInTimestampOrder(
+    mut env: JNIEnv,
+    _class: JClass,
+    decoder: *const ParquetDecoder,
+    timestamp_column_index: u32,
+) -> bool {
+    let env = &mut env;
+    let res = (|| -> ParquetResult<bool> {
+        if decoder.is_null() {
+            return Err(fmt_err!(InvalidLayout, "decoder pointer is null"));
+        }
+        let decoder = unsafe { &*decoder };
+        decoder.are_row_groups_in_timestamp_order(timestamp_column_index)
+    })();
+
+    match res {
+        Ok(is_ordered) => is_ordered,
+        Err(mut err) => {
+            err.add_context("error in PartitionDecoder.areRowGroupsInTimestampOrder");
+            err.into_cairo_exception().throw(env)
+        }
+    }
+}
+
+#[no_mangle]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetFileDecoder_rowGroupMinTimestamp(
     mut env: JNIEnv,
     _class: JClass,

@@ -467,7 +467,7 @@ pub fn convert_from_parquet(
         }
 
         let mut rg_builder = RowGroupBlockBuilder::new(col_count as u32);
-        rg_builder.set_num_rows(rg.num_rows().max(0) as u64);
+        rg_builder.set_num_rows(rg.num_rows() as u64);
 
         for (col_idx, col_chunk) in rg_columns.iter().enumerate() {
             let meta = col_chunk.metadata();

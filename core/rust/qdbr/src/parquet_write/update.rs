@@ -431,12 +431,7 @@ impl ParquetUpdater {
             .schema
             .iter()
             .zip(old_fields.iter())
-            .filter_map(|(col, field)| {
-                field
-                    .get_field_info()
-                    .id
-                    .and_then(|id| col.ascii.map(|a| (id, a)))
-            })
+            .filter_map(|(col, field)| field.get_field_info().id.zip(col.ascii))
             .collect();
 
         // An O3 merge of QuestDB 9.3.3 or older kept the footer metadata of the file it updated

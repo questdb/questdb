@@ -4385,6 +4385,113 @@ mod tests {
     }
 
     #[test]
+    fn test_float_chunk_statistics_write_zero_min_negative_and_zero_max_positive() {
+        // The footer follows parquet.thrift: a zero min is written as -0.0 and a zero max as
+        // +0.0, whatever the sign of the zeros in the column.
+        let doubles = [0.0f64, 2.0, f64::NAN, 0.0];
+        let floats = [-3.0f32, -0.0, f32::NAN, -0.0];
+        let dict_doubles = [0.0f64, -0.0, 0.0, f64::NAN];
+        let column = |id: i32,
+                      name: &'static str,
+                      tag: ColumnTypeTag,
+                      data: *const u8,
+                      size: usize,
+                      config: i32| {
+            Column::from_raw_data(
+                id,
+                name,
+                tag.into_type().code(),
+                0,
+                4,
+                data,
+                size,
+                null(),
+                0,
+                null(),
+                0,
+                false,
+                false,
+                config,
+            )
+            .unwrap()
+        };
+        let partition = Partition {
+            table: "test_table".to_string(),
+            columns: vec![
+                column(
+                    0,
+                    "d",
+                    ColumnTypeTag::Double,
+                    doubles.as_ptr().cast(),
+                    size_of_val(&doubles),
+                    0,
+                ),
+                column(
+                    1,
+                    "f",
+                    ColumnTypeTag::Float,
+                    floats.as_ptr().cast(),
+                    size_of_val(&floats),
+                    0,
+                ),
+                column(
+                    2,
+                    "dict_d",
+                    ColumnTypeTag::Double,
+                    dict_doubles.as_ptr().cast(),
+                    size_of_val(&dict_doubles),
+                    rle_dict_config(),
+                ),
+            ],
+        };
+
+        let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        ParquetWriter::new(&mut buf)
+            .with_statistics(true)
+            .finish(partition)
+            .expect("parquet writer");
+        let data = buf.into_inner();
+        let meta =
+            parquet2::read::read_metadata(&mut Cursor::new(data.as_slice())).expect("metadata");
+        let bounds = |i: usize| {
+            let stats = meta.row_groups[0].columns()[i]
+                .metadata()
+                .statistics
+                .as_ref()
+                .expect("statistics");
+            (
+                stats.min_value.clone().expect("min"),
+                stats.max_value.clone().expect("max"),
+            )
+        };
+
+        assert_eq!(
+            bounds(0),
+            (
+                (-0.0f64).to_le_bytes().to_vec(),
+                2.0f64.to_le_bytes().to_vec()
+            ),
+            "DOUBLE"
+        );
+        assert_eq!(
+            bounds(1),
+            (
+                (-3.0f32).to_le_bytes().to_vec(),
+                0.0f32.to_le_bytes().to_vec()
+            ),
+            "FLOAT"
+        );
+        assert_eq!(
+            bounds(2),
+            (
+                (-0.0f64).to_le_bytes().to_vec(),
+                0.0f64.to_le_bytes().to_vec()
+            ),
+            "DOUBLE dictionary"
+        );
+    }
+
+    #[test]
     fn test_dict_stats_fixed_len_bytes_reversed() {
         // UUID uses reverse=true: stats should be computed on the reversed
         // (big-endian / Parquet) representation, not the original LE bytes.

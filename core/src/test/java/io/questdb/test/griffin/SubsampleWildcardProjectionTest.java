@@ -587,13 +587,13 @@ public class SubsampleWildcardProjectionTest extends AbstractCairoTest {
                     1970-01-01T00:00:00.000040Z\t4.0
                     """;
             assertQuery("SELECT * FROM (SELECT ts, avg(x) a FROM ca SAMPLE BY 10U) TIMESTAMP(ts)")
-                    .timestamp("ts").expectSize().returns(allRows);
+                    .timestamp("ts").noRandomAccess().returns(allRows);
             assertQuery("SELECT * FROM (SELECT ts, avg(x) a FROM ca SAMPLE BY 10U) TIMESTAMP(ts) SUBSAMPLE uniform(2)")
                     .timestamp("ts").withPlanContaining("over (order by [ts])").returns(rows);
             // the time zone forces rewriteSampleBy to wrap the aggregation in an explicit projection;
             // 10U buckets keep the same UTC boundaries, so the no-SUBSAMPLE twin reports the same rows
             assertQuery("SELECT * FROM (SELECT ts, avg(x) a FROM ca SAMPLE BY 10U ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin') TIMESTAMP(ts)")
-                    .timestamp("ts").expectSize().returns(allRows);
+                    .timestamp("ts").noRandomAccess().returns(allRows);
             assertQuery("SELECT * FROM (SELECT ts, avg(x) a FROM ca SAMPLE BY 10U ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin') TIMESTAMP(ts) SUBSAMPLE uniform(2)")
                     .timestamp("ts").withPlanContaining("over (order by [ts])").returns(rows);
         });
