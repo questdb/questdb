@@ -72,6 +72,7 @@ import io.questdb.metrics.Counter;
 import io.questdb.metrics.LongGauge;
 import io.questdb.metrics.MetricsConfiguration;
 import io.questdb.metrics.MetricsRegistryImpl;
+import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.mp.WorkerPoolMode;
 import io.questdb.network.EpollFacade;
@@ -86,6 +87,7 @@ import io.questdb.network.SelectFacade;
 import io.questdb.network.SelectFacadeImpl;
 import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentCacheConfiguration;
+import io.questdb.std.CpuTopology;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
@@ -151,6 +153,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     public static final long COMMIT_INTERVAL_DEFAULT = 2000;
     public static final String CONFIG_DIRECTORY = "conf";
     public static final String DB_DIRECTORY = "db";
+    // the most worker groups a network pool splits into; it bounds the fiber runtimes, one per
+    // group, that the split network pools create
+    public static final int MAX_NETWORK_GROUP_COUNT = 16;
+    // the fewest workers a group of a split network pool has
+    public static final int MIN_NETWORK_GROUP_WORKERS = 8;
     public static final int MIN_TCP_ILP_BUF_SIZE = AuthUtils.CHALLENGE_LEN + 1;
     // public so a downstream configuration can detect the secret-file channel a sensitive key may arrive
     // through without re-deriving the suffixes from string literals
@@ -375,7 +382,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final LineHttpProcessorConfiguration lineHttpProcessorConfiguration = new PropLineHttpProcessorConfiguration();
     private final String lineTcpAuthDB;
     private final boolean lineTcpEnabled;
-    private final WorkerPoolConfiguration lineTcpIOWorkerPoolConfiguration = new PropLineTcpIOWorkerPoolConfiguration();
+    private final PropLineTcpIOWorkerPoolConfiguration lineTcpIOWorkerPoolConfiguration = new PropLineTcpIOWorkerPoolConfiguration();
     private final LineTcpReceiverConfiguration lineTcpReceiverConfiguration = new PropLineTcpReceiverConfiguration();
     private final WorkerPoolConfiguration lineTcpWriterWorkerPoolConfiguration = new PropLineTcpWriterWorkerPoolConfiguration();
     private final int lineUdpCommitMode;
@@ -1274,7 +1281,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.checkpointRecoveryThreadpoolMax = checkpointRecoveryThreadpoolMaxRaw;
         this.devModeEnabled = getBoolean(properties, env, PropertyKey.DEV_MODE_ENABLED, false);
 
-        int cpuAvailable = Runtime.getRuntime().availableProcessors();
+        // the process's CPUs, also when a reload runs on a network worker restricted to one socket's CPUs
+        int cpuAvailable = Os.getProcessCpuCount();
         int cpuWalApplyWorkers = 2;
         int cpuExportWorkers = 1;
         int cpuSpare = 0;
@@ -2256,7 +2264,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlWindowInitialRangeBufferSize = getInt(properties, env, PropertyKey.CAIRO_SQL_ANALYTIC_INITIAL_RANGE_BUFFER_SIZE, 32);
             this.sqlTxnScoreboardEntryCount = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_O3_TXN_SCOREBOARD_ENTRY_COUNT, 16384));
             this.sqlTimerShardCount = Math.max(1, getInt(properties, env, PropertyKey.CAIRO_TIMER_SHARDS,
-                    Math.min(4, Math.max(1, Runtime.getRuntime().availableProcessors() / 4))));
+                    Math.min(4, Math.max(1, cpuAvailable / 4))));
             this.latestByQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_LATEST_ON_QUEUE_CAPACITY, 32));
 
             // telemetry config
@@ -2574,6 +2582,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                     sharedWorkerSleepThreshold,
                     sharedWorkerSleepTimeout
             );
+            placeNetworkPools(properties, env);
 
             final int queryWorkers = configureSharedThreadPool(
                     properties,
@@ -3297,6 +3306,24 @@ public class PropServerConfiguration implements ServerConfiguration {
         return properties.getProperty(key.getPropertyPath()) != null;
     }
 
+    // Logs that the shared network pool's group count doesn't reach an enabled server that runs on
+    // a pool of its own, unless that pool has a group count of its own.
+    private void logOwnPoolNotSplit(
+            String label,
+            String poolDescription,
+            @Nullable String disabledReason,
+            int workerCount,
+            int groupCount,
+            PropertyKey groupsKey
+    ) {
+        if (disabledReason == null && workerCount > 0 && groupCount < 2) {
+            final String sharedGroupsKey = PropertyKey.SHARED_NETWORK_WORKER_GROUPS.getPropertyPath();
+            final String groupsKeyPath = groupsKey.getPropertyPath();
+            log.advisory().$(label).$(" workers not split: ").$(sharedGroupsKey)
+                    .$(" doesn't reach ").$(poolDescription).$(", which ").$(groupsKeyPath).$(" splits").$();
+        }
+    }
+
     private void parseMatViewRefreshBlockList(String value) {
         matViewRefreshBlockList.clear();
         if (value == null) {
@@ -3329,6 +3356,122 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
+    // Runs a network pool's groups, a multiple of the CPU socket count, on the CPUs of their CPU
+    // sockets: the first groupCount / socketCount groups on the first CPU socket, and so on.
+    private void pinNetworkGroups(
+            NetworkPoolGroups pool,
+            String label,
+            int workerCount,
+            int groupCount,
+            int[][] socketCpus,
+            int[] socketIds
+    ) {
+        final int groupsPerSocket = groupCount / socketCpus.length;
+        final int[][] groupCpus = new int[groupCount][];
+        // for example "group 0 workers 0-94 on CPUs 0-95 (socket 0), group 1 workers 95-189 on CPUs 96-191 (socket 1)"
+        final StringBuilder groups = new StringBuilder();
+        int firstWorker = 0;
+        for (int g = 0; g < groupCount; g++) {
+            final int socket = g / groupsPerSocket;
+            groupCpus[g] = socketCpus[socket];
+            int lastWorker = firstWorker;
+            while (lastWorker + 1 < workerCount && WorkerPool.getGroup(lastWorker + 1, groupCount, workerCount) == g) {
+                lastWorker++;
+            }
+            if (g > 0) {
+                groups.append(", ");
+            }
+            groups.append("group ").append(g)
+                    .append(" workers ").append(firstWorker).append('-').append(lastWorker)
+                    .append(" on CPUs ").append(CpuTopology.formatCpuList(socketCpus[socket]))
+                    .append(" (socket ").append(socketIds[socket]).append(')');
+            firstWorker = lastWorker + 1;
+        }
+        pool.setGroups(groupCount, groupCpus);
+        final String groupsText = groups.toString();
+        log.info().$(label).$(" workers split by CPU socket: ").$(groupsText).$();
+    }
+
+    // Splits each network pool whose group count is above 1 and that hosts an enabled server, and
+    // logs why a group count above 1 has no effect.
+    private void placeNetworkPools(Properties properties, @Nullable Map<String, String> env) throws ServerConfigurationException {
+        final int sharedGroupCount = readNetworkGroupCount(properties, env, PropertyKey.SHARED_NETWORK_WORKER_GROUPS);
+        final int httpGroupCount = readNetworkGroupCount(properties, env, PropertyKey.HTTP_WORKER_GROUPS);
+        final int pgGroupCount = readNetworkGroupCount(properties, env, PropertyKey.PG_WORKER_GROUPS);
+        final int ilpGroupCount = readNetworkGroupCount(properties, env, PropertyKey.LINE_TCP_IO_WORKER_GROUPS);
+        final String httpDisabledReason = httpServerEnabled ? null : PropertyKey.HTTP_ENABLED.getPropertyPath() + "=false";
+        final String pgDisabledReason = pgEnabled ? null : PropertyKey.PG_ENABLED.getPropertyPath() + "=false";
+        final String ilpDisabledReason = !lineTcpEnabled
+                ? PropertyKey.LINE_TCP_ENABLED.getPropertyPath() + "=false"
+                : isReadOnlyInstance ? "ILP/TCP doesn't run on a read-only instance" : null;
+        if (sharedGroupCount > 1) {
+            final boolean isHostingServer = (httpDisabledReason == null && httpWorkerCount < 1)
+                    || (pgDisabledReason == null && pgWorkerCount < 1)
+                    || (ilpDisabledReason == null && lineTcpIOWorkerCount < 1);
+            if (isHostingServer) {
+                splitNetworkPool(
+                        sharedWorkerPoolNetworkConfiguration,
+                        "network",
+                        PropertyKey.SHARED_NETWORK_WORKER_GROUPS,
+                        sharedGroupCount,
+                        sharedWorkerPoolNetworkConfiguration.sharedWorkerCount,
+                        sharedWorkerPoolNetworkConfiguration.sharedWorkerAffinity,
+                        PropertyKey.SHARED_NETWORK_WORKER_AFFINITY
+                );
+            } else {
+                log.advisory().$("network workers not split: the shared network pool hosts no HTTP, PostgreSQL wire or ILP/TCP server").$();
+            }
+            // the shared group count doesn't reach a server on a pool of its own
+            logOwnPoolNotSplit("http", "the HTTP server's own pool", httpDisabledReason, httpWorkerCount, httpGroupCount, PropertyKey.HTTP_WORKER_GROUPS);
+            logOwnPoolNotSplit("pgwire", "the PostgreSQL wire server's own pool", pgDisabledReason, pgWorkerCount, pgGroupCount, PropertyKey.PG_WORKER_GROUPS);
+            logOwnPoolNotSplit("ilpio", "the ILP/TCP server's own IO pool", ilpDisabledReason, lineTcpIOWorkerCount, ilpGroupCount, PropertyKey.LINE_TCP_IO_WORKER_GROUPS);
+        }
+        splitDedicatedPool(
+                (PropHttpServerConfiguration) httpServerConfiguration,
+                "http",
+                "the HTTP server",
+                PropertyKey.HTTP_WORKER_GROUPS,
+                httpGroupCount,
+                httpDisabledReason,
+                httpWorkerCount,
+                PropertyKey.HTTP_WORKER_COUNT,
+                httpWorkerAffinity,
+                PropertyKey.HTTP_WORKER_AFFINITY
+        );
+        splitDedicatedPool(
+                pgConfiguration,
+                "pgwire",
+                "the PostgreSQL wire server",
+                PropertyKey.PG_WORKER_GROUPS,
+                pgGroupCount,
+                pgDisabledReason,
+                pgWorkerCount,
+                PropertyKey.PG_WORKER_COUNT,
+                pgWorkerAffinity,
+                PropertyKey.PG_WORKER_AFFINITY
+        );
+        splitDedicatedPool(
+                lineTcpIOWorkerPoolConfiguration,
+                "ilpio",
+                "ILP/TCP",
+                PropertyKey.LINE_TCP_IO_WORKER_GROUPS,
+                ilpGroupCount,
+                ilpDisabledReason,
+                lineTcpIOWorkerCount,
+                PropertyKey.LINE_TCP_IO_WORKER_COUNT,
+                lineTcpIOWorkerAffinity,
+                PropertyKey.LINE_TCP_IO_WORKER_AFFINITY
+        );
+    }
+
+    private int readNetworkGroupCount(Properties properties, @Nullable Map<String, String> env, PropertyKey key) throws ServerConfigurationException {
+        final int groupCount = getInt(properties, env, key, 1);
+        if (groupCount < 1) {
+            throw ServerConfigurationException.forInvalidKey(key.getPropertyPath(), groupCount + ", expected 1 or more");
+        }
+        return groupCount;
+    }
+
     private WorkerPoolMode readWorkerPoolMode(
             Properties properties,
             @Nullable Map<String, String> env,
@@ -3338,6 +3481,113 @@ public class PropServerConfiguration implements ServerConfiguration {
         return getBoolean(properties, env, key, isFiberHostByDefault)
                 ? WorkerPoolMode.FIBER_HOST
                 : WorkerPoolMode.LEGACY;
+    }
+
+    // Splits a server's own pool when its group count is above 1, or logs why the count has no effect.
+    private void splitDedicatedPool(
+            NetworkPoolGroups pool,
+            String label,
+            String serverName,
+            PropertyKey groupsKey,
+            int groupCount,
+            @Nullable String disabledReason,
+            int workerCount,
+            PropertyKey workerCountKey,
+            @Nullable int[] affinity,
+            PropertyKey affinityKey
+    ) {
+        if (groupCount < 2) {
+            return;
+        }
+        if (disabledReason != null) {
+            log.advisory().$(label).$(" workers not split: ").$(disabledReason).$();
+            return;
+        }
+        if (workerCount < 1) {
+            final String workerCountKeyPath = workerCountKey.getPropertyPath();
+            final String sharedGroupsKey = PropertyKey.SHARED_NETWORK_WORKER_GROUPS.getPropertyPath();
+            log.advisory().$(label).$(" workers not split: ").$(workerCountKeyPath).$('=').$(workerCount)
+                    .$(" runs ").$(serverName).$(" on the shared network pool, which ").$(sharedGroupsKey)
+                    .$(" splits").$();
+            return;
+        }
+        splitNetworkPool(pool, label, groupsKey, groupCount, workerCount, affinity, affinityKey);
+    }
+
+    // Splits a network pool into requestedGroupCount worker groups, so that each server on it gets
+    // one dispatcher per group, and logs the outcome. Each group needs MIN_NETWORK_GROUP_WORKERS
+    // workers, so a pool too small for the requested count gets fewer groups, and no pool gets more
+    // than MAX_NETWORK_GROUP_COUNT. On a layout of several
+    // CPU sockets that passes the checks of CpuTopology, groups that divide evenly over the CPU
+    // sockets run on their CPU socket's CPUs. Groups on any other layout, one CPU socket included,
+    // run on all the allowed CPUs: the gain comes from the extra dispatchers, which pay off on one
+    // CPU socket too.
+    private void splitNetworkPool(
+            NetworkPoolGroups pool,
+            String label,
+            PropertyKey groupsKey,
+            int requestedGroupCount,
+            int workerCount,
+            @Nullable int[] affinity,
+            PropertyKey affinityKey
+    ) {
+        final String groupsKeyPath = groupsKey.getPropertyPath();
+        final CpuTopology topology = createCpuTopology();
+        if (topology == null) {
+            log.advisory().$(label).$(" workers not split: ").$(groupsKeyPath)
+                    .$(" applies on Linux only, where SO_REUSEPORT spreads connections over the groups' listeners").$();
+            return;
+        }
+        final int fillableGroupCount = workerCount / MIN_NETWORK_GROUP_WORKERS;
+        final int groupCount = Math.min(Math.min(requestedGroupCount, MAX_NETWORK_GROUP_COUNT), fillableGroupCount);
+        if (groupCount < 2) {
+            log.advisory().$(label).$(" workers not split: ").$(workerCount).$(' ').$(label)
+                    .$(" workers cannot fill 2 groups of ").$(MIN_NETWORK_GROUP_WORKERS).$();
+            return;
+        }
+        if (groupCount < requestedGroupCount) {
+            if (groupCount == fillableGroupCount) {
+                log.advisory().$(groupsKeyPath).$('=').$(requestedGroupCount)
+                        .$(" reduced to ").$(groupCount)
+                        .$(": ").$(workerCount).$(' ').$(label).$(" workers fill ").$(groupCount)
+                        .$(" groups of ").$(MIN_NETWORK_GROUP_WORKERS).$();
+            } else {
+                log.advisory().$(groupsKeyPath).$('=').$(requestedGroupCount)
+                        .$(" reduced to ").$(groupCount)
+                        .$(", the most groups a network pool splits into").$();
+            }
+        }
+        pool.setGroups(groupCount, null);
+        if (affinity != null) {
+            for (int cpu : affinity) {
+                if (cpu > -1) {
+                    final String affinityKeyPath = affinityKey.getPropertyPath();
+                    log.info().$(label).$(" workers split into ").$(groupCount).$(" groups without CPU pinning: ")
+                            .$(affinityKeyPath).$(" sets the workers' CPUs").$();
+                    return;
+                }
+            }
+        }
+        final CpuTopology.Layout layout = topology.read();
+        final int[][] socketCpus = layout.getSocketCpus();
+        final int[] socketIds = layout.getSocketIds();
+        final String unpinnedReason;
+        final boolean isUnpinnedWarning;
+        if (socketCpus == null || socketIds == null) {
+            unpinnedReason = layout.getRefusal();
+            isUnpinnedWarning = layout.isRefusalWarning();
+        } else if (groupCount % socketCpus.length != 0) {
+            unpinnedReason = groupCount + " groups don't divide evenly over " + socketCpus.length + " sockets";
+            isUnpinnedWarning = true;
+        } else {
+            pinNetworkGroups(pool, label, workerCount, groupCount, socketCpus, socketIds);
+            return;
+        }
+        final String description = layout.getDescription();
+        (isUnpinnedWarning ? log.advisory() : log.info())
+                .$(label).$(" workers split into ").$(groupCount)
+                .$(" groups without CPU pinning: ").$(unpinnedReason)
+                .$(" [layout=").$(description).I$();
     }
 
     private void validateHttpConnectionLimits(
@@ -3426,6 +3676,14 @@ public class PropServerConfiguration implements ServerConfiguration {
                         .$();
             }
         }
+    }
+
+    /**
+     * The source of the CPU socket layout that places the groups of a split network pool, or null
+     * where worker groups don't apply.
+     */
+    protected @Nullable CpuTopology createCpuTopology() {
+        return Os.isLinux() ? new CpuTopology() : null;
     }
 
     protected String getAcceptingWrites() {
@@ -3894,20 +4152,30 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    private abstract static class PropFiberWorkerPoolConfiguration implements WorkerPoolConfiguration {
+    // a network pool configuration that takes the worker groups placeNetworkPools() decides
+    private interface NetworkPoolGroups {
+        void setGroups(int groupCount, @Nullable int[][] groupCpus);
+    }
+
+    private abstract static class PropFiberWorkerPoolConfiguration implements WorkerPoolConfiguration, NetworkPoolGroups {
         private int fiberMaxLiveCount;
         private int fiberMountBudget = WorkerPoolConfiguration.super.getFiberMountBudget();
         private int fiberRetainedCount;
+        private int groupCount = 1;
+        private @Nullable int[][] groupCpus;
 
         protected PropFiberWorkerPoolConfiguration() {
         }
 
+        // copies the fiber limits and the worker groups
         protected PropFiberWorkerPoolConfiguration(WorkerPoolConfiguration configuration) {
             configureFiber(
                     configuration.getFiberMaxLiveCount(),
                     configuration.getFiberMountBudget(),
                     configuration.getFiberRetainedCount()
             );
+            this.groupCount = configuration.getGroupCount();
+            this.groupCpus = configuration.getGroupCpus();
         }
 
         @Override
@@ -3927,6 +4195,22 @@ public class PropServerConfiguration implements ServerConfiguration {
             return fiberRetainedCount > 0
                     ? fiberRetainedCount
                     : WorkerPoolConfiguration.super.getFiberRetainedCount();
+        }
+
+        @Override
+        public int getGroupCount() {
+            return groupCount;
+        }
+
+        @Override
+        public @Nullable int[][] getGroupCpus() {
+            return groupCpus;
+        }
+
+        @Override
+        public void setGroups(int groupCount, @Nullable int[][] groupCpus) {
+            this.groupCount = groupCount;
+            this.groupCpus = groupCpus;
         }
 
         private void configureFiber(int maxLiveCount, int mountBudget, int retainedCount) {
@@ -7273,7 +7557,19 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    private class PropLineTcpIOWorkerPoolConfiguration implements WorkerPoolConfiguration {
+    private class PropLineTcpIOWorkerPoolConfiguration implements WorkerPoolConfiguration, NetworkPoolGroups {
+        private int groupCount = 1;
+        private @Nullable int[][] groupCpus;
+
+        @Override
+        public int getGroupCount() {
+            return groupCount;
+        }
+
+        @Override
+        public @Nullable int[][] getGroupCpus() {
+            return groupCpus;
+        }
 
         @Override
         public Metrics getMetrics() {
@@ -7313,6 +7609,12 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean haltOnError() {
             return lineTcpIOWorkerPoolHaltOnError;
+        }
+
+        @Override
+        public void setGroups(int groupCount, @Nullable int[][] groupCpus) {
+            this.groupCount = groupCount;
+            this.groupCpus = groupCpus;
         }
     }
 

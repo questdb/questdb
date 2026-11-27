@@ -83,6 +83,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.mp.WorkerPool;
+import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.mp.WorkerPoolMode;
 import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.network.Net;
@@ -91,6 +92,7 @@ import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.CarrierLocal;
 import io.questdb.std.Chars;
+import io.questdb.std.CpuTopology;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Files;
@@ -144,6 +146,8 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.lang.management.ManagementFactory;
 import java.lang.management.ThreadMXBean;
+import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 import java.net.URISyntaxException;
 import java.net.URL;
 import java.nio.file.Paths;
@@ -152,6 +156,7 @@ import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.sql.Timestamp;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
@@ -1075,6 +1080,37 @@ public final class TestUtils {
     }
 
     /**
+     * Asserts that {@code configurationClass}, a wrapper around another
+     * {@link WorkerPoolConfiguration}, overrides every method of that interface, so that no
+     * method falls back to the interface default and drops the delegate's value. A method the
+     * class inherits from a superclass counts as an override. {@code isLegacy()} is exempt: its
+     * default derives from {@code getWorkerPoolMode()}.
+     */
+    public static void assertOverridesWorkerPoolConfiguration(Class<? extends WorkerPoolConfiguration> configurationClass) {
+        final ArrayList<String> notOverridden = new ArrayList<>();
+        for (Method method : WorkerPoolConfiguration.class.getMethods()) {
+            if (Modifier.isStatic(method.getModifiers()) || method.getName().equals("isLegacy")) {
+                continue;
+            }
+            final Method resolved;
+            try {
+                resolved = configurationClass.getMethod(method.getName(), method.getParameterTypes());
+            } catch (NoSuchMethodException e) {
+                throw new AssertionError(e);
+            }
+            if (resolved.getDeclaringClass().isInterface()) {
+                notOverridden.add(method.getName());
+            }
+        }
+        notOverridden.sort(null);
+        Assert.assertEquals(
+                configurationClass.getName() + " leaves WorkerPoolConfiguration methods to interface defaults",
+                "[]",
+                notOverridden.toString()
+        );
+    }
+
+    /**
      * Cross-checks every WAL table's reported physical row count against its designated timestamp
      * column's actual on-disk file length. {@link TableReader#getPartitionPhysicalRowCount} is pure
      * {@code _geometry}/{@code _txn} bookkeeping - never itself read back from the files a commit wrote -
@@ -1359,6 +1395,21 @@ public final class TestUtils {
         } finally {
             viewState.unlockAfterRead();
         }
+    }
+
+    /**
+     * Skips the calling test unless {@link #runOnOneCpu(LeakProneCode)} lowers the CPU count a
+     * thread sees from at least {@code minCpuCount} to 1. Thread CPU sets apply on Linux only, and
+     * both the calling thread's CPU set and the JVM's CPU count must hold {@code minCpuCount} CPUs:
+     * a CPU quota caps the JVM's count below the CPU set.
+     */
+    public static void assumeRestrictableToOneCpu(int minCpuCount) throws IOException {
+        Assume.assumeTrue("thread CPU sets apply on Linux only", Os.isLinux());
+        Assume.assumeTrue("needs at least " + minCpuCount + " allowed CPUs", getThreadAllowedCpus().length >= minCpuCount);
+        Assume.assumeTrue(
+                "needs a JVM CPU count of at least " + minCpuCount,
+                Runtime.getRuntime().availableProcessors() >= minCpuCount
+        );
     }
 
     public static void await(CyclicBarrier barrier) {
@@ -1994,6 +2045,18 @@ public final class TestUtils {
         }
     }
 
+    /**
+     * The CPUs the calling thread may run on, from {@code /proc/thread-self/status}. Linux only.
+     */
+    public static int[] getThreadAllowedCpus() throws IOException {
+        for (String line : java.nio.file.Files.readAllLines(Paths.get("/proc/thread-self/status"))) {
+            if (line.startsWith("Cpus_allowed_list:")) {
+                return CpuTopology.parseCpuList(line.substring("Cpus_allowed_list:".length()));
+            }
+        }
+        throw new AssertionError("no Cpus_allowed_list in /proc/thread-self/status");
+    }
+
     public static TestTimestampType getTimestampType() {
         return getTimestampType(generateRandom(LOG));
     }
@@ -2513,6 +2576,35 @@ public final class TestUtils {
         }
         joinThreads(threads);
         rethrowFirst(firstError);
+    }
+
+    /**
+     * Runs {@code code} on a new thread restricted to the first CPU the calling thread may use, once
+     * {@link Runtime#availableProcessors()} reports that single CPU to it, the way a worker of a
+     * network pool split by CPU socket runs on its socket's CPUs. A failure on that thread fails the
+     * calling test through {@link #rethrowFirst(AtomicReference)}. Linux only.
+     */
+    public static void runOnOneCpu(LeakProneCode code) throws Exception {
+        final int cpu = getThreadAllowedCpus()[0];
+        final AtomicReference<Throwable> failure = new AtomicReference<>();
+        final Thread thread = new Thread(() -> {
+            try {
+                Assert.assertEquals(0, Os.setCurrentThreadCpus(new int[]{cpu}));
+                // in a container, the JVM caches the CPU count across threads for a few milliseconds
+                final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+                int cpuCount;
+                while ((cpuCount = Runtime.getRuntime().availableProcessors()) != 1 && System.nanoTime() < deadline) {
+                    Os.pause();
+                }
+                Assert.assertEquals("the restricted thread sees only its own CPU", 1, cpuCount);
+                code.run();
+            } catch (Throwable th) {
+                failure.set(th);
+            }
+        });
+        thread.start();
+        thread.join();
+        rethrowFirst(failure);
     }
 
     /**

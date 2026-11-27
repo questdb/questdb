@@ -25,6 +25,8 @@
 package io.questdb.test.metrics;
 
 import io.questdb.metrics.FiberMetrics;
+import io.questdb.metrics.MetricSnapshotVisitor;
+import io.questdb.metrics.MetricType;
 import io.questdb.mp.WorkerPoolMode;
 import io.questdb.mp.continuation.Fiber;
 import io.questdb.mp.continuation.FiberRuntime;
@@ -37,6 +39,8 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -44,6 +48,55 @@ import java.util.concurrent.atomic.AtomicReference;
 
 public class FiberMetricsTest {
     private static final long AWAIT_SECONDS = 10;
+
+    @Test
+    public void testGroupRuntimesCarryGroupLabel() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final FiberRuntime whole = new FiberRuntime(1);
+            final FiberRuntime group0 = new FiberRuntime(2);
+            final FiberRuntime group1 = new FiberRuntime(3);
+            final FiberMetrics metrics = new FiberMetrics();
+            metrics.register("whole", whole);
+            metrics.register("split", 0, group0);
+            metrics.register("split", 1, group1);
+            try {
+                try (DirectUtf8Sink sink = new DirectUtf8Sink(2048)) {
+                    metrics.scrapeIntoPrometheus(sink);
+                    final String value = sink.toString();
+                    TestUtils.assertContains(value, "questdb_worker_pool_fiber_max_live{worker_pool=\"whole\"} 1\n");
+                    TestUtils.assertContains(value, "questdb_worker_pool_fiber_max_live{worker_pool=\"split\",group=\"0\"} 2\n");
+                    TestUtils.assertContains(value, "questdb_worker_pool_fiber_max_live{worker_pool=\"split\",group=\"1\"} 3\n");
+                    TestUtils.assertContains(value, "questdb_worker_pool_fiber_wake_total{worker_pool=\"split\",group=\"1\"} 0\n");
+                    TestUtils.assertContains(
+                            value,
+                            "questdb_worker_pool_fiber_scheduler_selection_total{worker_pool=\"split\",group=\"0\",source=\"global\"} 0\n"
+                    );
+                    TestUtils.assertContains(
+                            value,
+                            "questdb_worker_pool_fiber_launch_total{worker_pool=\"split\",group=\"1\",result=\"launched\"} 0\n"
+                    );
+                }
+                // snapshots carry at most two label values, so they name the group in the pool label
+                final List<String> maxLiveLabels = new ArrayList<>();
+                metrics.snapshot(new MetricSnapshotVisitor() {
+                    @Override
+                    public void visitLong(CharSequence name, MetricType type, CharSequence labelValue0, long value) {
+                        if ("worker_pool_fiber_max_live".contentEquals(name)) {
+                            maxLiveLabels.add(labelValue0 + "=" + value);
+                        }
+                    }
+                });
+                Assert.assertEquals(List.of("whole=1", "split_g0=2", "split_g1=3"), maxLiveLabels);
+            } finally {
+                metrics.unregister(whole);
+                metrics.unregister(group0);
+                metrics.unregister(group1);
+                close(whole);
+                close(group0);
+                close(group1);
+            }
+        });
+    }
 
     @Test
     public void testScrapeLocalFallbackPublicationAndClear() throws Exception {
