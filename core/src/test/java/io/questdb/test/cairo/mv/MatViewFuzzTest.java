@@ -47,6 +47,8 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
+import io.questdb.cairo.wal.WalUtils;
+import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -72,6 +74,7 @@ import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.QueryAssertion;
 import io.questdb.test.cairo.fuzz.AbstractFuzzTest;
+import io.questdb.test.cairo.fuzz.FuzzRunner;
 import io.questdb.test.fuzz.FuzzDropCreateTableOperation;
 import io.questdb.test.fuzz.FuzzDropPartitionOperation;
 import io.questdb.test.fuzz.FuzzInsertOperation;
@@ -316,6 +319,127 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             for (int round = 0; round < rounds; round++) {
                 LOG.info().$("fuzz: bare-name round ").$(round).$();
                 runBareNameOperations(rnd, steps > 0 ? steps : 40 + rnd.nextInt(40));
+            }
+        });
+    }
+
+    @Test
+    public void testBaseRowsReplayFindsEmptiedPartitions() throws Exception {
+        // BaseRowsReplay names the base partitions that a replace commit empties, which the base removes at the commit,
+        // a partial range included. It starts from the rows of the base's create, which the base has yet to apply, and
+        // counts a TRUNCATE and skips a rolled back transaction, as the base does. Oracle: the partitions the base itself
+        // removes at each commit, and the base's rows.
+        assertMemoryLeak(() -> {
+            // ten rows, one a second from 2022-02-24T00:00, which the first WAL transaction writes
+            fuzzer.createInitialTableWal("base", 10);
+            final TimestampDriver driver;
+            final TimestampDriver.TimestampCeilMethod ceil;
+            try (TableReader reader = engine.getReader("base")) {
+                driver = ColumnType.getTimestampDriver(reader.getMetadata().getTimestampType());
+                ceil = PartitionBy.getPartitionCeilMethod(reader.getMetadata().getTimestampType(), reader.getPartitionedBy());
+            }
+            final BaseRowsReplay replay = new BaseRowsReplay(fuzzer, "base");
+            final BaseRowsReplay divergingReplay = new BaseRowsReplay(fuzzer, "base");
+            final BaseRowsReplay inexactReplay = new BaseRowsReplay(fuzzer, "base");
+            final ObjList<FuzzTransaction> transactions = new ObjList<>();
+            try {
+                addReplayInsert(transactions, driver, false, "2022-02-25T10:00", "2022-02-25T11:00", "2022-02-26T10:00");
+                // a partial range that holds every row of 2022-02-25
+                addReplayReplace(transactions, driver, "2022-02-25T09:00", "2022-02-25T12:00");
+                // brings 2022-02-25 back
+                addReplayInsert(transactions, driver, false, "2022-02-25T15:00");
+                // replaces the row of 2022-02-26 with another
+                addReplayReplace(transactions, driver, "2022-02-26T00:00", "2022-02-26T23:00", "2022-02-26T12:00");
+                // removes half of the initial rows, which the base has yet to apply, then the other half
+                addReplayReplace(transactions, driver, "2022-02-24T00:00:05", "2022-02-24T00:00:10");
+                addReplayReplace(transactions, driver, "2022-02-24T00:00:00", "2022-02-24T00:00:05");
+                addReplayInsert(transactions, driver, true, "2022-02-26T23:30");
+                // empties 2022-02-26 unless the rolled back row counted
+                addReplayReplace(transactions, driver, "2022-02-26T00:00", "2022-02-26T23:00");
+                // replaces no row
+                addReplayReplace(transactions, driver, "2022-02-28T00:00", "2022-02-28T01:00");
+                final FuzzTransaction truncate = new FuzzTransaction();
+                truncate.operationList.add(new FuzzTruncateTableOperation());
+                transactions.add(truncate);
+                addReplayInsert(transactions, driver, false, "2022-02-25T16:00");
+                // empties 2022-02-25 unless the rows before the TRUNCATE counted
+                addReplayReplace(transactions, driver, "2022-02-25T16:00", "2022-02-25T17:00");
+                addReplayInsert(transactions, driver, false, "2022-02-27T08:00");
+                replay.replay(transactions);
+
+                final LongList expected = new LongList();
+                for (String day : new String[]{"2022-02-25", "2022-02-24", "2022-02-26", "2022-02-25"}) {
+                    expected.add(driver.parseFloorLiteral(day), ceil.ceil(driver.parseFloorLiteral(day)));
+                }
+                TestUtils.assertEquals(expected, replay.emptiedPartitions);
+                // the replace commits and the TRUNCATE
+                Assert.assertEquals(2 * 8, replay.removedRanges.size());
+
+                final LongList removedByBase = new LongList();
+                final Rnd rnd = new Rnd();
+                try (WalWriter walWriter = engine.getWalWriter(engine.verifyTableName("base"))) {
+                    for (int i = 0, n = transactions.size(); i < n; i++) {
+                        final FuzzTransaction transaction = transactions.getQuick(i);
+                        final LongList partitionsBefore = readBasePartitions();
+                        for (int j = 0, m = transaction.operationList.size(); j < m; j++) {
+                            transaction.operationList.getQuick(j).apply(rnd, engine, walWriter, -1, null);
+                        }
+                        if (transaction.rollback) {
+                            walWriter.rollback();
+                        } else if (transaction.hasReplaceRange()) {
+                            walWriter.commitWithParams(transaction.getReplaceLoTs(), transaction.getReplaceHiTs(), WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE);
+                        } else {
+                            walWriter.commit();
+                        }
+                        drainWalQueue();
+                        if (transaction.hasReplaceRange()) {
+                            final LongList partitionsAfter = readBasePartitions();
+                            for (int j = 0, m = partitionsBefore.size(); j < m; j++) {
+                                final long partitionLo = partitionsBefore.getQuick(j);
+                                if (partitionsAfter.indexOf(partitionLo) < 0) {
+                                    removedByBase.add(partitionLo, ceil.ceil(partitionLo));
+                                }
+                            }
+                        }
+                    }
+                }
+                TestUtils.assertEquals(expected, removedByBase);
+                replay.assertBaseRows();
+
+                // A replay that misses the last transaction and takes on one the base did not ends with other rows than
+                // the base.
+                final ObjList<FuzzTransaction> divergingTransactions = new ObjList<>();
+                for (int i = 0, n = transactions.size() - 1; i < n; i++) {
+                    divergingTransactions.add(transactions.getQuick(i));
+                }
+                final ObjList<FuzzTransaction> extraTransactions = new ObjList<>();
+                addReplayInsert(extraTransactions, driver, false, "2022-02-27T09:00");
+                divergingTransactions.addAll(extraTransactions);
+                divergingReplay.replay(divergingTransactions);
+                try {
+                    divergingReplay.assertBaseRows();
+                    Assert.fail("the replay ends with the base's rows");
+                } catch (AssertionError e) {
+                    TestUtils.assertEquals(
+                            "the replay of the transactions of base ends with other rows than the base [baseOnly=1 from "
+                                    + driver.parseFloorLiteral("2022-02-27T08:00")
+                                    + ", replayOnly=1 from " + driver.parseFloorLiteral("2022-02-27T09:00") + ']',
+                            e.getMessage()
+                    );
+                }
+
+                // A transaction that removes rows the replay does not model empties every partition and leaves the
+                // replay unchecked, though its rows differ from the base's.
+                final FuzzTransaction dropPartition = new FuzzTransaction();
+                dropPartition.operationList.add(new FuzzDropPartitionOperation(driver.parseFloorLiteral("2022-02-26")));
+                extraTransactions.add(dropPartition);
+                inexactReplay.replay(extraTransactions);
+                Assert.assertTrue(isEmptied(inexactReplay.emptiedPartitions, driver.parseFloorLiteral("1970-01-01")));
+                Assert.assertTrue(isEmptied(inexactReplay.emptiedPartitions, driver.parseFloorLiteral("2022-02-24")));
+                inexactReplay.assertBaseRows();
+                transactions.addAll(extraTransactions);
+            } finally {
+                Misc.freeObjListAndClear(transactions);
             }
         });
     }
@@ -706,6 +830,53 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     }
 
     @Test
+    public void testOracleAcceptsStaleBucketOfRecreatedPartition() throws Exception {
+        // A row can bring back a base partition that a replace commit emptied without reaching the bucket that
+        // straddles it, so that bucket keeps the old value the refresh left while the partition was gone. The oracle,
+        // assertViewMatchesBase(), accepts it only where a replace commit emptied the partition, which BaseRowsReplay
+        // finds, since the base holds the partition again.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (c3 INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base VALUES (1, '2024-01-01T13:00'), (2, '2024-01-02T01:00')");
+            final String viewSql = "SELECT min(c3) AS min, max(c3) AS max, ts FROM base SAMPLE BY 1d ALIGN TO CALENDAR WITH OFFSET '12:00'";
+            execute("CREATE MATERIALIZED VIEW mv AS (" + viewSql + ") PARTITION BY DAY");
+            drainWalAndMatViewQueues();
+            final TimestampDriver driver = MicrosTimestampDriver.INSTANCE;
+            MatViewPeriodRefreshTest.replaceRange(engine, driver, "2024-01-02T00:00", "2024-01-03T06:00", 3, "2024-01-03T05:00");
+            drainWalAndMatViewQueues();
+            execute("INSERT INTO base VALUES (4, '2024-01-02T20:00')");
+            drainWalAndMatViewQueues();
+            assertQuery("SELECT name FROM table_partitions('base')").noLeakCheck().expectSize().noRandomAccess().returns("""
+                    name
+                    2024-01-01
+                    2024-01-02
+                    2024-01-03
+                    """);
+            assertQuery("mv").timestamp("ts").expectSize().noLeakCheck().returns("""
+                    min\tmax\tts
+                    1\t2\t2024-01-01T12:00:00.000000Z
+                    3\t4\t2024-01-02T12:00:00.000000Z
+                    """);
+
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                final LongList removedRanges = new LongList();
+                removedRanges.add(driver.parseFloorLiteral("2024-01-02T00:00"), driver.parseFloorLiteral("2024-01-03T06:00"));
+                final LongList emptiedPartitions = new LongList();
+                emptiedPartitions.add(driver.parseFloorLiteral("2024-01-02"), driver.parseFloorLiteral("2024-01-03"));
+                assertViewMatchesBase(compiler, viewSql, "mv", removedRanges, emptiedPartitions);
+
+                // without the emptied partition, or with another one, the stale bucket stays unexplained, and so it
+                // does without a removed range in the bucket
+                assertViewDiffersFromBase(compiler, viewSql, removedRanges, new LongList());
+                final LongList otherEmptiedPartitions = new LongList();
+                otherEmptiedPartitions.add(driver.parseFloorLiteral("2024-01-03"), driver.parseFloorLiteral("2024-01-04"));
+                assertViewDiffersFromBase(compiler, viewSql, removedRanges, otherEmptiedPartitions);
+                assertViewDiffersFromBase(compiler, viewSql, new LongList(), emptiedPartitions);
+            }
+        });
+    }
+
+    @Test
     public void testOracleAcceptsStaleBucketOnlyWhereItStraddlesRemovedPartition() throws Exception {
         // The oracle, assertViewMatchesBase(), accepts a view bucket that differs from its SQL only where the bucket
         // straddles a base partition that a removed range emptied and the base removed: the partition clip keeps such
@@ -730,14 +901,14 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 final LongList removedRanges = new LongList();
                 removedRanges.add(driver.parseFloorLiteral("2024-01-02T00:00"), driver.parseFloorLiteral("2024-01-03T06:00"));
-                assertViewMatchesBase(compiler, viewSql, "mv", removedRanges);
+                assertViewMatchesBase(compiler, viewSql, "mv", removedRanges, new LongList());
 
                 // a removed range only inside a partition the base still holds explains no stale bucket, and neither
                 // does no removed range
                 final LongList keptPartitionRanges = new LongList();
                 keptPartitionRanges.add(driver.parseFloorLiteral("2024-01-01T20:00"), driver.parseFloorLiteral("2024-01-01T21:00"));
-                assertViewDiffersFromBase(compiler, viewSql, keptPartitionRanges);
-                assertViewDiffersFromBase(compiler, viewSql, new LongList());
+                assertViewDiffersFromBase(compiler, viewSql, keptPartitionRanges, new LongList());
+                assertViewDiffersFromBase(compiler, viewSql, new LongList(), new LongList());
             }
         });
     }
@@ -1563,6 +1734,19 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         drainWalAndMatViewQueues();
     }
 
+    // Adds a transaction that writes rows at the timestamps, rolled back or not, to the transactions of
+    // testBaseRowsReplayFindsEmptiedPartitions().
+    private static void addReplayInsert(ObjList<FuzzTransaction> transactions, TimestampDriver driver, boolean isRollback, String... timestamps) {
+        final FuzzTransaction transaction = newReplayTransaction(transactions, driver, timestamps);
+        transaction.rollback = isRollback;
+    }
+
+    // Adds a replace commit of [lo, hi) that writes rows at the timestamps to the transactions of
+    // testBaseRowsReplayFindsEmptiedPartitions().
+    private static void addReplayReplace(ObjList<FuzzTransaction> transactions, TimestampDriver driver, String lo, String hi, String... timestamps) {
+        newReplayTransaction(transactions, driver, timestamps).setReplaceRange(driver.parseFloorLiteral(lo), driver.parseFloorLiteral(hi));
+    }
+
     private static void appendDay(StringSink sink, int day) {
         sink.put('\'');
         MicrosFormatUtils.appendDateTimeUSec(sink, OPS_DAY_LO + day * Micros.DAY_MICROS);
@@ -1758,8 +1942,15 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     // lost. A replace commit that empties a partition, and TRUNCATE, remove base rows while the view keeps its own
     // there ("Known limitations"), so the view may keep a bucket that intersects one of those ranges. A bucket that
     // straddles a base partition such a range emptied and the base removed keeps its old value as well, see
-    // isStraddlingRemovedPartition().
-    private static void assertViewMatchesBase(SqlCompiler compiler, String viewSql, String viewName, LongList removedRanges) throws SqlException {
+    // isStraddlingRemovedPartition(). emptiedPartitions holds [lo, hi) of the base partitions a replace commit
+    // emptied, see BaseRowsReplay.
+    private static void assertViewMatchesBase(
+            SqlCompiler compiler,
+            String viewSql,
+            String viewName,
+            LongList removedRanges,
+            LongList emptiedPartitions
+    ) throws SqlException {
         final TreeMap<Long, String> expected = readRowsByTimestamp(compiler, viewSql);
         final TreeMap<Long, String> actual = readRowsByTimestamp(compiler, viewName);
         final TableToken viewToken = engine.verifyTableName(viewName);
@@ -1771,7 +1962,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         for (Map.Entry<Long, String> e : expected.entrySet()) {
             final long ts = e.getKey();
             final String actualRow = actual.get(ts);
-            if (!e.getValue().equals(actualRow) && !isStraddlingRemovedPartition(viewToken, removedRanges, ts, ts + bucketWidth)) {
+            if (!e.getValue().equals(actualRow) && !isStraddlingRemovedPartition(viewToken, removedRanges, emptiedPartitions, ts, ts + bucketWidth)) {
                 Assert.fail("view " + viewName + " differs from its SQL at a bucket the base holds [ts=" + ts
                         + ", expected=" + e.getValue() + ", actual=" + actualRow + ']');
             }
@@ -1785,18 +1976,43 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         }
     }
 
+    // Asserts a view against its SQL run on the current base, under the ranges the replay of the base's transactions
+    // removed and the partitions it emptied, once the replay ends with the base's rows.
+    private static void assertViewMatchesBase(
+            SqlCompiler compiler,
+            String viewSql,
+            String viewName,
+            BaseRowsReplay baseRowsReplay
+    ) throws SqlException {
+        baseRowsReplay.assertBaseRows();
+        assertViewMatchesBase(compiler, viewSql, viewName, baseRowsReplay.removedRanges, baseRowsReplay.emptiedPartitions);
+    }
+
     // Asserts that assertViewMatchesBase() rejects the 2024-01-01T12:00 bucket of the view "mv" of
-    // testOracleAcceptsStaleBucketOnlyWhereItStraddlesRemovedPartition() under the removed ranges.
-    private static void assertViewDiffersFromBase(SqlCompiler compiler, String viewSql, LongList removedRanges) throws SqlException {
+    // testOracleAcceptsStaleBucketOnlyWhereItStraddlesRemovedPartition() and
+    // testOracleAcceptsStaleBucketOfRecreatedPartition() under the removed ranges and emptied partitions.
+    private static void assertViewDiffersFromBase(
+            SqlCompiler compiler,
+            String viewSql,
+            LongList removedRanges,
+            LongList emptiedPartitions
+    ) throws SqlException {
         AssertionError error = null;
         try {
-            assertViewMatchesBase(compiler, viewSql, "mv", removedRanges);
+            assertViewMatchesBase(compiler, viewSql, "mv", removedRanges, emptiedPartitions);
         } catch (AssertionError e) {
             error = e;
         }
         Assert.assertNotNull(error);
         TestUtils.assertContains(error.getMessage(), "view mv differs from its SQL at a bucket the base holds [ts=1704110400000000, expected=1\t1\t");
         TestUtils.assertContains(error.getMessage(), "actual=1\t2\t");
+    }
+
+    // A replay of the rows of the base that the fuzzer created, which the transactions take on.
+    private static BaseRowsReplay replayBaseRows(FuzzRunner fuzzer, String baseTableName, ObjList<FuzzTransaction> transactions) throws SqlException {
+        final BaseRowsReplay replay = new BaseRowsReplay(fuzzer, baseTableName);
+        replay.replay(transactions);
+        return replay;
     }
 
     // The ranges the transactions may remove from the base: a replace commit removes the rows in its range, and a
@@ -1839,11 +2055,28 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         return false;
     }
 
+    // True when one of the [lo, hi) ranges of emptiedPartitions holds the partition that starts at partitionLo.
+    private static boolean isEmptied(LongList emptiedPartitions, long partitionLo) {
+        for (int i = 0, n = emptiedPartitions.size(); i < n; i += 2) {
+            if (emptiedPartitions.getQuick(i) <= partitionLo && partitionLo < emptiedPartitions.getQuick(i + 1)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     // True when the bucket [lo, hi) of the view intersects a partition of the view's base that a removed range
-    // intersects and that the base no longer holds: a replace commit emptied it and the base removed it. The refresh
-    // clips its interval to the base's partitions, so the view keeps such a bucket's old value, which the spec
-    // documents ("Buckets that straddle a removed partition").
-    private static boolean isStraddlingRemovedPartition(TableToken viewToken, LongList removedRanges, long lo, long hi) {
+    // intersects and that the base no longer holds, or that a replace commit emptied (emptiedPartitions): the base
+    // removed it. The refresh clips its interval to the base's partitions, so the view keeps such a bucket's old value,
+    // which the spec documents ("Buckets that straddle a removed partition"). Later rows can bring the partition back
+    // without reaching the bucket, so that a refresh that ran while the partition was gone leaves the bucket stale.
+    private static boolean isStraddlingRemovedPartition(
+            TableToken viewToken,
+            LongList removedRanges,
+            LongList emptiedPartitions,
+            long lo,
+            long hi
+    ) {
         final MatViewState state = engine.getMatViewStateStore().getViewState(viewToken);
         Assert.assertNotNull(state);
         try (TableReader reader = engine.getReader(state.getViewDefinition().getBaseTableName())) {
@@ -1857,7 +2090,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             for (long partitionLo = floor.floor(lo); partitionLo < hi; ) {
                 final long partitionHi = ceil.ceil(partitionLo);
                 if (intersects(removedRanges, Math.max(lo, partitionLo), Math.min(hi, partitionHi))
-                        && !hasPartition(reader, floor, partitionLo)) {
+                        && (!hasPartition(reader, floor, partitionLo) || isEmptied(emptiedPartitions, partitionLo))) {
                     return true;
                 }
                 partitionLo = partitionHi;
@@ -1889,6 +2122,42 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             width += maxBucketWidthMicros(baseToken);
         }
         return width;
+    }
+
+    private static FuzzTransaction newReplayTransaction(ObjList<FuzzTransaction> transactions, TimestampDriver driver, String... timestamps) {
+        final FuzzTransaction transaction = new FuzzTransaction();
+        for (String timestamp : timestamps) {
+            transaction.operationList.add(new FuzzInsertOperation(
+                    transactions.size(),
+                    transaction.operationList.size(),
+                    driver.parseFloorLiteral(timestamp),
+                    0,
+                    0,
+                    0,
+                    5,
+                    new String[]{"AB", "BC"}
+            ));
+        }
+        transactions.add(transaction);
+        return transaction;
+    }
+
+    // The floors of the partitions of the table base.
+    private static LongList readBasePartitions() {
+        final LongList partitions = new LongList();
+        try (TableReader reader = engine.getReader("base")) {
+            final TimestampDriver.TimestampFloorMethod floor = PartitionBy.getPartitionFloorMethod(
+                    reader.getMetadata().getTimestampType(),
+                    reader.getPartitionedBy()
+            );
+            for (int i = 0, n = reader.getPartitionCount(); i < n; i++) {
+                final long partitionLo = floor.floor(reader.getPartitionTimestampByIndex(i));
+                if (partitions.indexOf(partitionLo) < 0) {
+                    partitions.add(partitionLo);
+                }
+            }
+        }
+        return partitions;
     }
 
     // Reads the rows of a query that has one row per designated timestamp value, each row printed whole.
@@ -3552,7 +3821,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
 
         final ObjList<ObjList<FuzzTransaction>> fuzzTransactions = new ObjList<>();
         final ObjList<String> viewSqls = new ObjList<>();
-        final ObjList<LongList> removedRanges = new ObjList<>();
+        final ObjList<BaseRowsReplay> baseRowsReplays = new ObjList<>();
 
         try {
             for (int i = 0; i < refreshJobCount; i++) {
@@ -3565,7 +3834,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                 String viewSql = generateViewSql(rnd, tableNameBase);
                 ObjList<FuzzTransaction> transactions = createTransactionsAndMv(rnd, tableNameBase, tableNameMv, viewSql);
                 fuzzTransactions.add(transactions);
-                removedRanges.add(collectRemovedRanges(transactions, new LongList()));
+                baseRowsReplays.add(replayBaseRows(fuzzer, tableNameBase, transactions));
                 viewSqls.add(viewSql);
             }
 
@@ -3609,7 +3878,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                                     count
                                     1
                                     """);
-                    assertViewMatchesBase(compiler, viewSql, mvName, removedRanges.getQuick(i));
+                    assertViewMatchesBase(compiler, viewSql, mvName, baseRowsReplays.getQuick(i));
                 }
             }
         }
@@ -3618,7 +3887,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     private void runPeriodMvFuzz(Rnd rnd, String testTableName, int tableCount) throws Exception {
         final ObjList<ObjList<FuzzTransaction>> fuzzTransactions = new ObjList<>();
         final ObjList<String> viewSqls = new ObjList<>();
-        final ObjList<LongList> removedRanges = new ObjList<>();
+        final ObjList<BaseRowsReplay> baseRowsReplays = new ObjList<>();
 
         final int length = 1 + rnd.nextInt(10);
         final char[] units = new char[]{'s', 'm', 'h'};
@@ -3671,7 +3940,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                 String viewSql = "select min(c3) as min, max(c3) as max, ts from " + tableNameBase + " sample by " + sampleByInterval + lengthUnit;
                 ObjList<FuzzTransaction> transactions = createTransactionsAndPeriodMv(rnd, tableNameBase, tableNameMv, viewSql, start, end, length, lengthUnit, timeZone);
                 fuzzTransactions.add(transactions);
-                removedRanges.add(collectRemovedRanges(transactions, new LongList()));
+                baseRowsReplays.add(replayBaseRows(fuzzer, tableNameBase, transactions));
                 viewSqls.add(viewSql);
             }
 
@@ -3707,7 +3976,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                                 count
                                 1
                                 """);
-                assertViewMatchesBase(compiler, viewSql, mvName, removedRanges.getQuick(i));
+                assertViewMatchesBase(compiler, viewSql, mvName, baseRowsReplays.getQuick(i));
             }
         }
     }
@@ -3715,7 +3984,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     private void runTimerMvFuzz(Rnd rnd, String testTableName, int tableCount) throws Exception {
         final ObjList<ObjList<FuzzTransaction>> fuzzTransactions = new ObjList<>();
         final ObjList<String> viewSqls = new ObjList<>();
-        final ObjList<LongList> removedRanges = new ObjList<>();
+        final ObjList<BaseRowsReplay> baseRowsReplays = new ObjList<>();
 
         final int interval = 1 + rnd.nextInt(10);
         final char[] units = new char[]{'m', 'h'};
@@ -3747,7 +4016,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                 String viewSql = "select min(c3) as min, max(c3) as max, ts from  " + tableNameBase + " sample by 1h";
                 ObjList<FuzzTransaction> transactions = createTransactionsAndTimerMv(rnd, tableNameBase, tableNameMv, viewSql, start, interval, intervalUnit);
                 fuzzTransactions.add(transactions);
-                removedRanges.add(collectRemovedRanges(transactions, new LongList()));
+                baseRowsReplays.add(replayBaseRows(fuzzer, tableNameBase, transactions));
                 viewSqls.add(viewSql);
             }
 
@@ -3781,7 +4050,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                                 count
                                 1
                                 """);
-                assertViewMatchesBase(compiler, viewSql, mvName, removedRanges.getQuick(i));
+                assertViewMatchesBase(compiler, viewSql, mvName, baseRowsReplays.getQuick(i));
             }
         }
     }
@@ -3946,7 +4215,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
 
             AtomicBoolean stop = new AtomicBoolean();
             ObjList<Thread> refreshJobs = new ObjList<>();
-            final LongList removedRanges = new LongList();
+            final BaseRowsReplay baseRowsReplay = new BaseRowsReplay(fuzzer, baseTableName);
 
             try {
                 refreshJobs.add(startRefreshJob(0, stop, rnd));
@@ -3963,7 +4232,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                         drainWalAndMatViewQueues();
                         transactions = generateLaterBatch(rnd, baseTableName, hotTs);
                     }
-                    collectRemovedRanges(transactions, removedRanges);
+                    baseRowsReplay.replay(transactions);
                     ObjList<ObjList<FuzzTransaction>> fuzzTransactions = new ObjList<>();
                     fuzzTransactions.add(transactions);
                     fuzzer.applyManyWalParallel(
@@ -3990,7 +4259,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                             .noLeakCheck()
                             .noRandomAccess()
                             .returns("view_name\tinvalidation_reason\n");
-                    assertViewMatchesBase(compiler, mvSql, mvName, removedRanges);
+                    assertViewMatchesBase(compiler, mvSql, mvName, baseRowsReplay);
                 }
             }
         });
@@ -4010,6 +4279,129 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         long transitionTs;
         char unit;
         String zone;
+    }
+
+    // The rows of a fuzz run's base, replayed from its transactions in their commit order: a replace commit and a
+    // TRUNCATE wait for every transaction before them, and the transactions after them wait for their commit. The
+    // replay finds the base partitions that a replace commit emptied, which the base then removed, for
+    // isStraddlingRemovedPartition(): a later write can bring such a partition back, so that the base holding it at
+    // check time does not show that a refresh skipped it.
+    private static final class BaseRowsReplay {
+        // [lo, hi) of the base partitions a replace commit emptied, in the base's timestamp unit
+        final LongList emptiedPartitions = new LongList();
+        // the ranges the transactions may remove from the base, see collectRemovedRanges()
+        final LongList removedRanges = new LongList();
+        private final String baseTableName;
+        private final TimestampDriver.TimestampCeilMethod partitionCeil;
+        private final TimestampDriver.TimestampFloorMethod partitionFloor;
+        // the floors of the partitions that hold the rows a replace commit replaces
+        private final LongList replacedPartitions = new LongList();
+        // the distinct timestamps of the base rows
+        private final TreeSet<Long> timestamps = new TreeSet<>();
+        // false once a transaction removed rows that the replay does not model: DROP PARTITION, TTL or a dropped and
+        // created table; every partition then counts as emptied
+        private boolean isExact = true;
+
+        // Starts from the rows the fuzzer's create copied into the base, which the base holds once its first WAL
+        // transaction applies. The base takes on no other transaction before the replay does.
+        BaseRowsReplay(FuzzRunner fuzzer, String baseTableName) throws SqlException {
+            this.baseTableName = baseTableName;
+            final int timestampType;
+            try (TableReader reader = engine.getReader(baseTableName)) {
+                timestampType = reader.getMetadata().getTimestampType();
+                partitionFloor = PartitionBy.getPartitionFloorMethod(timestampType, reader.getPartitionedBy());
+                partitionCeil = PartitionBy.getPartitionCeilMethod(timestampType, reader.getPartitionedBy());
+            }
+            final LongList initialTimestamps = new LongList();
+            fuzzer.collectInitialRowTimestamps(timestampType, initialTimestamps);
+            for (int i = 0, n = initialTimestamps.size(); i < n; i++) {
+                timestamps.add(initialTimestamps.getQuick(i));
+            }
+        }
+
+        // Asserts that the replay ends with the rows the base holds, so that it saw the partitions the base emptied.
+        void assertBaseRows() throws SqlException {
+            if (!isExact) {
+                return;
+            }
+            final TreeSet<Long> baseTimestamps = new TreeSet<>();
+            readBaseTimestamps(baseTimestamps);
+            if (!baseTimestamps.equals(timestamps)) {
+                final TreeSet<Long> baseOnly = new TreeSet<>(baseTimestamps);
+                baseOnly.removeAll(timestamps);
+                final TreeSet<Long> replayOnly = new TreeSet<>(timestamps);
+                replayOnly.removeAll(baseTimestamps);
+                Assert.fail("the replay of the transactions of " + baseTableName + " ends with other rows than the base [baseOnly="
+                        + (baseOnly.isEmpty() ? "none" : baseOnly.size() + " from " + baseOnly.first())
+                        + ", replayOnly=" + (replayOnly.isEmpty() ? "none" : replayOnly.size() + " from " + replayOnly.first()) + ']');
+            }
+        }
+
+        void replay(ObjList<FuzzTransaction> transactions) {
+            collectRemovedRanges(transactions, removedRanges);
+            for (int i = 0, n = transactions.size(); i < n; i++) {
+                final FuzzTransaction transaction = transactions.getQuick(i);
+                if (transaction.rollback) {
+                    continue;
+                }
+                if (transaction.hasReplaceRange()) {
+                    replaceRows(transaction);
+                    continue;
+                }
+                for (int j = 0, m = transaction.operationList.size(); j < m; j++) {
+                    final FuzzTransactionOperation operation = transaction.operationList.getQuick(j);
+                    if (operation instanceof FuzzInsertOperation insert) {
+                        timestamps.add(insert.getTimestamp());
+                    } else if (operation instanceof FuzzTruncateTableOperation) {
+                        timestamps.clear();
+                    } else if (operation instanceof FuzzDropPartitionOperation
+                            || operation instanceof FuzzSetTtlOperation
+                            || operation instanceof FuzzDropCreateTableOperation) {
+                        isExact = false;
+                        emptiedPartitions.add(Long.MIN_VALUE, Long.MAX_VALUE);
+                    }
+                }
+            }
+        }
+
+        private void readBaseTimestamps(TreeSet<Long> sink) throws SqlException {
+            try (
+                    RecordCursorFactory factory = select(baseTableName);
+                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                final int timestampIndex = factory.getMetadata().getTimestampIndex();
+                final Record record = cursor.getRecord();
+                while (cursor.hasNext()) {
+                    sink.add(record.getTimestamp(timestampIndex));
+                }
+            }
+        }
+
+        // A replace commit removes the rows in [lo, hi) and writes its own, which lie in the range. A partition that
+        // held a replaced row and holds no row after the commit is emptied, and the base removes it.
+        private void replaceRows(FuzzTransaction transaction) {
+            final long lo = transaction.getReplaceLoTs();
+            final long hi = transaction.getReplaceHiTs();
+            replacedPartitions.clear();
+            for (Long ts = timestamps.ceiling(lo); ts != null && ts < hi; ts = timestamps.ceiling(partitionCeil.ceil(ts))) {
+                replacedPartitions.add(partitionFloor.floor(ts));
+            }
+            timestamps.subSet(lo, hi).clear();
+            for (int j = 0, m = transaction.operationList.size(); j < m; j++) {
+                if (transaction.operationList.getQuick(j) instanceof FuzzInsertOperation insert) {
+                    Assert.assertTrue(insert.getTimestamp() >= lo && insert.getTimestamp() < hi);
+                    timestamps.add(insert.getTimestamp());
+                }
+            }
+            for (int j = 0, m = replacedPartitions.size(); j < m; j++) {
+                final long partitionLo = replacedPartitions.getQuick(j);
+                final long partitionHi = partitionCeil.ceil(partitionLo);
+                final Long ts = timestamps.ceiling(partitionLo);
+                if (ts == null || ts >= partitionHi) {
+                    emptiedPartitions.add(partitionLo, partitionHi);
+                }
+            }
+        }
     }
 
     // An ALTER ... AS SQL of testAggregatingViewAlterAs(), see generateAggregatingSql().

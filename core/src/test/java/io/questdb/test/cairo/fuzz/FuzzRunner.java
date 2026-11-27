@@ -724,6 +724,23 @@ public class FuzzRunner {
         s1 = 0;
     }
 
+    /**
+     * Adds to the sink the timestamps of the rows that the createInitialTable methods copy into a new table whose
+     * designated timestamp has the type. A WAL table holds them once its first transaction applies. Call it after one
+     * of those methods created such a table.
+     */
+    public void collectInitialRowTimestamps(int timestampType, LongList sink) throws SqlException {
+        try (
+                RecordCursorFactory factory = engine.select("select ts from " + getDataTempTableName(timestampType), sqlExecutionContext);
+                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+        ) {
+            final Record record = cursor.getRecord();
+            while (cursor.hasNext()) {
+                sink.add(record.getTimestamp(0));
+            }
+        }
+    }
+
     public TableToken createInitialTableEmptyNonWal(String tableName) throws SqlException {
         return createInitialTable(tableName, false, 0);
     }
