@@ -39,13 +39,9 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractTest;
-import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
-
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
 
 import static io.questdb.cairo.arr.ArrayTypeDriver.ARRAY_AUX_WIDTH_BYTES;
 
@@ -90,7 +86,7 @@ public class ArrayTypeDriverTest extends AbstractTest {
 
     private static void assertRewind(CancelledRow cancelled) throws Exception {
         final String context = cancelled.toString();
-        final CountingFacade ff = new CountingFacade();
+        final AllocationCountingFacade ff = new AllocationCountingFacade();
         final long pageSize = Files.PAGE_SIZE;
         final ObjList<double[]> values = new ObjList<>();
         final long committedRows = switch (cancelled) {
@@ -170,7 +166,7 @@ public class ArrayTypeDriverTest extends AbstractTest {
     }
 
     // the put of the value fails where it needs a page of the file of fd, which cannot be allocated
-    private static void failAppend(String context, CountingFacade ff, long fd, MemoryMA auxMem, MemoryMA dataMem, DirectArray array, double[] value) {
+    private static void failAppend(String context, AllocationCountingFacade ff, long fd, MemoryMA auxMem, MemoryMA dataMem, DirectArray array, double[] value) {
         ff.failingFd.set(fd);
         try {
             append(auxMem, dataMem, array, value);
@@ -199,20 +195,5 @@ public class ArrayTypeDriverTest extends AbstractTest {
         VALUE_CUT_BY_FAILED_PAGE,
         // a value, whose aux entry needs the next page of the aux file, which cannot be allocated
         VALUE_WITH_FAILED_AUX_PAGE
-    }
-
-    // counts the allocations of disk space, and fails, once, the next one for one file
-    private static class CountingFacade extends TestFilesFacadeImpl {
-        final AtomicInteger allocations = new AtomicInteger();
-        final AtomicLong failingFd = new AtomicLong(-1);
-
-        @Override
-        public boolean allocate(long fd, long size) {
-            allocations.incrementAndGet();
-            if (failingFd.compareAndSet(fd, -1)) {
-                return false;
-            }
-            return super.allocate(fd, size);
-        }
     }
 }

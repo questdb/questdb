@@ -44,6 +44,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8String;
+import io.questdb.test.cairo.AllocationCountingFacade;
 import io.questdb.test.cairo.TestRecord;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
@@ -98,8 +99,7 @@ public class MemoryPMARImplTest {
     // The memory holds the pattern up to the start of the put, which needs the next page. The page switch fails;
     // a jump back to the start and the same put write the value; close truncates the file at its end.
     private static void assertFailedPageSwitchPut(
-            FilesFacade ff,
-            AtomicBoolean isFailing,
+            AllocationCountingFacade ff,
             long pattern,
             PutCase putCase,
             long left,
@@ -115,15 +115,14 @@ public class MemoryPMARImplTest {
                 mem.setCommitMode(commitMode);
                 mem.jumpTo(0);
                 mem.putBlockOfBytes(pattern, start);
-                isFailing.set(true);
+                ff.failingFd.set(mem.getFd());
                 try {
                     putCase.put.accept(mem);
                     Assert.fail(context);
                 } catch (CairoException e) {
                     TestUtils.assertContains(context, e.getFlyweightMessage(), "No space left");
-                } finally {
-                    isFailing.set(false);
                 }
+                Assert.assertEquals(context, -1, ff.failingFd.get());
                 Assert.assertEquals(context, 0, mem.getPageAddress(0));
                 if (left == 0) {
                     Assert.assertEquals(context, start, mem.getAppendOffset());
@@ -149,32 +148,30 @@ public class MemoryPMARImplTest {
     }
 
     // a jump to a page that cannot be mapped: it releases the mapped page and leaves the append offset
-    private static void failJump(MemoryPMARImpl mem, AtomicBoolean isFailing, long appendOffset) {
-        isFailing.set(true);
+    private static void failJump(MemoryPMARImpl mem, AllocationCountingFacade ff, long appendOffset) {
+        ff.failingFd.set(mem.getFd());
         try {
             mem.jumpTo(3 * Files.PAGE_SIZE);
             Assert.fail();
         } catch (CairoException e) {
             TestUtils.assertContains(e.getFlyweightMessage(), "No space left");
-        } finally {
-            isFailing.set(false);
         }
+        Assert.assertEquals(-1, ff.failingFd.get());
         Assert.assertEquals(appendOffset, mem.getAppendOffset());
         Assert.assertEquals(0, mem.getPageAddress(0));
     }
 
     // a put of a long at the end of the page: the page switch cannot allocate the next page
-    private static void failPut(MemoryPMARImpl mem, AtomicBoolean isFailing) {
+    private static void failPut(MemoryPMARImpl mem, AllocationCountingFacade ff) {
         final long appendOffset = mem.getAppendOffset();
-        isFailing.set(true);
+        ff.failingFd.set(mem.getFd());
         try {
             mem.putLong(-1);
             Assert.fail();
         } catch (CairoException e) {
             TestUtils.assertContains(e.getFlyweightMessage(), "No space left");
-        } finally {
-            isFailing.set(false);
         }
+        Assert.assertEquals(-1, ff.failingFd.get());
         Assert.assertEquals(appendOffset, mem.getAppendOffset());
         Assert.assertEquals(0, mem.getPageAddress(0));
     }
@@ -249,13 +246,7 @@ public class MemoryPMARImplTest {
         // without a jump maps the page back and writes at the append offset, also an int across the page end.
         TestUtils.assertMemoryLeak(() -> {
             final long pageSize = Files.PAGE_SIZE;
-            final AtomicBoolean isFailing = new AtomicBoolean();
-            final FilesFacade ff = new TestFilesFacadeImpl() {
-                @Override
-                public boolean allocate(long fd, long size) {
-                    return !isFailing.get() && super.allocate(fd, size);
-                }
-            };
+            final AllocationCountingFacade ff = new AllocationCountingFacade();
             try (Path path = new Path().of(temp.newFile().getAbsolutePath())) {
                 try (MemoryPMARImpl mem = new MemoryPMARImpl(ff, path.$(), pageSize, MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE)) {
                     for (long i = 0, n = pageSize / Long.BYTES - 1; i < n; i++) {
@@ -263,12 +254,12 @@ public class MemoryPMARImplTest {
                     }
                     mem.putShort((short) 7);
                     Assert.assertEquals(pageSize - 6, mem.getAppendOffset());
-                    failJump(mem, isFailing, pageSize - 6);
+                    failJump(mem, ff, pageSize - 6);
                     // mid-page: the put maps the page and writes at the append offset, not at the page start
                     mem.putShort((short) 8);
                     mem.putShort((short) 9);
                     Assert.assertEquals(pageSize - 2, mem.getAppendOffset());
-                    failJump(mem, isFailing, pageSize - 2);
+                    failJump(mem, ff, pageSize - 2);
                     // 2 bytes before the page end: the int crosses into the second page
                     mem.putInt(0x0A0B0C0D);
                     mem.putByte((byte) 10);
@@ -345,13 +336,7 @@ public class MemoryPMARImplTest {
         // value and the value, as a little-endian ByteBuffer models them.
         TestUtils.assertMemoryLeak(() -> {
             final long pageSize = Files.PAGE_SIZE;
-            final AtomicBoolean isFailing = new AtomicBoolean();
-            final FilesFacade ff = new TestFilesFacadeImpl() {
-                @Override
-                public boolean allocate(long fd, long size) {
-                    return !isFailing.get() && super.allocate(fd, size);
-                }
-            };
+            final AllocationCountingFacade ff = new AllocationCountingFacade();
             final long pattern = Unsafe.malloc(pageSize, MemoryTag.NATIVE_DEFAULT);
             final byte[] bin = {1, -2, 3, -4, 5, -6, 7, -8, 9, -10, 11};
             final long binAddress = Unsafe.malloc(bin.length, MemoryTag.NATIVE_DEFAULT);
@@ -443,7 +428,7 @@ public class MemoryPMARImplTest {
                             continue;
                         }
                         for (int commitMode : new int[]{CommitMode.NOSYNC, CommitMode.ASYNC, CommitMode.SYNC}) {
-                            assertFailedPageSwitchPut(ff, isFailing, pattern, putCase, left, commitMode);
+                            assertFailedPageSwitchPut(ff, pattern, putCase, left, commitMode);
                         }
                     }
                 }
@@ -461,37 +446,33 @@ public class MemoryPMARImplTest {
         // point into the released page: a cancel that jumps back into it, and the puts after it, map it again.
         TestUtils.assertMemoryLeak(() -> {
             final long pageSize = Files.PAGE_SIZE;
-            final AtomicBoolean isFailing = new AtomicBoolean();
-            final FilesFacade ff = new TestFilesFacadeImpl() {
-                @Override
-                public boolean allocate(long fd, long size) {
-                    return !isFailing.get() && super.allocate(fd, size);
-                }
-            };
+            final AllocationCountingFacade ff = new AllocationCountingFacade();
             final long longsPerPage = pageSize / Long.BYTES;
             try (Path path = new Path().of(temp.newFile().getAbsolutePath())) {
                 try (MemoryPMARImpl mem = new MemoryPMARImpl(ff, path.$(), pageSize, MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE)) {
                     for (long i = 0; i < longsPerPage; i++) {
                         mem.putLong(i);
                     }
-                    isFailing.set(true);
+                    ff.failingFd.set(mem.getFd());
                     try {
                         mem.putLong(-1);
                         Assert.fail();
                     } catch (CairoException e) {
                         TestUtils.assertContains(e.getFlyweightMessage(), "No space left");
                     }
+                    Assert.assertEquals(-1, ff.failingFd.get());
                     Assert.assertEquals(pageSize, mem.getAppendOffset());
                     Assert.assertEquals(0, mem.getPageAddress(0));
                     // fails again, and still leaves the append offset
+                    ff.failingFd.set(mem.getFd());
                     try {
                         mem.putLong(-1);
                         Assert.fail();
                     } catch (CairoException e) {
                         TestUtils.assertContains(e.getFlyweightMessage(), "No space left");
                     }
+                    Assert.assertEquals(-1, ff.failingFd.get());
                     Assert.assertEquals(pageSize, mem.getAppendOffset());
-                    isFailing.set(false);
                     // a row cancel moves back into the released page
                     mem.jumpTo(pageSize - Long.BYTES);
                     mem.putLong(100);
@@ -514,19 +495,13 @@ public class MemoryPMARImplTest {
         // file holds zeros between the end of the first page and the value.
         TestUtils.assertMemoryLeak(() -> {
             final long pageSize = Files.PAGE_SIZE;
-            final AtomicBoolean isFailing = new AtomicBoolean();
-            final FilesFacade ff = new TestFilesFacadeImpl() {
-                @Override
-                public boolean allocate(long fd, long size) {
-                    return !isFailing.get() && super.allocate(fd, size);
-                }
-            };
+            final AllocationCountingFacade ff = new AllocationCountingFacade();
             final File file = temp.newFile();
             try (Path path = new Path().of(file.getAbsolutePath())) {
                 try (MemoryPMARImpl mem = new MemoryPMARImpl(ff, path.$(), pageSize, MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE)) {
                     fillPage(mem, pageSize);
-                    failPut(mem, isFailing);
-                    failPut(mem, isFailing);
+                    failPut(mem, ff);
+                    failPut(mem, ff);
                     Assert.assertEquals(pageSize, mem.getAppendOffset());
                     mem.jumpTo(3 * pageSize + 5);
                     mem.putLong(99);
@@ -549,15 +524,9 @@ public class MemoryPMARImplTest {
         // With no page mapped after a failed page switch, a sync has no page to msync, and a flush syncs the file
         TestUtils.assertMemoryLeak(() -> {
             final long pageSize = Files.PAGE_SIZE;
-            final AtomicBoolean isFailing = new AtomicBoolean();
             final AtomicInteger msyncCount = new AtomicInteger();
             final AtomicInteger fdatasyncCount = new AtomicInteger();
-            final FilesFacade ff = new TestFilesFacadeImpl() {
-                @Override
-                public boolean allocate(long fd, long size) {
-                    return !isFailing.get() && super.allocate(fd, size);
-                }
-
+            final AllocationCountingFacade ff = new AllocationCountingFacade() {
                 @Override
                 public void fdatasync(long fd) {
                     fdatasyncCount.incrementAndGet();
@@ -575,7 +544,7 @@ public class MemoryPMARImplTest {
                     MemoryPMARImpl mem = new MemoryPMARImpl(ff, path.$(), pageSize, MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE)
             ) {
                 fillPage(mem, pageSize);
-                failPut(mem, isFailing);
+                failPut(mem, ff);
                 msyncCount.set(0);
                 fdatasyncCount.set(0);
                 mem.sync(false);
@@ -593,26 +562,19 @@ public class MemoryPMARImplTest {
         // the append offset the memory kept: the end of the page.
         TestUtils.assertMemoryLeak(() -> {
             final long pageSize = Files.PAGE_SIZE;
-            final AtomicBoolean isFailing = new AtomicBoolean();
-            final FilesFacade ff = new TestFilesFacadeImpl() {
-                @Override
-                public boolean allocate(long fd, long size) {
-                    return !isFailing.get() && super.allocate(fd, size);
-                }
-            };
+            final AllocationCountingFacade ff = new AllocationCountingFacade();
             final File file = temp.newFile();
             try (Path path = new Path().of(file.getAbsolutePath())) {
                 try (MemoryPMARImpl mem = new MemoryPMARImpl(ff, path.$(), pageSize, MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE)) {
                     fillPage(mem, pageSize - 3);
-                    isFailing.set(true);
+                    ff.failingFd.set(mem.getFd());
                     try {
                         mem.putLong(0x0102030405060708L);
                         Assert.fail();
                     } catch (CairoException e) {
                         TestUtils.assertContains(e.getFlyweightMessage(), "No space left");
-                    } finally {
-                        isFailing.set(false);
                     }
+                    Assert.assertEquals(-1, ff.failingFd.get());
                     Assert.assertEquals(pageSize, mem.getAppendOffset());
                     mem.close(true, Vm.TRUNCATE_TO_POINTER);
                 }
@@ -632,18 +594,12 @@ public class MemoryPMARImplTest {
         // a truncate after a failed page switch maps the first page again and appends from offset 0
         TestUtils.assertMemoryLeak(() -> {
             final long pageSize = Files.PAGE_SIZE;
-            final AtomicBoolean isFailing = new AtomicBoolean();
-            final FilesFacade ff = new TestFilesFacadeImpl() {
-                @Override
-                public boolean allocate(long fd, long size) {
-                    return !isFailing.get() && super.allocate(fd, size);
-                }
-            };
+            final AllocationCountingFacade ff = new AllocationCountingFacade();
             final File file = temp.newFile();
             try (Path path = new Path().of(file.getAbsolutePath())) {
                 try (MemoryPMARImpl mem = new MemoryPMARImpl(ff, path.$(), pageSize, MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE)) {
                     fillPage(mem, pageSize);
-                    failPut(mem, isFailing);
+                    failPut(mem, ff);
                     mem.truncate();
                     Assert.assertEquals(0, mem.getAppendOffset());
                     mem.putLong(42);
@@ -713,17 +669,9 @@ public class MemoryPMARImplTest {
         // the failed allocate(), and the put after it the allocate() and the mmap() of the page.
         TestUtils.assertMemoryLeak(() -> {
             final long pageSize = Files.PAGE_SIZE;
-            final AtomicBoolean isFailing = new AtomicBoolean();
-            final AtomicInteger allocateCount = new AtomicInteger();
             final AtomicInteger mmapCount = new AtomicInteger();
             final AtomicInteger munmapCount = new AtomicInteger();
-            final FilesFacade ff = new TestFilesFacadeImpl() {
-                @Override
-                public boolean allocate(long fd, long size) {
-                    allocateCount.incrementAndGet();
-                    return !isFailing.get() && super.allocate(fd, size);
-                }
-
+            final AllocationCountingFacade ff = new AllocationCountingFacade() {
                 @Override
                 public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
                     mmapCount.incrementAndGet();
@@ -741,27 +689,27 @@ public class MemoryPMARImplTest {
                     for (long i = 0, n = 5 * pageSize / Long.BYTES; i < n; i++) {
                         mem.putLong(i);
                     }
-                    Assert.assertEquals(5, allocateCount.get());
+                    Assert.assertEquals(5, ff.allocations.get());
                     Assert.assertEquals(5, mmapCount.get());
                     Assert.assertEquals(4, munmapCount.get());
                 }
                 Assert.assertEquals(5, munmapCount.get());
             }
 
-            allocateCount.set(0);
+            ff.allocations.set(0);
             mmapCount.set(0);
             munmapCount.set(0);
             try (Path path = new Path().of(temp.newFile().getAbsolutePath())) {
                 try (MemoryPMARImpl mem = new MemoryPMARImpl(ff, path.$(), pageSize, MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE)) {
                     fillPage(mem, pageSize);
-                    Assert.assertEquals(1, allocateCount.get());
+                    Assert.assertEquals(1, ff.allocations.get());
                     Assert.assertEquals(1, mmapCount.get());
-                    failPut(mem, isFailing);
-                    Assert.assertEquals(2, allocateCount.get());
+                    failPut(mem, ff);
+                    Assert.assertEquals(2, ff.allocations.get());
                     Assert.assertEquals(1, mmapCount.get());
                     Assert.assertEquals(1, munmapCount.get());
                     mem.putLong(1);
-                    Assert.assertEquals(3, allocateCount.get());
+                    Assert.assertEquals(3, ff.allocations.get());
                     Assert.assertEquals(2, mmapCount.get());
                     Assert.assertEquals(1, munmapCount.get());
                 }

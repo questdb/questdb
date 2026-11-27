@@ -26,11 +26,8 @@ package io.questdb.test.cutlass.pgwire;
 
 import io.questdb.PropertyKey;
 import io.questdb.std.Files;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.str.LPSZ;
-import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.cairo.AllocateFailingFacade;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -42,8 +39,6 @@ import java.sql.Timestamp;
 import java.sql.Types;
 import java.util.Arrays;
 import java.util.Base64;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicLong;
 
 public class PGInsertErrorTest extends BasePGTest {
 
@@ -113,8 +108,7 @@ public class PGInsertErrorTest extends BasePGTest {
         // A table without a designated timestamp, BINARY first: the bound BINARY value of the prepared INSERT, the first
         // value of the row, crosses the end of the page of b.d, which cannot be allocated. The INSERT fails, and the
         // same prepared statement, executed twice more, lands its rows after the committed ones.
-        final AtomicBoolean isArmed = new AtomicBoolean();
-        final FilesFacade facade = allocateFailingFacade("b.d", isArmed);
+        final AllocateFailingFacade facade = new AllocateFailingFacade("t", "b.d");
         assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
             // values of 8 + 92 bytes: the next one crosses the end of the first page of b.d
             final long n = Files.PAGE_SIZE / 100;
@@ -126,7 +120,7 @@ public class PGInsertErrorTest extends BasePGTest {
                 statement.execute("INSERT INTO t SELECT from_base64('" + Base64.getEncoder().encodeToString(committed) + "'), x FROM long_sequence(" + n + ")");
             }
             try (PreparedStatement insert = connection.prepareStatement("INSERT INTO t VALUES (?, ?)")) {
-                isArmed.set(true);
+                facade.isArmed.set(true);
                 insert.setBytes(1, bytesOf('B', 92));
                 insert.setLong(2, n + 1);
                 try {
@@ -135,7 +129,7 @@ public class PGInsertErrorTest extends BasePGTest {
                 } catch (SQLException e) {
                     TestUtils.assertContains(e.getMessage(), "No space left");
                 }
-                Assert.assertFalse(isArmed.get());
+                Assert.assertFalse(facade.isArmed.get());
                 insert.setBytes(1, c);
                 insert.setLong(2, n + 2);
                 insert.execute();
@@ -167,22 +161,21 @@ public class PGInsertErrorTest extends BasePGTest {
         // A table without a designated timestamp: an INSERT of NULLs only, whose NULL of s needs the next page of s.d
         // after the NULL of x landed, fails. A prepared INSERT, executed twice, lands its rows after the committed
         // ones.
-        final AtomicBoolean isArmed = new AtomicBoolean();
-        final FilesFacade facade = allocateFailingFacade("s.d", isArmed);
+        final AllocateFailingFacade facade = new AllocateFailingFacade("t", "s.d");
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             // 'abcdef' takes 16 bytes of s.d: the committed rows end its first page
             final long n = Files.PAGE_SIZE / 16;
             try (Statement statement = connection.createStatement()) {
                 statement.execute("CREATE TABLE t (x LONG, s STRING)");
                 statement.execute("INSERT INTO t SELECT x, 'abcdef' FROM long_sequence(" + n + ")");
-                isArmed.set(true);
+                facade.isArmed.set(true);
                 try {
                     statement.execute("INSERT INTO t VALUES (NULL, NULL)");
                     Assert.fail();
                 } catch (SQLException e) {
                     TestUtils.assertContains(e.getMessage(), "No space left");
                 }
-                Assert.assertFalse(isArmed.get());
+                Assert.assertFalse(facade.isArmed.get());
             }
             try (PreparedStatement insert = connection.prepareStatement("INSERT INTO t VALUES (?, ?)")) {
                 insert.setLong(1, n + 2);
@@ -204,29 +197,6 @@ public class PGInsertErrorTest extends BasePGTest {
             setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, Files.PAGE_SIZE);
             AbstractCairoTest.ff = facade;
         });
-    }
-
-    // fails, once when armed, the allocation of disk space for the file of table t
-    private static FilesFacade allocateFailingFacade(String fileName, AtomicBoolean isArmed) {
-        final AtomicLong fileFd = new AtomicLong(-1);
-        return new TestFilesFacadeImpl() {
-            @Override
-            public boolean allocate(long fd, long size) {
-                if (fd == fileFd.get() && isArmed.compareAndSet(true, false)) {
-                    return false;
-                }
-                return super.allocate(fd, size);
-            }
-
-            @Override
-            public long openRW(LPSZ name, int opts) {
-                final long fd = super.openRW(name, opts);
-                if (Utf8s.containsAscii(name, Files.SEPARATOR + "t~") && Utf8s.endsWithAscii(name, Files.SEPARATOR + fileName)) {
-                    fileFd.set(fd);
-                }
-                return fd;
-            }
-        };
     }
 
     private static byte[] bytesOf(char c, int len) {

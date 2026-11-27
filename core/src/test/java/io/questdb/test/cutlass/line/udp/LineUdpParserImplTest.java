@@ -48,24 +48,23 @@ import io.questdb.std.NumericException;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
-import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.AllocateFailingFacade;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.cairo.TestFilesFacade;
 import io.questdb.test.cairo.TestTableReaderRecordCursor;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestMicroClock;
-import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicLong;
 
 public class LineUdpParserImplTest extends AbstractCairoTest {
 
@@ -921,26 +920,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
         // page of s.d, which cannot be allocated. The row marks no column. The parser logs the error and leaves the row
         // in progress; the newRow() of the next line cancels it, and the lines after the failed one land as they are.
         setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, Files.PAGE_SIZE);
-        final AtomicBoolean isArmed = new AtomicBoolean();
-        final AtomicLong stringFd = new AtomicLong(-1);
-        final FilesFacade ff = new TestFilesFacadeImpl() {
-            @Override
-            public boolean allocate(long fd, long size) {
-                if (fd == stringFd.get() && isArmed.compareAndSet(true, false)) {
-                    return false;
-                }
-                return super.allocate(fd, size);
-            }
-
-            @Override
-            public long openRW(LPSZ name, int opts) {
-                final long fd = super.openRW(name, opts);
-                if (Utf8s.containsAscii(name, Files.SEPARATOR + "udp_nots~") && Utf8s.endsWithAscii(name, Files.SEPARATOR + "s.d")) {
-                    stringFd.set(fd);
-                }
-                return fd;
-            }
-        };
+        final AllocateFailingFacade ff = new AllocateFailingFacade("udp_nots", "s.d");
         assertMemoryLeak(ff, () -> {
             execute("CREATE TABLE udp_nots (x LONG, s STRING)");
             // 'abcdef' takes 16 bytes of s.d: the committed rows and the first line end s.d 48 bytes before the end of
@@ -952,14 +932,14 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
                     LineUdpLexer lexer = new LineUdpLexer(4096)
             ) {
                 lexer.withParser(parser);
-                isArmed.set(true);
+                ff.isArmed.set(true);
                 parseDatagram(lexer, "udp_nots s=\"abcdef\",x=" + (n + 1) + "i\n"
                         + "udp_nots s=\"" + "z".repeat(30) + "\",x=" + (n + 2) + "i\n"
                         + "udp_nots s=\"next\",x=" + (n + 3) + "i\n"
                         + "udp_nots x=" + (n + 4) + "i\n");
                 lexer.parseLast();
                 parser.commitAll();
-                Assert.assertFalse(isArmed.get());
+                Assert.assertFalse(ff.isArmed.get());
             }
             assertQuery("SELECT x, s FROM udp_nots WHERE x >= " + (n - 1) + " OR x IS NULL")
                     .noLeakCheck()

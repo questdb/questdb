@@ -43,9 +43,6 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
-
 import static io.questdb.cairo.VarcharTypeDriver.VARCHAR_AUX_WIDTH_BYTES;
 import static io.questdb.cairo.VarcharTypeDriver.VARCHAR_MAX_BYTES_FULLY_INLINED;
 
@@ -476,7 +473,7 @@ public class VarcharTypeDriverTest extends AbstractTest {
 
     private static void assertRewind(CancelledRow cancelled) throws Exception {
         final String context = cancelled.toString();
-        final CountingFacade ff = new CountingFacade();
+        final AllocationCountingFacade ff = new AllocationCountingFacade();
         final long pageSize = Files.PAGE_SIZE;
         final ObjList<String> values = new ObjList<>();
         final long committedRows = switch (cancelled) {
@@ -551,7 +548,7 @@ public class VarcharTypeDriverTest extends AbstractTest {
     }
 
     // the put of the value fails where it needs a page of the file of fd, which cannot be allocated
-    private static void failAppend(String context, CountingFacade ff, long fd, MemoryMA auxMem, MemoryMA dataMem, String value) {
+    private static void failAppend(String context, AllocationCountingFacade ff, long fd, MemoryMA auxMem, MemoryMA dataMem, String value) {
         ff.failingFd.set(fd);
         try {
             VarcharTypeDriver.appendValue(auxMem, dataMem, utf8Of(value));
@@ -584,20 +581,5 @@ public class VarcharTypeDriverTest extends AbstractTest {
         VALUE_CUT_BY_FAILED_PAGE,
         // a value, whose aux entry needs the next page of the aux file, which cannot be allocated
         VALUE_WITH_FAILED_AUX_PAGE
-    }
-
-    // counts the allocations of disk space, and fails, once, the next one for one file
-    private static class CountingFacade extends TestFilesFacadeImpl {
-        final AtomicInteger allocations = new AtomicInteger();
-        final AtomicLong failingFd = new AtomicLong(-1);
-
-        @Override
-        public boolean allocate(long fd, long size) {
-            allocations.incrementAndGet();
-            if (failingFd.compareAndSet(fd, -1)) {
-                return false;
-            }
-            return super.allocate(fd, size);
-        }
     }
 }

@@ -52,11 +52,11 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.DateLocale;
-import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.AllocateFailingFacade;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cairo.TestFilesFacade;
 import io.questdb.test.cairo.TestTableReaderRecordCursor;
@@ -78,7 +78,6 @@ import java.util.HashSet;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
 
 import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
 
@@ -1317,26 +1316,7 @@ public class TextLoaderTest extends AbstractCairoTest {
         // SKIP_ALL rolls the import back, and the rollback must not take the failed row for a row in progress: the
         // import fails with the error of the row, not with a distressed writer, and the committed rows stay.
         setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, Files.PAGE_SIZE);
-        final AtomicBoolean isArmed = new AtomicBoolean();
-        final AtomicLong timestampFd = new AtomicLong(-1);
-        final FilesFacade ff = new TestFilesFacadeImpl() {
-            @Override
-            public boolean allocate(long fd, long size) {
-                if (fd == timestampFd.get() && isArmed.compareAndSet(true, false)) {
-                    return false;
-                }
-                return super.allocate(fd, size);
-            }
-
-            @Override
-            public long openRW(LPSZ name, int opts) {
-                final long fd = super.openRW(name, opts);
-                if (Utf8s.containsAscii(name, Files.SEPARATOR + "test~") && Utf8s.endsWithAscii(name, Files.SEPARATOR + "ts.d")) {
-                    timestampFd.set(fd);
-                }
-                return fd;
-            }
-        };
+        final AllocateFailingFacade ff = new AllocateFailingFacade("test", "ts.d");
         assertMemoryLeak(ff, () -> {
             execute("CREATE TABLE test (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
             execute("INSERT INTO test SELECT x::TIMESTAMP, x FROM long_sequence(3)");
@@ -1351,14 +1331,14 @@ public class TextLoaderTest extends AbstractCairoTest {
                 textLoader.setForceHeaders(true);
                 // no commit before the failed row
                 textLoader.setMaxUncommittedRows((int) rowsPerPage * 2);
-                isArmed.set(true);
+                ff.isArmed.set(true);
                 try {
                     playText0(textLoader, csv.toString(), csv.length(), NOOP_TRANSFORMER);
                     Assert.fail();
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "No space left");
                 }
-                Assert.assertFalse(isArmed.get());
+                Assert.assertFalse(ff.isArmed.get());
             }
             final String committed = "ts\tv\n"
                     + timestampOf(1) + "\t1\n"
@@ -2357,8 +2337,8 @@ public class TextLoaderTest extends AbstractCairoTest {
         // cannot be allocated. append() throws and the import fails; the rollback of the writer, which holds the row
         // in progress, distresses it. The committed rows stay, and the next INSERT lands with a new writer.
         setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, Files.PAGE_SIZE);
-        final AtomicBoolean isArmed = new AtomicBoolean();
-        assertMemoryLeak(stringPageFailingFacade(isArmed), () -> {
+        final AllocateFailingFacade ff = new AllocateFailingFacade("test", "s.d");
+        assertMemoryLeak(ff, () -> {
             // 'abcdef' takes 16 bytes of s.d: the committed rows and the first row of the import end its first page
             final long n = Files.PAGE_SIZE / 16 - 1;
             execute("CREATE TABLE test (x LONG, s STRING)");
@@ -2367,14 +2347,14 @@ public class TextLoaderTest extends AbstractCairoTest {
             try (TextLoader textLoader = new TextLoader(engine)) {
                 configureLoaderDefaults(textLoader, (byte) ',', Atomicity.SKIP_ROW);
                 textLoader.setForceHeaders(true);
-                isArmed.set(true);
+                ff.isArmed.set(true);
                 try {
                     playText0(textLoader, csv, 1024, NOOP_TRANSFORMER);
                     Assert.fail();
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "No space left");
                 }
-                Assert.assertFalse(isArmed.get());
+                Assert.assertFalse(ff.isArmed.get());
             }
             assertQuery("SELECT count(), sum(x) FROM test")
                     .noLeakCheck()
@@ -2394,8 +2374,8 @@ public class TextLoaderTest extends AbstractCairoTest {
         // field, crosses the end of the page of s.d, which cannot be allocated. The row marks no column; SKIP_ROW
         // cancels it, and the rows after it land as they are.
         setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, Files.PAGE_SIZE);
-        final AtomicBoolean isArmed = new AtomicBoolean();
-        assertMemoryLeak(stringPageFailingFacade(isArmed), () -> {
+        final AllocateFailingFacade ff = new AllocateFailingFacade("test", "s.d");
+        assertMemoryLeak(ff, () -> {
             // 'abcdef' takes 16 bytes of s.d: the committed rows and the first row of the import end s.d 32 bytes
             // before the end of its first page, and the value of 30 chars takes 64
             final long n = Files.PAGE_SIZE / 16 - 3;
@@ -2409,9 +2389,9 @@ public class TextLoaderTest extends AbstractCairoTest {
             try (TextLoader textLoader = new TextLoader(engine)) {
                 configureLoaderDefaults(textLoader, (byte) ',', Atomicity.SKIP_ROW);
                 textLoader.setForceHeaders(true);
-                isArmed.set(true);
+                ff.isArmed.set(true);
                 playText0(textLoader, csv, 1024, NOOP_TRANSFORMER);
-                Assert.assertFalse(isArmed.get());
+                Assert.assertFalse(ff.isArmed.get());
                 Assert.assertEquals(3, textLoader.getWrittenLineCount());
             }
             assertQuery("SELECT x, s FROM test WHERE x >= " + (n - 1) + " OR x IS NULL")
@@ -4152,29 +4132,6 @@ public class TextLoaderTest extends AbstractCairoTest {
     @SafeVarargs
     private static <T> Set<T> setOf(T... elements) {
         return new HashSet<>(Arrays.asList(elements));
-    }
-
-    // fails, once when armed, the allocation of disk space for s.d of table test
-    private static FilesFacade stringPageFailingFacade(AtomicBoolean isArmed) {
-        final AtomicLong stringFd = new AtomicLong(-1);
-        return new TestFilesFacadeImpl() {
-            @Override
-            public boolean allocate(long fd, long size) {
-                if (fd == stringFd.get() && isArmed.compareAndSet(true, false)) {
-                    return false;
-                }
-                return super.allocate(fd, size);
-            }
-
-            @Override
-            public long openRW(LPSZ name, int opts) {
-                final long fd = super.openRW(name, opts);
-                if (Utf8s.containsAscii(name, Files.SEPARATOR + "test~") && Utf8s.endsWithAscii(name, Files.SEPARATOR + "s.d")) {
-                    stringFd.set(fd);
-                }
-                return fd;
-            }
-        };
     }
 
     private static String timestampOf(long micros) {

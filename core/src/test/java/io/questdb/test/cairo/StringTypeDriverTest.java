@@ -39,14 +39,11 @@ import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractTest;
 import io.questdb.test.griffin.engine.TestBinarySequence;
-import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
 import java.util.Arrays;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
 
 public class StringTypeDriverTest extends AbstractTest {
 
@@ -74,7 +71,7 @@ public class StringTypeDriverTest extends AbstractTest {
 
     private static void assertRewind(StringTypeDriver driver, boolean isBinary, CancelledRow cancelled) throws Exception {
         final String context = (isBinary ? "BINARY, " : "STRING, ") + cancelled;
-        final CountingFacade ff = new CountingFacade();
+        final AllocationCountingFacade ff = new AllocationCountingFacade();
         final long pageSize = Files.PAGE_SIZE;
         // the committed values
         final ObjList<Object> values = new ObjList<>();
@@ -198,7 +195,7 @@ public class StringTypeDriverTest extends AbstractTest {
     }
 
     // the put of the value fails where it needs a page of the file of fd, which cannot be allocated
-    private static void failAppend(String context, CountingFacade ff, long fd, MemoryMA auxMem, MemoryMA dataMem, boolean isBinary, Object value) {
+    private static void failAppend(String context, AllocationCountingFacade ff, long fd, MemoryMA auxMem, MemoryMA dataMem, boolean isBinary, Object value) {
         ff.failingFd.set(fd);
         try {
             append(auxMem, dataMem, isBinary, value);
@@ -247,20 +244,5 @@ public class StringTypeDriverTest extends AbstractTest {
         VALUE_CUT_BY_FAILED_PAGE,
         // a value, whose offset needs the next page of the aux file, which cannot be allocated
         VALUE_WITH_FAILED_AUX_PAGE
-    }
-
-    // counts the allocations of disk space, and fails, once, the next one for one file
-    private static class CountingFacade extends TestFilesFacadeImpl {
-        final AtomicInteger allocations = new AtomicInteger();
-        final AtomicLong failingFd = new AtomicLong(-1);
-
-        @Override
-        public boolean allocate(long fd, long size) {
-            allocations.incrementAndGet();
-            if (failingFd.compareAndSet(fd, -1)) {
-                return false;
-            }
-            return super.allocate(fd, size);
-        }
     }
 }

@@ -2346,39 +2346,6 @@ public class AppendPageFailureTest extends AbstractCairoTest {
     }
 
     /**
-     * Fails, once when armed, the allocation of disk space for one file of one table: the file that the writer
-     * opened last under that name, with or without the column name txn that a column added later has.
-     */
-    private static class AllocateFailingFacade extends TestFilesFacadeImpl {
-        final AtomicBoolean isArmed = new AtomicBoolean();
-        private final TableFile file;
-
-        AllocateFailingFacade(String tableName, String fileName) {
-            this.file = new TableFile(tableName, fileName);
-        }
-
-        @Override
-        public boolean allocate(long fd, long size) {
-            if (file.is(fd) && isArmed.compareAndSet(true, false)) {
-                onAllocationFailed();
-                return false;
-            }
-            return super.allocate(fd, size);
-        }
-
-        @Override
-        public long openRW(LPSZ name, int opts) {
-            final long fd = super.openRW(name, opts);
-            file.onOpen(name, fd);
-            return fd;
-        }
-
-        // the facade failed the allocation
-        void onAllocationFailed() {
-        }
-    }
-
-    /**
      * Writes random rows to t and ref through their writers, the same rows to both, and makes rows of t fail where
      * a file of t needs a page. ONCE: the next allocation of one file fails. MMAP: so does the next mapping of that
      * file after it, which a cancel that moves the file back into the page before makes, and the writer gets
@@ -3033,32 +3000,8 @@ public class AppendPageFailureTest extends AbstractCairoTest {
         }
 
         @Override
-        void onAllocationFailed() {
+        protected void onAllocationFailed() {
             isMmapFailing.set(true);
-        }
-    }
-
-    // one file of one table: the descriptor that the writer opened it under last, with or without the column name txn
-    // that a column added later has
-    private static class TableFile {
-        private final String fileSuffix;
-        private final String tableDirPrefix;
-        private volatile long fd = -1;
-
-        TableFile(String tableName, String fileName) {
-            this.tableDirPrefix = Files.SEPARATOR + tableName + '~';
-            this.fileSuffix = Files.SEPARATOR + fileName;
-        }
-
-        boolean is(long fd) {
-            return fd == this.fd;
-        }
-
-        void onOpen(LPSZ name, long fd) {
-            if (Utf8s.containsAscii(name, tableDirPrefix)
-                    && (Utf8s.endsWithAscii(name, fileSuffix) || Utf8s.containsAscii(name, fileSuffix + '.'))) {
-                this.fd = fd;
-            }
         }
     }
 }

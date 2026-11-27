@@ -39,6 +39,7 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.AllocateFailingFacade;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -52,7 +53,6 @@ import org.junit.Test;
 import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
 
 import static org.junit.Assume.assumeFalse;
 
@@ -2279,35 +2279,17 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
         node1.setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, Files.PAGE_SIZE);
         // the lines commit when the context closes
         node1.setProperty(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 1000);
-        final AtomicBoolean isArmed = new AtomicBoolean();
-        final AtomicLong stringFd = new AtomicLong(-1);
+        final AllocateFailingFacade ff = new AllocateFailingFacade(table, "s.d");
         runInContext(
-                new TestFilesFacadeImpl() {
-                    @Override
-                    public boolean allocate(long fd, long size) {
-                        if (fd == stringFd.get() && isArmed.compareAndSet(true, false)) {
-                            return false;
-                        }
-                        return super.allocate(fd, size);
-                    }
-
-                    @Override
-                    public long openRW(LPSZ name, int opts) {
-                        final long fd = super.openRW(name, opts);
-                        if (Utf8s.containsAscii(name, Files.SEPARATOR + table + '~') && Utf8s.endsWithAscii(name, Files.SEPARATOR + "s.d")) {
-                            stringFd.set(fd);
-                        }
-                        return fd;
-                    }
-                },
+                ff,
                 () -> {
                     execute("CREATE TABLE " + table + " (x LONG, s STRING)");
                     execute("INSERT INTO " + table + " SELECT x, 'abcdef' FROM long_sequence(" + n + ")");
-                    isArmed.set(true);
+                    ff.isArmed.set(true);
                     recvBuffer = lines;
                     handleIO();
                     closeContext();
-                    Assert.assertFalse(isArmed.get());
+                    Assert.assertFalse(ff.isArmed.get());
                     assertQuery("SELECT x, s FROM " + table + " WHERE x >= " + (n - 1) + " OR x IS NULL")
                             .noLeakCheck()
                             .returns("x\ts\n"
