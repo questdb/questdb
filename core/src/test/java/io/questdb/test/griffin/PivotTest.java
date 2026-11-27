@@ -1495,7 +1495,6 @@ public class PivotTest extends AbstractSqlParserTest {
                     ORDER BY v
                     """)
                     .noLeakCheck()
-                    .expectSize()
                     .returns("""
                             v
                             10
@@ -4467,9 +4466,10 @@ public class PivotTest extends AbstractSqlParserTest {
                                 SelectedRecord
                                     AsOf Join Light
                                       condition: B.vehicle_id=A.vehicle_id
-                                        Encode sort light
+                                        Encode sort
                                           keys: [timestamp, vehicle_id]
-                                            GroupBy vectorized: false
+                                            Stream Group By
+                                              segmentKey: timestamp
                                               keys: [timestamp,vehicle_id]
                                               values: [first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i000',avg(int_value),NaN)])),first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i001',avg(int_value),NaN)])),first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i002',avg(int_value),NaN)])),first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i003',avg(int_value),NaN)])),first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i004',avg(int_value),NaN)])),first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i005',avg(int_value),NaN)])),first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i006',avg(int_value),NaN)])),first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i007',avg(int_value),NaN)])),first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i008',avg(int_value),NaN)])),first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i009',avg(int_value),NaN)]))]
                                                 Async Stream Group By workers: 1
@@ -6126,9 +6126,9 @@ public class PivotTest extends AbstractSqlParserTest {
                         GROUP BY ts
                     ) ORDER BY ts
                     """)
+                    .noRandomAccess()
                     .noLeakCheck()
                     .timestamp("ts")
-                    .expectSize()
                     .returns("""
                             ts\tA\tB
                             2024-01-01T00:00:00.000000Z\t10\t20
@@ -6181,24 +6181,22 @@ public class PivotTest extends AbstractSqlParserTest {
                         side in ('buy', 'sell')
                     GROUP BY timestamp
                   ) order by timestamp;""")
+                .noRandomAccess()
                 .ddl(ddlTrades)
                 .timestamp("timestamp")
                 .mutateWith(dmlTrades)
-                .expectSize()
                 .withPlan("""
-                        Encode sort light
+                        Stream Group By
                           keys: [timestamp]
-                            GroupBy vectorized: false
-                              keys: [timestamp]
-                              values: [first_not_null(case([(symbol='ETH-USDT' and side='buy'),sum(price),NaN])),first_not_null(case([(symbol='ETH-USDT' and side='sell'),sum(price),NaN]))]
-                                Async Stream Group By workers: 1
-                                  segmentKey: timestamp
-                                  keys: [timestamp,symbol,side]
-                                  values: [sum(price)]
-                                  filter: (symbol in [ETH-USDT] and symbol in [ETH-USDT] and side in [buy,sell])
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: trades
+                          values: [first_not_null(case([(symbol='ETH-USDT' and side='buy'),sum(price),NaN])),first_not_null(case([(symbol='ETH-USDT' and side='sell'),sum(price),NaN]))]
+                            Async Stream Group By workers: 1
+                              segmentKey: timestamp
+                              keys: [timestamp,symbol,side]
+                              values: [sum(price)]
+                              filter: (symbol in [ETH-USDT] and symbol in [ETH-USDT] and side in [buy,sell])
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: trades
                         """)
                 .returns("timestamp\tETH-USDT_buy\tETH-USDT_sell\n", """
                         timestamp\tETH-USDT_buy\tETH-USDT_sell
@@ -6221,14 +6219,13 @@ public class PivotTest extends AbstractSqlParserTest {
                         side in ('buy', 'sell')
                     GROUP BY timestamp
                   ) order by timestamp LIMIT 3;""")
+                .noRandomAccess()
                 .ddl(ddlTrades)
                 .timestamp("timestamp")
                 .mutateWith(dmlTrades)
-                .expectSize()
                 .withPlan("""
-                        Long Top K lo: 3
-                          keys: [timestamp asc]
-                            GroupBy vectorized: false
+                        Limit value: 3 skip-rows-max: 0 take-rows-max: 3
+                            Stream Group By
                               keys: [timestamp]
                               values: [first_not_null(case([(symbol='ETH-USDT' and side='buy'),sum(price),NaN])),first_not_null(case([(symbol='ETH-USDT' and side='sell'),sum(price),NaN]))]
                                 Async JIT Stream Group By workers: 1
@@ -6258,24 +6255,22 @@ public class PivotTest extends AbstractSqlParserTest {
                         side in ('buy', 'sell')
                     GROUP BY timestamp
                   ) ORDER BY timestamp ASC;""")
+                .noRandomAccess()
                 .ddl(ddlTrades)
                 .timestampAsc("timestamp")
                 .mutateWith(dmlTrades)
-                .expectSize()
                 .withPlan("""
-                        Encode sort light
+                        Stream Group By
                           keys: [timestamp]
-                            GroupBy vectorized: false
-                              keys: [timestamp]
-                              values: [first_not_null(case([(symbol='ETH-USDT' and side='buy'),sum(price),NaN])),first_not_null(case([(symbol='ETH-USDT' and side='sell'),sum(price),NaN]))]
-                                Async JIT Stream Group By workers: 1
-                                  segmentKey: timestamp
-                                  keys: [timestamp,symbol,side]
-                                  values: [sum(price)]
-                                  filter: (symbol in [ETH-USDT] and side in [buy,sell])
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: trades
+                          values: [first_not_null(case([(symbol='ETH-USDT' and side='buy'),sum(price),NaN])),first_not_null(case([(symbol='ETH-USDT' and side='sell'),sum(price),NaN]))]
+                            Async JIT Stream Group By workers: 1
+                              segmentKey: timestamp
+                              keys: [timestamp,symbol,side]
+                              values: [sum(price)]
+                              filter: (symbol in [ETH-USDT] and side in [buy,sell])
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: trades
                         """)
                 .returns("timestamp\tETH-USDT_buy\tETH-USDT_sell\n", """
                         timestamp\tETH-USDT_buy\tETH-USDT_sell
@@ -6301,11 +6296,10 @@ public class PivotTest extends AbstractSqlParserTest {
                 .ddl(ddlTrades)
                 .timestampDesc("timestamp")
                 .mutateWith(dmlTrades)
-                .expectSize()
                 .withPlan("""
-                        Encode sort light
+                        Encode sort
                           keys: [timestamp desc]
-                            GroupBy vectorized: false
+                            Stream Group By
                               keys: [timestamp]
                               values: [first_not_null(case([(symbol='ETH-USDT' and side='buy'),sum(price),NaN])),first_not_null(case([(symbol='ETH-USDT' and side='sell'),sum(price),NaN]))]
                                 Async JIT Stream Group By workers: 1
@@ -6347,8 +6341,8 @@ public class PivotTest extends AbstractSqlParserTest {
                             """;
 
             assertQuery(pivotQuery)
+                    .noRandomAccess()
                     .timestampAsc("timestamp")
-                    .expectSize()
                     .returns("""
                             timestamp\tETH-USDT_buy\tETH-USDT_sell
                             2024-12-19T08:10:00.700999Z\tnull\t3678.25
@@ -6385,7 +6379,8 @@ public class PivotTest extends AbstractSqlParserTest {
                         GroupBy vectorized: false
                           keys: [timestamp]
                           values: [first_not_null(case([(symbol='BTC-USD' and side='buy'),sum(price),NaN])),first_not_null(case([(symbol='BTC-USD' and side='sell'),sum(price),NaN]))]
-                            GroupBy vectorized: false
+                            Stream Group By
+                              segmentKey: timestamp
                               keys: [timestamp,symbol,side]
                               values: [sum(price)]
                                 Async Stream Group By workers: 1
@@ -6553,7 +6548,7 @@ public class PivotTest extends AbstractSqlParserTest {
                             FOR sensor_name IN (select distinct sensor_name FROM sensors where sensor_name like 'i%' ORDER BY sensor_name LIMIT 1)
                             GROUP BY timestamp, vehicle_id
                         )
-                        ORDER BY timestamp
+                        ORDER BY timestamp, vehicle_id
                         LIMIT 10
                     )
                     UNION
@@ -6564,7 +6559,7 @@ public class PivotTest extends AbstractSqlParserTest {
                             FOR sensor_name IN (select distinct sensor_name FROM sensors where sensor_name like 'i%' ORDER BY sensor_name LIMIT 1)
                             GROUP BY timestamp, vehicle_id
                         )
-                        ORDER BY timestamp
+                        ORDER BY timestamp, vehicle_id
                         LIMIT -10
                     );""";
 
@@ -6575,9 +6570,10 @@ public class PivotTest extends AbstractSqlParserTest {
                             UnionSymbolCast
                               functions: [timestamp,vehicle_id::symbol,i000]
                                 Union
-                                    Long Top K lo: 10
-                                      keys: [timestamp asc]
-                                        GroupBy vectorized: false
+                                    Encode sort lo: 10 partiallySorted: true
+                                      keys: [timestamp, vehicle_id]
+                                        Stream Group By
+                                          segmentKey: timestamp
                                           keys: [timestamp,vehicle_id]
                                           values: [first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i000',avg(int_value),NaN)]))]
                                             Async JIT Stream Group By workers: 1
@@ -6588,9 +6584,10 @@ public class PivotTest extends AbstractSqlParserTest {
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: sensors
-                                    Encode sort light lo: -10
-                                      keys: [timestamp]
-                                        GroupBy vectorized: false
+                                    Encode sort lo: -10
+                                      keys: [timestamp, vehicle_id]
+                                        Stream Group By
+                                          segmentKey: timestamp
                                           keys: [timestamp,vehicle_id]
                                           values: [first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i000',avg(int_value),NaN)]))]
                                             Async JIT Stream Group By workers: 1

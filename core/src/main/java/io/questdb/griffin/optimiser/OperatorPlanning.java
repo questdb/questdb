@@ -117,7 +117,6 @@ final class OperatorPlanning implements Mutable {
         return TreeWalk.CONTINUE;
     };
     private final IntHashSet columnIds;
-    private final MonotonicTimestampFunctionFactory.ConstantArguments constantArguments = new MonotonicTimestampFunctionFactory.ConstantArguments();
     private final CairoConfiguration configuration;
     private final OptimiserContext context;
     private final ObjList<JoinInput> generatedInputs = new ObjList<>();
@@ -740,81 +739,6 @@ final class OperatorPlanning implements Mutable {
     }
 
     /**
-     * The column of {@code base} that the column {@code columnId} of {@code plan} passes through, -1 when a projection
-     * between them computes it or another operator separates them.
-     */
-    private static int sourceColumnId(LogicalPlan plan, LogicalPlan base, int columnId) {
-        while (plan != base && columnId >= 0) {
-            switch (plan) {
-                case ProjectPlan project -> columnId = LogicalPlans.projectedSourceColumnId(project, columnId);
-                case FilterPlan _ -> {
-                }
-                default -> {
-                    return -1;
-                }
-            }
-            plan = plan.inputAt(0);
-        }
-        return columnId;
-    }
-
-    /**
-     * The column of the aggregate's input whose values never decrease along the input rows, -1 for none: the designated
-     * timestamp of a base read forward, or of any page frame base of a parallel GROUP BY, which reads the frames in the
-     * order it picks, unless the scan order does not vouch for it, see {@link #isTimestampUnvouched}; or the column of
-     * a long_sequence() read under filters. Projections between the aggregate and its base pass the column through.
-     */
-    private int ascendingInputColumnId(GroupingPlan grouping, LogicalPlan base, boolean isFrameOrderPicked) {
-        int baseColumnId = -1;
-        final PhysicalProperties.ScanDirection direction = scanDirection(base);
-        if ((direction == PhysicalProperties.ScanDirection.FORWARD || isFrameOrderPicked && direction == PhysicalProperties.ScanDirection.BACKWARD)
-                && !isTimestampUnvouched(grouping.getChild())) {
-            final int timestampIndex = timestampIndex(base);
-            if (timestampIndex >= 0) {
-                baseColumnId = base.getOutput().getColumnId(timestampIndex);
-            }
-        }
-        if (baseColumnId < 0) {
-            LogicalPlan source = base;
-            while (source instanceof FilterPlan filter) {
-                source = filter.getChild();
-            }
-            // the aggregate may read none of its columns, as a DISTINCT of constants does
-            if (source instanceof FunctionSourcePlan function && function.isLongSequence() && function.getOutput().getColumnCount() > 0) {
-                baseColumnId = function.getOutput().getColumnId(0);
-            }
-        }
-        return baseColumnId;
-    }
-
-    /**
-     * True when the scan order, read through projections and filters, does not vouch for the designated timestamp: a
-     * TIMESTAMP clause declares a column its input does not designate, which only the user vouches for, on a projection
-     * or on a table scan, or a table scan reads its rows through an index rather than page frame by page frame.
-     */
-    private static boolean isTimestampUnvouched(LogicalPlan plan) {
-        while (true) {
-            switch (plan) {
-                case ProjectPlan project -> {
-                    if (project.hasTimestampDeclaration() && PhysicalProperties.timestampSource(project) != 0) {
-                        return true;
-                    }
-                    plan = project.getChild();
-                }
-                case FilterPlan filter -> plan = filter.getChild();
-                case ScanPlan scan -> {
-                    final OutputSchema output = scan.getOutput();
-                    return output.getTimestampIndex() >= 0 && output.getTimestampColumnId() != scan.getNativeTimestampColumnId()
-                            || scan.getAccessPath() != ScanPlan.AccessPath.PAGE_FRAMES;
-                }
-                default -> {
-                    return false;
-                }
-            }
-        }
-    }
-
-    /**
      * Decides whether the GROUP BY streams, see {@link AggregatePlan#getStreamKeyIndex()}, and records it. A GROUP BY
      * keeps its map when its consumer bounds a sort by one LONG column, or a TIMESTAMP column other than the stream
      * key, by a top-K count: the long top-K of the map scans the map in place. A stream GROUP BY scans its input
@@ -869,10 +793,9 @@ final class OperatorPlanning implements Mutable {
                 || aggregate.hasSharedConsumers() || !isParallel && algorithm != AggregatePlan.Algorithm.SERIAL || !isStreamable(aggregate, base)) {
             return -1;
         }
-        final int ascendingColumnId = ascendingInputColumnId(aggregate, base, isParallel);
         final ObjList<BoundExpression> keys = aggregate.getGroupingExpressions();
-        for (int i = 0, n = keys.size(); ascendingColumnId >= 0 && i < n; i++) {
-            if (isAscendingKey(aggregate, base, keys.getQuick(i), ascendingColumnId)) {
+        for (int i = 0, n = keys.size(); i < n; i++) {
+            if (isAscendingKey(aggregate, keys.getQuick(i), isParallel)) {
                 return i;
             }
         }
@@ -880,19 +803,22 @@ final class OperatorPlanning implements Mutable {
     }
 
     /**
-     * True when the key never decreases along the input rows of the grouping: a TIMESTAMP, LONG or INT that reads the
-     * ascending column of the input, see {@link #ascendingInputColumnId}, of the same type or through a call that
-     * keeps its order, see {@link #orderSource}.
+     * True when the key never decreases along the input rows of the grouping: a TIMESTAMP, LONG or INT that reads, of
+     * its own type or through calls that keep its order, see {@link MonotonicTimestampFunctionFactory#orderSource}, a
+     * column the input is ordered by, see {@link PhysicalProperties#isOrderedBy}: forward, or backward under a GROUP BY
+     * that reads the page frames of its input in the order it picks.
      */
-    private boolean isAscendingKey(GroupingPlan grouping, LogicalPlan base, BoundExpression key, int ascendingColumnId) throws SqlException {
+    private static boolean isAscendingKey(GroupingPlan grouping, BoundExpression key, boolean isFrameOrderPicked) {
         final int keyType = key.getDataType();
         if (!ColumnType.isTimestamp(keyType) && keyType != ColumnType.LONG && keyType != ColumnType.INT) {
             return false;
         }
-        final OutputSchema input = grouping.getChild().getOutput();
-        return orderSource(key) instanceof ColumnExpression column
-                && column.getDataType() == input.getColumnType(input.getColumnIndexById(column.getColumnId()))
-                && sourceColumnId(grouping.getChild(), base, column.getColumnId()) == ascendingColumnId;
+        final ColumnExpression source = MonotonicTimestampFunctionFactory.orderSource(key);
+        final LogicalPlan input = grouping.getChild();
+        final int index = source == null ? -1 : input.getOutput().getColumnIndexById(source.getColumnId());
+        return index >= 0 && source.getDataType() == input.getOutput().getColumnType(index)
+                && (PhysicalProperties.isOrderedBy(input, index, PhysicalProperties.ScanDirection.FORWARD)
+                || isFrameOrderPicked && PhysicalProperties.isOrderedBy(input, index, PhysicalProperties.ScanDirection.BACKWARD));
     }
 
     /**
@@ -932,7 +858,7 @@ final class OperatorPlanning implements Mutable {
     private AggregatePlan.Algorithm preAggregation(SampleByPlan sample, LogicalPlan base) throws SqlException {
         final BoundExpression bucket = sample.getBucket();
         if (bucket == null || !LogicalPlans.isStableWithinExecution(bucket) || !isStreamable(sample, base)
-                || !isAscendingKey(sample, base, bucket, ascendingInputColumnId(sample, base, false))) {
+                || !isAscendingKey(sample, bucket, false)) {
             return null;
         }
         final ObjList<FunctionExpression> aggregates = sample.getAggregates();
@@ -949,24 +875,6 @@ final class OperatorPlanning implements Mutable {
             return AggregatePlan.Algorithm.PARALLEL;
         }
         return isStolenFilter(base, FilterConsumer.FRAME_REDUCER) ? AggregatePlan.Algorithm.PARALLEL_STOLEN_FILTER : AggregatePlan.Algorithm.SERIAL;
-    }
-
-    /**
-     * The expression whose order the key keeps: the key itself, the timestamp argument of a call whose values keep the
-     * argument's order, see {@link MonotonicTimestampFunctionFactory#preservesTimestampOrder}, or null for a key that
-     * keeps no order.
-     */
-    private BoundExpression orderSource(BoundExpression key) throws SqlException {
-        if (key instanceof ColumnExpression) {
-            return key;
-        }
-        final MonotonicTimestampFunctionFactory factory = MonotonicTimestampFunctionFactory.of(key);
-        if (factory == null) {
-            return null;
-        }
-        final FunctionExpression call = (FunctionExpression) key;
-        final int index = factory.getTimestampArgumentIndex(call, constantArguments);
-        return index >= 0 && factory.preservesTimestampOrder(call, constantArguments) ? call.argumentAt(index) : null;
     }
 
     private void planAggregate(AggregatePlan aggregate) throws SqlException {
@@ -1226,14 +1134,14 @@ final class OperatorPlanning implements Mutable {
      * Decides which operator applies the LIMIT and, over a sort, how the sort implements it. A LIMIT operator copies
      * its input when it would run a stream GROUP BY again, see {@link #isInputCopied}.
      */
-    private void planLimit(LimitPlan limit) throws SqlException {
+    private void planLimit(LimitPlan limit) {
         planLimitApplication(limit);
         if (limit.getApplication() == LimitPlan.Application.OPERATOR && isInputCopied(limit)) {
             limit.setApplication(LimitPlan.Application.COPIED_INPUT);
         }
     }
 
-    private void planLimitApplication(LimitPlan limit) throws SqlException {
+    private void planLimitApplication(LimitPlan limit) {
         final LogicalPlan limited = limit.getChild();
         if (!LogicalPlans.hasSortUnderStableProjects(limited)) {
             if (isInputLimit(limited)) {
@@ -1249,12 +1157,12 @@ final class OperatorPlanning implements Mutable {
         final SortPlan sort = (SortPlan) LogicalPlans.skipProjects(limited);
         final LogicalPlan input = sort.getChild();
         final int keyIndex = input.getOutput().getColumnIndexById(sort.getColumnIds().getQuick(0));
-        final boolean isTimestampCallOrdered = !isRowIdSortRequired(sort) && isTimestampCallOrdered(sort, constantArguments);
-        final boolean isTimestampOrdered = isTimestampOrdered(sort) || isTimestampCallOrdered;
-        final boolean isOrderDelivered = !isRowIdSortRequired(sort)
-                && (isAdviceFollowed(input) && PlanToFactoryRules.hasAdvisedInput(input) || sort.getColumnIds().size() == 1 && isTimestampOrdered);
-        final SortPlan.Algorithm deliveredAlgorithm = isTimestampCallOrdered ? SortPlan.Algorithm.TIMESTAMP_DECLARATION : SortPlan.Algorithm.INPUT_ORDER;
-        if (isTimestampCallOrdered) {
+        final boolean isTimestampOrdered = isTimestampOrdered(sort);
+        final SortPlan.Algorithm keyOrderAlgorithm = isRowIdSortRequired(sort) ? null : deliveredSortAlgorithm(sort);
+        final boolean isOrderDelivered = keyOrderAlgorithm != null
+                || !isRowIdSortRequired(sort) && isAdviceFollowed(input) && PlanToFactoryRules.hasAdvisedInput(input);
+        final SortPlan.Algorithm deliveredAlgorithm = keyOrderAlgorithm != null ? keyOrderAlgorithm : SortPlan.Algorithm.INPUT_ORDER;
+        if (keyOrderAlgorithm != null) {
             readOrder(input, false, true);
         }
         if (isInputLimit(input)) {
@@ -1432,7 +1340,7 @@ final class OperatorPlanning implements Mutable {
     /**
      * Decides how the generator implements a sort without a LIMIT over it; the LIMIT over a bounded sort decides again.
      */
-    private void planSort(SortPlan sort, boolean isTimestampRequired) throws SqlException {
+    private void planSort(SortPlan sort, boolean isTimestampRequired) {
         final LogicalPlan input = sort.getChild();
         final int keyIndex = input.getOutput().getColumnIndexById(sort.getColumnIds().getQuick(0));
         final int timestampIndex = PhysicalProperties.timestampIndex(input);
@@ -1446,13 +1354,12 @@ final class OperatorPlanning implements Mutable {
             final int sortedIndex = sort.getOutput().getTimestampIndex();
             sort.setAlgorithm(sortedIndex < 0 || sortedIndex == timestampIndex || !isTimestampRequired
                     ? SortPlan.Algorithm.INPUT_ORDER : SortPlan.Algorithm.TIMESTAMP_DECLARATION);
-        } else if (sort.getColumnIds().size() == 1 && isTimestampOrdered(sort)) {
-            sort.setAlgorithm(SortPlan.Algorithm.INPUT_ORDER);
-        } else if (isTimestampCallOrdered(sort, constantArguments)) {
-            readOrder(input, false, true);
-            sort.setAlgorithm(SortPlan.Algorithm.TIMESTAMP_DECLARATION);
         } else {
-            sort.setAlgorithm(sortAlgorithm(input));
+            final SortPlan.Algorithm keyOrderAlgorithm = deliveredSortAlgorithm(sort);
+            if (keyOrderAlgorithm != null) {
+                readOrder(input, false, true);
+            }
+            sort.setAlgorithm(keyOrderAlgorithm != null ? keyOrderAlgorithm : sortAlgorithm(input));
         }
     }
 
@@ -2119,43 +2026,37 @@ final class OperatorPlanning implements Mutable {
     }
 
     /**
+     * The algorithm of a single-key sort whose input emits its rows in the order of the key, null for any other sort:
+     * the sort keeps the input's order, see {@link SortPlan.Algorithm#INPUT_ORDER}, when the key is the input's
+     * designated timestamp in the input's direction, or when the input is ordered by the key, see
+     * {@link PhysicalProperties#isOrderedBy}, and the sort designates no other timestamp than the input; it declares its
+     * own designated timestamp over the input when it designates another, see
+     * {@link SortPlan.Algorithm#TIMESTAMP_DECLARATION}.
+     */
+    static SortPlan.Algorithm deliveredSortAlgorithm(SortPlan sort) {
+        if (sort.getColumnIds().size() != 1) {
+            return null;
+        }
+        if (isTimestampOrdered(sort)) {
+            return SortPlan.Algorithm.INPUT_ORDER;
+        }
+        final LogicalPlan input = sort.getChild();
+        final int keyIndex = input.getOutput().getColumnIndexById(sort.getColumnIds().getQuick(0));
+        if (!PhysicalProperties.isOrderedBy(input, keyIndex, PhysicalProperties.ScanDirection.of(sort.getDirections().getQuick(0)))) {
+            return null;
+        }
+        final int sortedIndex = sort.getOutput().getTimestampIndex();
+        return sortedIndex < 0 || sortedIndex == PhysicalProperties.timestampIndex(input)
+                ? SortPlan.Algorithm.INPUT_ORDER : SortPlan.Algorithm.TIMESTAMP_DECLARATION;
+    }
+
+    /**
      * True when the input of the sort emits its rows in the order of the sort's first key: that key is the input's
      * designated timestamp, in the input's scan direction.
      */
     static boolean isTimestampOrdered(SortPlan sort) {
         final LogicalPlan input = sort.getChild();
         return input.getOutput().getColumnIndexById(sort.getColumnIds().getQuick(0)) == PhysicalProperties.timestampIndex(input)
-                && PhysicalProperties.scanDirection(input) == PhysicalProperties.ScanDirection.of(sort.getDirections().getQuick(0));
-    }
-
-    /**
-     * True when the input of a single-key sort emits its rows in the order of the key although the key is not its
-     * designated timestamp: a projection computes the key by a call that keeps the order of the designated timestamp
-     * of the projection's input, see {@link MonotonicTimestampFunctionFactory#preservesTimestampOrder}, which the input
-     * reads in the sort's direction. The sort declares the key the timestamp of its input instead of sorting, see
-     * {@link SortPlan.Algorithm#TIMESTAMP_DECLARATION}.
-     */
-    static boolean isTimestampCallOrdered(SortPlan sort, MonotonicTimestampFunctionFactory.ConstantArguments arguments) throws SqlException {
-        if (sort.getColumnIds().size() != 1 || !(sort.getChild() instanceof ProjectPlan project)
-                || PlanToFactoryRules.projectionFactory(project) == PlanToFactoryRules.ProjectionFactory.WINDOW
-                || PlanToFactoryRules.projectionFactory(project) == PlanToFactoryRules.ProjectionFactory.WINDOW_JOIN) {
-            return false;
-        }
-        final BoundExpression key = project.getExpressions().getQuick(project.getOutput().getColumnIndexById(sort.getColumnIds().getQuick(0)));
-        final MonotonicTimestampFunctionFactory factory = MonotonicTimestampFunctionFactory.of(key);
-        if (factory == null) {
-            return false;
-        }
-        final FunctionExpression call = (FunctionExpression) key;
-        final int argumentIndex = factory.getTimestampArgumentIndex(call, arguments);
-        if (argumentIndex < 0 || !factory.preservesTimestampOrder(call, arguments)
-                || !(call.argumentAt(argumentIndex) instanceof ColumnExpression column) || !column.isDirectReference()) {
-            return false;
-        }
-        final LogicalPlan input = project.getChild();
-        final OutputSchema output = input.getOutput();
-        final int columnIndex = output.getColumnIndexById(column.getColumnId());
-        return columnIndex == PhysicalProperties.timestampIndex(input) && column.getDataType() == output.getColumnType(columnIndex)
                 && PhysicalProperties.scanDirection(input) == PhysicalProperties.ScanDirection.of(sort.getDirections().getQuick(0));
     }
 

@@ -28,7 +28,6 @@ import io.questdb.ParanoiaState;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.EntityColumnFilter;
-import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -52,7 +51,6 @@ import io.questdb.griffin.engine.LimitBounds;
 import io.questdb.griffin.engine.LimitRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.RecordComparatorCompiler;
 import io.questdb.griffin.engine.table.MasterSuffixRows;
-import io.questdb.griffin.engine.table.SelectedRecordCursorFactory;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
@@ -275,24 +273,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         filterGenerator.setEnableJitNullChecks(value);
     }
 
-    private static RecordCursorFactory declareTimestamp(RecordCursorFactory base, int timestampIndex) {
-        final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        final IntList mapping;
-        try {
-            final RecordMetadata baseMetadata = base.getMetadata();
-            mapping = new IntList(baseMetadata.getColumnCount());
-            for (int i = 0, n = baseMetadata.getColumnCount(); i < n; i++) {
-                metadata.add(baseMetadata.getColumnMetadata(i));
-                mapping.add(i);
-            }
-            metadata.setTimestampIndex(timestampIndex);
-        } catch (Throwable th) {
-            Misc.free(base, th);
-            throw th;
-        }
-        return new SelectedRecordCursorFactory(metadata, mapping, base);
-    }
-
     /**
      * Whether the planned property agrees with the factory's: a property operator planning leaves unknown agrees with
      * none.
@@ -457,9 +437,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 return projectionGenerator.generateProjection(frame, project, base, executionContext);
             }
             case SortPlan sort -> {
-                return sort.getAlgorithm() == SortPlan.Algorithm.TIMESTAMP_DECLARATION
-                        ? declareTimestamp(base, PhysicalProperties.timestampIndex(sort))
-                        : sortGenerator.generate(frame, sort, base, null);
+                return sortGenerator.generate(frame, sort, base, null);
             }
             case LimitPlan limit -> {
                 if (limit.getApplication() == LimitPlan.Application.INPUT) {

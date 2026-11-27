@@ -4351,6 +4351,7 @@ public class ArrayTest extends AbstractCairoTest {
 
             drainWalQueue();
 
+            sqlExecutionContext.setStreamGroupByEnabled(false);
             assertQuery("""
                     SELECT * FROM (DECLARE
                     \t@price := 1,

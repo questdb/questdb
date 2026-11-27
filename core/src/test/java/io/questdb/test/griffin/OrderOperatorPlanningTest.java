@@ -233,9 +233,11 @@ public class OrderOperatorPlanningTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createSampledTable();
             final String sampleByRows = "SELECT ts, sym, first(i) f FROM a SAMPLE BY 1h FILL(PREV) ALIGN TO FIRST OBSERVATION";
-            final String sorted = "SELECT ts, sym, first(i) f FROM a SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR";
+            final String streamed = "SELECT ts, sym, first(i) f FROM a SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR";
+            final String sorted = "SELECT a1.ts, a1.sym, first(a1.i) f FROM a a1 ASOF JOIN a a2 SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR";
             final String indexed = "SELECT ts, sym, first(i) f FROM a WHERE sym = 'S' SAMPLE BY 1h FILL(NULL) ALIGN TO FIRST OBSERVATION";
             assertPlanned(engine, sqlExecutionContext, sampleByRows, FillPlan.class, fill -> Assert.assertEquals(FillPlan.Algorithm.SAMPLE_BY_ROWS, fill.getAlgorithm()));
+            assertPlanned(engine, sqlExecutionContext, streamed, FillPlan.class, fill -> Assert.assertEquals(FillPlan.Algorithm.INPUT_ORDER, fill.getAlgorithm()));
             assertPlanned(engine, sqlExecutionContext, sorted, FillPlan.class, fill -> Assert.assertEquals(FillPlan.Algorithm.SORTED, fill.getAlgorithm()));
             assertPlanned(engine, sqlExecutionContext, indexed, FillPlan.class, fill -> Assert.assertEquals(FillPlan.Algorithm.SAMPLE_BY_ROWS, fill.getAlgorithm()));
             final String prevRows = """
@@ -262,24 +264,26 @@ public class OrderOperatorPlanningTest extends AbstractCairoTest {
                                         Frame forward scan on: a
                             """)
                     .returns(prevRows);
-            assertQuery(sorted)
+            assertQuery(streamed).assertsPlan("""
+                    Sample By Fill
+                      stride: '1h'
+                      fill: prev
+                      cached: true
+                        Async Stream Group By workers: 1
+                          segmentKey: timestamp_floor_utc('1h',ts)
+                          keys: [ts,sym]
+                          keyFunctions: [timestamp_floor_utc('1h',ts)]
+                          values: [first(i)]
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                    """);
+            assertQuery("SELECT * FROM (" + streamed + ") ORDER BY ts, sym")
                     .timestamp("ts")
-                    .noRandomAccess()
-                    .withPlan("""
-                            Sample By Fill
-                              stride: '1h'
-                              fill: prev
-                                Encode sort light
-                                  keys: [ts]
-                                    Async Group By workers: 1
-                                      keys: [ts,sym]
-                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
-                                      values: [first(i)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: a
-                            """)
+                    .returns(prevRows);
+            assertQuery("SELECT * FROM (" + sorted + ") ORDER BY ts, sym")
+                    .timestamp("ts")
+                    .withPlanContaining("Encode sort light")
                     .returns(prevRows);
             assertQuery(indexed)
                     .timestamp("ts")
@@ -570,6 +574,83 @@ public class OrderOperatorPlanningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOrderPreservingProjectionDeliversOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            assertQuery("SELECT dateadd('d', 1, ts) d, x FROM t ORDER BY d")
+                    .noLeakCheck()
+                    .timestamp("d")
+                    .expectSize()
+                    .withPlan("""
+                            VirtualRecord
+                              functions: [dateadd('d',1,ts),x]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: t
+                            """)
+                    .returns("""
+                            d\tx
+                            2024-01-02T00:00:00.000000Z\t1
+                            2024-01-02T01:00:00.000000Z\t2
+                            2024-01-02T02:00:00.000000Z\t3
+                            2024-01-03T00:00:00.000000Z\t4
+                            """);
+            assertQuery("SELECT dateadd('d', 1, ts) d, x FROM t ORDER BY d DESC")
+                    .noLeakCheck()
+                    .timestampDesc("d")
+                    .expectSize()
+                    .withPlan("""
+                            VirtualRecord
+                              functions: [dateadd('d',1,ts),x]
+                                PageFrame
+                                    Row backward scan
+                                    Frame backward scan on: t
+                            """)
+                    .returns("""
+                            d\tx
+                            2024-01-03T00:00:00.000000Z\t4
+                            2024-01-02T02:00:00.000000Z\t3
+                            2024-01-02T01:00:00.000000Z\t2
+                            2024-01-02T00:00:00.000000Z\t1
+                            """);
+            assertQuery("SELECT dateadd('h', 1, b) shifted, c FROM (SELECT timestamp_floor('1d', ts) b, count() c FROM t) ORDER BY shifted")
+                    .noLeakCheck()
+                    .timestamp("shifted")
+                    .noRandomAccess()
+                    .withPlanContaining("Stream Group By")
+                    .withPlanNotContaining("sort", "Sort")
+                    .returns("""
+                            shifted\tc
+                            2024-01-01T01:00:00.000000Z\t3
+                            2024-01-02T01:00:00.000000Z\t1
+                            """);
+            assertQuery("SELECT x, count() c FROM long_sequence(3) ORDER BY x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Stream Group By")
+                    .withPlanNotContaining("sort", "Sort")
+                    .returns("""
+                            x\tc
+                            1\t1
+                            2\t1
+                            3\t1
+                            """);
+            assertQuery("SELECT coalesce(ts, ts) d, x FROM t ORDER BY d")
+                    .noLeakCheck()
+                    .timestamp("d")
+                    .expectSize()
+                    .withPlanContaining("sort")
+                    .returns("""
+                            d\tx
+                            2024-01-01T00:00:00.000000Z\t1
+                            2024-01-01T01:00:00.000000Z\t2
+                            2024-01-01T02:00:00.000000Z\t3
+                            2024-01-02T00:00:00.000000Z\t4
+                            """);
+        });
+    }
+
+    @Test
     public void testOrderedSwappableJoinDeclaresTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             createSwappableJoinTables();
@@ -596,7 +677,7 @@ public class OrderOperatorPlanningTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRangeWindowKeepsSampleBySort() throws Exception {
+    public void testRangeWindowKeepsSampleByOrder() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
             assertQuery("""
@@ -605,22 +686,18 @@ public class OrderOperatorPlanningTest extends AbstractCairoTest {
                         FROM (SELECT ts, sum(x) sx FROM t SAMPLE BY 1h)
                     ) ORDER BY sx DESC
                     """)
-                    .expectSize()
                     .withPlan("""
                             Encode sort
                               keys: [sx desc]
                                 Window
                                   functions: [sum(sx) over (range between 3600000000 preceding and current row)]
-                                    Encode sort light
+                                    Async Stream Group By workers: 1
                                       keys: [ts]
-                                        Async Group By workers: 1
-                                          keys: [ts]
-                                          keyFunctions: [timestamp_floor_utc('1h',ts)]
-                                          values: [sum(x)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: t
+                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                      values: [sum(x)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
                             """)
                     .returns("""
                             ts\tsx\ts
@@ -638,20 +715,20 @@ public class OrderOperatorPlanningTest extends AbstractCairoTest {
             createTables();
             assertQuery("SELECT * FROM (SELECT * FROM t ORDER BY x DESC) a LEFT JOIN u ON a.x = u.x ORDER BY a.ts DESC, u.y LIMIT 3")
                     .timestampDesc("ts")
+                    .expectSize()
                     .withPlan("""
-                            Limit value: 3 skip-rows-max: 0 take-rows-max: 3
-                                Encode sort
-                                  keys: [ts desc, y]
-                                    SelectedRecord
-                                        Hash Left Outer Join Light
-                                          condition: u.x=a.x
+                            Encode sort lo: 3 partiallySorted: true
+                              keys: [ts desc, y]
+                                SelectedRecord
+                                    Hash Left Outer Join Light
+                                      condition: u.x=a.x
+                                        PageFrame
+                                            Row backward scan
+                                            Frame backward scan on: t
+                                        Hash
                                             PageFrame
-                                                Row backward scan
-                                                Frame backward scan on: t
-                                            Hash
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: u
+                                                Row forward scan
+                                                Frame forward scan on: u
                             """)
                     .returns("""
                             ts\tx\tx1\ty
@@ -743,17 +820,15 @@ public class OrderOperatorPlanningTest extends AbstractCairoTest {
             createTables();
             execute("CREATE VIEW v AS (SELECT ts, count() c, sum(x) sx FROM t SAMPLE BY 1h)");
             drainWalAndViewQueues();
-            final String descendingTopK = """
-                    Long Top K lo: 3
-                      keys: [ts desc]
-                        Async Group By workers: 1
+            final String descendingStream = """
+                    Limit value: 3 skip-rows-max: 0 take-rows-max: 3
+                        Async Stream Group By workers: 1
                           keys: [ts]
                           keyFunctions: [timestamp_floor_utc('1h',ts)]
                           values: [count(*),sum(x)]
-                          filter: null
                             PageFrame
-                                Row forward scan
-                                Frame forward scan on: t
+                                Row backward scan
+                                Frame backward scan on: t
                     """;
             final String descendingRows = """
                     ts\tc\tsx
@@ -764,33 +839,31 @@ public class OrderOperatorPlanningTest extends AbstractCairoTest {
             assertQuery("SELECT * FROM v ORDER BY ts DESC LIMIT 3")
                     .noLeakCheck()
                     .timestampDesc("ts")
-                    .expectSize()
-                    .withPlan(descendingTopK)
+                    .noRandomAccess()
+                    .withPlan(descendingStream)
                     .returns(descendingRows);
             assertQuery("WITH s AS (SELECT ts, count() c, sum(x) sx FROM t SAMPLE BY 1h) SELECT * FROM s ORDER BY ts DESC LIMIT 3")
                     .noLeakCheck()
                     .timestampDesc("ts")
-                    .expectSize()
-                    .withPlan(descendingTopK)
+                    .noRandomAccess()
+                    .withPlan(descendingStream)
                     .returns(descendingRows);
             assertQuery("SELECT * FROM (SELECT ts, count() c, sum(x) sx FROM t SAMPLE BY 1h) ORDER BY ts DESC LIMIT 3")
                     .noLeakCheck()
                     .timestampDesc("ts")
-                    .expectSize()
-                    .withPlan(descendingTopK)
+                    .noRandomAccess()
+                    .withPlan(descendingStream)
                     .returns(descendingRows);
             assertQuery("SELECT * FROM v ORDER BY ts LIMIT 3")
                     .noLeakCheck()
                     .timestamp("ts")
-                    .expectSize()
+                    .noRandomAccess()
                     .withPlan("""
-                            Long Top K lo: 3
-                              keys: [ts asc]
-                                Async Group By workers: 1
+                            Limit value: 3 skip-rows-max: 0 take-rows-max: 3
+                                Async Stream Group By workers: 1
                                   keys: [ts]
                                   keyFunctions: [timestamp_floor_utc('1h',ts)]
                                   values: [count(*),sum(x)]
-                                  filter: null
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: t
@@ -803,18 +876,17 @@ public class OrderOperatorPlanningTest extends AbstractCairoTest {
                             """);
             assertQuery("SELECT * FROM v ORDER BY sx DESC")
                     .noLeakCheck()
-                    .expectSize()
                     .withPlan("""
-                            Encode sort light
+                            Encode sort
                               keys: [sx desc]
-                                Async Group By workers: 1
-                                  keys: [ts]
-                                  keyFunctions: [timestamp_floor_utc('1h',ts)]
-                                  values: [count(*),sum(x)]
-                                  filter: null
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: t
+                                SelectedRecord
+                                    Async Stream Group By workers: 1
+                                      keys: [ts]
+                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                      values: [count(*),sum(x)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
                             """)
                     .returns("""
                             ts\tc\tsx
@@ -826,17 +898,15 @@ public class OrderOperatorPlanningTest extends AbstractCairoTest {
             assertQuery("SELECT * FROM (SELECT ts, count() c FROM t GROUP BY ts ORDER BY ts) ORDER BY ts DESC LIMIT 3")
                     .noLeakCheck()
                     .timestampDesc("ts")
-                    .expectSize()
+                    .noRandomAccess()
                     .withPlan("""
-                            Long Top K lo: 3
-                              keys: [ts desc]
-                                Async Group By workers: 1
+                            Limit value: 3 skip-rows-max: 0 take-rows-max: 3
+                                Async Stream Group By workers: 1
                                   keys: [ts]
                                   values: [count(*)]
-                                  filter: null
                                     PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: t
+                                        Row backward scan
+                                        Frame backward scan on: t
                             """)
                     .returns("""
                             ts\tc
@@ -847,25 +917,24 @@ public class OrderOperatorPlanningTest extends AbstractCairoTest {
             assertQuery("SELECT v.ts, v.sx, u.y FROM v LEFT JOIN u ON v.sx = u.x ORDER BY v.ts DESC, u.y LIMIT 3")
                     .noLeakCheck()
                     .timestampDesc("ts")
+                    .expectSize()
                     .withPlan("""
-                            Limit value: 3 skip-rows-max: 0 take-rows-max: 3
-                                Encode sort
-                                  keys: [ts desc, y]
-                                    SelectedRecord
-                                        Hash Left Outer Join Light
-                                          condition: u.x=v.sx
-                                            Async Group By workers: 1
-                                              keys: [ts]
-                                              keyFunctions: [timestamp_floor_utc('1h',ts)]
-                                              values: [sum(x)]
-                                              filter: null
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: t
-                                            Hash
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: u
+                            Encode sort lo: 3 partiallySorted: true
+                              keys: [ts desc, y]
+                                SelectedRecord
+                                    Hash Left Outer Join Light
+                                      condition: u.x=v.sx
+                                        Async Stream Group By workers: 1
+                                          keys: [ts]
+                                          keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                          values: [sum(x)]
+                                            PageFrame
+                                                Row backward scan
+                                                Frame backward scan on: t
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: u
                             """)
                     .returns("""
                             ts\tsx\ty

@@ -34,6 +34,7 @@ import io.questdb.jit.JitUtil;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.QueryAssertion;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -1002,8 +1003,8 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
     @Test
     public void testDateaddCalendarUnitZeroStrideIsNotDesignatedTimestamp() throws Exception {
         // A zero stride leaves every timestamp unchanged, so this projection is in order. The code
-        // generator still classifies it by unit alone and drops the designated timestamp: the cost
-        // is a sort, never a wrong result.
+        // generator still classifies it by unit alone and drops the designated timestamp, but the
+        // planner proves the order, so ORDER BY declares x the designated timestamp without a sort.
         assertMemoryLeak(() -> {
             createDayClampTables();
             for (String unit : new String[]{"M", "y"}) {
@@ -1020,7 +1021,14 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                         .noLeakCheck()
                         .timestamp("x")
                         .expectSize()
-                        .withPlanContaining("keys: [x]")
+                        .withPlan("""
+                                Limit value: 2 skip-rows: 0 take-rows: 2
+                                    VirtualRecord
+                                      functions: [dateadd('#UNIT',0,ts)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: jan
+                                """.replace("#UNIT", unit))
                         .returns("""
                                 x
                                 2024-01-29T00:00:00.000000Z
@@ -1330,13 +1338,15 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     2024-01-01T00:20:00.000000Z\t600
                     2024-01-01T00:30:00.000000Z\t201
                     """;
-            assertDateaddOverUnorderedSubQuery("SELECT ts, avg(price) a FROM trades", expectedHead, expectedBuckets, 0, NO_DESIGNATED_TIMESTAMP_ERROR);
-            assertDateaddOverUnorderedSubQuery("SELECT ts, sym, avg(price) a FROM trades GROUP BY ts, sym", expectedHead, expectedBuckets, 0, NO_DESIGNATED_TIMESTAMP_ERROR);
-            assertDateaddOverUnorderedSubQuery("SELECT DISTINCT ts, price FROM trades", expectedHead, expectedBuckets, 0, NO_DESIGNATED_TIMESTAMP_ERROR);
-            assertDateaddOverUnorderedSubQuery("SELECT ts, price FROM trades ORDER BY price", expectedHead, expectedBuckets, 0, NO_DESIGNATED_TIMESTAMP_ERROR);
-            assertDateaddOverUnorderedSubQuery("SELECT ts2 ts, price FROM trades", expectedHead, expectedBuckets, 0, NO_DESIGNATED_TIMESTAMP_ERROR);
+            assertDateaddOverUnorderedSubQuery("SELECT ts, avg(price) a FROM trades", false, false, expectedHead, expectedBuckets, 0, NO_DESIGNATED_TIMESTAMP_ERROR);
+            assertDateaddOverUnorderedSubQuery("SELECT ts, sym, avg(price) a FROM trades GROUP BY ts, sym", false, false, expectedHead, expectedBuckets, 0, NO_DESIGNATED_TIMESTAMP_ERROR);
+            assertDateaddOverUnorderedSubQuery("SELECT DISTINCT ts, price FROM trades", false, false, expectedHead, expectedBuckets, 0, NO_DESIGNATED_TIMESTAMP_ERROR);
+            assertDateaddOverUnorderedSubQuery("SELECT ts, price FROM trades ORDER BY price", false, true, expectedHead, expectedBuckets, 0, NO_DESIGNATED_TIMESTAMP_ERROR);
+            assertDateaddOverUnorderedSubQuery("SELECT ts2 ts, price FROM trades", true, true, expectedHead, expectedBuckets, 0, NO_DESIGNATED_TIMESTAMP_ERROR);
             assertDateaddOverUnorderedSubQuery(
                     "SELECT ts, sym FROM trades UNION ALL SELECT ts, sym FROM trades WHERE ts >= '2024-01-01T00:30'",
+                    false,
+                    false,
                     expectedHead,
                     """
                             x\tcount
@@ -1351,6 +1361,8 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
             // the join output follows trades, so the slave timestamp cycles through the five marks
             assertDateaddOverUnorderedSubQuery(
                     "SELECT m.ts, t.price FROM trades t JOIN marks m ON (sym)",
+                    true,
+                    true,
                     """
                             x
                             2024-01-01T00:00:01.000000Z
@@ -1366,6 +1378,8 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
             );
             assertDateaddOverUnorderedSubQuery(
                     "SELECT sym, max(ts) ts FROM trades GROUP BY sym",
+                    true,
+                    true,
                     """
                             x
                             2024-01-01T00:33:16.000000Z
@@ -1382,8 +1396,8 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
             // The sub-query designates time, an alias of ts that its ORDER BY names. The rows arrive in ts
             // order, but code generation keeps the designated timestamp only when the dateadd() argument is
             // the designated column itself, so SAMPLE BY needs the rows sorted by x.
-            assertDateaddOverUnorderedSubQuery("SELECT ts AS time, ts, price FROM trades ORDER BY time", expectedHead, expectedBuckets, 0, NO_DESIGNATED_TIMESTAMP_ERROR);
-            assertDateaddOverUnorderedSubQuery("SELECT *, ts AS time FROM trades ORDER BY time", expectedHead, expectedBuckets, 0, NO_DESIGNATED_TIMESTAMP_ERROR);
+            assertDateaddOverUnorderedSubQuery("SELECT ts AS time, ts, price FROM trades ORDER BY time", false, true, expectedHead, expectedBuckets, 0, NO_DESIGNATED_TIMESTAMP_ERROR);
+            assertDateaddOverUnorderedSubQuery("SELECT *, ts AS time FROM trades ORDER BY time", false, true, expectedHead, expectedBuckets, 0, NO_DESIGNATED_TIMESTAMP_ERROR);
 
             // Column pruning drops x from the dateadd() projection, and the code generator restores a
             // pruned dateadd() timestamp as a hidden column for an operator that requires one. The
@@ -3998,11 +4012,11 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     WHERE x < '2024-01-01T00:00:25'
                     ORDER BY x
                     """)
+                    .noRandomAccess()
                     .noLeakCheck()
                     .timestamp("x")
                     .withPlan("""
-                            Encode sort
-                              keys: [x]
+                            SelectedRecord
                                 VirtualRecord
                                   functions: [dateadd('s',1,ts),sym]
                                     Filter filter: dateadd('s',1,ts)<2024-01-01T00:00:25.000000Z
@@ -4405,20 +4419,19 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     WHERE x < '2024-01-01T00:00:25'
                     ORDER BY x
                     """)
+                    .noRandomAccess()
                     .noLeakCheck()
                     .timestamp("x")
                     .withPlan("""
-                            Encode sort
-                              keys: [x]
-                                VirtualRecord
-                                  functions: [dateadd('s',1,ts),sym]
-                                    Async Stream Group By workers: 1
-                                      segmentKey: ts
-                                      keys: [ts,sym]
-                                        PageFrame
-                                            Row forward scan
-                                            Interval forward scan on: trades
-                                              intervals: [("MIN","2024-01-01T00:00:23.999999Z")]
+                            VirtualRecord
+                              functions: [dateadd('s',1,ts),sym]
+                                Async Stream Group By workers: 1
+                                  segmentKey: ts
+                                  keys: [ts,sym]
+                                    PageFrame
+                                        Row forward scan
+                                        Interval forward scan on: trades
+                                          intervals: [("MIN","2024-01-01T00:00:23.999999Z")]
                             """)
                     .returns("""
                             x\tsym
@@ -5211,17 +5224,20 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
 
     private void assertDateaddOverUnorderedSubQuery(
             String subQuery,
+            boolean isSorted,
+            boolean isRandomAccess,
             String expectedHead,
             String expectedBuckets,
             int sampleByErrorPosition,
             String sampleByError
     ) throws Exception {
-        // ORDER BY sorts instead of trusting the sub-query's row order
-        assertQuery("SELECT dateadd('s', 1, ts) x FROM (" + subQuery + ") ORDER BY x LIMIT 3")
+        // ORDER BY sorts unless the plan proves the sub-query delivers its rows in ts order
+        final QueryAssertion ordered = assertQuery("SELECT dateadd('s', 1, ts) x FROM (" + subQuery + ") ORDER BY x LIMIT 3")
                 .noLeakCheck()
                 .timestamp("x")
                 .sizeMayVary()
-                .returns(expectedHead);
+                .supportsRandomAccess(isRandomAccess);
+        (isSorted ? ordered.withPlanContaining("keys: [x]") : ordered.withPlanNotContaining("sort", "Sort")).returns(expectedHead);
         // SAMPLE BY rejects the unordered rows...
         assertExceptionNoLeakCheck(
                 "SELECT x, count() FROM (SELECT dateadd('s', 1, ts) x FROM (" + subQuery + ")) SAMPLE BY 10m",

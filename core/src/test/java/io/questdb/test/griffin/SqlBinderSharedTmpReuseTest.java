@@ -339,6 +339,7 @@ public class SqlBinderSharedTmpReuseTest extends AbstractCairoTest {
                     LIMIT 2
                     """)
                     .noLeakCheck()
+                    .expectSize()
                     .returns("""
                             k\tv\tw
                             y\t4\t20
