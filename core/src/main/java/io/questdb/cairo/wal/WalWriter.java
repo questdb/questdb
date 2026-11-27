@@ -4199,7 +4199,8 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
 
         @Override
         public void putSym(int columnIndex, char value) {
-            CharSequence str = SingleCharCharSequence.get(value);
+            // a NULL CHAR is stored as char 0, it must not become a symbol of its own
+            CharSequence str = value == 0 ? null : SingleCharCharSequence.get(value);
             putSym(columnIndex, str);
         }
 
@@ -4255,6 +4256,11 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
 
         @Override
         public void putVarchar(int columnIndex, char value) {
+            // a NULL CHAR is stored as char 0, it must not become a one-character value
+            if (value == 0) {
+                putVarchar(columnIndex, (Utf8Sequence) null);
+                return;
+            }
             tempUtf8Sink.clear();
             tempUtf8Sink.put(value);
             VarcharTypeDriver.appendValue(
