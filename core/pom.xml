@@ -998,6 +998,13 @@
         </profile>
         <profile>
             <id>jacoco</id>
+            <properties>
+                <!-- Classes the agent instruments, as colon-separated JaCoCo patterns. CI passes
+                     the classes a PR changed: instrumenting every class makes the tests up to
+                     2.6x slower. The plugin's own jacoco.includes property does not reach the
+                     agent from the command line. -->
+                <coverage.includes>*</coverage.includes>
+            </properties>
             <build>
                 <plugins>
                     <plugin>
@@ -1010,6 +1017,11 @@
                                 <goals>
                                     <goal>prepare-agent</goal>
                                 </goals>
+                                <configuration>
+                                    <includes>
+                                        <include>${coverage.includes}</include>
+                                    </includes>
+                                </configuration>
                             </execution>
                             <execution>
                                 <id>default-report</id>

@@ -437,8 +437,21 @@ steps:
       else
         echo "##vso[task.setvariable variable=COVERAGE_PROFILES]jacoco,build-web-console"
       fi
-    displayName: "Select coverage profiles"
+      # JaCoCo instruments only the classes the PR changed; instrumenting every class makes
+      # the tests up to 2.6x slower. COVERAGE_DIFF (check-changes-job.yml) lists them as
+      # +:*.Foo,+:*.Bar; the agent takes *.Foo*:*.Bar*, where the trailing * adds nested
+      # classes. +:* means a build with no PR, which measures everything; -:* means a PR that
+      # changed no Java class, which runs here only for its Rust coverage.
+      case "$COVERAGE_DIFF" in
+        '+:*' | '') INCLUDES='*' ;;
+        '-:*') INCLUDES='no.java.class.changed' ;;
+        *) INCLUDES=$(echo "$COVERAGE_DIFF" | tr -cd 'A-Za-z0-9_*.,:+' | sed -e 's/+:\([^,]*\)/\1*/g' -e 's/,/:/g') ;;
+      esac
+      echo "##vso[task.setvariable variable=COVERAGE_INCLUDES]$INCLUDES"
+    displayName: "Select coverage profiles and classes"
     condition: startsWith(variables['testset'], 'coverage')
+    env:
+      COVERAGE_DIFF: $(COVERAGE_DIFF)
   - task: Maven@3
     displayName: "Run tests with Coverage (jemalloc)"
     inputs:
@@ -458,6 +471,7 @@ steps:
         -DfailIfNoTests=false
         -Dsurefire.failIfNoSpecifiedTests=false
         -P $(COVERAGE_PROFILES)
+        -Dcoverage.includes=$(COVERAGE_INCLUDES)
         $(CLIENT_PROFILE) $(MAVEN_RUN_OPTS) $(TEST_COMMIT_MODE_OPT)"
       jdkVersionOption: $(jdk)
     env:
