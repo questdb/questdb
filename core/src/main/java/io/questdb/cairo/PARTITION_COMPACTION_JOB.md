@@ -57,7 +57,7 @@ Each tick starts at a seeded random table, pre-charges each copy against `io.bud
 | entry point | partition | result |
 |---|---|---|
 | `dispatchMerge` | a whole logical partition past the squash threshold | one directory holding every folder's live rows, staged as `.merging<folderCount>`; the swap replaces the run of `_txn` entries with one |
-| `dispatchMakePlain` | composite, one piece at row 0 with dead space above (`isMakePlainShape`) | MAKE-PLAIN + TRIM-FILES in place on the writer |
+| `dispatchMakePlain` | composite, one piece at row 0 with dead space above and a generation left for the record that lowers `E` (`isMakePlainShape`) | MAKE-PLAIN + TRIM-FILES in place on the writer |
 | `dispatchComposite` | composite, otherwise | REWRITE: live rows in timestamp order, staged as `.compacting<generation>` |
 | `dispatchParquet` | Parquet with dead row groups or a stale schema | live row groups re-encoded into staging |
 

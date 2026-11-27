@@ -35,10 +35,32 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8StringSink;
 
 public class LineUdpParserSupport {
     private final static Log LOG = LogFactory.getLog(LineUdpParserSupport.class);
+
+    /**
+     * The type of the column a field value creates: the type {@link #getValueType} gave the value, except that a
+     * value it typed as a float by its first and last characters, which no float column can store, such as +05:30,
+     * 10.0.0.1 or 1e400, creates a SYMBOL column that keeps the text instead of a float column holding NULL. The
+     * parser calls this only for a value that creates a column, so values sent to existing columns cost nothing more.
+     */
+    public static int getNewColumnType(CharSequence value, int valueType, short defaultFloatColumnType) {
+        if (valueType == defaultFloatColumnType && !SqlKeywords.isNanKeyword(value)) {
+            try {
+                if (defaultFloatColumnType == ColumnType.FLOAT) {
+                    Numbers.parseFloat(value);
+                } else {
+                    Numbers.parseDouble(value);
+                }
+            } catch (NumericException e) {
+                return ColumnType.SYMBOL;
+            }
+        }
+        return valueType;
+    }
 
     public static int getValueType(CharSequence value) {
         return getValueType(value, ColumnType.DOUBLE, ColumnType.LONG, true);
@@ -92,7 +114,7 @@ public class LineUdpParserSupport {
                     }
                     return useLegacyStringDefault ? ColumnType.STRING : ColumnType.VARCHAR;
                 default:
-                    if (last >= '0' && last <= '9' && ((first >= '0' && first <= '9') || first == '-' || first == '.')) {
+                    if (last >= '0' && last <= '9' && ((first >= '0' && first <= '9') || first == '-' || first == '+' || first == '.')) {
                         return defaultFloatColumnType;
                     }
                     if (SqlKeywords.isNanKeyword(value)) {
@@ -109,25 +131,27 @@ public class LineUdpParserSupport {
 
     /**
      * Writes column value to table row. CharSequence value is interpreted depending on
-     * column type and written to column, identified by columnIndex. If value cannot be
-     * cast to column type, #BadCastException is thrown.
+     * column type and written to column, identified by columnIndex. A value that does not
+     * parse as the column type is logged and leaves the column NULL for the row; an integer
+     * outside the range of a BYTE column throws a CairoException instead, which drops the row.
      *
-     * @param row            table row
-     * @param columnType     column type value will be cast to
-     * @param columnTypeMeta if columnType's tag is GeoHash it contains bits precision (low short)
-     *                       and tag size (high short negative), otherwise -1
-     * @param columnIndex    index of column to write value to
-     * @param value          value characters
+     * @param row         table row
+     * @param columnType  column type value will be cast to
+     * @param valueType   the type {@link #getValueType(CharSequence)} gave the value; a STRING or
+     *                    VARCHAR value carries its quotes
+     * @param columnIndex index of column to write value to
+     * @param value       value characters
      */
     public static void putValue(
             TableWriter.Row row,
             int columnType,
-            int columnTypeMeta,
+            int valueType,
             int columnIndex,
             CharSequence value
     ) {
         if (!value.isEmpty()) {
             try {
+                final int columnTypeMeta = ColumnType.getGeoHashBits(columnType);
                 switch (ColumnType.tagOf(columnType)) {
                     case ColumnType.LONG:
                         row.putLong(columnIndex, Numbers.parseLong(value, 0, value.length() - 1));
@@ -144,7 +168,18 @@ public class LineUdpParserSupport {
                         row.putVarchar(columnIndex, utf8Sink);
                         break;
                     case ColumnType.SYMBOL:
-                        row.putSym(columnIndex, value);
+                        row.putSym(columnIndex, unquoted(value, valueType));
+                        break;
+                    case ColumnType.UUID:
+                        row.putUuid(columnIndex, unquoted(value, valueType));
+                        break;
+                    case ColumnType.DECIMAL8:
+                    case ColumnType.DECIMAL16:
+                    case ColumnType.DECIMAL32:
+                    case ColumnType.DECIMAL64:
+                    case ColumnType.DECIMAL128:
+                    case ColumnType.DECIMAL256:
+                        row.putDecimalStr(columnIndex, unquoted(value, valueType));
                         break;
                     case ColumnType.DOUBLE:
                         row.putDouble(columnIndex, Numbers.parseDouble(value));
@@ -253,6 +288,20 @@ public class LineUdpParserSupport {
 
     private static boolean isTrue(CharSequence value) {
         return (value.charAt(0) | 32) == 't';
+    }
+
+    /**
+     * The value without its quotes when it came in as a quoted string, else the value as it is:
+     * a tag value keeps every character, quotes included, and a number keeps its spelling, as over
+     * TCP; so does a bare text field value, which TCP refuses.
+     */
+    private static CharSequence unquoted(CharSequence value, int valueType) {
+        if (valueType != ColumnType.STRING && valueType != ColumnType.VARCHAR) {
+            return value;
+        }
+        final StringSink sink = Misc.getThreadLocalSink();
+        sink.put(value, 1, value.length() - 1);
+        return sink;
     }
 
     private static void putNullValue(TableWriter.Row row, int columnIndex, int columnType) {

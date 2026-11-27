@@ -1342,6 +1342,12 @@ public interface CairoConfiguration {
 
     int getVectorAggregateQueueCapacity();
 
+    /**
+     * Returns the delay, in milliseconds, before the view compiler compiles a view again after its
+     * compile found a table locked, for example by a TRUNCATE, DROP or RENAME of a non-WAL table.
+     */
+    long getViewCompileBusyRetryTimeout();
+
     int getViewLexerPoolCapacity();
 
     int getViewWalWriterPoolMaxSegments();
@@ -1695,6 +1701,8 @@ public interface CairoConfiguration {
     boolean isSqlParallelWindowJoinEnabled();
 
     boolean isSqlParquetRowGroupPruningEnabled();
+
+    boolean isSqlStreamGroupByEnabled();
 
     boolean isSqlWindowCachedLightEnabled();
 

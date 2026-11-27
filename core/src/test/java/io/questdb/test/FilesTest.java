@@ -446,6 +446,100 @@ public class FilesTest {
     }
 
     /**
+     * A file can vanish between the listing of its directory and its link or copy: the column purge job removes
+     * superseded column files from a partition directory that DETACH or FORCE REINDEX is linking. The walk must skip
+     * the vanished entry, as a walk that listed the directory after the removal would. A failure while the source is
+     * still there must still fail the walk, and a failure other than a missing file must leave errno to the caller.
+     */
+    @Test
+    public void testCopyRecursiveAndHardLinkRecursiveSkipEntryRemovedAfterListing() throws Exception {
+        assertMemoryLeak(() -> {
+            final int mkdirMode = 509;
+            final AtomicReference<String> failure = new AtomicReference<>();
+            final AtomicInteger failedSourceChecks = new AtomicInteger();
+            final AtomicInteger fakeErrno = new AtomicInteger(-1);
+            final FilesFacade ff = new TestFilesFacadeImpl() {
+                @Override
+                public int copy(LPSZ from, LPSZ to) {
+                    return invoke(from) ? super.copy(from, to) : -1;
+                }
+
+                @Override
+                public int errno() {
+                    return fakeErrno.get() > -1 ? fakeErrno.get() : super.errno();
+                }
+
+                @Override
+                public boolean exists(LPSZ path) {
+                    if (failure.get() != null && Utf8s.endsWithAscii(path, failure.get())) {
+                        failedSourceChecks.incrementAndGet();
+                    }
+                    return super.exists(path);
+                }
+
+                @Override
+                public int hardLink(LPSZ src, LPSZ hardLink) {
+                    return invoke(src) ? super.hardLink(src, hardLink) : -1;
+                }
+
+                // false when the operation must fail without touching the file system
+                private boolean invoke(LPSZ src) {
+                    final String name = Utf8s.stringFromUtf8Bytes(src);
+                    if (name.endsWith("gone") || name.endsWith("gone2")) {
+                        // a purge removes the file after the walk listed it
+                        Assert.assertTrue(super.removeQuiet(src));
+                        return true;
+                    }
+                    if (failure.get() != null && name.endsWith(failure.get())) {
+                        return false;
+                    }
+                    return true;
+                }
+            };
+            final java.nio.file.Path root = temporaryFolder.newFolder().toPath();
+            final java.nio.file.Path srcDir = root.resolve("src");
+            java.nio.file.Files.createDirectories(srcDir.resolve("subdir"));
+            java.nio.file.Files.writeString(srcDir.resolve("keep"), "abcde");
+            java.nio.file.Files.writeString(srcDir.resolve("subdir").resolve("keep2"), "efgh");
+            try (Path src = new Path(); Path dst = new Path()) {
+                for (boolean isHardLink : new boolean[]{false, true}) {
+                    // the walk skips the files that vanish and links or copies the rest
+                    java.nio.file.Files.writeString(srcDir.resolve("gone"), "x");
+                    java.nio.file.Files.writeString(srcDir.resolve("subdir").resolve("gone2"), "y");
+                    java.nio.file.Path dstDir = root.resolve("dst-" + isHardLink);
+                    src.of(srcDir.toString());
+                    dst.of(dstDir.toString());
+                    Assert.assertEquals(0, isHardLink ? ff.hardLinkDirRecursive(src, dst, mkdirMode) : ff.copyRecursive(src, dst, mkdirMode));
+                    Assert.assertEquals("abcde", java.nio.file.Files.readString(dstDir.resolve("keep")));
+                    Assert.assertEquals("efgh", java.nio.file.Files.readString(dstDir.resolve("subdir").resolve("keep2")));
+                    Assert.assertFalse(java.nio.file.Files.exists(dstDir.resolve("gone")));
+                    Assert.assertFalse(java.nio.file.Files.exists(dstDir.resolve("subdir").resolve("gone2")));
+                    Assert.assertFalse(java.nio.file.Files.exists(srcDir.resolve("gone")));
+
+                    // a missing-file error while the source is still there fails the walk
+                    failure.set("keep2");
+                    fakeErrno.set(CairoException.ERRNO_FILE_DOES_NOT_EXIST);
+                    failedSourceChecks.set(0);
+                    dstDir = root.resolve("dst-enoent-" + isHardLink);
+                    dst.of(dstDir.toString());
+                    Assert.assertEquals(-1, isHardLink ? ff.hardLinkDirRecursive(src, dst, mkdirMode) : ff.copyRecursive(src, dst, mkdirMode));
+                    Assert.assertEquals(1, failedSourceChecks.get());
+
+                    // any other error fails the walk without probing the source, which could change errno
+                    fakeErrno.set(18);
+                    failedSourceChecks.set(0);
+                    dstDir = root.resolve("dst-exdev-" + isHardLink);
+                    dst.of(dstDir.toString());
+                    Assert.assertEquals(-1, isHardLink ? ff.hardLinkDirRecursive(src, dst, mkdirMode) : ff.copyRecursive(src, dst, mkdirMode));
+                    Assert.assertEquals(0, failedSourceChecks.get());
+                    failure.set(null);
+                    fakeErrno.set(-1);
+                }
+            }
+        });
+    }
+
+    /**
      * On a file system that reports no entry types (XFS without ftype, some FUSE and network file systems) the
      * recursive copy and hard link must ask whether an entry is a directory; they used to open every file as a
      * directory and fail with ENOTDIR. A file system that reports types must not pay for the question.

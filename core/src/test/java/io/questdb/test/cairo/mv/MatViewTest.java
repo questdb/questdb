@@ -1037,7 +1037,10 @@ public class MatViewTest extends AbstractCairoTest {
             execute("alter materialized view price_1h set refresh limit 2 months;");
 
             // period refresh should respect the refresh limit,
-            // so only the 2023-12-31 rows should be aggregated in the view
+            // so only the 2023-12-31 rows should be aggregated in the view;
+            // the view was created on the real clock, and the clock now steps
+            // back into the 24h period [2024-01-01, 2024-01-02), so the last
+            // complete period ends at 2024-01-01T00:00
             currentMicros = parseFloorPartialTimestamp("2024-01-01T01:01:01.000000Z");
             drainQueues();
 
@@ -1049,7 +1052,7 @@ public class MatViewTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns("""
                             view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_status\trefresh_period_hi\trefresh_base_table_txn\tbase_table_txn\tperiod_length\tperiod_length_unit\trefresh_limit\trefresh_limit_unit
-                            price_1h\timmediate\tbase_price\t2024-01-01T01:01:01.000000Z\t2024-01-01T01:01:01.000000Z\tvalid\t2024-01-02T00:00:00.000000Z\t1\t1\t24\tHOUR\t2\tMONTH
+                            price_1h\timmediate\tbase_price\t2024-01-01T01:01:01.000000Z\t2024-01-01T01:01:01.000000Z\tvalid\t2024-01-01T00:00:00.000000Z\t1\t1\t24\tHOUR\t2\tMONTH
                             """);
             assertQuery("price_1h order by sym, ts")
                     .expectSize()
@@ -4943,6 +4946,104 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIncrementalRefreshPeriodEndsWithBatchCommit() throws Exception {
+        // Regression test for #8072. The period cuts off the txn interval of the row in the incomplete period, so
+        // the last step group of the refresh interval iterator holds no txn interval. With a one-row batch size,
+        // the step group with the row in the complete period ends in a batch commit, and the iterator yields no
+        // more intervals. The refresh used to leak the view's query factory and never advance the watermark,
+        // leaving the view 'refreshing' and rescanning the same intervals on every later refresh.
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_INSERT_AS_SELECT_BATCH_SIZE, 1);
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, 1);
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (price double, ts #TIMESTAMP) timestamp(ts) partition by HOUR WAL"
+            );
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T11:30:00.000000Z");
+            execute(
+                    "create materialized view price_1h refresh immediate period (length 1h) as " +
+                            "select ts, last(price) as price from base_price sample by 1h"
+            );
+            execute("insert into base_price(price, ts) values (1.0, '2024-09-10T10:01')");
+            final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+            // The first refresh measured its scan and commit times. The gap threshold of the txn interval
+            // clustering derives from them, and a threshold above the three-hour gap between the next two
+            // rows would merge their txn intervals into one that the last step group intersects. Reset the
+            // measurements, so the threshold takes its cold-start value of two seconds.
+            execute("refresh materialized view price_1h stats");
+
+            // a row in a complete period and a row in the incomplete period, in two transactions
+            execute("insert into base_price(price, ts) values (2.0, '2024-09-10T08:01')");
+            execute("insert into base_price(price, ts) values (3.0, '2024-09-10T11:10')");
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T11:40:00.000000Z");
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+
+            final String expected = replaceExpectedTimestamp("""
+                    ts\tprice
+                    2024-09-10T08:00:00.000000Z\t2.0
+                    2024-09-10T10:00:00.000000Z\t1.0
+                    """);
+            assertQuery("price_1h")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("select view_name, view_status, last_refresh_start_timestamp, last_refresh_finish_timestamp, " + txnColumns() + " from materialized_views")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tview_status\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\trefresh_base_table_txn\tbase_table_txn
+                            price_1h\tvalid\t2024-09-10T11:40:00.000000Z\t2024-09-10T11:40:00.000000Z\t3\t3
+                            """);
+
+            // another row in the incomplete period: the view's rows stay the same, but the refresh advances
+            // the watermark
+            execute("insert into base_price(price, ts) values (4.0, '2024-09-10T11:20')");
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T11:45:00.000000Z");
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+
+            assertQuery("price_1h")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("select view_name, view_status, last_refresh_start_timestamp, last_refresh_finish_timestamp, " + txnColumns() + " from materialized_views")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tview_status\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\trefresh_base_table_txn\tbase_table_txn
+                            price_1h\tvalid\t2024-09-10T11:45:00.000000Z\t2024-09-10T11:45:00.000000Z\t4\t4
+                            """);
+
+            // the period completes, and its range refresh writes the 11:00 bucket
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T12:10:00.000000Z");
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+
+            assertQuery("price_1h")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceExpectedTimestamp("""
+                            ts\tprice
+                            2024-09-10T08:00:00.000000Z\t2.0
+                            2024-09-10T10:00:00.000000Z\t1.0
+                            2024-09-10T11:00:00.000000Z\t4.0
+                            """));
+            assertQuery("select view_name, view_status, " + txnColumns() + " from materialized_views")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tview_status\trefresh_base_table_txn\tbase_table_txn
+                            price_1h\tvalid\t4\t4
+                            """);
+        });
+    }
+
+    @Test
     public void testIncrementalRefreshRecoversWhenWalSegmentIsGone() throws Exception {
         // The base table is renamed, dropped, swapped or has its WAL purged here, so the
         // transaction the composite randomiser commits against it cannot be subtracted back
@@ -5356,7 +5457,7 @@ public class MatViewTest extends AbstractCairoTest {
 
             assertQuery(outSelect(out, viewQuery))
                     .timestamp("k")
-                    .expectSize()
+                    .noRandomAccess()
                     .noLeakCheck()
                     .returns(replaceExpectedTimestamp(expected));
             assertQuery(outSelect(out, viewName))
@@ -5392,7 +5493,8 @@ public class MatViewTest extends AbstractCairoTest {
                     """;
 
             assertQuery(outSelect(out, viewQuery))
-                    .expectSize()
+                    .supportsRandomAccess(timestampType == TestTimestampType.NANO)
+                    .expectSize(timestampType == TestTimestampType.NANO)
                     .noLeakCheck()
                     .returns(replaceExpectedTimestamp(expected));
             assertQuery(outSelect(out, viewName))
@@ -5426,7 +5528,8 @@ public class MatViewTest extends AbstractCairoTest {
                     """;
 
             assertQuery(outSelect(out, viewQuery))
-                    .expectSize()
+                    .supportsRandomAccess(timestampType == TestTimestampType.NANO)
+                    .expectSize(timestampType == TestTimestampType.NANO)
                     .noLeakCheck()
                     .returns(replaceExpectedTimestamp(expected));
             assertQuery(outSelect(out, viewName))
@@ -5461,7 +5564,8 @@ public class MatViewTest extends AbstractCairoTest {
                     """;
 
             assertQuery(outSelect(out, viewQuery))
-                    .expectSize()
+                    .supportsRandomAccess(timestampType == TestTimestampType.NANO)
+                    .expectSize(timestampType == TestTimestampType.NANO)
                     .noLeakCheck()
                     .returns(replaceExpectedTimestamp(expected));
             assertQuery(outSelect(out, viewName))
@@ -5494,7 +5598,8 @@ public class MatViewTest extends AbstractCairoTest {
                     2021-03-28T01:00:00.000000Z\ta\t33.45558404694713\t128.42101395467057
                     """;
             assertQuery(outSelect(out, viewQuery))
-                    .expectSize()
+                    .supportsRandomAccess(timestampType == TestTimestampType.NANO)
+                    .expectSize(timestampType == TestTimestampType.NANO)
                     .noLeakCheck()
                     .returns(replaceExpectedTimestamp(expected));
             assertQuery(outSelect(out, viewName))
@@ -5692,7 +5797,7 @@ public class MatViewTest extends AbstractCairoTest {
 
             assertQuery(outSelect(out, viewQuery))
                     .timestamp("k")
-                    .expectSize()
+                    .noRandomAccess()
                     .noLeakCheck()
                     .returns(replaceExpectedTimestamp(expected));
             assertQuery(outSelect(out, viewName))
@@ -5764,7 +5869,6 @@ public class MatViewTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns(replaceExpectedTimestamp(expected1));
             assertQuery(view1Sql + " order by sym")
-                    .expectSize()
                     .noLeakCheck()
                     .returns(replaceExpectedTimestamp(expected1));
 
@@ -5778,7 +5882,6 @@ public class MatViewTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns(replaceExpectedTimestamp(expected2));
             assertQuery(view2Sql + " order by sym")
-                    .expectSize()
                     .noLeakCheck()
                     .returns(replaceExpectedTimestamp(expected2));
         });
@@ -5841,7 +5944,7 @@ public class MatViewTest extends AbstractCairoTest {
             final String viewSql = "select ts, first(ts) as first_ts from x sample by 10y";
             assertQuery(viewSql)
                     .timestamp("ts")
-                    .expectSize()
+                    .noRandomAccess()
                     .noLeakCheck()
                     .returns(replaceExpectedTimestamp(expected));
 
@@ -8033,7 +8136,13 @@ public class MatViewTest extends AbstractCairoTest {
             execute("insert into base_price(price, ts) values (2.0, '2024-09-09T05:01')");
             execute("insert into base_price(price, ts) values (3.0, '2024-09-10T11:01')");
 
+            // The period [11:00, 12:00) completes at 12:00, so at 12:30 the
+            // period timer fires too. Refresh the two transactions first: a
+            // period refresh that ran before them would recompute the 11:00
+            // bucket on its own, which is not what this test counts. The
+            // period refresh then finds the period refreshed already.
             currentMicros = parseFloorPartialTimestamp("2024-09-10T12:30:00.000000Z");
+            drainQueues();
             drainMatViewTimerQueue(timerJob);
             drainQueues();
 
@@ -9249,7 +9358,7 @@ public class MatViewTest extends AbstractCairoTest {
                     """;
             assertQuery(viewSql + " order by ts")
                     .timestamp("ts")
-                    .expectSize()
+                    .noRandomAccess()
                     .noLeakCheck()
                     .returns(replaceExpectedTimestamp(expected));
             assertQuery("price_1h order by ts")
@@ -9592,7 +9701,8 @@ public class MatViewTest extends AbstractCairoTest {
 
             final String out = "select to_timezone(k, 'Iran') k, c";
             assertQuery(outSelect(out, viewQuery))
-                    .expectSize()
+                    .supportsRandomAccess(timestampType == TestTimestampType.NANO)
+                    .expectSize(timestampType == TestTimestampType.NANO)
                     .noLeakCheck()
                     .returns(replaceExpectedTimestamp(expected));
             assertQuery(outSelect(out, viewName))
@@ -9630,7 +9740,8 @@ public class MatViewTest extends AbstractCairoTest {
 
             final String out = "select to_timezone(k, 'Europe/Berlin') k, c";
             assertQuery(outSelect(out, viewQuery))
-                    .expectSize()
+                    .supportsRandomAccess(timestampType == TestTimestampType.NANO)
+                    .expectSize(timestampType == TestTimestampType.NANO)
                     .noLeakCheck()
                     .returns(replaceExpectedTimestamp(expected));
             assertQuery(outSelect(out, viewName))
@@ -9675,7 +9786,8 @@ public class MatViewTest extends AbstractCairoTest {
                     """;
             final String out = "select to_timezone(k, 'Europe/Berlin') k, c";
             assertQuery(outSelect(out, viewQuery))
-                    .expectSize()
+                    .supportsRandomAccess(timestampType == TestTimestampType.NANO)
+                    .expectSize(timestampType == TestTimestampType.NANO)
                     .noLeakCheck()
                     .returns(replaceExpectedTimestamp(expected));
             assertQuery(outSelect(out, viewName))
@@ -9726,7 +9838,8 @@ public class MatViewTest extends AbstractCairoTest {
 
             final String out = "select to_timezone(k, 'Europe/Berlin') k, c";
             assertQuery(outSelect(out, viewQuery))
-                    .expectSize()
+                    .supportsRandomAccess(timestampType == TestTimestampType.NANO)
+                    .expectSize(timestampType == TestTimestampType.NANO)
                     .noLeakCheck()
                     .returns(replaceExpectedTimestamp(expected));
             assertQuery(outSelect(out, viewName))
@@ -9793,7 +9906,7 @@ public class MatViewTest extends AbstractCairoTest {
 
             assertQuery(viewQuery)
                     .timestamp("k")
-                    .expectSize()
+                    .noRandomAccess()
                     .noLeakCheck()
                     .returns(replaceExpectedTimestamp(expected));
             assertQuery(viewName)
@@ -9828,7 +9941,7 @@ public class MatViewTest extends AbstractCairoTest {
 
             assertQuery(viewQuery)
                     .timestamp("k")
-                    .expectSize()
+                    .noRandomAccess()
                     .noLeakCheck()
                     .returns(replaceExpectedTimestamp(expected));
             assertQuery(viewName)
@@ -10167,7 +10280,6 @@ public class MatViewTest extends AbstractCairoTest {
 
             assertQuery("select sym, last(price) as price, ts from base_price sample by 1h order by ts, sym")
                     .timestamp("ts")
-                    .expectSize()
                     .noLeakCheck()
                     .returns(replaceExpectedTimestamp(expected));
             assertQuery("price_1h order by ts, sym")
@@ -11593,7 +11705,7 @@ public class MatViewTest extends AbstractCairoTest {
                     """;
             assertQuery(viewQuery)
                     .timestamp("ts")
-                    .expectSize()
+                    .noRandomAccess()
                     .noLeakCheck()
                     .returns(replaceExpectedTimestamp(expected));
             assertQuery("price_1h")
@@ -12280,7 +12392,8 @@ public class MatViewTest extends AbstractCairoTest {
                     "FROM historical_prices " +
                     "SAMPLE BY 1w")
                     .timestamp("timestamp")
-                    .expectSize()
+                    .supportsRandomAccess(timestampType == TestTimestampType.NANO)
+                    .expectSize(timestampType == TestTimestampType.NANO)
                     .noLeakCheck()
                     .returns(expected);
 

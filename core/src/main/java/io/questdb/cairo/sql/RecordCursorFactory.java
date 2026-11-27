@@ -336,6 +336,18 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     }
 
     /**
+     * Returns true if {@code toTop()} on this factory's cursor reruns a stream GROUP BY. A factory
+     * with an input that {@link #getBaseFactory()} does not expose must combine its inputs.
+     */
+    default boolean isRewindRecomputing() {
+        if (recordCursorSupportsRandomAccess()) {
+            return false;
+        }
+        final RecordCursorFactory base = getBaseFactory();
+        return base != null && base.isRewindRecomputing();
+    }
+
+    /**
      * Returns true if this factory is guaranteed to produce the same result for every cursor
      * open within a single query execution (same {@code SqlExecutionContext}). This is a weaker
      * property than {@code !isNonDeterministic()}: a factory projecting {@code now()} or a bind
@@ -388,6 +400,22 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     default boolean hasParquetConvertedColumns(SqlExecutionContext executionContext) {
         final RecordCursorFactory base = getBaseFactory();
         return base != null && base.hasParquetConvertedColumns(executionContext);
+    }
+
+    /**
+     * Returns true when the column that this factory's metadata marks as its timestamp holds, in every row, the
+     * designated timestamp of the table row that the factory read, unchanged, and the rows follow the direction that
+     * {@link #getScanDirection()} reports: ascending for {@link #SCAN_DIRECTION_FORWARD}, descending for
+     * {@link #SCAN_DIRECTION_BACKWARD} ({@link #SCAN_DIRECTION_OTHER} promises no order). A table rejects NULL in its
+     * designated timestamp, so that column holds no NULL. Table scans and their row and index filters, LIMIT, sorts
+     * whose first key is that column, and projections and views that keep it answer true. A Parquet export of a
+     * lazily type-converted column streams such a plan and writes that column as the file's designated timestamp.
+     * <p>
+     * Fail-safe: a factory that cannot prove both facts answers false, the default, and such an export goes through a
+     * temp table.
+     */
+    default boolean hasTableScanTimestamp() {
+        return false;
     }
 
     default boolean mayHaveParquetPartitions(SqlExecutionContext executionContext) {
@@ -450,6 +478,17 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     }
 
     /**
+     * Returns true if {@link #newTimeFrameCursor()} returns a cursor that parallel WINDOW and HORIZON
+     * JOINs can read: one whose records and timestamps come from the frames of
+     * {@link #getPageFrameCursor}. Implies {@link #supportsTimeFrameCursor()}.
+     *
+     * @return true if the factory supports concurrent time frames
+     */
+    default boolean supportsConcurrentTimeFrameCursor() {
+        return supportsTimeFrameCursor();
+    }
+
+    /**
      * Returns true if the factory stands for nothing more but a filter, so that
      * the above factory (e.g. a parallel GROUP BY one) can steal the filter.
      *
@@ -505,8 +544,8 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
      * Time frames are supported only for full table scan cursors, i.e. "x" queries.
      *
      * @return true if the factory supports time frames
-     * and {@link #getTimeFrameCursor(SqlExecutionContext)}
-     * or {@link #newTimeFrameCursor()} can be safely called.
+     * and {@link #getTimeFrameCursor(SqlExecutionContext)} can be safely called;
+     * {@link #supportsConcurrentTimeFrameCursor()} governs {@link #newTimeFrameCursor()}.
      */
     default boolean supportsTimeFrameCursor() {
         return false;

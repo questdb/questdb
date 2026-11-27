@@ -660,10 +660,7 @@ fn make_varchar_data_sized(row_count: usize, null_pct: u8, str_len: usize) -> Va
         }
     }
 
-    let aux: Vec<[u8; 16]> = aux_bytes
-        .chunks_exact(16)
-        .map(|chunk| <[u8; 16]>::try_from(chunk).expect("chunk"))
-        .collect();
+    let aux: Vec<[u8; 16]> = aux_bytes.as_chunks::<16>().0.to_vec();
 
     VarcharData { data, aux }
 }
