@@ -94,23 +94,6 @@ public class GroupByUtils {
     // Grouping sets roll up columns only: a rolled-up key is replaced with NULL by its input column.
     public static final String EXPRESSION_GROUPING_KEY_MESSAGE = "expression keys in ROLLUP, CUBE and GROUPING SETS must be computed in a subquery";
 
-    /**
-     * Computes the value each function reports over an empty group, for functions whose
-     * {@link GroupByFunction#hasNonNullEmptyValue()} is true. The result and
-     * {@code emptyValueTypes} are parallel to {@code functions}. For a function with a non-NULL
-     * empty value, entry i of {@code emptyValueTypes} holds the function's type tag (BOOLEAN,
-     * DOUBLE or LONG) and entry i of the result holds the value's raw bits: 1 or 0 for BOOLEAN,
-     * {@link Double#doubleToRawLongBits(double)} for DOUBLE, the value itself for LONG. For any
-     * other function, the type tag is {@link ColumnType#UNDEFINED}, which means the function
-     * reports NULL over an empty group, and the value is {@link Numbers#LONG_NULL}.
-     *
-     * @param functions       assembled group-by functions, with their value types already initialized
-     * @param valueCount      number of map value slots the functions' value types occupy
-     * @param emptyValueTypes receives the per-function type tags; cleared first, and left empty
-     *                        when the method returns null
-     * @return the per-function empty values, or null when every function reports NULL
-     */
-    @Nullable
     public static void aggregateKeyedBatch(
             PageFrameMemoryRecord record,
             Map map,
@@ -133,6 +116,23 @@ public class GroupByUtils {
         }
     }
 
+    /**
+     * Computes the value each function reports over an empty group, for functions whose
+     * {@link GroupByFunction#hasNonNullEmptyValue()} is true. The result and
+     * {@code emptyValueTypes} are parallel to {@code functions}. For a function with a non-NULL
+     * empty value, entry i of {@code emptyValueTypes} holds the function's type tag (BOOLEAN,
+     * DOUBLE or LONG) and entry i of the result holds the value's raw bits: 1 or 0 for BOOLEAN,
+     * {@link Double#doubleToRawLongBits(double)} for DOUBLE, the value itself for LONG. For any
+     * other function, the type tag is {@link ColumnType#UNDEFINED}, which means the function
+     * reports NULL over an empty group, and the value is {@link Numbers#LONG_NULL}.
+     *
+     * @param functions       assembled group-by functions, with their value types already initialized
+     * @param valueCount      number of map value slots the functions' value types occupy
+     * @param emptyValueTypes receives the per-function type tags; cleared first, and left empty
+     *                        when the method returns null
+     * @return the per-function empty values, or null when every function reports NULL
+     */
+    @Nullable
     public static LongList computeNonNullEmptyValues(ObjList<GroupByFunction> functions, int valueCount, IntList emptyValueTypes) {
         emptyValueTypes.clear();
         final int n = functions.size();
