@@ -12821,13 +12821,13 @@ public class MatViewTest extends AbstractCairoTest {
                             "sym varchar, price double, ts #TIMESTAMP" +
                             ") timestamp(ts) partition by DAY WAL"
             );
-            // The parser gives a second wildcard the synthesized name *1 and rejects it, so a passthrough
-            // view reaches the wildcard expansion with at most one wildcard in its select list.
+            // The parser gives a second wildcard a synthesized name and rejects it, so a passthrough view reaches
+            // the wildcard expansion with at most one wildcard in its select list.
             final String sql = "create materialized view price_copy as (select b.*, * from base_price b)";
             assertExceptionNoLeakCheck(
                     sql,
                     sql.indexOf(", *") + 2,
-                    "column '*1' requires an explicit alias"
+                    "a select list of a materialized view takes one wildcard, list the columns of * by name"
             );
         });
     }

@@ -113,37 +113,38 @@ public class MatViewExplicitColumnNamesTest extends AbstractCairoTest {
 
     @Test
     public void testComputedColumnRequiresAlias() throws Exception {
-        // Under both alias rules, an unaliased function call, operator expression or constant fails at its
-        // expression, which the error points at by its function name, operator or constant.
+        // Under both alias rules, an unaliased function call, operator expression or constant fails at its first
+        // character, and the hint quotes it as the SQL writes it, not the name the parser generated for it.
         assertMemoryLeak(() -> {
             createBase();
             for (String mode : ALIAS_EXPRESSION_MODES) {
                 setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, mode);
-                final boolean isLegacy = "false".equals(mode);
-                assertCreateFails(
-                        "SELECT ts, sym, avg(price) FROM base SAMPLE BY 1h",
-                        "avg(price)",
-                        aliasRequired(isLegacy ? "avg" : "avg(price)")
-                );
-                assertCreateFails(
-                        "SELECT ts, sym, count() FROM base SAMPLE BY 1h",
-                        "count()",
-                        aliasRequired(isLegacy ? "count" : "count()")
-                );
+                assertCreateFails("SELECT ts, sym, avg(price) FROM base SAMPLE BY 1h", "avg(price)", aliasRequired("avg(price)"));
+                assertCreateFails("SELECT ts, sym, count() FROM base SAMPLE BY 1h", "count()", aliasRequired("count()"));
                 assertCreateFails(
                         "SELECT ts, sym, sum(price) * 2 FROM base SAMPLE BY 1h",
-                        "* 2",
-                        aliasRequired(isLegacy ? "column" : "sum(price) * 2")
+                        "sum(price) * 2",
+                        aliasRequired("sum(price) * 2")
                 );
-                assertCreateFails(
-                        "SELECT ts, sym, price::INT FROM base",
-                        "::INT",
-                        aliasRequired(isLegacy ? "cast" : "price::INT")
-                );
-                // a numeric constant's generated name is a valid column name under both rules
+                assertCreateFails("SELECT ts, sym, price::INT FROM base", "price::INT", aliasRequired("price::INT"));
                 assertCreateFails("SELECT ts, sym, 42 FROM base", "42", aliasRequired("42"));
-                assertCreateFails("SELECT ts, sym, 1.5 FROM base", "1.5", aliasRequired(isLegacy ? "column1" : "\"1.5\""));
-                assertCreateFails("SELECT ts, sym, 'abc' FROM base", "'abc'", aliasRequired(isLegacy ? "abc" : "'abc'"));
+                assertCreateFails("SELECT ts, sym, 1.5 FROM base", "1.5", aliasRequired("1.5"));
+                assertCreateFails("SELECT ts, sym, 'abc' FROM base", "'abc'", aliasRequired("'abc'"));
+                // the item spans lines and comments as the SQL writes it, without the whitespace around it
+                assertCreateFails(
+                        "SELECT ts, sym,\n    max(price) /* top */\n        - min(price)\n FROM base SAMPLE BY 1h",
+                        "max(price) /*",
+                        aliasRequired("max(price) /* top */\n        - min(price)")
+                );
+                // the hint names neither the expression cut to the generated name's size nor a column
+                final String longColumn = "c" + "x".repeat(70);
+                assertCreateFails(
+                        "SELECT ts, sym, " + longColumn + " + price FROM base",
+                        longColumn + " + price",
+                        aliasRequired(longColumn + " + price")
+                );
+                // a declared variable is the item the SQL writes
+                assertCreateFails("DECLARE @c := price + 1 SELECT ts, sym, @c FROM base", "@c FROM", aliasRequired("@c"));
                 // an explicit alias has to be a valid column name
                 assertCreateFails(
                         "SELECT ts, sym, max(price) AS \"a,b\" FROM base SAMPLE BY 1h",
@@ -159,12 +160,12 @@ public class MatViewExplicitColumnNamesTest extends AbstractCairoTest {
                 assertCreateFails(
                         "SELECT ts, sym, avg_price FROM (SELECT ts, sym, avg(price) AS avg_price, count() FROM base SAMPLE BY 1h)",
                         "count()",
-                        aliasRequired(isLegacy ? "count" : "count()")
+                        aliasRequired("count()")
                 );
                 assertCreateFails(
                         "WITH c AS (SELECT ts, sym, max(price) FROM base SAMPLE BY 1h) SELECT * FROM c",
                         "max(price)",
-                        aliasRequired(isLegacy ? "max" : "max(price)")
+                        aliasRequired("max(price)")
                 );
             }
         });
@@ -179,19 +180,18 @@ public class MatViewExplicitColumnNamesTest extends AbstractCairoTest {
             execute("CREATE TABLE rates (sym SYMBOL, rate DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
             for (String mode : ALIAS_EXPRESSION_MODES) {
                 setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, mode);
-                final boolean isLegacy = "false".equals(mode);
                 assertDdlFails(
                         "CREATE MATERIALIZED VIEW v WITH BASE base AS (SELECT b.ts, b.sym, last(b.price) AS price, last(r.max) AS rate "
                                 + "FROM base b JOIN (SELECT sym, max(rate) FROM rates) r ON (sym) SAMPLE BY 1h) PARTITION BY DAY",
                         "max(rate)",
-                        aliasRequired(isLegacy ? "max" : "max(rate)")
+                        aliasRequired("max(rate)")
                 );
                 assertDdlFails(
                         "CREATE MATERIALIZED VIEW v WITH BASE base AS (SELECT b.ts, b.sym, last(b.price) AS price, last(k.rate) AS rate "
                                 + "FROM base b JOIN (SELECT sym, rate FROM rates UNION ALL SELECT sym, rate * 2 FROM rates) k ON (sym) "
                                 + "SAMPLE BY 1h) PARTITION BY DAY",
-                        "* 2",
-                        aliasRequired(isLegacy ? "column" : "rate * 2")
+                        "rate * 2",
+                        aliasRequired("rate * 2")
                 );
             }
             // aliased, both views compile
@@ -222,11 +222,10 @@ public class MatViewExplicitColumnNamesTest extends AbstractCairoTest {
             drainWalAndViewQueues();
             for (String mode : ALIAS_EXPRESSION_MODES) {
                 setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, mode);
-                final boolean isLegacy = "false".equals(mode);
                 assertDdlFails(
                         "CREATE MATERIALIZED VIEW v WITH BASE base AS (SELECT ts, sym, max(pi) FROM v_avg SAMPLE BY 1d) PARTITION BY DAY",
                         "max(pi)",
-                        aliasRequired(isLegacy ? "max" : "max(pi)")
+                        aliasRequired("max(pi)")
                 );
             }
             setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, "false");
@@ -245,7 +244,7 @@ public class MatViewExplicitColumnNamesTest extends AbstractCairoTest {
                 execute(ddl);
                 Assert.fail("CREATE must fail: " + ddl);
             } catch (SqlException e) {
-                // the error has the position of the column in the view's text
+                // the error names the column's generated name: the select item lies in the view's text
                 TestUtils.assertEquals(aliasRequired("avg(price)"), e.getFlyweightMessage());
             }
             Assert.assertNull(engine.getTableTokenIfExists("mv"));
@@ -255,22 +254,28 @@ public class MatViewExplicitColumnNamesTest extends AbstractCairoTest {
     @Test
     public void testDuplicateColumnReferenceRequiresAlias() throws Exception {
         // A plain column reference whose name another column of its select list took gets a generated name, so it
-        // needs an alias, whether the other column is a reference to the same column or an explicit alias.
+        // needs an alias, whether the other column is a reference to the same column or an explicit alias. The error
+        // names the column, not the generated name, and quotes the reference as the SQL writes it.
         assertMemoryLeak(() -> {
             createBase();
+            execute("CREATE TABLE dim (sym SYMBOL, rate DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
             for (String mode : ALIAS_EXPRESSION_MODES) {
                 setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, mode);
-                final boolean isLegacy = "false".equals(mode);
-                assertCreateFails("SELECT ts, sym, price, price FROM base", "price FROM", aliasRequired(isLegacy ? "price1" : "price_2"));
-                assertCreateFails("SELECT b.ts, b.sym, b.price, b.price FROM base b", "b.price FROM", aliasRequired(isLegacy ? "price1" : "price_2"));
-                assertCreateFails("SELECT ts, price AS sym, sym FROM base", "sym FROM", aliasRequired(isLegacy ? "sym1" : "sym_2"));
+                assertCreateFails("SELECT ts, sym, price, price FROM base", "price FROM", aliasRequired("price", "price"));
+                assertCreateFails("SELECT b.ts, b.sym, b.price, b.price FROM base b", "b.price FROM", aliasRequired("price", "b.price"));
+                assertCreateFails("SELECT ts, price AS sym, sym FROM base", "sym FROM", aliasRequired("sym", "sym"));
                 assertCreateFails(
                         "SELECT ts, sym, avg_price FROM (SELECT ts, sym, sym, avg(price) AS avg_price FROM base SAMPLE BY 1h)",
                         "sym, avg(price)",
-                        aliasRequired(isLegacy ? "sym1" : "sym_2")
+                        aliasRequired("sym", "sym")
                 );
                 // a second wildcard has a generated name, and a wildcard cannot have an alias
-                assertCreateFails("SELECT b.*, * FROM base b", "* FROM", isLegacy ? aliasRequired("*1") : aliasRequired("*_2"));
+                assertCreateFails("SELECT b.*, * FROM base b", "* FROM", wildcardRefused("*"));
+                assertDdlFails(
+                        "CREATE MATERIALIZED VIEW v WITH BASE base AS (SELECT b.*, d.* FROM base b ASOF JOIN dim d ON (sym)) PARTITION BY DAY",
+                        "d.*",
+                        wildcardRefused("d.*")
+                );
             }
             execute("CREATE MATERIALIZED VIEW v AS (SELECT ts, sym, price, price AS price2 FROM base) PARTITION BY DAY");
             insertBaseRows();
@@ -764,8 +769,17 @@ public class MatViewExplicitColumnNamesTest extends AbstractCairoTest {
         });
     }
 
-    private static String aliasRequired(String generatedName) {
-        return "column '" + generatedName + "' requires an explicit alias. Use: " + generatedName + " AS your_column_name";
+    private static String aliasRequired(String item) {
+        return aliasRequired(item, item);
+    }
+
+    // The error of a select item without an alias that names the column and quotes the item.
+    private static String aliasRequired(String column, String item) {
+        return "column '" + column + "' requires an explicit alias. Use: " + item + " AS your_column_name";
+    }
+
+    private static String wildcardRefused(String item) {
+        return "a select list of a materialized view takes one wildcard, list the columns of " + item + " by name";
     }
 
     // Asserts that CREATE MATERIALIZED VIEW v AS (query) fails with the message at the first occurrence of

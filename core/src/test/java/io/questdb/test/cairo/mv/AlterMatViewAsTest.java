@@ -2122,7 +2122,12 @@ public class AlterMatViewAsTest extends AbstractCairoTest {
             assertAlterFails(
                     "AS (SELECT ts, sym, last(price) FROM base SAMPLE BY 1h)",
                     "last(price)",
-                    "column 'last' requires an explicit alias. Use: last AS your_column_name"
+                    "column 'last(price)' requires an explicit alias. Use: last(price) AS your_column_name"
+            );
+            assertAlterFails(
+                    "AS (SELECT b.ts, b.sym, last(b.price) AS price, b.sym FROM base b SAMPLE BY 1h)",
+                    "b.sym FROM",
+                    "column 'sym' requires an explicit alias. Use: b.sym AS your_column_name"
             );
             assertAlterFails(
                     "AS (SELECT ts, sym, count FROM base SAMPLE BY 1h)",
