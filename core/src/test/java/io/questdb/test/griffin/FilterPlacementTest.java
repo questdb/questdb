@@ -114,15 +114,15 @@ public class FilterPlacementTest extends AbstractCairoTest {
             createCoveringTable();
             sqlExecutionContext.setParallelFilterEnabled(false);
             final String sql = "SELECT sym, price FROM c WHERE sym = 'a' AND price > 1 ORDER BY price DESC LIMIT 2";
-            assertSortAlgorithm(SortPlan.Algorithm.MATERIALIZED, sql);
+            assertSortAlgorithm(SortPlan.Algorithm.COPIED_LIMITED, sql);
             assertQuery(sql)
+                    .expectSize()
                     .withPlan("""
-                            Limit value: 2 skip-rows-max: 0 take-rows-max: 2
-                                Encode sort
-                                  keys: [price desc]
-                                    Filter filter: 1<price
-                                        CoveringIndex on: sym with: price
-                                          filter: sym='a'
+                            Encode sort lo: 2
+                              keys: [price desc]
+                                Filter filter: 1<price
+                                    CoveringIndex on: sym with: price
+                                      filter: sym='a'
                             """)
                     .returns("""
                             sym\tprice

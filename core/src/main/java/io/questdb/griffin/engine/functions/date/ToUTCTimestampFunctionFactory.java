@@ -133,7 +133,7 @@ public class ToUTCTimestampFunctionFactory implements FunctionFactory, Monotonic
         final CharSequence tz = arguments.constant(call.argumentAt(1)).getStrA(null);
         final int type = call.getDataType();
         return ToTimezoneTimestampFunctionFactory.constantZoneRules(tz, call.argumentAt(1).getPosition(), type) == null
-                && OffsetTimestampFunction.preservesOrder(call.argumentAt(0).getDataType(), type, fixedOffset(tz, type));
+                && OffsetTimestampFunction.preservesOrder(MonotonicTimestampFunctionFactory.timestampArgumentType(call, 0), type, fixedOffset(tz, type));
     }
 
     private static long fixedOffset(CharSequence tz, int timestampType) {

@@ -6103,7 +6103,7 @@ public class LateralCorrelationTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             VirtualRecord
-                              functions: [o.id,case([o.__qdb_row_marker__0,coalesce(x.cnt,0),null]),r.id]
+                              functions: [o.id,case([o.__qdb_row_marker__0,coalesce(x.cnt,0),nullL]),r.id]
                                 Hash Right Outer Join Light
                                   condition: r.k=o.k
                                     Hash Left Outer Join Light

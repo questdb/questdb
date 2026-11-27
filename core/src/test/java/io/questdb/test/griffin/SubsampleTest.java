@@ -4198,7 +4198,7 @@ public class SubsampleTest extends AbstractCairoTest {
             // SUBSAMPLE(5 rows, target=2) gives {first=10 at 00:00, last=50 at 04:00}
             // DISTINCT over price,ts produces 2 rows (already distinct)
             assertQuery("SELECT DISTINCT price, ts FROM (SELECT price, ts FROM t SUBSAMPLE lttb(price, 2))")
-                    .expectSize()
+                    .noRandomAccess()
                     .returns("price\tts\n" +
                             "10.0\t2024-01-01T00:00:00.000000Z\n" +
                             "50.0\t2024-01-01T04:00:00.000000Z\n");

@@ -28,6 +28,7 @@ package io.questdb.griffin.engine.functions;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.FunctionFactoryDescriptor;
 import io.questdb.griffin.FunctionInstantiator;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.plan.logical.BoundExpression;
@@ -54,6 +55,20 @@ public interface MonotonicTimestampFunctionFactory {
     static MonotonicTimestampFunctionFactory of(BoundExpression expression) {
         return expression instanceof FunctionExpression call && call.getOverload() != null
                 && call.getOverload().getFactory() instanceof MonotonicTimestampFunctionFactory factory ? factory : null;
+    }
+
+    /**
+     * The type the built function of {@code call} reads its timestamp argument {@code index} as: the instantiator hands a
+     * TIMESTAMP or DATE parameter runtime-constant text as a value of that type, see
+     * {@link RuntimeConstFunction#temporalTextType}, which the bound argument does not record.
+     */
+    static int timestampArgumentType(FunctionExpression call, int index) {
+        final BoundExpression argument = call.argumentAt(index);
+        final short temporalType = FunctionFactoryDescriptor.toTypeTag(call.getOverload().getArgTypeWithFlags(index));
+        if (temporalType != ColumnType.TIMESTAMP && temporalType != ColumnType.DATE) {
+            return argument.getDataType();
+        }
+        return RuntimeConstFunction.temporalTextType(argument.getDataType(), (argument.getFunctionFlags() & BoundExpression.RUNTIME_CONSTANT) != 0, temporalType);
     }
 
     /**

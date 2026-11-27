@@ -78,7 +78,7 @@ public class AddLongToTimestampFunctionFactory implements FunctionFactory, Monot
     @Override
     public boolean preservesTimestampOrder(FunctionExpression call, ConstantArguments arguments) {
         return call.argumentAt(1) instanceof ConstantExpression
-                && preservesOrder(call.argumentAt(0).getDataType(), call.getDataType(), arguments.constant(call.argumentAt(1)).getLong(null));
+                && preservesOrder(MonotonicTimestampFunctionFactory.timestampArgumentType(call, 0), call.getDataType(), arguments.constant(call.argumentAt(1)).getLong(null));
     }
 
 

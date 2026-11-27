@@ -217,19 +217,19 @@ public class OrderPlanningTest extends AbstractCairoTest {
                             """);
             assertQuery("SELECT ts, s, count() FROM t WHERE ts IN '2024-01-01' SAMPLE BY 1d ORDER BY s")
                     .noLeakCheck()
-                    .expectSize()
                     .withPlan("""
-                            Encode sort light
+                            Encode sort
                               keys: [s]
-                                Async Group By workers: 1
-                                  keys: [ts,s]
-                                  keyFunctions: [timestamp_floor_utc('1d',ts)]
-                                  values: [count(*)]
-                                  filter: null
-                                    PageFrame
-                                        Row forward scan
-                                        Interval forward scan on: t
-                                          intervals: [("2024-01-01T00:00:00.000000Z","2024-01-01T23:59:59.999999Z")]
+                                SelectedRecord
+                                    Async Stream Group By workers: 1
+                                      segmentKey: timestamp_floor_utc('1d',ts)
+                                      keys: [ts,s]
+                                      keyFunctions: [timestamp_floor_utc('1d',ts)]
+                                      values: [count(*)]
+                                        PageFrame
+                                            Row forward scan
+                                            Interval forward scan on: t
+                                              intervals: [("2024-01-01T00:00:00.000000Z","2024-01-01T23:59:59.999999Z")]
                             """)
                     .returns("""
                             ts	s	count
@@ -458,21 +458,22 @@ public class OrderPlanningTest extends AbstractCairoTest {
                     """;
             assertQuery("SELECT ts, v, avg(v) OVER (ORDER BY ts DESC RANGE 2 SECONDS PRECEDING) a FROM w WHERE ts IN '2024-01-01' ORDER BY v LIMIT 3")
                     .noLeakCheck()
+                    .expectSize()
                     .withPlan("""
-                            Limit value: 3 skip-rows-max: 0 take-rows-max: 3
-                                Encode sort
-                                  keys: [v]
-                                    Window
-                                      functions: [avg(v) over (range between 2000000 preceding and current row)]
-                                        PageFrame
-                                            Row backward scan
-                                            Interval backward scan on: w
-                                              intervals: [("2024-01-01T00:00:00.000000Z","2024-01-01T23:59:59.999999Z")]
+                            Encode sort lo: 3
+                              keys: [v]
+                                Window
+                                  functions: [avg(v) over (range between 2000000 preceding and current row)]
+                                    PageFrame
+                                        Row backward scan
+                                        Interval backward scan on: w
+                                          intervals: [("2024-01-01T00:00:00.000000Z","2024-01-01T23:59:59.999999Z")]
                             """)
                     .returns(firstRows);
             assertQuery("SELECT ts, v, avg(v) OVER (ORDER BY ts DESC RANGE 2 SECONDS PRECEDING) a FROM w WHERE ts IN '2024-01-01' ORDER BY ts LIMIT 3")
                     .noLeakCheck()
                     .timestamp("ts")
+                    .expectSize()
                     .returns(firstRows);
         });
     }
@@ -656,6 +657,7 @@ public class OrderPlanningTest extends AbstractCairoTest {
             assertQuery("SELECT ts, v, avg(v) OVER (ORDER BY ts RANGE 2 SECONDS PRECEDING) a FROM w WHERE s IN ('S1', 'S2') ORDER BY ts DESC LIMIT 3")
                     .noLeakCheck()
                     .timestampDesc("ts")
+                    .expectSize()
                     .returns("""
                             ts	v	a
                             2024-01-01T00:00:09.000000Z	10.0	9.0
@@ -680,14 +682,13 @@ public class OrderPlanningTest extends AbstractCairoTest {
                     .timestampDesc("ts")
                     .expectSize()
                     .withPlan("""
-                            Limit value: 3 skip-rows: 0 take-rows: 3
-                                Encode sort
-                                  keys: [ts desc]
-                                    Window
-                                      functions: [avg(v) over (range between 2000000 preceding and current row)]
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: w
+                            Encode sort lo: 3 partiallySorted: true
+                              keys: [ts desc]
+                                Window
+                                  functions: [avg(v) over (range between 2000000 preceding and current row)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: w
                             """)
                     .returns(expected);
             assertQuery("SELECT ts, v, avg(v) OVER (ORDER BY ts RANGE 2 SECONDS PRECEDING) a FROM w ORDER BY 1 DESC LIMIT 3")
@@ -768,14 +769,13 @@ public class OrderPlanningTest extends AbstractCairoTest {
                     .timestampDesc("ts")
                     .expectSize()
                     .withPlan("""
-                            Limit value: 3 skip-rows: 0 take-rows: 3
-                                Encode sort
-                                  keys: [ts desc, v]
-                                    Window
-                                      functions: [avg(v) over (range between 2000000 preceding and current row)]
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: w
+                            Encode sort lo: 3 partiallySorted: true
+                              keys: [ts desc, v]
+                                Window
+                                  functions: [avg(v) over (range between 2000000 preceding and current row)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: w
                             """)
                     .returns(lastRows);
             assertQuery("SELECT ts, v, avg(v) OVER w1 a FROM w WINDOW w1 AS (ORDER BY ts RANGE 2 SECONDS PRECEDING) ORDER BY ts DESC, v LIMIT 3")

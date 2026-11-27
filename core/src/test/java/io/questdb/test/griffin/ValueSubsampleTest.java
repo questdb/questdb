@@ -443,9 +443,9 @@ public class ValueSubsampleTest extends AbstractCairoTest {
                         "SELECT ts,sum(v) value FROM lp_value_subsample GROUP BY ts SUBSAMPLE " + method + "(value,4)",
                         """
                                 ts	value
+                                2024-01-01T00:00:01.000000Z	10.0
                                 2024-01-01T00:10:07.000000Z	60.0
                                 2024-01-01T00:10:08.000000Z	10.0
-                                2024-01-01T00:00:01.000000Z	10.0
                                 """
                 );
                 assertRowsOnly(
@@ -487,10 +487,10 @@ public class ValueSubsampleTest extends AbstractCairoTest {
                         "SELECT ts,sum(v) value FROM lp_value_subsample GROUP BY ts SUBSAMPLE " + method + "(value,4)",
                         """
                                 ts	value
+                                2024-01-01T00:00:01.000000Z	10.0
+                                2024-01-01T00:00:02.000000Z	50.0
                                 2024-01-01T00:10:07.000000Z	60.0
                                 2024-01-01T00:10:08.000000Z	10.0
-                                2024-01-01T00:00:02.000000Z	50.0
-                                2024-01-01T00:00:01.000000Z	10.0
                                 """
                 );
                 assertRowsOnly(
@@ -536,10 +536,10 @@ public class ValueSubsampleTest extends AbstractCairoTest {
                         "SELECT ts,sum(v) value FROM lp_value_subsample GROUP BY ts SUBSAMPLE " + method + "(value,4)",
                         """
                                 ts	value
+                                2024-01-01T00:00:01.000000Z	10.0
+                                2024-01-01T00:00:02.000000Z	50.0
                                 2024-01-01T00:10:07.000000Z	60.0
                                 2024-01-01T00:10:08.000000Z	10.0
-                                2024-01-01T00:00:02.000000Z	50.0
-                                2024-01-01T00:00:01.000000Z	10.0
                                 """
                 );
                 assertRowsOnly(

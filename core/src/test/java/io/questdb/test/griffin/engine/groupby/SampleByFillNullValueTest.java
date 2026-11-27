@@ -184,6 +184,7 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
             createBucketAliasTable();
             assertQuery("SELECT timestamp_floor('1d', t.ts) AS ts, avg(val) AS v FROM t SAMPLE BY 1h FILL(NULL)")
                     .noLeakCheck()
+                    .noRandomAccess()
                     .timestamp("ts")
                     .returns("""
                             ts\tv

@@ -98,7 +98,7 @@ public class DateTruncFunctionFactory implements FunctionFactory, MonotonicTimes
         }
         final String unit = unit(arguments.constant(call.argumentAt(0)).getStrA(null), call.argumentAt(0).getPosition());
         final int type = call.getDataType();
-        return isIdentity(unit, type) || TimestampFloorFunctions.preservesFloorOrder(call.argumentAt(1).getDataType(), type, unit);
+        return isIdentity(unit, type) || TimestampFloorFunctions.preservesFloorOrder(MonotonicTimestampFunctionFactory.timestampArgumentType(call, 1), type, unit);
     }
 
     private static boolean isIdentity(String unit, int timestampType) {

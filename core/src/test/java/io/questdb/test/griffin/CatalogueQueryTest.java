@@ -762,12 +762,11 @@ public class CatalogueQueryTest extends AbstractCairoTest {
                         """);
                 assertRowsOnly("EXPLAIN " + sql, """
                         QUERY PLAN
-                        Limit value: 3 skip-rows-max: 0 take-rows-max: 3
-                            Encode sort
-                              keys: [proname]
-                                SelectedRecord
-                                    Filter filter: proisstrict
-                                        GenericRecord
+                        Encode sort lo: 3
+                          keys: [proname]
+                            SelectedRecord
+                                Filter filter: proisstrict
+                                    GenericRecord
                         """);
             }
             {

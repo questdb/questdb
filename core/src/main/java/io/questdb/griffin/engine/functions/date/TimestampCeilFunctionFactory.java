@@ -107,7 +107,7 @@ public class TimestampCeilFunctionFactory implements FunctionFactory, MonotonicT
     @Override
     public boolean preservesTimestampOrder(FunctionExpression call, ConstantArguments arguments) {
         return call.argumentAt(0) instanceof ConstantExpression
-                && preservesOrder(call.argumentAt(1).getDataType(), call.getDataType(), arguments.constant(call.argumentAt(0)).getChar(null));
+                && preservesOrder(MonotonicTimestampFunctionFactory.timestampArgumentType(call, 1), call.getDataType(), arguments.constant(call.argumentAt(0)).getChar(null));
     }
 
     private static SqlException invalidUnit(char unit, int position) {

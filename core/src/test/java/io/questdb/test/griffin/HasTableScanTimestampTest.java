@@ -223,8 +223,8 @@ public class HasTableScanTimestampTest extends AbstractCairoTest {
             // The planner builds the single-threaded top K only over a GROUP BY, whose rows carry no table's
             // designated timestamp.
             assertFalse("SELECT ts, count() c FROM t GROUP BY ts ORDER BY ts DESC LIMIT 3", BACKWARD, "Limit value: 3", "Async Stream Group By", "Row backward scan");
-            // A TIMESTAMP(col) claim on the GROUP BY gives the top K a base with the same timestamp, still not a table's.
-            assertFalse("SELECT * FROM (SELECT ts, count() c FROM t GROUP BY ts) timestamp(ts) ORDER BY ts DESC LIMIT 3", BACKWARD, "Encode sort lo: 3", "keys: [ts desc]", "SelectedRecord", "Async Stream Group By");
+            // A TIMESTAMP(col) claim on the GROUP BY changes neither: the stream still reads backward, its rows no table's.
+            assertFalse("SELECT * FROM (SELECT ts, count() c FROM t GROUP BY ts) timestamp(ts) ORDER BY ts DESC LIMIT 3", BACKWARD, "Limit value: 3", "Async Stream Group By", "Row backward scan");
 
             // The timestamp is not a table's designated timestamp, or the rows do not follow the reported direction.
             assertFalse("SELECT * FROM t timestamp(other_ts)", FORWARD, "PageFrame", "Frame forward scan on: t");

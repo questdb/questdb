@@ -62,6 +62,7 @@ import io.questdb.griffin.engine.table.AdaptiveSymbolPatternRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncFilterAtom;
 import io.questdb.griffin.engine.table.AsyncGroupByAtom;
 import io.questdb.griffin.engine.table.AsyncGroupByNotKeyedAtom;
+import io.questdb.griffin.engine.table.AsyncStreamGroupByAtom;
 import io.questdb.griffin.engine.table.AsyncTopKAtom;
 import io.questdb.griffin.engine.table.BaseAsyncHorizonJoinAtom;
 import io.questdb.griffin.engine.table.HeapRowCursorFactory;
@@ -4252,6 +4253,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         return switch (TestUtils.findAtom(factory, query)) {
             case AsyncGroupByAtom atom -> atom.getFilterContext()::getFilter;
             case AsyncGroupByNotKeyedAtom atom -> atom.getFilterContext()::getFilter;
+            case AsyncStreamGroupByAtom atom -> atom.getFilterContext()::getFilter;
             case AsyncTopKAtom atom -> atom.getFilterContext()::getFilter;
             case BaseAsyncHorizonJoinAtom atom -> atom.getFilterContext()::getFilter;
             case AsyncWindowJoinAtom atom -> atom.getMasterFilter()::getFilter;

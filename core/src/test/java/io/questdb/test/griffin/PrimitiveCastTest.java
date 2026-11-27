@@ -396,7 +396,7 @@ public class PrimitiveCastTest extends AbstractCairoTest {
                             """,
                     """
                             cast	cast1	cast2	cast3	cast4	cast5	cast6	cast7	cast8	cast9	cast10	cast11
-                            		null	null	null	null	NaN	NaN	NaN	NaN	null\t
+                            										null\t
                             """
             );
             assertRowsOnly(

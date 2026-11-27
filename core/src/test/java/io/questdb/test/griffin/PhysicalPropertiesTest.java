@@ -634,26 +634,24 @@ public class PhysicalPropertiesTest extends AbstractCairoTest {
                             """);
             assertQuery("SELECT * FROM (SELECT x, rnd_int() r FROM t) ORDER BY x DESC LIMIT 1, 3")
                     .assertsPlan("""
-                            Limit left: 1 right: 3 skip-rows: 1 take-rows: 2
-                                Encode sort
-                                  keys: [x desc]
-                                    VirtualRecord
-                                      functions: [x,rnd_int()]
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: t
+                            Encode sort lo: 1 hi: 3
+                              keys: [x desc]
+                                VirtualRecord
+                                  functions: [x,rnd_int()]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: t
                             """);
             assertQuery("SELECT * FROM (SELECT x, timestamp_sequence(0, 1) r FROM t) ORDER BY x DESC LIMIT 1, 3")
                     .expectSize()
                     .withPlan("""
-                            Limit left: 1 right: 3 skip-rows: 1 take-rows: 2
-                                Encode sort
-                                  keys: [x desc]
-                                    VirtualRecord
-                                      functions: [x,timestamp_sequence(0,1)]
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: t
+                            Encode sort lo: 1 hi: 3
+                              keys: [x desc]
+                                VirtualRecord
+                                  functions: [x,timestamp_sequence(0,1)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: t
                             """)
                     .returns("""
                             x\tr
@@ -997,14 +995,13 @@ public class PhysicalPropertiesTest extends AbstractCairoTest {
             assertQuery("SELECT * FROM (SELECT ts, x, sum(x) OVER (ORDER BY ts) s FROM t) ORDER BY x DESC LIMIT 1, 3")
                     .expectSize()
                     .withPlan("""
-                            Limit left: 1 right: 3 skip-rows: 1 take-rows: 2
-                                Encode sort
-                                  keys: [x desc]
-                                    Window
-                                      functions: [sum(x) over (rows between unbounded preceding and current row)]
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: t
+                            Encode sort lo: 1 hi: 3
+                              keys: [x desc]
+                                Window
+                                  functions: [sum(x) over (rows between unbounded preceding and current row)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: t
                             """)
                     .returns("""
                             ts\tx\ts

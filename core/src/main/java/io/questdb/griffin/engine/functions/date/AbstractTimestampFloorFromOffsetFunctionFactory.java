@@ -204,7 +204,7 @@ abstract class AbstractTimestampFloorFromOffsetFunctionFactory implements Functi
                 + constantOffset(arguments.constant(call.argumentAt(3)).getStrA(null), call.argumentAt(3).getPosition(), timestampDriver);
         final CharSequence tz = arguments.constant(call.argumentAt(4)).getStrA(null);
         final TimeZoneRules tzRules = constantZoneRules(tz, call.argumentAt(4).getPosition(), timestampDriver);
-        final int argumentType = call.argumentAt(1).getDataType();
+        final int argumentType = MonotonicTimestampFunctionFactory.timestampArgumentType(call, 1);
         if (tzRules != null && !tzRules.hasFixedOffset()) {
             return preservesZonedOrder(isReturnUtc(), argumentType, type, unit, stride, effectiveOffset, tzRules.getStandardOffset());
         }

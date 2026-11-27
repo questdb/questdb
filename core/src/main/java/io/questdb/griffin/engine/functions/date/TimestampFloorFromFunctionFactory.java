@@ -97,7 +97,7 @@ public class TimestampFloorFromFunctionFactory implements FunctionFactory, Monot
         final int position = call.argumentAt(0).getPosition();
         final int type = call.getDataType();
         final long from = floorOrigin(ColumnType.getTimestampDriver(type), arguments.constant(call.argumentAt(2)).getTimestamp(null), call.argumentAt(2).getDataType());
-        return TimestampFloorOffsetFunction.preservesOrder(call.argumentAt(1).getDataType(), type,
+        return TimestampFloorOffsetFunction.preservesOrder(MonotonicTimestampFunctionFactory.timestampArgumentType(call, 1), type,
                 CommonUtils.getStrideUnit(str, position), CommonUtils.getStrideMultiple(str, position), from);
     }
 

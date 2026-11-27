@@ -8303,34 +8303,30 @@ public class SqlParserTest extends AbstractSqlParserTest {
                     .noRandomAccess()
                     .timestamp("timestamp")
                     .withPlan("""
-                            Encode sort light
+                            Async Stream Group By workers: 1
                               keys: [timestamp]
-                                Async Group By workers: 1
-                                  keys: [timestamp]
-                                  keyFunctions: [timestamp_floor_utc('1d',timestamp)]
-                                  values: [count(*)]
-                                  filter: null
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: trades
+                              keyFunctions: [timestamp_floor_utc('1d',timestamp)]
+                              values: [count(*)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: trades
                             """)
                     .returns("timestamp\tcount\n");
             // model with sample by - with projection
             // todo: hints currently do not appear in the outer SELECT-CHOOSE, consider adding them?
             assertQuery("select /*+ HINT*/ tag, count(*) from trades sample by 1d")
                     .noLeakCheck()
+                    .noRandomAccess()
                     .withPlan("""
                             SelectedRecord
-                                Encode sort light
-                                  keys: [timestamp]
-                                    Async Group By workers: 1
-                                      keys: [tag,timestamp]
-                                      keyFunctions: [timestamp_floor_utc('1d',timestamp)]
-                                      values: [count(*)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: trades
+                                Async Stream Group By workers: 1
+                                  segmentKey: timestamp_floor_utc('1d',timestamp)
+                                  keys: [tag,timestamp]
+                                  keyFunctions: [timestamp_floor_utc('1d',timestamp)]
+                                  values: [count(*)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: trades
                             """)
                     .returns("tag\tcount\n");
             // model with union
@@ -12751,20 +12747,20 @@ public class SqlParserTest extends AbstractSqlParserTest {
                     .returns("day\tisin\tlast\n");
             assertQuery("select day(ts), isin, last(start_price) from xetra where isin='DE000A0KRJS4' sample by 1d")
                     .noLeakCheck()
+                    .noRandomAccess()
                     .withPlan("""
                             SelectedRecord
-                                Encode sort light
-                                  keys: [ts]
-                                    VirtualRecord
-                                      functions: [day(ts),isin,last,ts]
-                                        Async JIT Group By workers: 1
-                                          keys: [ts,isin]
-                                          keyFunctions: [timestamp_floor_utc('1d',ts)]
-                                          values: [last(start_price)]
-                                          filter: isin='DE000A0KRJS4'
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: xetra
+                                VirtualRecord
+                                  functions: [day(ts),isin,last,ts]
+                                    Async JIT Stream Group By workers: 1
+                                      segmentKey: timestamp_floor_utc('1d',ts)
+                                      keys: [ts,isin]
+                                      keyFunctions: [timestamp_floor_utc('1d',ts)]
+                                      values: [last(start_price)]
+                                      filter: isin='DE000A0KRJS4'
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: xetra
                             """)
                     .returns("day\tisin\tlast\n");
             assertQuery("select day(ts), isin, last(start_price) from xetra where isin='DE000A0KRJS4' sample by 1d align to calendar")
@@ -12772,18 +12768,17 @@ public class SqlParserTest extends AbstractSqlParserTest {
                     .noRandomAccess()
                     .withPlan("""
                             SelectedRecord
-                                Encode sort light
-                                  keys: [ts]
-                                    VirtualRecord
-                                      functions: [day(ts),isin,last,ts]
-                                        Async JIT Group By workers: 1
-                                          keys: [ts,isin]
-                                          keyFunctions: [timestamp_floor_utc('1d',ts)]
-                                          values: [last(start_price)]
-                                          filter: isin='DE000A0KRJS4'
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: xetra
+                                VirtualRecord
+                                  functions: [day(ts),isin,last,ts]
+                                    Async JIT Stream Group By workers: 1
+                                      segmentKey: timestamp_floor_utc('1d',ts)
+                                      keys: [ts,isin]
+                                      keyFunctions: [timestamp_floor_utc('1d',ts)]
+                                      values: [last(start_price)]
+                                      filter: isin='DE000A0KRJS4'
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: xetra
                             """)
                     .returns("day\tisin\tlast\n");
         });
@@ -13966,11 +13961,13 @@ public class SqlParserTest extends AbstractSqlParserTest {
             assertQuery("select a, sum(b) from (tab order by t) timestamp(t) sample by 2m align to calendar order by a")
                     .noLeakCheck()
                     .withPlan("""
-                            Encode sort light
+                            Encode sort
                               keys: [a]
                                 SelectedRecord
-                                    GroupBy vectorized: false
+                                    Stream Group By
+                                      segmentKey: timestamp_floor_utc('2m',t)
                                       keys: [a,t]
+                                      keyFunctions: [timestamp_floor_utc('2m',t)]
                                       values: [sum(b)]
                                         Encode sort light
                                           keys: [t]
@@ -13982,11 +13979,13 @@ public class SqlParserTest extends AbstractSqlParserTest {
             assertQuery("select a, sum(b) from (tab order by t) timestamp(t) sample by 2m align to calendar time zone 'Europe/Paris' order by a")
                     .noLeakCheck()
                     .withPlan("""
-                            Encode sort light
+                            Encode sort
                               keys: [a]
                                 SelectedRecord
-                                    GroupBy vectorized: false
+                                    Stream Group By
+                                      segmentKey: timestamp_floor_utc('2m',t,null,'00:00','Europe/Paris')
                                       keys: [a,t]
+                                      keyFunctions: [timestamp_floor_utc('2m',t,null,'00:00','Europe/Paris')]
                                       values: [sum(b)]
                                         Encode sort light
                                           keys: [t]
@@ -13998,11 +13997,13 @@ public class SqlParserTest extends AbstractSqlParserTest {
             assertQuery("select a, sum(b) from (tab order by t) timestamp(t) sample by 2m align to calendar time zone 'Europe/Paris' order by 1 desc")
                     .noLeakCheck()
                     .withPlan("""
-                            Encode sort light
+                            Encode sort
                               keys: [a desc]
                                 SelectedRecord
-                                    GroupBy vectorized: false
+                                    Stream Group By
+                                      segmentKey: timestamp_floor_utc('2m',t,null,'00:00','Europe/Paris')
                                       keys: [a,t]
+                                      keyFunctions: [timestamp_floor_utc('2m',t,null,'00:00','Europe/Paris')]
                                       values: [sum(b)]
                                         Encode sort light
                                           keys: [t]
@@ -14014,11 +14015,13 @@ public class SqlParserTest extends AbstractSqlParserTest {
             assertQuery("select 10*a as a10, sum(b) from (tab order by t) timestamp(t) sample by 2m align to calendar time zone 'Europe/Paris' order by a10")
                     .noLeakCheck()
                     .withPlan("""
-                            Encode sort light
+                            Encode sort
                               keys: [a10]
                                 SelectedRecord
-                                    GroupBy vectorized: false
+                                    Stream Group By
+                                      segmentKey: timestamp_floor_utc('2m',t,null,'00:00','Europe/Paris')
                                       keys: [a10,t]
+                                      keyFunctions: [10*a,timestamp_floor_utc('2m',t,null,'00:00','Europe/Paris')]
                                       values: [sum(b)]
                                         Encode sort light
                                           keys: [t]
@@ -14031,10 +14034,12 @@ public class SqlParserTest extends AbstractSqlParserTest {
                     .noLeakCheck()
                     .withPlan("""
                             SelectedRecord
-                                Encode sort light
+                                Encode sort
                                   keys: [column desc, a0]
-                                    GroupBy vectorized: false
+                                    Stream Group By
+                                      segmentKey: timestamp_floor_utc('2m',t,null,'00:00','Europe/Paris')
                                       keys: [a0,t,column]
+                                      keyFunctions: [timestamp_floor_utc('2m',t,null,'00:00','Europe/Paris'),10*a]
                                       values: [sum(b)]
                                         Encode sort light
                                           keys: [t]
@@ -14096,8 +14101,10 @@ public class SqlParserTest extends AbstractSqlParserTest {
                                 GroupBy vectorized: false
                                   keys: [a]
                                   values: [sum(b)]
-                                    GroupBy vectorized: false
+                                    Stream Group By
+                                      segmentKey: timestamp_floor_utc('10m',t)
                                       keys: [a,t]
+                                      keyFunctions: [timestamp_floor_utc('10m',t)]
                                       values: [sum(b)]
                                         Encode sort light
                                           keys: [t]
@@ -16301,16 +16308,14 @@ public class SqlParserTest extends AbstractSqlParserTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                Encode sort light
-                                  keys: [timestamp]
-                                    Async Group By workers: 1
-                                      keys: [x,timestamp]
-                                      keyFunctions: [timestamp_floor_utc('2m',timestamp)]
-                                      values: [sum(y)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: tab
+                                Async Stream Group By workers: 1
+                                  segmentKey: timestamp_floor_utc('2m',timestamp)
+                                  keys: [x,timestamp]
+                                  keyFunctions: [timestamp_floor_utc('2m',timestamp)]
+                                  values: [sum(y)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: tab
                             """);
         });
     }
@@ -16346,16 +16351,14 @@ public class SqlParserTest extends AbstractSqlParserTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                Encode sort light
-                                  keys: [timestamp]
-                                    Async Group By workers: 1
-                                      keys: [x,timestamp]
-                                      keyFunctions: [timestamp_floor_utc('2U',timestamp)]
-                                      values: [sum(y)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: tab
+                                Async Stream Group By workers: 1
+                                  segmentKey: timestamp_floor_utc('2U',timestamp)
+                                  keys: [x,timestamp]
+                                  keyFunctions: [timestamp_floor_utc('2U',timestamp)]
+                                  values: [sum(y)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: tab
                             """);
         });
     }
@@ -16393,17 +16396,15 @@ public class SqlParserTest extends AbstractSqlParserTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                Encode sort light
-                                  keys: [timestamp]
-                                    SelectedRecord
-                                        Async Group By workers: 1
-                                          keys: [b,k,timestamp]
-                                          keyFunctions: [timestamp_floor_utc('3h',timestamp)]
-                                          values: [sum(a)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: x
+                                SelectedRecord
+                                    Async Stream Group By workers: 1
+                                      segmentKey: timestamp_floor_utc('3h',timestamp)
+                                      keys: [b,k,timestamp]
+                                      keyFunctions: [timestamp_floor_utc('3h',timestamp)]
+                                      values: [sum(a)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: x
                             """);
         });
     }
@@ -16530,16 +16531,13 @@ public class SqlParserTest extends AbstractSqlParserTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                Encode sort light
+                                Async Stream Group By workers: 1
                                   keys: [ts]
-                                    Async Group By workers: 1
-                                      keys: [ts]
-                                      keyFunctions: [timestamp_floor_utc('15m',ts)]
-                                      values: [first(ts)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: t1
+                                  keyFunctions: [timestamp_floor_utc('15m',ts)]
+                                  values: [first(ts)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: t1
                             """);
         });
     }
@@ -16574,16 +16572,13 @@ public class SqlParserTest extends AbstractSqlParserTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                Encode sort light
+                                Async Stream Group By workers: 1
                                   keys: [ts]
-                                    Async Group By workers: 1
-                                      keys: [ts]
-                                      keyFunctions: [timestamp_floor_utc('15m',ts)]
-                                      values: [first(ts)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: t1
+                                  keyFunctions: [timestamp_floor_utc('15m',ts)]
+                                  values: [first(ts)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: t1
                             """);
         });
     }
@@ -17226,20 +17221,18 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 .fails(17, "wildcard column select is not allowed in sample-by queries");
 
         assertQuery("select avg(usage_user) * 10 from cpu sample by 1d")
+                .noRandomAccess()
                 .withPlan("""
                         SelectedRecord
-                            Encode sort light
-                              keys: [timestamp]
-                                VirtualRecord
-                                  functions: [avg*10,timestamp]
-                                    Async Group By workers: 1
-                                      keys: [timestamp]
-                                      keyFunctions: [timestamp_floor_utc('1d',timestamp)]
-                                      values: [avg(usage_user)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: cpu
+                            VirtualRecord
+                              functions: [avg*10,timestamp]
+                                Async Stream Group By workers: 1
+                                  keys: [timestamp]
+                                  keyFunctions: [timestamp_floor_utc('1d',timestamp)]
+                                  values: [avg(usage_user)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: cpu
                         """)
                 .returns("column\n");
     }
@@ -17271,7 +17264,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
             execute("CREATE TABLE tbl (ts TIMESTAMP, price DOUBLE) TIMESTAMP(ts)");
             assertQuery("SELECT ts, avg(price) FROM tbl SAMPLE BY 5m ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
                     .noLeakCheck()
-                    .noRandomAccess()
                     .assertsPlan("""
                             Async Stream Group By workers: 1
                               keys: [ts]
@@ -17650,29 +17642,25 @@ public class SqlParserTest extends AbstractSqlParserTest {
                               functions: [b::symbol,sum,k1,k]
                                 Union All
                                     SelectedRecord
-                                        Encode sort light
-                                          keys: [timestamp]
-                                            SelectedRecord
-                                                Async Group By workers: 1
-                                                  keys: [b,k1,timestamp]
-                                                  keyFunctions: [timestamp_floor_utc('3h',timestamp)]
-                                                  values: [sum(a)]
-                                                  filter: null
-                                                    PageFrame
-                                                        Row forward scan
-                                                        Frame forward scan on: x
+                                        SelectedRecord
+                                            Async Stream Group By workers: 1
+                                              segmentKey: timestamp_floor_utc('3h',timestamp)
+                                              keys: [b,k1,timestamp]
+                                              keyFunctions: [timestamp_floor_utc('3h',timestamp)]
+                                              values: [sum(a)]
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: x
                                     SelectedRecord
-                                        Encode sort light
-                                          keys: [timestamp]
-                                            SelectedRecord
-                                                Async Group By workers: 1
-                                                  keys: [b,k1,timestamp]
-                                                  keyFunctions: [timestamp_floor_utc('3h',timestamp)]
-                                                  values: [sum(a)]
-                                                  filter: null
-                                                    PageFrame
-                                                        Row forward scan
-                                                        Frame forward scan on: x
+                                        SelectedRecord
+                                            Async Stream Group By workers: 1
+                                              segmentKey: timestamp_floor_utc('3h',timestamp)
+                                              keys: [b,k1,timestamp]
+                                              keyFunctions: [timestamp_floor_utc('3h',timestamp)]
+                                              values: [sum(a)]
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: x
                             """);
             assertQuery("select b, sum(a), k k1, k from x y sample by 3h align to first observation" +
                     " union all " +

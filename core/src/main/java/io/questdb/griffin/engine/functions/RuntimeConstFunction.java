@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -50,7 +51,7 @@ import io.questdb.griffin.plan.logical.BoundExpression;
  * function of that type would return. A flat hand-rolled getter table would have to reproduce all
  * of that by hand, which is exactly where a wrong-field read can sneak in.
  * <p>
- * {@link #wrapTemporalText(Function, int)} reuses the TIMESTAMP and DATE wrappers for runtime-constant text that a
+ * {@link #wrapTemporalText(Function, int, int)} reuses the TIMESTAMP and DATE wrappers for runtime-constant text that a
  * TIMESTAMP or DATE parameter receives, so the text parses once per cursor; {@link #wrapTimestampText} wraps the
  * text a comparison reads at the precision of its TIMESTAMP operand.
  * <p>
@@ -140,9 +141,9 @@ public interface RuntimeConstFunction extends UnaryFunction {
             case ColumnType.DOUBLE:
                 return new DoubleRuntimeConstFunction(arg);
             case ColumnType.DATE:
-                return new DateRuntimeConstFunction(arg);
+                return new DateRuntimeConstFunction(arg, 0);
             case ColumnType.TIMESTAMP:
-                return new TimestampRuntimeConstFunction(arg);
+                return new TimestampRuntimeConstFunction(arg, 0);
             case ColumnType.IPv4:
                 return new IPv4RuntimeConstFunction(arg);
             case ColumnType.GEOBYTE:
@@ -162,15 +163,28 @@ public interface RuntimeConstFunction extends UnaryFunction {
 
     /**
      * Wraps {@code arg} when it is runtime-constant text that a parameter reads as {@code temporalType}, TIMESTAMP or
-     * DATE, so the text parses once per cursor rather than on every row; returns any other argument as is. Unlike
+     * DATE, so the text parses once per cursor rather than on every row, and text that spells no value fails at
+     * {@code position}; returns any other argument as is. Unlike
      * {@link #isFoldable(Function)}, this wraps a leaf too: a text bind variable caches its text, not the value it
      * parses to.
      */
-    static Function wrapTemporalText(Function arg, int temporalType) {
-        if (!ColumnType.isVarcharOrString(arg.getType()) || !arg.isRuntimeConstant()) {
+    static Function wrapTemporalText(Function arg, int temporalType, int position) {
+        if (temporalTextType(arg.getType(), arg.isRuntimeConstant(), temporalType) == arg.getType()) {
             return arg;
         }
-        return temporalType == ColumnType.DATE ? new DateRuntimeConstFunction(arg) : new TimestampRuntimeConstFunction(arg);
+        return temporalType == ColumnType.DATE ? new DateRuntimeConstFunction(arg, position) : new TimestampRuntimeConstFunction(arg, position);
+    }
+
+    /**
+     * The type of the argument {@link #wrapTemporalText} hands a parameter that reads {@code temporalType}, TIMESTAMP or
+     * DATE, for an argument of {@code type}: runtime-constant text reads as a DATE or as a TIMESTAMP of
+     * {@link ColumnType#getTimestampType}; any other argument keeps its type.
+     */
+    static int temporalTextType(int type, boolean isRuntimeConstant, int temporalType) {
+        if (!ColumnType.isVarcharOrString(type) || !isRuntimeConstant) {
+            return type;
+        }
+        return temporalType == ColumnType.DATE ? ColumnType.DATE : ColumnType.getTimestampType(type);
     }
 
     /**
@@ -298,10 +312,12 @@ public interface RuntimeConstFunction extends UnaryFunction {
 
     final class DateRuntimeConstFunction extends DateFunction implements RuntimeConstFunction {
         private final Function arg;
+        private final int position;
         private long value;
 
-        DateRuntimeConstFunction(Function arg) {
+        DateRuntimeConstFunction(Function arg, int position) {
             this.arg = arg;
+            this.position = position;
         }
 
         @Override
@@ -317,7 +333,11 @@ public interface RuntimeConstFunction extends UnaryFunction {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             arg.init(symbolTableSource, executionContext);
-            value = arg.getDate(null);
+            try {
+                value = arg.getDate(null);
+            } catch (ImplicitCastException e) {
+                throw e.position(position);
+            }
         }
     }
 
@@ -582,11 +602,13 @@ public interface RuntimeConstFunction extends UnaryFunction {
 
     final class TimestampRuntimeConstFunction extends TimestampFunction implements RuntimeConstFunction {
         private final Function arg;
+        private final int position;
         private long value;
 
-        TimestampRuntimeConstFunction(Function arg) {
+        TimestampRuntimeConstFunction(Function arg, int position) {
             super(ColumnType.getTimestampType(arg.getType()));
             this.arg = arg;
+            this.position = position;
         }
 
         @Override
@@ -602,7 +624,11 @@ public interface RuntimeConstFunction extends UnaryFunction {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             arg.init(symbolTableSource, executionContext);
-            value = arg.getTimestamp(null);
+            try {
+                value = arg.getTimestamp(null);
+            } catch (ImplicitCastException e) {
+                throw e.position(position);
+            }
         }
     }
 

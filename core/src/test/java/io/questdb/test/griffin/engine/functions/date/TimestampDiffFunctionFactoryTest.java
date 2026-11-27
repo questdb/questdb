@@ -794,12 +794,14 @@ public class TimestampDiffFunctionFactoryTest extends AbstractFunctionFactoryTes
                         1\t86400
                         2\t1
                         """, text(textType, "2024-01-02")));
-                cases.add(BindVarTuple.fails("invalid text", 0, error, text(textType, "abc")));
-                assertQuery("SELECT v, datediff('s', ts, :e) diff FROM t").noLeakCheck().expectSize().assertBinds(cases);
+                final String overRows = "SELECT v, datediff('s', ts, :e) diff FROM t";
+                cases.add(BindVarTuple.fails("invalid text", overRows.indexOf(":e"), error, text(textType, "abc")));
+                assertQuery(overRows).noLeakCheck().expectSize().assertBinds(cases);
 
                 cases.clear();
-                cases.add(BindVarTuple.fails("invalid text over no rows", 0, error, text(textType, "abc")));
-                assertQuery("SELECT v, datediff('s', ts, :e) diff FROM e").noLeakCheck().expectSize().assertBinds(cases);
+                final String overNoRows = "SELECT v, datediff('s', ts, :e) diff FROM e";
+                cases.add(BindVarTuple.fails("invalid text over no rows", overNoRows.indexOf(":e"), error, text(textType, "abc")));
+                assertQuery(overNoRows).noLeakCheck().expectSize().assertBinds(cases);
             }
         });
     }
@@ -810,7 +812,11 @@ public class TimestampDiffFunctionFactoryTest extends AbstractFunctionFactoryTes
         final FunctionFactoryDescriptor descriptor = new FunctionFactoryDescriptor(getFunctionFactory());
         final CountingTextFunction text = new CountingTextFunction("2021-01-01T00:00:01.000000Z");
         final ObjList<Function> args = new ObjList<>(CharConstant.newInstance('s'), new ColumnFunction(1_609_459_200_000_000L), text);
-        try (Function function = parser.getFunctionResolver().createFunction(descriptor, 0, "datediff", args, new IntList(), sqlExecutionContext)) {
+        final IntList argPositions = new IntList();
+        argPositions.add(9);
+        argPositions.add(14);
+        argPositions.add(18);
+        try (Function function = parser.getFunctionResolver().createFunction(descriptor, 0, "datediff", args, argPositions, sqlExecutionContext)) {
             function.init(null, sqlExecutionContext);
             for (int i = 0; i < 1_000; i++) {
                 Assert.assertEquals(1, function.getLong(null));

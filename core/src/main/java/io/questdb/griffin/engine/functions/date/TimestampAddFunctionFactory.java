@@ -137,7 +137,7 @@ public class TimestampAddFunctionFactory implements FunctionFactory, MonotonicTi
         }
         final int type = call.getDataType();
         final char period = arguments.constant(call.argumentAt(0)).getChar(null);
-        return preservesOrder(call.argumentAt(2).getDataType(), type, period, addMethod(period, type, call.argumentAt(0).getPosition()),
+        return preservesOrder(MonotonicTimestampFunctionFactory.timestampArgumentType(call, 2), type, period, addMethod(period, type, call.argumentAt(0).getPosition()),
                 constantStride(arguments.constant(call.argumentAt(1)), call.argumentAt(1).getPosition()));
     }
 

@@ -5915,6 +5915,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     SAMPLE BY (1m);
                     """)
                     .noLeakCheck()
+                    .noRandomAccess()
                     .timestamp("timestamp")
                     .returns("""
                             timestamp\textra_column\textra_column2\tfirst

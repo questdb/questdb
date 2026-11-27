@@ -161,7 +161,7 @@ public class TimestampAddWithTimezoneFunctionFactory implements FunctionFactory,
         final int stride = arguments.constant(call.argumentAt(1)).getInt(null);
         assert timezone != null && periodAddFunction != null && stride != Numbers.INT_NULL;
         return arguments.getTimezoneRules(timestampDriver, timezone) instanceof FixedTimeZoneRule
-                && TimestampAddFunctionFactory.preservesOrder(call.argumentAt(2).getDataType(), type, period, periodAddFunction, stride);
+                && TimestampAddFunctionFactory.preservesOrder(MonotonicTimestampFunctionFactory.timestampArgumentType(call, 2), type, period, periodAddFunction, stride);
     }
 
     private static long compute(long timestamp, TimeZoneRules timeZoneRules, int stride, TimestampDriver.TimestampAddMethod periodAddFunction) {

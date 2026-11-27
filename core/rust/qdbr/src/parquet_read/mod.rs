@@ -352,7 +352,9 @@ mod tests {
     fn inlined_varchar_values(aux: &[u8]) -> Vec<Option<String>> {
         const HEADER_FLAG_INLINED: u8 = 1;
         const HEADER_FLAG_NULL: u8 = 1 << 2;
-        aux.chunks_exact(16)
+        aux.as_chunks::<16>()
+            .0
+            .iter()
             .map(|entry| {
                 let header = entry[0];
                 if header & HEADER_FLAG_NULL != 0 {

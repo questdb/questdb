@@ -1691,7 +1691,7 @@ public class FunctionResolver implements Mutable, SwitchFunctionFactory.Equality
                     args.setQuick(i, RuntimeConstFunction.wrapTimestampText(arg, args.getQuick(operandIndex).getType(),
                             argPositions.getQuick(i), isCeil));
                 } else {
-                    args.setQuick(i, RuntimeConstFunction.wrapTemporalText(arg, sigArgTypeTag));
+                    args.setQuick(i, RuntimeConstFunction.wrapTemporalText(arg, sigArgTypeTag, argPositions.getQuick(i)));
                 }
             }
         }

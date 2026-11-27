@@ -348,7 +348,7 @@ public class TemporalCastTest extends AbstractCairoTest {
                     "SELECT (null::DATE)::STRING,(null::DATE)::VARCHAR,(null::TIMESTAMP)::STRING,(null::TIMESTAMP_NS)::VARCHAR,(null::IPv4)::VARCHAR FROM lp_temporal_cast LIMIT 1",
                     """
                             cast	cast1	cast2	cast3	cast4
-                            null	null		null	0.0.0.0
+                            			\t
                             """
             );
             assertRowsOnly(

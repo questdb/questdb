@@ -4707,7 +4707,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                             Encode sort
                               keys: [k, n]
                                 VirtualRecord
-                                  functions: [t1.k,t1.n,case([__lateral_limit(t1.k-1,9223372036854775807L)>=1,coalesce(l.c,0),null])]
+                                  functions: [t1.k,t1.n,case([__lateral_limit(t1.k-1,9223372036854775807L)>=1,coalesce(l.c,0),nullL])]
                                     Hash Left Outer Join Light
                                       condition: l.__qdb_outer_ref__0_k=t1.k
                                       filter: true

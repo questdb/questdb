@@ -110,7 +110,7 @@ public class TimestampFloorFunctionFactory implements FunctionFactory, Monotonic
         final CharSequence str = arguments.constant(call.argumentAt(0)).getStrA(null);
         final int stride = stride(str);
         final String unit = unitName(stride > 0 ? unit(str) : 1, str, call.argumentAt(0).getPosition());
-        final int argumentType = call.argumentAt(1).getDataType();
+        final int argumentType = MonotonicTimestampFunctionFactory.timestampArgumentType(call, 1);
         return stride > 1 ? TimestampFloorFunctions.preservesStrideFloorOrder(argumentType, call.getDataType(), unit, stride)
                 : TimestampFloorFunctions.preservesFloorOrder(argumentType, call.getDataType(), unit);
     }
