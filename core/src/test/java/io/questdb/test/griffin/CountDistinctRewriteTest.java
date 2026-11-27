@@ -266,6 +266,9 @@ public class CountDistinctRewriteTest extends AbstractCairoTest {
             assertQuery("SELECT count_distinct((SELECT max(i) FROM cd_scalar)) c FROM cd_scalar")
                     .noLeakCheck()
                     .fails(7, "there is no matching function `count_distinct` with the argument types: (CURSOR)");
+            assertQuery("SELECT count_distinct((SELECT max(i) FROM cd_scalar)) c FROM cd_scalar WHERE i > 0")
+                    .noLeakCheck()
+                    .fails(7, "there is no matching function `count_distinct` with the argument types: (CURSOR)");
             assertQuery("SELECT count_distinct(i) c FROM cd_scalar")
                     .noLeakCheck()
                     .noRandomAccess()
