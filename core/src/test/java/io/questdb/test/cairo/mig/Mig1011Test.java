@@ -643,7 +643,7 @@ public class Mig1011Test extends AbstractCairoTest {
         Assert.assertArrayEquals(Arrays.copyOfRange(snapshot, 8, snapshot.length), Arrays.copyOfRange(bytes, 8, snapshot.length));
         final int footer = committedFooterOffset(buffer);
         Assert.assertEquals(snapshot.length, buffer.getLong(footer + 24));
-        Assert.assertNotEquals(0, buffer.getLong(footer + 32) & (1L << 2));
+        Assert.assertNotEquals(0, buffer.getLong(footer + 32) & (1L << 3));
         final CRC32 crc = new CRC32();
         crc.update(bytes, 8, size - 16);
         Assert.assertEquals((int) crc.getValue(), buffer.getInt(size - 8));
@@ -662,8 +662,8 @@ public class Mig1011Test extends AbstractCairoTest {
         final int footer = committedFooterOffset(buffer);
         Assert.assertEquals("single footer expected", 0, buffer.getLong(footer + 24));
         final long flags = buffer.getLong(footer + 32);
-        Assert.assertNotEquals("writer recorded", 0, flags & (1L << 2));
-        buffer.putLong(footer + 32, flags & ~(1L << 2));
+        Assert.assertNotEquals("writer recorded", 0, flags & (1L << 3));
+        buffer.putLong(footer + 32, flags & ~(1L << 3));
         final CRC32 crc = new CRC32();
         crc.update(bytes, 8, size - 16);
         buffer.putInt(size - 8, (int) crc.getValue());

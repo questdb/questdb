@@ -1533,7 +1533,7 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
                         Unsafe.putByte(chunk + 3, (byte) 0x88);
                         Unsafe.putLong(chunk + 32, values[5]);
                         if (values.length > 7 && values[7] != 0) {
-                            Unsafe.putLong(footer + 32, Unsafe.getLong(footer + 32) | (1L << 2));
+                            Unsafe.putLong(footer + 32, Unsafe.getLong(footer + 32) | (1L << 3));
                         }
                         patchCrc(file.dataPtr, file.parquetMetaFileSize);
                         ParquetMetaFileReader reader = new ParquetMetaFileReader();
