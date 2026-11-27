@@ -193,6 +193,17 @@ public class PartitionUpdater implements QuietCloseable {
     }
 
     /**
+     * Update mode only: removes original row group {@code rowGroupIndex} (pre-update
+     * index space, as in {@link #updateRowGroup}). The next footer omits it, leaving its
+     * bytes as unused space. Throws CairoException in rewrite mode, on an invalid index,
+     * or if the group is already replaced or removed in this pass.
+     */
+    public void removeRowGroup(int rowGroupIndex) {
+        assert ptr != 0;
+        removeRowGroup(ptr, rowGroupIndex);
+    }
+
+    /**
      * Rewrites the columns in {@code descriptor} and raw-copies every other
      * target-schema column chunk from the source row group. Call
      * {@link #setTargetSchema(PartitionDescriptor)} before this method.
@@ -230,6 +241,19 @@ public class PartitionUpdater implements QuietCloseable {
     public void setColumnTopRowLimit(long limit) {
         assert ptr != 0;
         setColumnTopRowLimit(ptr, limit);
+    }
+
+    /**
+     * Gives a rewrite the {@code _pm} of the file it reads, so that the row groups it copies keep the ASCII flags of
+     * their VARCHAR chunks. Without it a copied chunk has no flag: the flag of a whole column, in the parquet footer
+     * or in the old header, flags no chunk. Call after {@link #of}, before the first row group.
+     *
+     * @param parquetMetaAddr     address of the mapped {@code _pm}
+     * @param parquetMetaFileSize size of the {@code _pm} snapshot that describes the file, which the map covers
+     */
+    public void setSourceParquetMeta(long parquetMetaAddr, long parquetMetaFileSize) {
+        assert ptr != 0;
+        setSourceParquetMeta(ptr, parquetMetaAddr, parquetMetaFileSize);
     }
 
     /**
@@ -355,6 +379,11 @@ public class PartitionUpdater implements QuietCloseable {
 
     private static native boolean isRowGroupRewriteUnchanged(long impl, int rowGroupLo, int rowGroupHi, long rowOffset) throws CairoException;
 
+    private static native void removeRowGroup(
+            long impl,
+            int rowGroupIndex
+    ) throws CairoException;
+
     private static native void rewriteRowGroupColumns(
             long impl,
             int tableNameLen,
@@ -370,6 +399,8 @@ public class PartitionUpdater implements QuietCloseable {
     ) throws CairoException;
 
     private static native void setColumnTopRowLimit(long impl, long limit) throws CairoException;
+
+    private static native void setSourceParquetMeta(long impl, long parquetMetaAddr, long parquetMetaFileSize) throws CairoException;
 
     private static native void setTargetSchema(
             long impl,

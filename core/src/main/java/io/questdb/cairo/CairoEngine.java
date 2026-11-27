@@ -178,6 +178,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.Transient;
+import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.MutableCharSink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -400,6 +401,9 @@ public class CairoEngine implements Closeable, WriterSource {
     private volatile SqlCompilerPool sqlCompilerPool;
     // volatile: see metadataCache comment above.
     private volatile TableNameRegistry tableNameRegistry;
+    private volatile Runnable viewCompileHolderLookupCallback;
+    private volatile Runnable viewCompileHolderScanCallback;
+    private volatile Runnable viewCompileRetryCallback;
     private @NotNull ViewStateStore viewStateStore = NoOpViewStateStore.INSTANCE;
     private @NotNull WalDirectoryPolicy walDirectoryPolicy = DefaultWalDirectoryPolicy.INSTANCE;
     // volatile: walListener is reassigned by PrimaryRoleState.openLoops on the lifecycle thread
@@ -2227,7 +2231,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 LOG.info().$("table is already dropped [table=").$(tableToken).I$();
             }
         } else {
-            CharSequence lockedReason = lockAll(tableToken, "removeTable", false);
+            CharSequence lockedReason = lockAllAfterViewCompiles(tableToken, "removeTable");
             if (lockedReason == null) {
                 try {
                     path.of(configuration.getDbRoot()).concat(tableToken).$();
@@ -2713,11 +2717,13 @@ public class CairoEngine implements Closeable, WriterSource {
             validateDesiredMetadataVersion(tableToken, metadata, desiredVersion);
             return metadata;
         } catch (CairoException e) {
-            if (tableToken.isWal()) {
+            // A locked pool reports that another thread, such as a DROP or RENAME inside lockAll(),
+            // holds or takes the table's lock, not damaged files. A repair would take the writer that
+            // the lock holder locks next, and fail its statement.
+            if (tableToken.isWal() || e instanceof EntryLockedException) {
                 throw e;
-            } else {
-                tryRepairTable(tableToken, e);
             }
+            tryRepairTable(tableToken, e);
         }
         TableMetadata metadata = tableMetadataPool.get(tableToken);
         validateDesiredMetadataVersion(tableToken, metadata, desiredVersion);
@@ -3406,9 +3412,29 @@ public class CairoEngine implements Closeable, WriterSource {
         return lockedReason;
     }
 
+    /**
+     * Locks the readers of a non-WAL table for TRUNCATE. When the lock fails while only view
+     * compile runs hold the table's readers, it waits until those runs have ended and tries again,
+     * see {@link #awaitViewCompiles}. The caller holds the table's writer, so no other session can
+     * drop or rename the table while the lock waits, and the token stays current.
+     */
     public boolean lockReaders(TableToken tableToken) {
         verifyTableToken(tableToken);
-        return lockReadersByTableToken(tableToken);
+        long timeoutStartMs = Numbers.LONG_NULL;
+        while (true) {
+            if (checkpointAgent.isInProgress()) {
+                // prevent reader locking before checkpoint is released
+                return false;
+            }
+            final long compileRunActivity = viewStateStore.getCompileRunActivity();
+            if (readerPool.lock(tableToken)) {
+                return true;
+            }
+            timeoutStartMs = awaitViewCompiles(tableToken, readerPool, null, compileRunActivity, timeoutStartMs);
+            if (timeoutStartMs == Numbers.LONG_NULL) {
+                return false;
+            }
+        }
     }
 
     public boolean lockReadersAndMetadata(TableToken tableToken) {
@@ -3547,6 +3573,14 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     /**
+     * Asks CheckWalTransactionsJob to rescan the WAL tables at its paced interval, leaving every transaction
+     * tracker as it is. A table whose initialised tracker lags its sequencer is notified again from that scan.
+     */
+    public void notifyWalTxnRepublisher() {
+        unpublishedWalTxnCount.incrementAndGet();
+    }
+
+    /**
      * This is a workaround for notification queue full and other off-piste events. It includes a hack to
      * prevent repeated notifications by uninitializing the writer's transaction tracker.
      *
@@ -3554,7 +3588,7 @@ public class CairoEngine implements Closeable, WriterSource {
      */
     public void notifyWalTxnRepublisher(TableToken tableToken) {
         tableSequencerAPI.updateWriterTxns(tableToken, SeqTxnTracker.UNINITIALIZED_TXN, SeqTxnTracker.UNINITIALIZED_TXN);
-        unpublishedWalTxnCount.incrementAndGet();
+        notifyWalTxnRepublisher();
     }
 
     /**
@@ -3853,7 +3887,7 @@ public class CairoEngine implements Closeable, WriterSource {
                             .put(']');
                 }
             } else {
-                String lockedReason = lockAll(fromTableToken, "renameTable", false);
+                String lockedReason = lockAllAfterViewCompiles(fromTableToken, "renameTable");
                 if (lockedReason == null) {
                     try {
                         // No readers exist for the table, no checkpoint
@@ -3989,6 +4023,42 @@ public class CairoEngine implements Closeable, WriterSource {
 
     @TestOnly
     public void setUp() {
+    }
+
+    /**
+     * Sets a callback that a DROP, RENAME or TRUNCATE of a non-WAL table runs each time after it
+     * scanned the pools for the threads that hold its table, see {@link #awaitViewCompiles}, and
+     * before it looks these threads up among the threads that run view compile runs.
+     *
+     * @param callback the callback to invoke, or null to clear
+     */
+    @TestOnly
+    public void setViewCompileHolderLookupCallback(Runnable callback) {
+        this.viewCompileHolderLookupCallback = callback;
+    }
+
+    /**
+     * Sets a callback that a DROP, RENAME or TRUNCATE of a non-WAL table runs after a failed lock
+     * attempt that a view compile run overlapped, each time before it scans the pools for the
+     * threads that hold its table, see {@link #awaitViewCompiles}.
+     *
+     * @param callback the callback to invoke, or null to clear
+     */
+    @TestOnly
+    public void setViewCompileHolderScanCallback(Runnable callback) {
+        this.viewCompileHolderScanCallback = callback;
+    }
+
+    /**
+     * Sets a callback that a DROP or RENAME of a non-WAL table runs after it waited for view
+     * compile runs, or found that nothing holds its table any more, and found its table under the
+     * same name, right before it tries the lock again.
+     *
+     * @param callback the callback to invoke, or null to clear
+     */
+    @TestOnly
+    public void setViewCompileRetryCallback(Runnable callback) {
+        this.viewCompileRetryCallback = callback;
     }
 
     public void setWalDirectoryPolicy(@NotNull WalDirectoryPolicy walDirectoryPolicy) {
@@ -4209,10 +4279,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public void verifyTableToken(TableToken tableToken) {
         TableToken tt = tableNameRegistry.getTableToken(tableToken.getTableName());
-        if (tt == null || TableNameRegistry.isLocked(tt)) {
-            throw CairoException.tableDoesNotExist(tableToken.getTableName());
-        }
-        if (!tt.equals(tableToken)) {
+        if (!isTableTokenCurrent(tableToken, tt)) {
             throw TableReferenceOutOfDateException.of(tableToken, tableToken.getTableId(), tt.getTableId(), tt.getTableId(), -1);
         }
     }
@@ -4274,6 +4341,15 @@ public class CairoEngine implements Closeable, WriterSource {
             default:
                 throw SqlException.$(0, "use ddl()");
         }
+    }
+
+    // Tells whether the token's name still maps to the token in the name registry. Throws when the
+    // name maps to no table, or to a name that a DROP or a CREATE in progress has reserved.
+    private static boolean isTableTokenCurrent(TableToken tableToken, @Nullable TableToken registeredToken) {
+        if (registeredToken == null || TableNameRegistry.isLocked(registeredToken)) {
+            throw CairoException.tableDoesNotExist(tableToken.getTableName());
+        }
+        return registeredToken.equals(tableToken);
     }
 
     private static boolean isUnderRoot(CharSequence path, @Nullable CharSequence root) {
@@ -4476,6 +4552,107 @@ public class CairoEngine implements Closeable, WriterSource {
             throw SqlException.$(position, "live view select cannot override the designated timestamp; expected '")
                     .put(baseTimestampName).put("', got '").put(timestampName).put('\'');
         }
+    }
+
+    /**
+     * Called after a lock attempt of a non-WAL table failed on a busy reader or busy metadata. A
+     * view compile run borrows both, on behalf of the statement that queued it, on the thread that
+     * runs the run. When a run overlapped the attempt, this tells the runs that hold the table from
+     * its other holders by the thread that holds each slot of the table in the pools that the
+     * caller locks:
+     * <ul>
+     *     <li>when anything but a run holds the table, such as a query, it gives up at once, as
+     *     without views;</li>
+     *     <li>when only runs hold the table, it waits until each of these runs has ended, so the
+     *     DDL never locks the table in the middle of such a run;</li>
+     *     <li>when nothing holds the table any more, the caller tries the lock again at once.</li>
+     * </ul>
+     * All of it, over all lock attempts of the DDL, stays within
+     * {@link CairoConfiguration#getWriterAsyncCommandBusyWaitTimeout()} counted from the first time
+     * the DDL tells the holders apart.
+     *
+     * @param pool      a pool that the caller locks
+     * @param otherPool another pool that the caller locks, or null
+     * @return the start of the timeout, when the caller should try the lock again, or
+     * {@link Numbers#LONG_NULL} when it should give up
+     */
+    private long awaitViewCompiles(
+            TableToken tableToken,
+            AbstractMultiTenantPool<?> pool,
+            @Nullable AbstractMultiTenantPool<?> otherPool,
+            long compileRunActivityBeforeAttempt,
+            long timeoutStartMs
+    ) {
+        long compileRunActivity = viewStateStore.getCompileRunActivity();
+        if (!ViewStateStore.hasCompileRunOverlapped(compileRunActivityBeforeAttempt, compileRunActivity)) {
+            return Numbers.LONG_NULL;
+        }
+        final long timeoutMs = configuration.getWriterAsyncCommandBusyWaitTimeout();
+        if (timeoutMs <= 0) {
+            return Numbers.LONG_NULL;
+        }
+        final MillisecondClock clock = configuration.getMillisecondClock();
+        // an earlier call of the DDL returned the start of the timeout once it logged its wait
+        final boolean isWaitLogged = timeoutStartMs != Numbers.LONG_NULL;
+        if (!isWaitLogged) {
+            timeoutStartMs = clock.getTicks();
+        }
+        // the threads that hold a slot of the table, then the runs among them, each as its thread
+        // followed by the number of its run
+        final LongList holderThreads = new LongList();
+        final LongList holderRuns = new LongList();
+        while (true) {
+            final Runnable scanCallback = viewCompileHolderScanCallback;
+            if (scanCallback != null) {
+                scanCallback.run();
+            }
+            holderThreads.clear();
+            pool.getOwnerThreads(tableToken, holderThreads);
+            if (otherPool != null) {
+                otherPool.getOwnerThreads(tableToken, holderThreads);
+            }
+            final Runnable lookupCallback = viewCompileHolderLookupCallback;
+            if (lookupCallback != null) {
+                lookupCallback.run();
+            }
+            holderRuns.clear();
+            boolean isHeldOutsideRuns = false;
+            for (int i = 0, n = holderThreads.size(); i < n; i++) {
+                final long thread = holderThreads.getQuick(i);
+                final long run = viewStateStore.getCompileRunOfThread(thread);
+                if (run == 0) {
+                    isHeldOutsideRuns = true;
+                    break;
+                }
+                holderRuns.add(thread, run);
+            }
+            final long activityAfterScan = viewStateStore.getCompileRunActivity();
+            if (activityAfterScan == compileRunActivity) {
+                if (isHeldOutsideRuns) {
+                    // waiting for the runs cannot make the lock succeed
+                    return Numbers.LONG_NULL;
+                }
+                break;
+            }
+            // A run started or ended during the scan, so the threads of the runs may not match the
+            // slots that the scan saw: the slot of a run that ended looks like a query's.
+            compileRunActivity = activityAfterScan;
+            if (clock.getTicks() - timeoutStartMs >= timeoutMs) {
+                return Numbers.LONG_NULL;
+            }
+        }
+        if (!isWaitLogged) {
+            LOG.info().$("waiting for view compilation to release table [table=").$safe(tableToken.getTableName()).I$();
+        }
+        // Waits for the end of the runs, not for the release of the table: a view compile borrows
+        // a table more than once, and a drain can compile more views over the table.
+        while (clock.getTicks() - timeoutStartMs < timeoutMs) {
+            if (!isAnyCompileRunRunning(holderRuns)) {
+                return timeoutStartMs;
+            }
+            Os.pause();
+        }
+        return Numbers.LONG_NULL;
     }
 
     // Commits the registry name for a table created via the deferred-register
@@ -4893,6 +5070,16 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
+    // tells whether any of the view compile runs, each as its thread followed by its number, still runs
+    private boolean isAnyCompileRunRunning(LongList threadsAndRuns) {
+        for (int i = 0, n = threadsAndRuns.size(); i < n; i += 2) {
+            if (viewStateStore.getCompileRunOfThread(threadsAndRuns.getQuick(i)) == threadsAndRuns.getQuick(i + 1)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /**
      * Loads one mat-view's definition and persisted state into {@code target}.
      * Shared by {@link #buildViewGraphs()} (boot, {@code forceCreateState=false}) and
@@ -5016,6 +5203,55 @@ public class CairoEngine implements Closeable, WriterSource {
                 rec.$(", msg=").$safe(th.getMessage());
             }
             rec.I$();
+        }
+    }
+
+    /**
+     * Locks a non-WAL table for DROP or RENAME, see {@link #lockAll}. When the lock fails while only
+     * view compile runs hold the table, it waits for those runs and tries again, see
+     * {@link #awaitViewCompiles}, but only on the table the statement resolved: after each wait it
+     * checks that the name still maps to that table, and checks again under the lock of a retry.
+     * The DDL then never acts on a table that another session created under the same name.
+     *
+     * @return null when the table is locked, or the reason of a failed lock attempt
+     * @throws CairoException when the name maps to no table after a wait
+     */
+    private String lockAllAfterViewCompiles(TableToken tableToken, String lockReason) {
+        long timeoutStartMs = Numbers.LONG_NULL;
+        // the reason of the last attempt that a wait followed
+        String waitedReason = null;
+        while (true) {
+            final long compileRunActivity = viewStateStore.getCompileRunActivity();
+            final String reason = lockAll(tableToken, lockReason, false);
+            if (reason == null) {
+                // While this thread holds the locks, no session can drop or rename the table that
+                // owns the directory, so the name cannot change before the DDL is done.
+                if (waitedReason != null && !tableToken.equals(tableNameRegistry.getTableToken(tableToken.getTableName()))) {
+                    // another session changed the name after the check that followed the wait,
+                    // and this lock took the pools of whatever owns the directory name now
+                    unlockTableUnsafe(tableToken, null, false);
+                    return waitedReason;
+                }
+                return null;
+            }
+            // a view compile borrows readers and, for table_partitions(), table metadata
+            //noinspection StringEquality
+            if (reason != REASON_BUSY_READER && reason != REASON_BUSY_TABLE_READER_METADATA_POOL) {
+                return reason;
+            }
+            timeoutStartMs = awaitViewCompiles(tableToken, readerPool, tableMetadataPool, compileRunActivity, timeoutStartMs);
+            if (timeoutStartMs == Numbers.LONG_NULL) {
+                return reason;
+            }
+            if (!isTableTokenCurrent(tableToken, tableNameRegistry.getTableToken(tableToken.getTableName()))) {
+                // another session replaced the table during the wait
+                return reason;
+            }
+            waitedReason = reason;
+            final Runnable callback = viewCompileRetryCallback;
+            if (callback != null) {
+                callback.run();
+            }
         }
     }
 

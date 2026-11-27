@@ -1327,6 +1327,41 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testImportFileWithHeaderIntoExistingTableWithMissingArrayAndBinaryColumns() throws Exception {
+        final String oldInputRoot = inputRoot;
+        try {
+            File dir = temp.newFolder();
+            TestUtils.writeStringToFile(new File(dir, "missing.csv"), """
+                    k,ts
+                    1,2024-01-01T00:00:00.000000Z
+                    2,2024-01-02T00:00:00.000000Z
+                    3,2024-01-03T00:00:00.000000Z
+                    4,2024-01-04T00:00:00.000000Z
+                    """);
+            inputRoot = dir.getAbsolutePath();
+            executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+                execute(compiler, "CREATE TABLE t (k INT, a DOUBLE[], ts TIMESTAMP, aa DOUBLE[][], b BINARY) TIMESTAMP(ts) PARTITION BY DAY", sqlExecutionContext);
+                try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
+                    importer.setMinChunkSize(1);
+                    importer.of("t", "missing.csv", 1, PartitionBy.DAY, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
+                    importer.process(AllowAllSecurityContext.INSTANCE);
+                }
+                refreshTablesInBaseEngine();
+                assertQuery("SELECT k, a, aa, b IS NULL AS b_null FROM t")
+                        .noLeakCheck().expectSize().returns("""
+                                k\ta\taa\tb_null
+                                1\tnull\tnull\ttrue
+                                2\tnull\tnull\ttrue
+                                3\tnull\tnull\ttrue
+                                4\tnull\tnull\ttrue
+                                """);
+            });
+        } finally {
+            inputRoot = oldInputRoot;
+        }
+    }
+
+    @Test
     public void testImportFileWithHeaderIntoExistingTableWhenInputColumnCountIsSmallerThanTablesSucceedsAndInsertsNullIntoMissingColumns() throws Exception {
         executeWithPool(
                 4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {

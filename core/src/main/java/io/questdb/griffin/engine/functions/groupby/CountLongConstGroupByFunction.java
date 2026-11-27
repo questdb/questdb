@@ -93,6 +93,11 @@ public class CountLongConstGroupByFunction extends LongFunction implements Group
     }
 
     @Override
+    public boolean hasNonNullEmptyValue() {
+        return true;
+    }
+
+    @Override
     public void initValueIndex(int valueIndex) {
         this.valueIndex = valueIndex;
     }
@@ -147,7 +152,13 @@ public class CountLongConstGroupByFunction extends LongFunction implements Group
     }
 
     @Override
+    public boolean isStateSelfContained() {
+        return true;
+    }
+
+    @Override
     public void toPlan(PlanSink sink) {
         sink.val("count(*)");
     }
+
 }

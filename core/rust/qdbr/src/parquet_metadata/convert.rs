@@ -31,14 +31,14 @@
 //! preserving the existing write-path callers in `parquet_write/jni.rs` and
 //! `parquet_write/update.rs`.
 
-use std::collections::HashMap;
-
 use parquet2::thrift_format::{ColumnMetaData, RowGroup};
+use parquet2::write::RowGroupOrigin;
 
 use crate::parquet::error::{parquet_meta_err, ParquetError, ParquetResult};
-use qdb_parquet_meta::convert::{build_row_group_block, BloomFilterSource};
+use qdb_parquet_meta::convert::{build_row_group_block, set_chunk_ascii_flags, BloomFilterSource};
 use qdb_parquet_meta::error::{ParquetMetaErrorKind, ParquetMetaResult};
 use qdb_parquet_meta::types::SeqTxn;
+use qdb_parquet_meta::writer::RowGroupSlot;
 
 pub use qdb_parquet_meta::convert::{
     convert_from_parquet, detect_designated_timestamp, extract_sorting_columns,
@@ -47,16 +47,35 @@ pub use qdb_parquet_meta::convert::{
     TsStatsBackfill,
 };
 
-/// Bloom-filter source backed by pre-captured bitsets indexed by
-/// `(row_group, column)`. The parquet write path captures these while writing
-/// each row group; the shared converter then inlines them through this view.
+/// Bloom-filter source backed by the bitsets the parquet write path captured
+/// while writing each row group. The shared converter asks for a bitset by
+/// FINAL row-group position, but `bitsets` is in WRITE order and holds only the
+/// groups written in this session.
+///
+/// [`Self::new`] assumes the two coincide, which holds for a file written from
+/// scratch. An in-place update must use [`Self::with_origins`]: `origins` (from
+/// `ParquetFile::row_group_origins`, parallel to the final row groups) maps
+/// `Written(k)` to `bitsets[k]`, and `Existing` to `None` since no bitset was
+/// captured for it (no pruning, never a false skip). Resolving an update by
+/// position hands a shifted row group another group's bloom filter, which makes
+/// equality filters skip row groups that hold matching rows.
 pub struct VecBloomFilterSource<'a> {
     bitsets: &'a [Vec<Option<Vec<u8>>>],
+    origins: Option<&'a [RowGroupOrigin]>,
 }
 
 impl<'a> VecBloomFilterSource<'a> {
+    /// Final position `i` resolves to `bitsets[i]`: write order is final order.
     pub fn new(bitsets: &'a [Vec<Option<Vec<u8>>>]) -> Self {
-        Self { bitsets }
+        Self { bitsets, origins: None }
+    }
+
+    /// Final position `i` resolves through `origins[i]`.
+    pub fn with_origins(
+        bitsets: &'a [Vec<Option<Vec<u8>>>],
+        origins: &'a [RowGroupOrigin],
+    ) -> Self {
+        Self { bitsets, origins: Some(origins) }
     }
 }
 
@@ -67,7 +86,14 @@ impl BloomFilterSource for VecBloomFilterSource<'_> {
         column: usize,
         _meta: &ColumnMetaData,
     ) -> ParquetMetaResult<Option<&'a [u8]>> {
-        let Some(rg) = self.bitsets.get(row_group) else {
+        let write_idx = match self.origins {
+            None => row_group,
+            Some(origins) => match origins.get(row_group) {
+                Some(RowGroupOrigin::Written(k)) => *k,
+                Some(RowGroupOrigin::Existing { .. }) | None => return Ok(None),
+            },
+        };
+        let Some(rg) = self.bitsets.get(write_idx) else {
             return Ok(None);
         };
         let Some(cell) = rg.get(column) else {
@@ -99,7 +125,9 @@ pub struct ParquetMetaUpdateResult {
 
 /// Generates a complete `_pm` file from pre-built column descriptors and raw
 /// thrift row groups, inlining the bloom bitsets captured during the parquet
-/// write.
+/// write. `origins`, when given, is parallel to `thrift_row_groups` and maps
+/// each final row group to its bitset (see [`VecBloomFilterSource`]); `None`
+/// means write order is final order, as for a file written from scratch.
 #[allow(clippy::too_many_arguments)]
 pub fn generate_parquet_metadata(
     columns: &[ParquetMetaColumnInfo<'_>],
@@ -109,11 +137,49 @@ pub fn generate_parquet_metadata(
     parquet_footer_offset: u64,
     parquet_footer_length: u32,
     bloom_bitsets: &[Vec<Option<Vec<u8>>>],
+    origins: Option<&[RowGroupOrigin]>,
     unused_bytes: u64,
     squash_tracker: i64,
     seq_txn: SeqTxn,
 ) -> ParquetResult<(Vec<u8>, u64)> {
-    let bloom_source = VecBloomFilterSource::new(bloom_bitsets);
+    generate_parquet_metadata_with_chunk_ascii(
+        columns,
+        thrift_row_groups,
+        designated_timestamp,
+        sorting_columns,
+        parquet_footer_offset,
+        parquet_footer_length,
+        bloom_bitsets,
+        origins,
+        unused_bytes,
+        squash_tracker,
+        seq_txn,
+        &[],
+    )
+}
+
+/// [`generate_parquet_metadata`] for a writer that knows which column chunks
+/// hold only ASCII values: `is_chunk_ascii`, by final row group and column. A
+/// chunk it lacks carries no flag, unless `columns` flags its whole column.
+#[allow(clippy::too_many_arguments)]
+pub fn generate_parquet_metadata_with_chunk_ascii(
+    columns: &[ParquetMetaColumnInfo<'_>],
+    thrift_row_groups: &[RowGroup],
+    designated_timestamp: i32,
+    sorting_columns: &[u32],
+    parquet_footer_offset: u64,
+    parquet_footer_length: u32,
+    bloom_bitsets: &[Vec<Option<Vec<u8>>>],
+    origins: Option<&[RowGroupOrigin]>,
+    unused_bytes: u64,
+    squash_tracker: i64,
+    seq_txn: SeqTxn,
+    is_chunk_ascii: &[Vec<bool>],
+) -> ParquetResult<(Vec<u8>, u64)> {
+    let bloom_source = match origins {
+        Some(origins) => VecBloomFilterSource::with_origins(bloom_bitsets, origins),
+        None => VecBloomFilterSource::new(bloom_bitsets),
+    };
     qdb_parquet_meta::convert::generate_parquet_metadata(
         columns,
         thrift_row_groups,
@@ -125,15 +191,30 @@ pub fn generate_parquet_metadata(
         squash_tracker,
         seq_txn,
         &bloom_source,
+        is_chunk_ascii,
     )
     .map_err(ParquetError::from)
 }
 
+/// The file offset of the first page of the row group's first column. A row
+/// group keeps it for as long as its bytes stay where they are, so it tells
+/// the row groups of one file apart.
+pub fn row_group_first_page_offset(row_group: &RowGroup) -> Option<u64> {
+    row_group
+        .columns
+        .first()
+        .and_then(|c| c.meta_data.as_ref())
+        .map(|m| m.dictionary_page_offset.unwrap_or(m.data_page_offset) as u64)
+}
+
 /// Updates an existing `_pm` file incrementally (append-only).
 ///
-/// Compares the new parquet row groups against the committed `_pm`: unchanged
-/// row groups keep their original offsets (no data rewritten); only new/changed
-/// blocks and a new footer are appended at `append_base`, leaving the committed
+/// Drives the new footer by each final row group's origin (`origins`, parallel
+/// to `thrift_row_groups`, from `ParquetFile::row_group_origins`), never by its
+/// position: an `Existing { orig_idx }` group reuses committed block `orig_idx`
+/// together with its committed bloom entries, wherever it lands; a `Written(k)`
+/// group gets a new block built with bloom bitset `k`. Only new blocks and a
+/// new footer are appended at `append_base`, leaving the committed
 /// bytes -- and any orphaned dead-footer tail in [parse anchor, append_base) --
 /// intact, so any older committed `parquetMetaFileSize` still resolves to a
 /// consistent snapshot.
@@ -143,25 +224,47 @@ pub fn generate_parquet_metadata(
 /// `append_base` (the published header, `>=` the parse anchor) is where the new
 /// bytes land. `existing_parquet_meta` must span at least `append_base` bytes.
 ///
-/// Returns an error when the new row group count is smaller than the existing
-/// one: the writer's row-group entry list cannot drop existing references, so
-/// the caller must escalate to a full rewrite.
+/// The row group count may shrink: a committed block that no origin references
+/// (a removed row group) is left out of the new footer and becomes dead space.
 ///
 /// `is_index_row_map_dropped` writes the identity index row map, for a table
 /// with no symbol index (see `ParquetMetaUpdateWriter::drop_index_row_map`).
+///
+/// The header keeps the column flags it was created with, so the ASCII flags
+/// of the new snapshot go where an append can put them, both slices indexed
+/// by column:
+/// - `is_kept_header_ascii_checked`: the updater checked the values of the
+///   header-flagged columns in the row groups it keeps and found them ASCII. The
+///   new footer says whether the header flags hold: for a kept row group when
+///   the committed snapshot says so or the updater checked it, for a row group the
+///   update writes when its chunk of every flagged column is flagged ASCII.
+/// - `is_chunk_ascii`: by row group of `thrift_row_groups`, then by column,
+///   whether every value of the chunk is ASCII. The blocks the update adds
+///   carry it; a row group or a column it lacks is not ASCII.
 #[allow(clippy::too_many_arguments)]
 pub fn update_parquet_metadata(
     existing_parquet_meta: &[u8],
     existing_parquet_meta_file_size: u64,
     append_base: u64,
     thrift_row_groups: &[RowGroup],
+    origins: &[RowGroupOrigin],
     parquet_footer_offset: u64,
     parquet_footer_length: u32,
     bloom_bitsets: &[Vec<Option<Vec<u8>>>],
     unused_bytes: u64,
     seq_txn: SeqTxn,
     is_index_row_map_dropped: bool,
+    is_kept_header_ascii_checked: bool,
+    is_chunk_ascii: &[Vec<bool>],
 ) -> ParquetResult<ParquetMetaUpdateResult> {
+    if origins.len() != thrift_row_groups.len() {
+        return Err(parquet_meta_err!(
+            ParquetMetaErrorKind::InvalidValue,
+            "_pm update: {} row group origins for {} row groups",
+            origins.len(),
+            thrift_row_groups.len()
+        ));
+    }
     // append_base (the published header, >= the parse anchor) bounds the new
     // footer's position; the buffer must reach it so finish folds any dead
     // footer in [parse anchor, append_base) into the cumulative CRC. Guarded
@@ -192,6 +295,15 @@ pub fn update_parquet_metadata(
     )?;
     let existing_rg_count = existing_reader.row_group_count() as usize;
 
+    let mut header_ascii_columns = Vec::new();
+    for i in 0..existing_reader.column_count() as usize {
+        if existing_reader.column_descriptor(i)?.flags().is_ascii() {
+            header_ascii_columns.push(i);
+        }
+    }
+    let mut is_header_ascii_valid =
+        existing_reader.is_header_ascii_valid() || is_kept_header_ascii_checked;
+
     let mut existing_fingerprints: Vec<Option<u64>> = Vec::with_capacity(existing_rg_count);
     for i in 0..existing_rg_count {
         let rg = existing_reader.row_group(i)?;
@@ -203,69 +315,45 @@ pub fn update_parquet_metadata(
         existing_fingerprints.push(fp);
     }
 
-    // Compaction is conceptually representable as an append (write a new
-    // footer that references fewer row groups, leaving the dropped blocks as
-    // dead space), but the current `ParquetMetaUpdateWriter` exposes only
-    // replace/add — it has no remove operation, and the loop below only
-    // iterates `thrift_row_groups`, so existing entries beyond the new length
-    // would leak into the new footer as stale references. None of the Java
-    // callers in `O3PartitionJob` shrink the row group count today, so this
-    // is a defensive guard rather than a load-bearing check; it stays so any
-    // future caller that violates the invariant fails loudly instead of
-    // silently corrupting the file.
-    if thrift_row_groups.len() < existing_rg_count {
-        return Err(parquet_meta_err!(
-            ParquetMetaErrorKind::InvalidValue,
-            "_pm in-place update cannot shrink row group count ({} -> {}); caller must escalate to rewrite mode (new nameTxn directory)",
-            existing_rg_count,
-            thrift_row_groups.len()
-        ));
-    }
-
+    // A removed row group (parquet2 `remove`) simply has no origin pointing at
+    // it: the new footer references fewer blocks and the dropped one stays as
+    // dead space that only older footers reference. So the row group count
+    // may shrink as well as grow.
     let mut updater = qdb_parquet_meta::writer::ParquetMetaUpdateWriter::new(
         existing_parquet_meta,
         existing_parquet_meta_file_size,
     )?;
 
-    // A kept row group may have shifted; find it by fingerprint so the writer
-    // reuses its block, bloom filters and index rows.
-    let mut existing_by_fingerprint: HashMap<u64, usize> =
-        HashMap::with_capacity(existing_rg_count);
-    for (i, fp) in existing_fingerprints.iter().enumerate() {
-        if let Some(fp) = fp {
-            existing_by_fingerprint.insert(*fp, i);
+    let bloom_source = VecBloomFilterSource::with_origins(bloom_bitsets, origins);
+    let mut slots = Vec::with_capacity(thrift_row_groups.len());
+    for (i, (thrift_rg, origin)) in thrift_row_groups.iter().zip(origins).enumerate() {
+        if let RowGroupOrigin::Existing { orig_idx } = *origin {
+            // Reuse the committed block only when it describes this row group's
+            // data: the first chunk's start offset is unique per written chunk.
+            // A mismatch means the `_pm` and the parquet footer disagree; rebuild
+            // from the thrift then, and the bloom source yields None for an
+            // Existing origin, so the group loses pruning but is never skipped
+            // by another group's bloom filter.
+            let new_fp = row_group_first_page_offset(thrift_rg);
+            if existing_fingerprints.get(orig_idx) == Some(&new_fp) {
+                slots.push(RowGroupSlot::Existing(orig_idx));
+                continue;
+            }
         }
+        let mut block = build_row_group_block(thrift_rg, i, &bloom_source)?;
+        let is_row_group_chunk_ascii = is_chunk_ascii.get(i).map_or(&[][..], Vec::as_slice);
+        set_chunk_ascii_flags(&mut block, is_row_group_chunk_ascii)?;
+        is_header_ascii_valid &= header_ascii_columns
+            .iter()
+            .all(|&col| is_row_group_chunk_ascii.get(col).copied().unwrap_or(false));
+        slots.push(RowGroupSlot::New(block));
     }
-
-    let bloom_source = VecBloomFilterSource::new(bloom_bitsets);
-    for (i, thrift_rg) in thrift_row_groups.iter().enumerate() {
-        let new_fp: Option<u64> = thrift_rg
-            .columns
-            .first()
-            .and_then(|c| c.meta_data.as_ref())
-            .map(|m| m.dictionary_page_offset.unwrap_or(m.data_page_offset) as u64);
-
-        if i < existing_rg_count && existing_fingerprints[i] == new_fp {
-            continue;
-        }
-
-        if let Some(&src) = new_fp.and_then(|fp| existing_by_fingerprint.get(&fp)) {
-            updater.reuse_row_group(i, src)?;
-            continue;
-        }
-
-        let block = build_row_group_block(thrift_rg, i, &bloom_source)?;
-
-        if i < existing_rg_count {
-            updater.replace_row_group(i, block)?;
-        } else {
-            updater.add_row_group(block);
-        }
-    }
+    updater.set_row_groups(slots)?;
 
     updater.parquet_footer(parquet_footer_offset, parquet_footer_length);
     updater.unused_bytes(unused_bytes);
     updater.seq_txn(seq_txn);
+    updater.header_ascii_valid(is_header_ascii_valid);
     if is_index_row_map_dropped {
         updater.drop_index_row_map();
     }
@@ -313,6 +401,7 @@ mod tests {
             strided_timestamp_16: false,
             designated_timestamp_ascending: true,
             parquet_encoding_config: ParquetEncodingConfig::from_raw(0),
+            dense_symbol_dictionary: false,
         };
 
         let partition = Partition { table: "test".to_string(), columns: vec![col] };
@@ -873,6 +962,7 @@ mod tests {
                 strided_timestamp_16: false,
                 designated_timestamp_ascending: true,
                 parquet_encoding_config: ParquetEncodingConfig::from_raw(0),
+                dense_symbol_dictionary: false,
             },
             Column {
                 name: "int_val",
@@ -888,6 +978,7 @@ mod tests {
                 strided_timestamp_16: false,
                 designated_timestamp_ascending: false,
                 parquet_encoding_config: ParquetEncodingConfig::from_raw(0),
+                dense_symbol_dictionary: false,
             },
             Column {
                 name: "dbl_val",
@@ -903,6 +994,7 @@ mod tests {
                 strided_timestamp_16: false,
                 designated_timestamp_ascending: false,
                 parquet_encoding_config: ParquetEncodingConfig::from_raw(0),
+                dense_symbol_dictionary: false,
             },
             Column {
                 name: "bool_val",
@@ -918,6 +1010,7 @@ mod tests {
                 strided_timestamp_16: false,
                 designated_timestamp_ascending: false,
                 parquet_encoding_config: ParquetEncodingConfig::from_raw(0),
+                dense_symbol_dictionary: false,
             },
         ];
 
@@ -1023,6 +1116,7 @@ mod tests {
                 strided_timestamp_16: false,
                 designated_timestamp_ascending: true,
                 parquet_encoding_config: ParquetEncodingConfig::from_raw(0),
+                dense_symbol_dictionary: false,
             },
             Column {
                 name: "val",
@@ -1038,6 +1132,7 @@ mod tests {
                 strided_timestamp_16: false,
                 designated_timestamp_ascending: false,
                 parquet_encoding_config: ParquetEncodingConfig::from_raw(0),
+                dense_symbol_dictionary: false,
             },
         ];
 
@@ -1189,7 +1284,11 @@ mod tests {
         let desc = reader.column_descriptor(0).unwrap();
         let flags = desc.flags();
         assert!(flags.is_local_key_global());
-        assert!(flags.is_ascii());
+        // the footer's `ascii` describes the whole column and may be stale (9.3.4 and 9.3.5 left
+        // it true over non-ASCII values): it flags neither the column nor its chunks
+        assert!(!flags.is_ascii());
+        let chunk = reader.row_group(0).unwrap().column_chunk(0).unwrap();
+        assert!(!chunk.flags().is_ascii());
     }
 
     #[test]
@@ -1245,6 +1344,7 @@ mod tests {
             strided_timestamp_16: false,
             designated_timestamp_ascending: true,
             parquet_encoding_config: ParquetEncodingConfig::from_raw(0),
+            dense_symbol_dictionary: false,
         };
 
         let partition = Partition { table: "test".to_string(), columns: vec![col] };
@@ -1278,9 +1378,9 @@ mod tests {
             ParquetMetaReader::from_file_size(&parquet_meta_bytes, parquet_meta_file_size).unwrap();
         assert_eq!(reader.row_group_count(), metadata.row_groups.len() as u32);
 
-        for i in 0..reader.row_group_count() as usize {
+        for (i, expected) in metadata.row_groups.iter().enumerate() {
             let rg = reader.row_group(i).unwrap();
-            assert_eq!(rg.num_rows(), metadata.row_groups[i].num_rows() as u64);
+            assert_eq!(rg.num_rows(), expected.num_rows() as u64);
         }
     }
 
@@ -1304,6 +1404,7 @@ mod tests {
             strided_timestamp_16: false,
             designated_timestamp_ascending: false,
             parquet_encoding_config: ParquetEncodingConfig::from_raw(0),
+            dense_symbol_dictionary: false,
         };
 
         let partition = Partition {
@@ -1548,6 +1649,7 @@ mod tests {
                 strided_timestamp_16: false,
                 designated_timestamp_ascending: true,
                 parquet_encoding_config: ParquetEncodingConfig::from_raw(0),
+                dense_symbol_dictionary: false,
             }],
         };
 
@@ -1633,6 +1735,7 @@ mod tests {
             parquet_footer_offset,
             parquet_footer_length,
             &[],
+            None,
             0,
             -1,
             SeqTxn::UNSET,
@@ -1678,6 +1781,7 @@ mod tests {
             100,
             50,
             &[],
+            None,
             0,
             -1,
             SeqTxn::UNSET,
@@ -1702,12 +1806,18 @@ mod tests {
             initial_size,
             initial_size,
             &extended_rgs,
+            &[
+                RowGroupOrigin::Existing { orig_idx: 0 },
+                RowGroupOrigin::Written(0),
+            ],
             200,
             60,
             &[],
             0,
             SeqTxn::UNSET,
             false,
+            false,
+            &[],
         )
         .unwrap();
 
@@ -1727,6 +1837,169 @@ mod tests {
 
         let old_reader = ParquetMetaReader::from_file_size(&initial_pm, initial_size).unwrap();
         assert_eq!(old_reader.row_group_count(), 1);
+    }
+
+    /// A `_pm` over the multi-column file with the header flag of column 1 set, as QuestDB 10.2.0
+    /// and older wrote it, and the thrift row groups of an update that appends one more row group
+    /// to it.
+    fn pm_with_ascii_flagged_column() -> (Vec<u8>, Vec<RowGroup>) {
+        let parquet_data = write_multi_column_parquet(80);
+        let mut cursor = Cursor::new(&parquet_data);
+        let metadata = read_metadata_with_size(&mut cursor, parquet_data.len() as u64).unwrap();
+        let qdb_meta = extract_qdb_meta_from(&metadata);
+        let schema_columns = metadata.schema_descr.columns().to_vec();
+        let thrift_meta = metadata.into_thrift();
+        let mut col_infos = col_infos_from_schema(&schema_columns, qdb_meta.as_ref());
+        col_infos[1].flags = col_infos[1].flags.with_ascii();
+        let (pm, _) = generate_parquet_metadata(
+            &col_infos,
+            &thrift_meta.row_groups,
+            0,
+            &[0],
+            100,
+            50,
+            &[],
+            None,
+            0,
+            -1,
+            SeqTxn::UNSET,
+        )
+        .unwrap();
+
+        let mut row_groups = thrift_meta.row_groups;
+        let mut new_rg = row_groups[0].clone();
+        for col in &mut new_rg.columns {
+            if let Some(ref mut meta) = col.meta_data {
+                meta.data_page_offset += 10_000;
+            }
+        }
+        row_groups.push(new_rg);
+        (pm, row_groups)
+    }
+
+    fn append_row_group(
+        pm: &[u8],
+        row_groups: &[RowGroup],
+        is_kept_header_ascii_checked: bool,
+        is_chunk_ascii: &[Vec<bool>],
+    ) -> ParquetResult<Vec<u8>> {
+        let size = pm.len() as u64;
+        // the update keeps the row groups of the snapshot and writes the ones past them
+        let kept = ParquetMetaReader::from_file_size(pm, size)?.row_group_count() as usize;
+        let origins: Vec<RowGroupOrigin> = (0..row_groups.len())
+            .map(|i| match i.checked_sub(kept) {
+                Some(written) => RowGroupOrigin::Written(written),
+                None => RowGroupOrigin::Existing { orig_idx: i },
+            })
+            .collect();
+        let result = update_parquet_metadata(
+            pm,
+            size,
+            size,
+            row_groups,
+            &origins,
+            200,
+            60,
+            &[],
+            0,
+            SeqTxn::UNSET,
+            false,
+            is_kept_header_ascii_checked,
+            is_chunk_ascii,
+        )?;
+        let mut full_file = pm.to_vec();
+        full_file.extend_from_slice(&result.bytes);
+        Ok(full_file)
+    }
+
+    #[test]
+    fn update_parquet_metadata_vouches_for_header_ascii_flags_that_hold() {
+        let (pm, row_groups) = pm_with_ascii_flagged_column();
+        // the header holds for the committed snapshot, the first one, and the new row group flags
+        // its chunk of column 1, the flagged one; columns the header does not flag do not count.
+        // The flags of row group 0 are ignored: the update keeps its block
+        let is_chunk_ascii = [vec![true, false], vec![false, true]];
+        let updated = append_row_group(&pm, &row_groups, false, &is_chunk_ascii).unwrap();
+        let reader = ParquetMetaReader::from_file_size(&updated, updated.len() as u64).unwrap();
+        assert!(reader.footer_feature_flags().has_header_ascii_valid());
+        assert!(reader.is_header_ascii_valid());
+        let chunk_flags = |rg: usize, col: usize| {
+            let chunk = reader.row_group(rg).unwrap().column_chunk(col).unwrap();
+            chunk.flags().is_ascii()
+        };
+        // the committed block keeps the flags it was created with, none: the header flag of
+        // column 1 flags no chunk. The new block takes the update's.
+        assert!(!chunk_flags(0, 0));
+        assert!(!chunk_flags(0, 1));
+        assert!(!chunk_flags(1, 0));
+        assert!(chunk_flags(1, 1));
+    }
+
+    #[test]
+    fn update_parquet_metadata_does_not_vouch_for_header_ascii_flag_that_broke() {
+        let (pm, row_groups) = pm_with_ascii_flagged_column();
+        // the new row group does not flag its chunk of column 1, whatever the kept ones hold
+        let not_flagged = [Vec::new(), vec![true, false, true]];
+        for is_kept_header_ascii_checked in [false, true] {
+            for is_chunk_ascii in [&[][..], &not_flagged[..]] {
+                let updated = append_row_group(
+                    &pm,
+                    &row_groups,
+                    is_kept_header_ascii_checked,
+                    is_chunk_ascii,
+                )
+                .unwrap();
+                let reader =
+                    ParquetMetaReader::from_file_size(&updated, updated.len() as u64).unwrap();
+                assert!(!reader.footer_feature_flags().has_header_ascii_valid());
+                assert!(!reader.is_header_ascii_valid());
+                let new_chunk = reader.row_group(1).unwrap().column_chunk(1).unwrap();
+                assert!(!new_chunk.flags().is_ascii());
+            }
+        }
+    }
+
+    #[test]
+    fn update_parquet_metadata_vouches_for_unproven_header_only_after_the_check() {
+        let (pm, mut row_groups) = pm_with_ascii_flagged_column();
+        // a snapshot that does not vouch for the header, as QuestDB 10.2.0 appended them
+        let unproven = append_row_group(&pm, &row_groups, false, &[]).unwrap();
+        let reader = ParquetMetaReader::from_file_size(&unproven, unproven.len() as u64).unwrap();
+        assert!(!reader.is_header_ascii_valid());
+
+        let mut new_rg = row_groups[1].clone();
+        for col in &mut new_rg.columns {
+            if let Some(ref mut meta) = col.meta_data {
+                meta.data_page_offset += 10_000;
+            }
+        }
+        row_groups.push(new_rg);
+        let is_chunk_ascii = [Vec::new(), Vec::new(), vec![false, true]];
+        for is_kept_header_ascii_checked in [false, true] {
+            let updated = append_row_group(
+                &unproven,
+                &row_groups,
+                is_kept_header_ascii_checked,
+                &is_chunk_ascii,
+            )
+            .unwrap();
+            let reader = ParquetMetaReader::from_file_size(&updated, updated.len() as u64).unwrap();
+            assert_eq!(reader.is_header_ascii_valid(), is_kept_header_ascii_checked);
+        }
+    }
+
+    #[test]
+    fn update_parquet_metadata_rejects_ascii_flag_for_column_the_file_lacks() {
+        let (pm, row_groups) = pm_with_ascii_flagged_column();
+        let column_count = row_groups[0].columns.len();
+        let mut is_new_chunk_ascii = vec![false; column_count + 1];
+        is_new_chunk_ascii[column_count] = true;
+        let is_chunk_ascii = [Vec::new(), is_new_chunk_ascii];
+        let err = append_row_group(&pm, &row_groups, false, &is_chunk_ascii).unwrap_err();
+        assert!(
+            err.to_string().contains("column chunk index"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
@@ -1751,6 +2024,7 @@ mod tests {
             100,
             50,
             &[],
+            None,
             0,
             -1,
             SeqTxn::UNSET,
@@ -1769,18 +2043,25 @@ mod tests {
             }
         }
         let shifted_rgs = vec![inserted_rg, thrift_meta.row_groups[0].clone()];
+        let shifted_origins = [
+            RowGroupOrigin::Written(0),
+            RowGroupOrigin::Existing { orig_idx: 0 },
+        ];
 
         let result = update_parquet_metadata(
             &initial_pm,
             initial_size,
             initial_size,
             &shifted_rgs,
+            &shifted_origins,
             200,
             60,
             &[],
             0,
             SeqTxn::UNSET,
             false,
+            false,
+            &[],
         )
         .unwrap();
         let mut full_file = initial_pm.clone();
@@ -1808,12 +2089,15 @@ mod tests {
             initial_size,
             initial_size,
             &shifted_rgs,
+            &shifted_origins,
             200,
             60,
             &[],
             0,
             SeqTxn::UNSET,
             true,
+            false,
+            &[],
         )
         .unwrap();
         let mut full_file = initial_pm.clone();
@@ -1833,7 +2117,7 @@ mod tests {
     }
 
     #[test]
-    fn update_with_decreasing_row_group_count_returns_error() {
+    fn update_with_decreasing_row_group_count_drops_removed_groups() {
         let parquet_data = write_multi_column_parquet(80);
         let mut cursor = Cursor::new(&parquet_data);
         let metadata = read_metadata_with_size(&mut cursor, parquet_data.len() as u64).unwrap();
@@ -1871,6 +2155,7 @@ mod tests {
             100,
             50,
             &[],
+            None,
             0,
             -1,
             SeqTxn::UNSET,
@@ -1881,33 +2166,225 @@ mod tests {
         let initial_reader = ParquetMetaReader::from_file_size(&initial_pm, initial_size).unwrap();
         assert_eq!(initial_reader.row_group_count(), 3);
 
-        let two_rgs = three_rgs[..2].to_vec();
+        // Row group 1 is removed: the survivors keep their committed blocks.
+        let two_rgs = vec![three_rgs[0].clone(), three_rgs[2].clone()];
         let result = update_parquet_metadata(
             &initial_pm,
             initial_size,
             initial_size,
             &two_rgs,
+            &[
+                RowGroupOrigin::Existing { orig_idx: 0 },
+                RowGroupOrigin::Existing { orig_idx: 2 },
+            ],
             100,
             50,
             &[],
             0,
             SeqTxn::UNSET,
             false,
-        );
+            false,
+            &[],
+        )
+        .unwrap();
 
+        let mut full_file = initial_pm.clone();
+        full_file.extend_from_slice(&result.bytes);
+        assert_eq!(full_file.len() as u64, result.new_file_size);
+        full_file[qdb_parquet_meta::types::HEADER_PARQUET_META_FILE_SIZE_OFF
+            ..qdb_parquet_meta::types::HEADER_PARQUET_META_FILE_SIZE_OFF + 8]
+            .copy_from_slice(&result.new_file_size.to_le_bytes());
+
+        let new_reader =
+            ParquetMetaReader::from_file_size(&full_file, result.new_file_size).unwrap();
+        assert_eq!(new_reader.row_group_count(), 2);
+        assert!(new_reader.verify_checksum().is_ok());
+        let first_offset = |r: &ParquetMetaReader, rg: usize| {
+            r.row_group(rg)
+                .unwrap()
+                .column_chunk(0)
+                .unwrap()
+                .byte_range_start
+        };
+        let old_reader = ParquetMetaReader::from_file_size(&full_file, initial_size).unwrap();
+        assert_eq!(old_reader.row_group_count(), 3);
+        assert_eq!(first_offset(&new_reader, 0), first_offset(&old_reader, 0));
+        assert_eq!(first_offset(&new_reader, 1), first_offset(&old_reader, 2));
+        assert_ne!(first_offset(&old_reader, 1), first_offset(&old_reader, 2));
+    }
+
+    #[test]
+    fn vec_bloom_source_resolves_by_origin() {
+        let bitsets: Vec<Vec<Option<Vec<u8>>>> =
+            vec![vec![Some(vec![1u8; 32])], vec![Some(vec![2u8; 32])]];
+        // bitset() ignores the metadata; any real column's will do.
+        let (_, target) = one_group_pm_and_two_group_target();
+        let meta = target[0].columns[0].meta_data.clone().unwrap();
+
+        // Positional: final position == write order.
+        let positional = VecBloomFilterSource::new(&bitsets);
+        assert_eq!(
+            positional.bitset(1, 0, &meta).unwrap(),
+            Some(&[2u8; 32][..])
+        );
+        assert_eq!(positional.bitset(2, 0, &meta).unwrap(), None);
+        assert_eq!(positional.bitset(0, 1, &meta).unwrap(), None);
+
+        // Final [written#1, existing, written#0].
+        let origins = [
+            RowGroupOrigin::Written(1),
+            RowGroupOrigin::Existing { orig_idx: 0 },
+            RowGroupOrigin::Written(0),
+        ];
+        let by_origin = VecBloomFilterSource::with_origins(&bitsets, &origins);
+        assert_eq!(by_origin.bitset(0, 0, &meta).unwrap(), Some(&[2u8; 32][..]));
+        assert_eq!(by_origin.bitset(1, 0, &meta).unwrap(), None);
+        assert_eq!(by_origin.bitset(2, 0, &meta).unwrap(), Some(&[1u8; 32][..]));
+        // Past the origins, or a write index with no captured bitsets: None.
+        assert_eq!(by_origin.bitset(3, 0, &meta).unwrap(), None);
+        let dangling = [RowGroupOrigin::Written(5)];
+        let dangling = VecBloomFilterSource::with_origins(&bitsets, &dangling);
+        assert_eq!(dangling.bitset(0, 0, &meta).unwrap(), None);
+    }
+
+    /// A 1-row-group `_pm` over `write_multi_column_parquet(80)`, plus a target
+    /// row group list [rg0, new] whose second group starts 10 000 bytes later.
+    fn one_group_pm_and_two_group_target() -> (Vec<u8>, Vec<RowGroup>) {
+        let parquet_data = write_multi_column_parquet(80);
+        let mut cursor = Cursor::new(&parquet_data);
+        let metadata = read_metadata_with_size(&mut cursor, parquet_data.len() as u64).unwrap();
+        let qdb_meta = extract_qdb_meta_from(&metadata);
+        let thrift_meta = metadata.into_thrift();
+        let mut cursor2 = Cursor::new(&parquet_data);
+        let metadata2 = read_metadata_with_size(&mut cursor2, parquet_data.len() as u64).unwrap();
+        let col_infos = col_infos_from_schema(metadata2.schema_descr.columns(), qdb_meta.as_ref());
+        let (initial_pm, _) = generate_parquet_metadata(
+            &col_infos,
+            &thrift_meta.row_groups,
+            0,
+            &[0],
+            100,
+            50,
+            &[],
+            None,
+            0,
+            -1,
+            SeqTxn::UNSET,
+        )
+        .unwrap();
+        let mut target = thrift_meta.row_groups.clone();
+        let mut new_rg = target[0].clone();
+        for col in &mut new_rg.columns {
+            if let Some(ref mut meta) = col.meta_data {
+                meta.data_page_offset += 10_000;
+            }
+        }
+        target.push(new_rg);
+        (initial_pm, target)
+    }
+
+    #[test]
+    fn update_rejects_origin_count_mismatch() {
+        let (initial_pm, target) = one_group_pm_and_two_group_target();
+        let size = initial_pm.len() as u64;
+        let result = update_parquet_metadata(
+            &initial_pm,
+            size,
+            size,
+            &target,
+            &[RowGroupOrigin::Existing { orig_idx: 0 }],
+            200,
+            60,
+            &[],
+            0,
+            SeqTxn::UNSET,
+            false,
+            false,
+            &[],
+        );
         let err = match result {
-            Ok(_) => panic!("update should fail when row groups shrink"),
+            Ok(_) => panic!("origin count mismatch must be rejected"),
             Err(e) => e,
         };
-        let msg = format!("{err}");
         assert!(
-            msg.contains("cannot shrink row group count (3 -> 2)"),
-            "expected 'cannot shrink row group count (3 -> 2)' in error, got: {msg}"
+            format!("{err}").contains("1 row group origins for 2 row groups"),
+            "got: {err}"
         );
-        assert!(
-            msg.contains("escalate to rewrite mode"),
-            "expected escalation hint in error, got: {msg}"
+    }
+
+    #[test]
+    fn update_propagates_new_block_build_error() {
+        // A written group whose thrift lacks column metadata must fail the
+        // update with an error, not panic across JNI.
+        let (initial_pm, mut target) = one_group_pm_and_two_group_target();
+        target[1].columns[0].meta_data = None;
+        let size = initial_pm.len() as u64;
+        let result = update_parquet_metadata(
+            &initial_pm,
+            size,
+            size,
+            &target,
+            &[
+                RowGroupOrigin::Existing { orig_idx: 0 },
+                RowGroupOrigin::Written(0),
+            ],
+            200,
+            60,
+            &[],
+            0,
+            SeqTxn::UNSET,
+            false,
+            false,
+            &[],
         );
+        let err = match result {
+            Ok(_) => panic!("a written group without column metadata must be rejected"),
+            Err(e) => e,
+        };
+        assert!(format!("{err}").contains("no metadata"), "got: {err}");
+    }
+
+    #[test]
+    fn update_rebuilds_existing_origin_whose_block_does_not_match() {
+        // The target claims its second group is committed group 0, but its first
+        // chunk starts elsewhere: the committed block does not describe it, so it
+        // must be rebuilt from the thrift instead of reusing group 0's block.
+        let (initial_pm, target) = one_group_pm_and_two_group_target();
+        let size = initial_pm.len() as u64;
+        let result = update_parquet_metadata(
+            &initial_pm,
+            size,
+            size,
+            &target[1..],
+            &[RowGroupOrigin::Existing { orig_idx: 0 }],
+            200,
+            60,
+            &[],
+            0,
+            SeqTxn::UNSET,
+            false,
+            false,
+            &[],
+        )
+        .unwrap();
+        let mut full = initial_pm.clone();
+        full.extend_from_slice(&result.bytes);
+        let old = ParquetMetaReader::from_file_size(&initial_pm, size).unwrap();
+        let new = ParquetMetaReader::from_file_size(&full, result.new_file_size).unwrap();
+        assert_eq!(new.row_group_count(), 1);
+        let old_start = old
+            .row_group(0)
+            .unwrap()
+            .column_chunk(0)
+            .unwrap()
+            .byte_range_start;
+        let new_start = new
+            .row_group(0)
+            .unwrap()
+            .column_chunk(0)
+            .unwrap()
+            .byte_range_start;
+        assert_eq!(new_start, old_start + 10_000);
     }
 
     #[test]
@@ -1934,6 +2411,7 @@ mod tests {
             100,
             50,
             &[],
+            None,
             0,
             -1,
             SeqTxn::UNSET,
@@ -1960,12 +2438,18 @@ mod tests {
                 parse_anchor,
                 bad_base,
                 &extended_rgs,
+                &[
+                    RowGroupOrigin::Existing { orig_idx: 0 },
+                    RowGroupOrigin::Written(0),
+                ],
                 200,
                 60,
                 &[],
                 0,
                 SeqTxn::UNSET,
                 false,
+                false,
+                &[],
             );
             let err = match result {
                 Ok(_) => panic!("append base {bad_base} must be rejected"),
@@ -2030,6 +2514,7 @@ mod tests {
             strided_timestamp_16: false,
             designated_timestamp_ascending: true,
             parquet_encoding_config: ParquetEncodingConfig::from_raw(0),
+            dense_symbol_dictionary: false,
         };
 
         let partition = Partition {
@@ -2080,6 +2565,7 @@ mod tests {
             100,
             50,
             bloom_bitsets,
+            None,
             0,
             -1,
             SeqTxn::UNSET,
@@ -2146,6 +2632,7 @@ mod tests {
                 strided_timestamp_16: false,
                 designated_timestamp_ascending: true,
                 parquet_encoding_config: ParquetEncodingConfig::from_raw(0),
+                dense_symbol_dictionary: false,
             },
             Column {
                 name: "val",
@@ -2161,6 +2648,7 @@ mod tests {
                 strided_timestamp_16: false,
                 designated_timestamp_ascending: false,
                 parquet_encoding_config: ParquetEncodingConfig::from_raw(0),
+                dense_symbol_dictionary: false,
             },
         ];
         let partition = Partition { table: "test".to_string(), columns: cols };
@@ -2191,6 +2679,7 @@ mod tests {
             100,
             50,
             &[],
+            None,
             0,
             -1,
             SeqTxn::UNSET,
@@ -2259,6 +2748,7 @@ mod tests {
             strided_timestamp_16: false,
             designated_timestamp_ascending: true,
             parquet_encoding_config: ParquetEncodingConfig::from_raw(0),
+            dense_symbol_dictionary: false,
         };
         let partition = Partition { table: "test".to_string(), columns: vec![col] };
 

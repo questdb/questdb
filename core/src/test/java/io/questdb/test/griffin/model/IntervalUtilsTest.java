@@ -208,6 +208,18 @@ public class IntervalUtilsTest {
     }
 
     @Test
+    public void testInvertEmpty() {
+        runTestInvertInplace(new LongList(), 0, "[null,9223372036854775807]");
+
+        LongList intervals = new LongList();
+        // A
+        add(intervals, 1, 2);
+
+        // B is empty
+        runTestInvertInplace(intervals, 2, "[null,9223372036854775807]");
+    }
+
+    @Test
     public void testInvertSimple() {
         LongList intervals = new LongList();
         // A

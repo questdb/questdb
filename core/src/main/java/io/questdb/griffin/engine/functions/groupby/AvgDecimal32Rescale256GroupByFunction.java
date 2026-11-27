@@ -262,6 +262,11 @@ class AvgDecimal32Rescale256GroupByFunction extends Decimal256Function implement
         return UnaryFunction.super.supportsParallelism();
     }
 
+    @Override
+    public boolean isStateSelfContained() {
+        return true;
+    }
+
     private void add(MapValue mapValue, int decimal32A, long decimal64B) {
         try {
             mapValue.putLong(valueIndex + 1, Decimal64.uncheckedAdd(decimal32A, decimal64B));

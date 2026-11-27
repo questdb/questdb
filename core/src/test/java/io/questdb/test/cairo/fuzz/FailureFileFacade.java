@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.fuzz;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableUtils;
 import io.questdb.log.Log;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FindVisitor;
@@ -32,6 +33,7 @@ import io.questdb.std.Os;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.MutableUtf8Sink;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.concurrent.atomic.AtomicInteger;
@@ -53,6 +55,7 @@ public class FailureFileFacade implements FilesFacade {
     private volatile String contaminatingThreadName;
     private final AtomicInteger failureGenerated = new AtomicInteger();
     private final FilesFacade ff;
+    private volatile boolean isDetachCopied;
     private final AtomicInteger osCallsCount = new AtomicInteger(0);
     // Mode 3: name prefix of the query pool's worker threads, or null otherwise.
     private volatile String queryWorkerNamePrefix;
@@ -173,6 +176,15 @@ public class FailureFileFacade implements FilesFacade {
 
     public int failureGenerated() {
         return failureGenerated.get();
+    }
+
+    /**
+     * The armed countdown: the value passed to {@link #setToFailAfter(int)} minus the file
+     * system calls counted since. It keeps falling past zero after the failure fires, so the
+     * difference is the number of calls made while armed.
+     */
+    public int getOsCallsCount() {
+        return osCallsCount.get();
     }
 
     @Override
@@ -308,6 +320,9 @@ public class FailureFileFacade implements FilesFacade {
 
     @Override
     public int hardLinkDirRecursive(Path src, Path dst, int dirMode) {
+        if (isDetachCopied && Utf8s.endsWithAscii(dst, TableUtils.DETACHING_DIR_MARKER)) {
+            return ff.copyRecursive(src, dst, dirMode);
+        }
         return ff.hardLinkDirRecursive(src, dst, dirMode);
     }
 
@@ -581,6 +596,15 @@ public class FailureFileFacade implements FilesFacade {
             return false;
         }
         return ff.rmdir(name, haltOnError);
+    }
+
+    /**
+     * While on, hardLinkDirRecursive() copies into a directory whose name ends with
+     * {@link TableUtils#DETACHING_DIR_MARKER}, the temporary directory of DETACH PARTITION, and links every other
+     * directory. Off by default. The detach/attach fuzz copies on DETACH, see questdb-enterprise#1575.
+     */
+    public void setDetachCopied(boolean isDetachCopied) {
+        this.isDetachCopied = isDetachCopied;
     }
 
     public void setToFailAfter(int ioFailureCallCount) {

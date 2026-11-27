@@ -47,6 +47,28 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
 }
 
 #[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpdater_removeRowGroup(
+    mut env: JNIEnv,
+    _class: JClass,
+    updater: *mut ParquetUpdater,
+    rg_index: jint,
+) {
+    let env = &mut env;
+    if updater.is_null() {
+        let mut err = fmt_err!(InvalidType, "ParquetUpdater pointer is null");
+        err.add_context("error in PartitionUpdater.removeRowGroup");
+        return err.into_cairo_exception().throw(env);
+    }
+
+    let parquet_updater = unsafe { &mut *updater };
+    if let Err(mut err) = parquet_updater.remove_row_group(rg_index) {
+        err.add_context(format!("could not remove row group {rg_index}"));
+        err.add_context("error in PartitionUpdater.removeRowGroup");
+        err.into_cairo_exception().throw(env)
+    }
+}
+
+#[no_mangle]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpdater_setTargetSchema(
     mut env: JNIEnv,
     _class: JClass,
@@ -413,6 +435,42 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     }
 }
 
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpdater_setSourceParquetMeta(
+    mut env: JNIEnv,
+    _class: JClass,
+    updater: *mut ParquetUpdater,
+    parquet_meta_ptr: *const u8,
+    parquet_meta_file_size: jlong,
+) {
+    let env = &mut env;
+    let set_source_parquet_meta = || -> ParquetResult<()> {
+        if updater.is_null() {
+            return Err(fmt_err!(InvalidType, "ParquetUpdater pointer is null"));
+        }
+        if parquet_meta_ptr.is_null() || parquet_meta_file_size <= 0 {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "invalid source _pm [addr={:?}, size={}]",
+                parquet_meta_ptr,
+                parquet_meta_file_size
+            ));
+        }
+        // SAFETY: Java passes the address of its read-only map of the source _pm and the size of
+        // the snapshot it resolved in it, which the map covers, and keeps the map for the call.
+        let parquet_meta =
+            unsafe { slice::from_raw_parts(parquet_meta_ptr, parquet_meta_file_size as usize) };
+        // SAFETY: Pointer was created by `Box::into_raw` in the create function.
+        // Single-threaded JNI access guarantees no aliasing.
+        unsafe { &mut *updater }
+            .set_source_parquet_meta(parquet_meta, parquet_meta_file_size as u64)
+    };
+    if let Err(mut err) = set_source_parquet_meta() {
+        err.add_context("error in PartitionUpdater.setSourceParquetMeta");
+        err.into_cairo_exception().throw::<()>(env);
+    }
+}
+
 fn row_offset_from(row_offset: jlong) -> ParquetResult<usize> {
     usize::try_from(row_offset)
         .map_err(|_| fmt_err!(InvalidLayout, "negative row_offset: {}", row_offset))
@@ -721,6 +779,9 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
         let encodings = crate::parquet_write::schema::to_encodings(&partition);
         let compressions = crate::parquet_write::schema::to_compressions(&partition);
         let mut chunked = writer.chunked_with_compressions(schema, encodings, compressions)?;
+        if parquet_meta_fd >= 0 {
+            chunked.track_chunk_ascii();
+        }
         chunked.write_chunk(&partition)?;
         let parquet_file_size = chunked
             .finish(additional_meta)
@@ -763,7 +824,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             .unwrap_or(-1);
 
         let (parquet_meta_bytes, _parquet_meta_footer_offset) =
-            crate::parquet_metadata::generate_parquet_metadata(
+            crate::parquet_metadata::generate_parquet_metadata_with_chunk_ascii(
                 &col_infos,
                 chunked.row_groups(),
                 designated_ts,
@@ -771,9 +832,11 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
                 footer_offset,
                 footer_length,
                 chunked.bloom_bitsets(),
-                0, // unused_bytes: new file, no dead space
+                None, // written from scratch: write order is final order
+                0,    // unused_bytes: new file, no dead space
                 squash_tracker,
                 seq_txn,
+                chunked.chunk_ascii(),
             )
             .context("generate_parquet_metadata failed")?;
 
@@ -1149,10 +1212,11 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
     bloom_filter_column_count: jint,
     bloom_filter_fpp: jdouble,
     min_compression_ratio: jdouble,
+    dense_symbol_dictionary: jboolean,
 ) -> *mut StreamingParquetWriter {
     let env = &mut env;
     let create = || -> ParquetResult<StreamingParquetWriter> {
-        let partition_template = create_partition_template(
+        let mut partition_template = create_partition_template(
             col_count,
             col_names_ptr,
             col_names_len,
@@ -1160,6 +1224,15 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             timestamp_index,
             timestamp_descending,
         )?;
+        if dense_symbol_dictionary != 0 {
+            // The frames clone the template's columns, so every row group of a Symbol
+            // column gets a dictionary of only the symbols it uses.
+            for column in partition_template.columns.iter_mut() {
+                if column.data_type.tag() == qdb_core::col_type::ColumnTypeTag::Symbol {
+                    column.dense_symbol_dictionary = true;
+                }
+            }
+        }
         let compression_options =
             compression_from_i64(compression_codec).context("CompressionCodec")?;
         let row_group_size_opt = if row_group_size > 0 {
@@ -2207,6 +2280,7 @@ mod validation_tests {
                 strided_timestamp_16: false,
                 designated_timestamp_ascending: false,
                 parquet_encoding_config: ParquetEncodingConfig::from_raw(0),
+                dense_symbol_dictionary: false,
             }],
         }
     }

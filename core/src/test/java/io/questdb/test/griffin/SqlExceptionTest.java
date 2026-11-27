@@ -108,6 +108,37 @@ public class SqlExceptionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTableLockedFlagDoesNotChangeSqlError() {
+        final SqlException exception = SqlException.$(17, "table is locked: x").setTableLocked(true);
+        Assert.assertTrue(exception.isTableLocked());
+        Assert.assertFalse(exception.isTableBusy());
+        Assert.assertEquals(0, exception.getErrorCode());
+        Assert.assertEquals(17, exception.getPosition());
+        TestUtils.assertEquals("[17] table is locked: x", exception.getMessage());
+        TestUtils.assertEquals("[17]: table is locked: x", exception);
+
+        exception.setTableLocked(false);
+        Assert.assertFalse(exception.isTableLocked());
+    }
+
+    @Test
+    public void testTableLockedFlagResetsOnFlyweightReuse() throws Exception {
+        // -ea makes position() allocate fresh exceptions. Load just SqlException without assertions
+        // to verify that its production flyweight clears the flag before the next throw.
+        final Class<?> exceptionClass = TestUtils.loadSqlExceptionWithAssertionsDisabled();
+        Assert.assertFalse(exceptionClass.desiredAssertionStatus());
+        final Method position = exceptionClass.getMethod("position", int.class);
+        final Method isTableLocked = exceptionClass.getMethod("isTableLocked");
+        final Object locked = position.invoke(null, 17);
+        exceptionClass.getMethod("setTableLocked", boolean.class).invoke(locked, true);
+        Assert.assertEquals(true, isTableLocked.invoke(locked));
+
+        final Object other = position.invoke(null, 23);
+        Assert.assertSame(locked, other);
+        Assert.assertEquals(false, isTableLocked.invoke(other));
+    }
+
+    @Test
     public void testTimeoutResetsOnFlyweightReuse() {
         final SqlTimeoutException first = SqlTimeoutException.timeout("first timeout");
         first.setPosition(5);

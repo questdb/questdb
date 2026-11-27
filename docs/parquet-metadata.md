@@ -87,7 +87,7 @@ header is. A reader mmaps the 32-byte header prefix, reads `PARQUET_META_FILE_SI
                  |    byte_range_start  ----------+---------+
                  |    total_compressed            |
                  |    null_count                  |
-                 |    _reserved (0)               |
+                 |    flags                       |
                  |    min_stat, max_stat          |
                  |  chunk col 1: ...              |
                  |  ...                           |
@@ -214,13 +214,14 @@ file otherwise. Feature sections are ordered by bit position.
 
 **Footer flag bits:**
 
-| bit | name          | footer section                                                                                                                                   |
-| --- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 0   | SEQ_TXN       | 8 bytes: `i64` per-snapshot apply-time `seqTxn`. Set when ≠ -1.                                                                                  |
-| 1   | SCRATCHPAD    | Variable size: `[u32 entry_count][(u32 code, u32 length, u8[length] content)*]`. Opaque TLV. Capped at `MAX_SCRATCHPAD_SIZE` (1 MiB) per footer. |
-| 32  | INDEX_ROW_MAP | Required. `8 + 8 * ROW_GROUP_COUNT` bytes: `[u64 index_row_count][u64 index_row_lo; ROW_GROUP_COUNT]`. See "Index row map" below.               |
+| bit | name               | footer section                                                                                                                                   |
+| --- | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 0   | SEQ_TXN            | 8 bytes: `i64` per-snapshot apply-time `seqTxn`. Set when ≠ -1.                                                                                  |
+| 1   | SCRATCHPAD         | Variable size: `[u32 entry_count][(u32 code, u32 length, u8[length] content)*]`. Opaque TLV. Capped at `MAX_SCRATCHPAD_SIZE` (1 MiB) per footer. |
+| 2   | HEADER_ASCII_VALID | None. Readers trust the `IS_ASCII` column flags of the header for every row group of this snapshot. See "ASCII flags" below.                     |
+| 32  | INDEX_ROW_MAP      | Required. `8 + 8 * ROW_GROUP_COUNT` bytes: `[u64 index_row_count][u64 index_row_lo; ROW_GROUP_COUNT]`. See "Index row map" below.               |
 
-Bit 2 indicates that the partition's sorting order is implicitly the designated timestamp column in ascending order. The
+Header bit 2 (SORTING_IS_DTS_ASC) indicates that the partition's sorting order is implicitly the designated timestamp column in ascending order. The
 on-disk `SORTING_COLUMN_COUNT` is 0 and the SORTING_COLUMNS section is absent, but readers treat the partition as sorted
 by `[DESIGNATED_TIMESTAMP]` ascending. The designated timestamp column's DESCENDING flag must not be set. This flag is
 only valid when `DESIGNATED_TIMESTAMP >= 0`; writers must not set it when `DESIGNATED_TIMESTAMP` is -1.
@@ -240,13 +241,14 @@ Without the `INDEX_ROW_MAP` section, the footer uses the identity map: row group
 preceding row groups' `NUM_ROWS`, and `index_row_count` is the partition row count. Writers that build a new
 `data.parquet` (conversion, rewrite, compaction) always produce the identity map and index the file afresh.
 
-An in-place O3 update changes the row layout of the live file, while readers of the committed snapshot keep
-using the same index files. It therefore keeps the index rows of the row groups it kept (wherever they sit in
-the new footer, matched by the byte offset of their first column chunk) and gives the row groups it wrote fresh
-index rows from `index_row_count` upwards, in row group order. The indexes only ever grow: the update appends
-the rows of the new row groups, and the entries a pinned reader's footer refers to stay as they are. A reader
-asks the index for the index rows of each row group it reads, in footer order, and maps a result back to its
-row group position by subtracting `index_row_lo`.
+An in-place O3 update changes the row layout of the live file. It keeps the index rows of the row groups it
+kept (wherever they sit in the new footer: the parquet writer reports each row group's origin, and the update
+checks it against the byte offset of the first column chunk) and gives the row groups it wrote fresh index rows
+from `index_row_count` upwards, in row group order. A dropped or replaced row group's index rows stay
+unreferenced. The update rebuilds the symbol indexes at these index rows under a new column name txn, next to
+the committed index files that readers of the committed snapshot keep using, and `_cv` moves to the new name in
+the same `_txn`. A reader asks the index for the index rows of each row group it reads, in footer order, and
+maps a result back to its row group position by subtracting `index_row_lo`.
 
 The writer omits the section when the resolved map is the identity map, for example after an update that only
 appended row groups after the last one. The bit is in the required range: a reader that ignored the map would
@@ -300,10 +302,54 @@ Per-column metadata. Written once in the header, applies across all row groups.
 | bit offset | bit size | field               | type | description                              |
 | ---------- | -------- | ------------------- | ---- | ---------------------------------------- |
 | 0          | 1        | LOCAL_KEY_IS_GLOBAL | i1   | Symbol                                   |
-| 1          | 1        | IS_ASCII            | i1   | Varchar                                  |
+| 1          | 1        | IS_ASCII            | i1   | Varchar, see "ASCII flags"               |
 | 2          | 2        | FIELD_REPETITION    | u2   | 0 = Required, 1 = Optional, 2 = Repeated |
 | 4          | 1        | DESCENDING          | i1   | For sorted column, 1 = Descending        |
 | 5          | 27       | RESERVED            |      | Reserved, must be 0                      |
+
+#### ASCII flags
+
+A reader that knows every value of a VARCHAR chunk is ASCII skips UTF-8 handling. It may assume that
+only when the metadata says so, and a flag that says so wrongly gives wrong query results.
+
+The ASCII flag lives on each column chunk (the `IS_ASCII` bit of the chunk's FLAGS, see "Column
+chunk"): every value of that chunk is ASCII. A row group block never changes, so the flag holds in
+every snapshot that refers to the block. Only a writer that checked the values of the chunk sets it:
+every writer flags the chunks it writes by the bytes of their values, whatever the rest of the column
+holds, and a writer that copies a row group into a new file copies the flags of its chunks from the
+`_pm` of the old file. The per-value ASCII bit of QuestDB's native VARCHAR storage does not count: a
+SQL copy keeps the bit of the value it copies, which a scan of an older version could have set over
+non-ASCII bytes. A flag that describes a whole column, the header's `IS_ASCII` or the `ascii` of the
+QuestDB metadata in the parquet footer, never flags a chunk: no writer checked it chunk by chunk, and
+QuestDB 9.3.4 and 9.3.5 left the footer's true over non-ASCII values. A `_pm` built from the parquet
+file alone, without the `_pm` of the file it describes, flags no chunk.
+
+The header's `IS_ASCII` column flag comes from QuestDB 10.2.0 and older, which set it when they
+created the file and trusted it alone; later versions do not set it. The header is written once and
+every snapshot of the file shares it, so no later update can clear the flag. Readers and writers
+trust it for the first snapshot of the chain without a check, and it can be wrong there: QuestDB
+9.4.0 to 10.2.0 built some first snapshots from a parquet footer whose `ascii` 9.3.4 or 9.3.5 left
+true over non-ASCII values ([#8570](https://github.com/questdb/questdb/issues/8570)).
+
+The `HEADER_ASCII_VALID` footer flag says that every column the header flags is still ASCII in all
+row groups of the snapshot, as far as the writer of the footer knows. An update that adds or
+replaces row groups sets it only when every chunk it writes of a flagged column is flagged ASCII,
+and the previous snapshot carries the answer for the row groups it keeps: it is the first of the
+chain or carries `HEADER_ASCII_VALID`, or the update decoded the flagged columns of those row groups
+and found their values ASCII. The parquet footer's `ascii` cannot answer, for the reason above. A
+footer that keeps the row groups of the previous one inherits its answer. So the flag does not prove
+that the values were checked: an in-place update that writes ASCII values into a file whose first
+snapshot is wrong sets `HEADER_ASCII_VALID` over the wrong flag.
+
+A reader takes a chunk for ASCII when the chunk flag is set, or when the header flags the column
+and the snapshot is the first of the chain (`PREV_PARQUET_META_FILE_SIZE` is 0) or carries
+`HEADER_ASCII_VALID`.
+
+A `_pm` that 10.2.0 or older updated in place has a later footer without `HEADER_ASCII_VALID`, so
+its header flags are unproven and its values read as not ASCII, until an update decodes the flagged
+columns of the row groups it keeps and sets the flag again. The update decodes only when the bit can
+follow, and clears the footer's `ascii` of a column it finds non-ASCII, so a partition pays the decode
+once.
 
 ### Sorting column (4 bytes)
 
@@ -343,7 +389,7 @@ Per-column-chunk metadata needed to locate and decode data from the parquet file
 | 1      | 1    | ENCODINGS        | u8   | bitmask: bit 0=PLAIN, 1=RLE_DICTIONARY, 2=DELTA_BINARY_PACKED, 3=DELTA_LENGTH_BYTE_ARRAY, 4=DELTA_BYTE_ARRAY, 5=BYTE_STREAM_SPLIT |
 | 2      | 1    | STAT_FLAGS       | u8   |                                                                                                                                   |
 | 3      | 1    | STAT_SIZES       | u8   | low nibble = MIN_STAT byte size (inline only), high nibble = MAX_STAT byte size (inline only)                                     |
-| 4      | 4    | RESERVED         | u32  | must be 0. Previously held bloom filter offsets, now moved to footer feature sections. Exists for layout preservation.            |
+| 4      | 4    | FLAGS            | u32  | bit 0 = IS_ASCII (Varchar): every value of the chunk is ASCII, see "ASCII flags". Bits 1-31 are reserved, must be 0.              |
 | 8      | 8    | NUM_VALUES       | u64  | total values (may differ from row count for arrays)                                                                               |
 | 16     | 8    | BYTE_RANGE_START | u64  | byte offset in parquet file to chunk start (dictionary page offset if present, else data page offset)                             |
 | 24     | 8    | TOTAL_COMPRESSED | u64  | total compressed bytes of all pages                                                                                               |

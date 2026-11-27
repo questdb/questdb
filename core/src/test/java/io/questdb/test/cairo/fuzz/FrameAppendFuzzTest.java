@@ -156,6 +156,10 @@ public class FrameAppendFuzzTest extends AbstractFuzzTest {
 
     @Override
     protected void runFuzz(Rnd rnd) throws Exception {
+        // mergeAllPartitions() reads the partition directories as splits of a YEAR partition. Only DAY
+        // names match those: a YEAR split spells midnight with no time, unlike HOUR, T00, and a time
+        // within the hour with seconds, HHmmss, unlike sub-hour partitions, HHmm.
+        fuzzer.setPartitionBy(PartitionBy.DAY);
         int size = rnd.nextInt(16 * 1024 * 1024);
         node1.setProperty(PropertyKey.DEBUG_CAIRO_O3_COLUMN_MEMORY_SIZE, size);
 
