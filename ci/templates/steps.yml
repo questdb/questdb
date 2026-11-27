@@ -20,7 +20,7 @@ parameters:
   # legs of one stage, or the macOS and Windows halves of the hosted jobs). Name those jobs
   # here, space-separated, and select-test-commit-mode.yml puts half of them on NOSYNC and half
   # on ADAPTIVE, swapping them on the branch's next run. Empty leaves the suite default
-  # (ADAPTIVE) in place, which the fuzz and adaptive-soak pipelines rely on. The coverage legs
+  # (ADAPTIVE) in place, as in the fuzz and adaptive-soak pipelines. The coverage legs
   # of a PR build name no group either: they run each shard once, always on NOSYNC (see
   # TEST_COMMIT_MODE_OPT below).
   - name: testCommitModeGroup
@@ -67,7 +67,8 @@ steps:
       # tasks would otherwise pass the undefined macro to Maven as literal text.
       #   - The coverage legs of a PR build run NOSYNC, the mode a table commits in unless it
       #     is configured otherwise. ADAPTIVE is tested on master, where the platform legs
-      #     alternate the two modes, and by the fuzz pipelines.
+      #     alternate the two modes. Fuzz test classes ignore this setting and draw their own
+      #     mode in every run.
       #   - Empty everywhere else, which leaves the suite default (ADAPTIVE) in place.
       # select-test-commit-mode.yml runs later and overrides this for a job in a group.
       if [ "$(Build.Reason)" = "PullRequest" ] && [[ "$(testset)" == coverage* ]]; then
