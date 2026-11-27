@@ -37,7 +37,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cutlass.SelectCacheKey;
 import io.questdb.cutlass.http.HttpChunkedResponse;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpKeywords;
@@ -151,8 +150,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private long recordCountNanos;
     private RecordCursorFactory recordCursorFactory;
     private Rnd rnd;
-    // the select cache scope of the principal the query runs for, see getSelectCacheKey()
-    private CharSequence selectCacheScope;
+    private CharSequence selectCacheKey;
     private long skip;
     private long stop;
     private boolean timings = false;
@@ -207,16 +205,14 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             }
             if (recordCursorFactory != null) {
                 if (queryCacheable && ownerEndFailure == null) {
-                    httpConnectionContext.getSelectCache().put(
-                            SelectCacheKey.of(selectCacheScope, query, queryVariables.getText(), selectCacheKeySink),
-                            recordCursorFactory
-                    );
+                    assert selectCacheKey != null;
+                    httpConnectionContext.getSelectCache().put(selectCacheKey, recordCursorFactory);
                 } else {
                     recordCursorFactory.close();
                 }
                 recordCursorFactory = null;
             }
-            selectCacheScope = null;
+            selectCacheKey = null;
             query.clear();
             queryVariables.clear();
             columnNameSink.clear();
@@ -360,13 +356,11 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     }
 
     /**
-     * Returns the select cache key of the query for the principal it runs for, and remembers the
-     * principal's scope, so that clear() returns the factory to the same scope it came from or was
-     * compiled in.
+     * Prepares the lookup key. Both the query and the key sink stay intact until clear() returns the factory.
      */
     public CharSequence getSelectCacheKey(SecurityContext securityContext) {
-        selectCacheScope = securityContext.getSelectCacheScope();
-        return SelectCacheKey.of(selectCacheScope, query, queryVariables.getText(), selectCacheKeySink);
+        selectCacheKey = httpConnectionContext.getSelectCacheKey(securityContext, query, queryVariables.getText(), selectCacheKeySink);
+        return selectCacheKey;
     }
 
     public long getStatementTimeout() {

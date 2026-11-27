@@ -117,6 +117,7 @@ public class ExportQueryProcessorResourceLifecycleTest extends AbstractTest {
                     final SqlExecutionContext executionContext = context.getOrCreateSqlExecutionContext(engine, 1);
                     final TrackingRecordCursorFactory factory = new TrackingRecordCursorFactory(engine.events);
                     try (ExportQueryProcessorState state = new ExportQueryProcessorState(context, null)) {
+                        Assert.assertNull(cache.poll(state.getSelectCacheKey(context.getSecurityContext())));
                         state.setTaskAndCursorForTest(new CopyExportRequestTask(), new TrackingRecordCursor(engine.events));
                         state.setFactoryForTest(factory, true);
                         state.beginSqlExecutionOwner("SELECT 1", executionContext, CompiledQuery.SELECT);

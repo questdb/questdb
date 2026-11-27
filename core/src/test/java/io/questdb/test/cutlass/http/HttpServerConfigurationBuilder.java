@@ -64,6 +64,7 @@ public class HttpServerConfigurationBuilder {
     private byte httpHealthCheckAuthType = SecurityContext.AUTH_TYPE_NONE;
     private String httpProtocolVersion = "HTTP/1.1 ";
     private byte httpStaticContentAuthType = SecurityContext.AUTH_TYPE_NONE;
+    private boolean isQueryCacheEnabled = true;
     private NanosecondClock nanosecondClock = StationaryNanosClock.INSTANCE;
     private NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
     private boolean pessimisticHealthCheck = false;
@@ -304,6 +305,11 @@ public class HttpServerConfigurationBuilder {
             public boolean isPessimisticHealthCheckEnabled() {
                 return pessimisticHealthCheck;
             }
+
+            @Override
+            public boolean isQueryCacheEnabled() {
+                return isQueryCacheEnabled;
+            }
         };
     }
 
@@ -374,6 +380,11 @@ public class HttpServerConfigurationBuilder {
 
     public HttpServerConfigurationBuilder withPessimisticHealthCheck(boolean pessimisticHealthCheck) {
         this.pessimisticHealthCheck = pessimisticHealthCheck;
+        return this;
+    }
+
+    public HttpServerConfigurationBuilder withQueryCacheEnabled(boolean isQueryCacheEnabled) {
+        this.isQueryCacheEnabled = isQueryCacheEnabled;
         return this;
     }
 

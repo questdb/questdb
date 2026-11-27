@@ -145,6 +145,7 @@ public class JsonQueryProcessorResourceLifecycleTest extends AbstractTest {
                     context.getOrCreateSqlExecutionContext(engine, 1);
                     final TrackingRecordCursorFactory factory = new TrackingRecordCursorFactory(engine.events);
                     try (JsonQueryProcessorState state = new JsonQueryProcessorState(context, cairoConfiguration.getNanosecondClock(), null)) {
+                        Assert.assertNull(cache.poll(state.getSelectCacheKey(context.getSecurityContext())));
                         engine.nextOwnerId = 7;
                         state.beginSqlExecutionOwner("SELECT 1", context.getSqlExecutionContext(), CompiledQuery.SELECT);
                         state.setCursor(new TrackingRecordCursor(engine.events));

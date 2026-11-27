@@ -33,6 +33,7 @@ import io.questdb.cairo.security.PrincipalContext;
 import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cutlass.SelectCacheKey;
 import io.questdb.cutlass.http.ex.BufferOverflowException;
 import io.questdb.cutlass.http.ex.NotEnoughLinesException;
 import io.questdb.cutlass.http.ex.RetryFailedOperationException;
@@ -466,6 +467,19 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
 
     public AssociativeCache<RecordCursorFactory> getSelectCache() {
         return selectCache;
+    }
+
+    public CharSequence getSelectCacheKey(
+            SecurityContext securityContext,
+            CharSequence sqlText,
+            CharSequence variables,
+            StringSink sink
+    ) {
+        if (getSelectCache() == HttpServer.NO_OP_CACHE) {
+            // The disabled cache ignores the key but still closes the factory on put().
+            return sqlText;
+        }
+        return SelectCacheKey.of(securityContext.getSelectCacheScope(), sqlText, variables, sink);
     }
 
     public @NotNull StringSink getSessionIdSink() {

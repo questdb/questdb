@@ -25,6 +25,7 @@
 package io.questdb.test.cutlass.http;
 
 import io.questdb.cairo.SqlJitMode;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.processors.ExportQueryProcessor;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorState;
@@ -34,6 +35,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
+import io.questdb.std.str.AbstractCharSequence;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
@@ -46,6 +48,8 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Pattern;
 
 /**
@@ -175,6 +179,16 @@ public class HttpQueryVariablesTest extends AbstractTest {
             capture.stop();
             LogFactory.disableGuaranteedLogging(QueryProgress.class);
         }
+    }
+
+    @Test
+    public void testCacheKeyCopiedOncePerLookup() throws Exception {
+        assertCacheKeyCopies(true);
+    }
+
+    @Test
+    public void testCacheKeyNotCopiedWhenCacheDisabled() throws Exception {
+        assertCacheKeyCopies(false);
     }
 
     @Test
@@ -842,6 +856,55 @@ public class HttpQueryVariablesTest extends AbstractTest {
                     "@a := 1"
             );
         }));
+    }
+
+    private static void assertCacheKeyCopies(boolean isCacheEnabled) throws Exception {
+        // Each serialization copies this one-character scope. The cache only reads the encoded key.
+        final AtomicInteger copies = new AtomicInteger();
+        final CharSequence scope = new AbstractCharSequence() {
+            @Override
+            public char charAt(int index) {
+                copies.incrementAndGet();
+                return "s".charAt(index);
+            }
+
+            @Override
+            public int length() {
+                return 1;
+            }
+        };
+        getSimpleTester()
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder().withQueryCacheEnabled(isCacheEnabled))
+                .withSecurityContext(new AllowAllSecurityContext() {
+                    @Override
+                    public CharSequence getSelectCacheScope() {
+                        return scope;
+                    }
+                })
+                .run((engine, sqlExecutionContext) -> {
+                    engine.execute("CREATE TABLE t AS (SELECT x FROM long_sequence(2))", sqlExecutionContext);
+                    final String sql = "SELECT x FROM t WHERE x = @n";
+                    final String metadata = "\"query\":\"" + sql + "\",\"columns\":[{\"name\":\"x\",\"type\":\"LONG\"}],\"timestamp\":-1";
+                    testHttpClient.setKeepConnection(true);
+                    try {
+                        for (String url : List.of("/exec", "/exp")) {
+                            final boolean isExec = "/exec".equals(url);
+                            final CharSequenceObjHashMap<String> params = new CharSequenceObjHashMap<>();
+                            params.put("variables", isExec ? "@n := 1" : "@n := 2");
+                            final String rows = isExec ? '{' + metadata + ",\"dataset\":[[1]],\"count\":1}" : "\"x\"\r\n2\r\n";
+                            // Distinct variables give each endpoint a cold lookup followed by a warm one.
+                            for (int i = 0; i < 2; i++) {
+                                testHttpClient.assertGet(url, rows, sql, params);
+                                // Validation on the same connection waits for factory return without using the cache.
+                                testHttpClient.assertGet("/api/v1/sql/validate", '{' + metadata + '}', sql, params);
+                                Assert.assertEquals(url, isCacheEnabled ? 1 : 0, copies.getAndSet(0));
+                            }
+                        }
+                    } finally {
+                        testHttpClient.setKeepConnection(false);
+                        testHttpClient.disconnect();
+                    }
+                });
     }
 
     private static void assertGet(CharSequence expected, CharSequence sql, @Nullable String variables) {
