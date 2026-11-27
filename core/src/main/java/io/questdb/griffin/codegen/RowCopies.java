@@ -44,16 +44,15 @@ final class RowCopies {
     }
 
     /**
-     * Copies every column of the rows of {@code base} as {@code copy} does, within the join budget when
-     * {@code isJoinBudgeted}. Consumes the base on entry, including on failure.
+     * Copies every column of the rows of {@code base} as {@code copy} does. Consumes the base on entry, including on
+     * failure.
      */
     static RecordCursorFactory copy(
             CairoConfiguration configuration,
             BytecodeAssembler asm,
             EntityColumnFilter columnFilter,
             RecordCursorFactory base,
-            RowCopy copy,
-            boolean isJoinBudgeted
+            RowCopy copy
     ) {
         final RecordSink sink;
         try {
@@ -63,7 +62,7 @@ final class RowCopies {
             Misc.free(base, th);
             throw th;
         }
-        return new MaterializedRecordCursorFactory(configuration, base, sink, copy.isRandomAccess(), isJoinBudgeted,
-                copy == RowCopy.RANDOM_ACCESS_IN_BATCHES);
+        return new MaterializedRecordCursorFactory(configuration, base, sink, copy.isRandomAccess(), copy.isJoinBudgeted(),
+                copy.isCopiedInBatches());
     }
 }

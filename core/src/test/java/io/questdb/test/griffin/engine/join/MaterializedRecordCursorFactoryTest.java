@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoConfigurationWrapper;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.EntityColumnFilter;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.RecordSink;
@@ -301,6 +302,28 @@ public class MaterializedRecordCursorFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFullFatHashJoinUnderRightNestedLoopHashesStreamOnce() throws Exception {
+        run((engine, compiler, context) -> {
+            createTables(engine, context);
+            engine.execute("CREATE TABLE k AS (SELECT CASE WHEN x % 2 = 0 THEN 'A' ELSE 'B' END::SYMBOL sym, x y FROM long_sequence(2))", context);
+            final String query = "SELECT k.y, s.c, m.x FROM k JOIN ($sub) s ON k.sym = s.sym RIGHT JOIN m ON s.c < m.x ORDER BY m.x, k.y, s.c";
+            final String expected = TestUtils.printSqlToString(engine, context, query.replace("$sub", SUBQUERIES[1][1]), new StringSink());
+            final String sql = query.replace("$sub", SUBQUERIES[1][0]);
+            compiler.setFullFatJoins(true);
+            try (RecordCursorFactory factory = compiler.compile("EXPLAIN " + sql, context).getRecordCursorFactory()) {
+                final String plan = readRows(factory, context);
+                Assert.assertTrue(plan, plan.contains("Nested Loop Right Join") && plan.contains("Hash Join\n") && !plan.contains("Materialize"));
+            }
+            try (RecordCursorFactory factory = compiler.compile(sql, context).getRecordCursorFactory()) {
+                for (int pass = 0; pass < 2; pass++) {
+                    Assert.assertEquals(expected, readRows(factory, context));
+                }
+            }
+            Assert.assertEquals(0, countRewinds(compiler, context, sql));
+        });
+    }
+
+    @Test
     public void testFullJoin() throws Exception {
         run((engine, compiler, context) -> {
             createTables(engine, context);
@@ -524,6 +547,7 @@ public class MaterializedRecordCursorFactoryTest extends AbstractCairoTest {
                 try {
                     for (String join : new String[]{
                             crossJoin,
+                            "SELECT m.x, s.* FROM m JOIN (" + sub + ") s ON s.c = m.x",
                             "SELECT m.x, s.* FROM m LEFT JOIN (" + sub + ") s ON s.s < m.x",
                             "SELECT m.x, s.* FROM (" + sub + ") s RIGHT JOIN m ON s.s < m.x",
                             "SELECT m.x, s.* FROM m FULL JOIN (" + sub + ") s ON s.s < m.x"
@@ -1329,6 +1353,14 @@ public class MaterializedRecordCursorFactoryTest extends AbstractCairoTest {
                 "CREATE TABLE q AS (SELECT timestamp_sequence('2024-01-01T00:30', 3_600_000_000L) ts, x FROM long_sequence(10)) TIMESTAMP(ts) PARTITION BY DAY",
                 context
         );
+    }
+
+    private static String readRows(RecordCursorFactory factory, SqlExecutionContext context) throws SqlException {
+        final StringSink sink = new StringSink();
+        try (RecordCursor cursor = factory.getCursor(context)) {
+            CursorPrinter.println(cursor, factory.getMetadata(), sink);
+        }
+        return sink.toString();
     }
 
     private static RecordCursorFactory strictCopy(

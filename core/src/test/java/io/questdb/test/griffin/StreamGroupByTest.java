@@ -926,7 +926,8 @@ public class StreamGroupByTest extends AbstractCairoTest {
                     "SELECT m.ts, m.v, b.sym FROM src m JOIN " + filtered + " b ON m.v = b.s",
                     "SELECT m.ts, m.v, b.name FROM src m ASOF JOIN " + filtered + " b ON (sym)",
                     "SELECT m.ts, m.v, b.s FROM src m CROSS JOIN " + filtered + " b ORDER BY m.ts, b.s",
-                    "SELECT * FROM (" + filtered + " LATEST ON ts PARTITION BY sym) ORDER BY sym"
+                    "SELECT * FROM (" + filtered + " LATEST ON ts PARTITION BY sym) ORDER BY sym",
+                    "SELECT b.ts, h.offset, m.v FROM " + filtered + " b HORIZON JOIN src m RANGE FROM 0s TO 10m STEP 10m AS h"
             }) {
                 context.setStreamGroupByEnabled(false);
                 final String expected = compileAndRead(compiler, context, sql);
@@ -934,6 +935,36 @@ public class StreamGroupByTest extends AbstractCairoTest {
                 final String plan = compileAndRead(compiler, context, "EXPLAIN " + sql);
                 try (RecordCursorFactory factory = compiler.compile(sql, context).getRecordCursorFactory()) {
                     Assert.assertTrue(plan, plan.matches("(?s).*\n( *)Materialize\n(\\1 +SelectedRecord\n)*\\1 +Filter filter: 2<s\n\\1 +(Async )?Stream Group By.*"));
+                    for (int pass = 0; pass < 2; pass++) {
+                        Assert.assertEquals(sql, expected, read(factory, context));
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testRereadCopiesStreamInputsOfJoinsAndUnions() throws Exception {
+        run((engine, compiler, context) -> {
+            engine.execute("CREATE TABLE trades AS (SELECT timestamp_sequence('2024-01-01', 7_000_000) ts, ('S' || (x % 5))::SYMBOL sym, x % 97 price "
+                    + "FROM long_sequence(600)) TIMESTAMP(ts) PARTITION BY DAY", context);
+            engine.execute("CREATE TABLE notes AS (SELECT ('S' || (x % 5))::SYMBOL sym, x note FROM long_sequence(20))", context);
+            final String bars = "SELECT ts, sym, sum(price) total FROM trades SAMPLE BY 1m";
+            final String totals = "SELECT ts, sum(price) total FROM trades SAMPLE BY 1m";
+            for (String sql : new String[]{
+                    "SELECT * FROM (SELECT s.ts, s.total, n.note FROM (" + totals + ") s CROSS JOIN notes n) LIMIT -7",
+                    "SELECT * FROM (SELECT s.ts, s.total, t.price FROM (" + totals + ") s ASOF JOIN trades t) LIMIT -7",
+                    "SELECT * FROM (SELECT ts, price FROM trades UNION ALL " + totals + ") LIMIT -7",
+                    "SELECT ts, sym, last(total) total FROM ((SELECT s.ts, s.sym, s.total FROM (" + bars + ") s ASOF JOIN trades t ON (sym)) TIMESTAMP(ts)) "
+                            + "SAMPLE BY 5m FILL(PREV) ORDER BY ts, sym"
+            }) {
+                context.setStreamGroupByEnabled(false);
+                final String expected = compileAndRead(compiler, context, sql);
+                context.setStreamGroupByEnabled(true);
+                final String plan = compileAndRead(compiler, context, "EXPLAIN " + sql);
+                Assert.assertTrue(plan, plan.matches("(?s).*\n( *)Materialize\n\\1 +(SelectedRecord\n\\1 +)?(Async )?Stream Group By.*")
+                        && !plan.matches("(?s).*Materialize\n *(Cross Join|AsOf Join|Union|SelectedRecord\n *(Cross Join|AsOf Join|Union)).*"));
+                try (RecordCursorFactory factory = compiler.compile(sql, context).getRecordCursorFactory()) {
                     for (int pass = 0; pass < 2; pass++) {
                         Assert.assertEquals(sql, expected, read(factory, context));
                     }

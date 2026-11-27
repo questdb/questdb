@@ -51,6 +51,7 @@ import io.questdb.griffin.plan.logical.JoinPlan;
 import io.questdb.griffin.plan.logical.LatestByPlan;
 import io.questdb.griffin.plan.logical.LimitPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
+import io.questdb.griffin.plan.logical.LogicalPlans;
 import io.questdb.griffin.plan.logical.NullKeyMatch;
 import io.questdb.griffin.plan.logical.OuterColumnExpression;
 import io.questdb.griffin.plan.logical.OutputSchema;
@@ -862,10 +863,24 @@ public class PlanVerifierTest extends AbstractCairoTest {
                     JoinPlan.class, join -> {
                         final JoinInput step = join.getOrderedInputs().getQuick(1);
                         Assert.assertEquals(JoinInput.Algorithm.NESTED_LOOP, step.getAlgorithm());
-                        Assert.assertEquals(RowCopy.REPLAY, step.getInput().getOutputCopy());
-                        Assert.assertTrue(step.getInput().isOutputCopyJoinBudgeted());
+                        Assert.assertEquals(RowCopy.JOIN_CACHE, step.getInput().getOutputCopy());
                         step.setJoinType(JoinKind.FULL_OUTER);
                         join.getOutput().setTimestampIndex(-1);
+                    }, PlanVerifier.OUTPUT_COPY);
+        });
+    }
+
+    @Test
+    public void testJoinSlaveEmptiedWithoutCopy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE es_m (x LONG)");
+            execute("CREATE TABLE es_s (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY");
+            assertAlgorithmContradicts("SELECT m.x, b.c FROM es_m m LEFT JOIN (SELECT ts, count() c FROM es_s SAMPLE BY 1h) b ON m.x = b.c AND 1 = 0",
+                    JoinPlan.class, join -> {
+                        final LogicalPlan slave = join.getOrderedInputs().getQuick(1).getInput();
+                        Assert.assertTrue(PlanToFactoryRules.isSlaveEmptied(join.getOrderedInputs().getQuick(1)));
+                        Assert.assertNull(slave.getOutputCopy());
+                        slave.setOutputCopy(RowCopy.RANDOM_ACCESS_IN_BATCHES);
                     }, PlanVerifier.OUTPUT_COPY);
         });
     }
@@ -879,7 +894,7 @@ public class PlanVerifierTest extends AbstractCairoTest {
                     JoinPlan.class, join -> {
                         final LogicalPlan slave = join.getOrderedInputs().getQuick(1).getInput();
                         Assert.assertEquals(RowCopy.RANDOM_ACCESS, slave.getOutputCopy());
-                        slave.setOutputCopy(null, false);
+                        slave.setOutputCopy(null);
                     }, PlanVerifier.INPUT_RECOMPUTED);
         });
     }
@@ -1222,14 +1237,27 @@ public class PlanVerifierTest extends AbstractCairoTest {
             execute("CREATE TABLE oc_t (ts TIMESTAMP, s STRING, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
             assertAlgorithmContradicts("SELECT * FROM oc_t", ScanPlan.class, scan -> {
                 Assert.assertNull(scan.getOutputCopy());
-                scan.setOutputCopy(RowCopy.RANDOM_ACCESS, false);
+                scan.setOutputCopy(RowCopy.RANDOM_ACCESS);
             }, PlanVerifier.OUTPUT_COPY);
-            assertAlgorithmContradicts("SELECT * FROM oc_t", ScanPlan.class, scan -> scan.setOutputCopy(RowCopy.RANDOM_ACCESS, true),
+            assertAlgorithmContradicts("SELECT * FROM oc_t", ScanPlan.class, scan -> scan.setOutputCopy(RowCopy.JOIN_RANDOM_ACCESS),
                     PlanVerifier.OUTPUT_COPY);
-            assertAlgorithmContradicts("SELECT * FROM oc_t", ScanPlan.class, scan -> scan.setOutputCopy(RowCopy.REPLAY, false),
+            assertAlgorithmContradicts("SELECT * FROM oc_t", ScanPlan.class, scan -> scan.setOutputCopy(RowCopy.REPLAY),
                     PlanVerifier.OUTPUT_COPY);
-            assertAlgorithmContradicts("SELECT * FROM oc_t", ScanPlan.class, scan -> scan.setOutputCopy(RowCopy.REPLAY, true),
+            assertAlgorithmContradicts("SELECT * FROM oc_t", ScanPlan.class, scan -> scan.setOutputCopy(RowCopy.JOIN_CACHE),
                     PlanVerifier.OUTPUT_COPY);
+        });
+    }
+
+    @Test
+    public void testOutputCopyOfNodeBuiltIntoItsConsumer() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ic_t (ts TIMESTAMP, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            assertAlgorithmContradicts("SELECT * FROM (SELECT ts, sum(v) total FROM ic_t SAMPLE BY 1h) ORDER BY ts LIMIT 2", LimitPlan.class, limit -> {
+                final SortPlan sort = (SortPlan) LogicalPlans.skipProjects(limit.getChild());
+                Assert.assertEquals(SortPlan.Algorithm.INPUT_ORDER, sort.getAlgorithm());
+                Assert.assertNull(sort.getOutputCopy());
+                sort.setOutputCopy(RowCopy.RANDOM_ACCESS);
+            }, PlanVerifier.OUTPUT_COPY);
         });
     }
 

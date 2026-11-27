@@ -33,7 +33,6 @@ import io.questdb.griffin.SqlException;
 public abstract sealed class LogicalPlan implements PlanFactSource
         permits UnaryPlan, DomainReadPlan, FunctionSourcePlan, HorizonJoinPlan, JoinPlan, ScanPlan, SetOperationPlan, WindowJoinPlan {
     private final OutputSchema output = new OutputSchema();
-    private boolean isOutputCopyJoinBudgeted;
     private RowCopy outputCopy;
     private int position = -1;
     private PlanStage stage;
@@ -41,7 +40,6 @@ public abstract sealed class LogicalPlan implements PlanFactSource
     @Override
     public void clear() {
         output.clearAndTrim();
-        isOutputCopyJoinBudgeted = false;
         outputCopy = null;
         position = -1;
         stage = null;
@@ -77,16 +75,6 @@ public abstract sealed class LogicalPlan implements PlanFactSource
 
     public abstract int inputCount();
 
-    /**
-     * Whether the join budget bounds the memory of {@link #getOutputCopy()}, as it does for a copy a join reads of rows
-     * computed once; a copy of rows a stream GROUP BY computes again stands in for the map of a hash GROUP BY, which
-     * only the query memory limit bounds.
-     */
-    public boolean isOutputCopyJoinBudgeted() {
-        checkPhysicalRead("LogicalPlan.isOutputCopyJoinBudgeted");
-        return isOutputCopyJoinBudgeted;
-    }
-
     public abstract void replaceInput(int index, LogicalPlan input);
 
     /**
@@ -106,9 +94,9 @@ public abstract sealed class LogicalPlan implements PlanFactSource
         return rewriter.rewrite(this);
     }
 
-    public void setOutputCopy(RowCopy outputCopy, boolean isJoinBudgeted) {
+    public void setOutputCopy(RowCopy outputCopy) {
+        assert this.outputCopy == null || outputCopy == null : "the node's rows have a copy";
         this.outputCopy = outputCopy;
-        this.isOutputCopyJoinBudgeted = isJoinBudgeted;
     }
 
     public void setPosition(int position) {
@@ -123,7 +111,6 @@ public abstract sealed class LogicalPlan implements PlanFactSource
     public void visitFacts(PlanFactRecorder visitor) {
         visitor.output("output", output);
         visitor.fact("outputCopy", outputCopy);
-        visitor.fact("isOutputCopyJoinBudgeted", isOutputCopyJoinBudgeted);
         visitor.fact("position", position);
     }
 

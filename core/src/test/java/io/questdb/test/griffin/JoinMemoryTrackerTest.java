@@ -948,6 +948,23 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMaterializedNestedLoopOverStreamJoinStaysUnderQueryMemoryLimit() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_PAGE_SIZE, 64 * 1024L);
+        setProperty(PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_MAX_PAGES, 1);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m AS (SELECT x::INT id, (x * 1_000_000L)::TIMESTAMP ts FROM long_sequence(3)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t AS (SELECT (x * 1_000_000L)::TIMESTAMP ts, 1 k, x v FROM long_sequence(2_000)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE c AS (SELECT 1 k FROM long_sequence(500))");
+            drainWalQueue();
+            final String sql = "SELECT count(), sum(v) FROM (SELECT m.ts, b.v FROM m CROSS JOIN (SELECT ts, k, sum(v) v FROM t SAMPLE BY 1s) b "
+                    + "JOIN c ON b.k = c.k) TIMESTAMP(ts)";
+            assertUsesMaterializedNestedLoop(sql);
+            assertQuery(sql).noLeakCheck().noRandomAccess().expectSize()
+                    .returns("count\tsum\n3000000\t3001500000\n");
+        });
+    }
+
+    @Test
     public void testMaterializedNestedLoopStreamsBeyondQueryMemoryLimit() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE m AS (SELECT x::INT id, (x * 1_000_000L)::TIMESTAMP ts FROM long_sequence(3)) TIMESTAMP(ts) PARTITION BY DAY");
