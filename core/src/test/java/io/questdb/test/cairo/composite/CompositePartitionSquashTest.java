@@ -91,6 +91,8 @@ public class CompositePartitionSquashTest extends AbstractCairoTest {
             node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_PIECE_THRESHOLD, 1);
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MAX_SPLITS, 1);
             final long countBefore = rowsOfDay();
+            // The target's cleanup shortens its files, so it waits for a save point past its geometry.
+            releaseSavePointHolds("x");
             final long writtenBefore = node1.getMetrics().tableWriterMetrics().getPhysicallyWrittenRows();
             execute("INSERT INTO x (i, ts) VALUES (100, '2024-01-01T12:00:00')");
             execute("INSERT INTO x (i, ts) VALUES (101, '2024-01-02')");
@@ -220,6 +222,8 @@ public class CompositePartitionSquashTest extends AbstractCairoTest {
             final long sumBefore = scalar("SELECT sum(i) FROM x");
             final long oldNameTxn;
             final TableToken token = engine.verifyTableName("x");
+            // The target's cleanup shortens its files, so it waits for a save point past its geometry.
+            releaseSavePointHolds("x");
             final long writtenBefore = node1.getMetrics().tableWriterMetrics().getPhysicallyWrittenRows();
             try (TableReader pinned = engine.getReader(token)) {
                 oldNameTxn = pinned.getTxFile().getPartitionNameTxn(0);
@@ -536,6 +540,16 @@ public class CompositePartitionSquashTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPlainSourceIntoCompositeTargetWithRoomForTheFold() throws Exception {
+        assertFoldIntoACompositeTargetNearItsFileLimit(true);
+    }
+
+    @Test
+    public void testPlainSourceIntoCompositeTargetWithoutRoomForTheFold() throws Exception {
+        assertFoldIntoACompositeTargetNearItsFileLimit(false);
+    }
+
+    @Test
     public void testPlainSourceIntoCompositeTarget() throws Exception {
         assertMemoryLeak(() -> {
             createSplitDay();
@@ -637,6 +651,34 @@ public class CompositePartitionSquashTest extends AbstractCairoTest {
         );
     }
 
+    private static void assertFoldIntoACompositeTargetNearItsFileLimit(boolean isRoomForTheFold) throws Exception {
+        assertMemoryLeak(() -> {
+            createSplitDay();
+            makeComposite("T01:00:00");
+            Assert.assertTrue("fixture left the target plain", isComposite(DAY));
+            final long dayTs = MicrosTimestampDriver.floor(DAY + "T00:00:00.000000Z");
+            final int pieceCount;
+            try (TableReader reader = engine.getReader(engine.verifyTableName("x"))) {
+                pieceCount = reader.getGeometry().getPieceCount(reader.getTxFile().getPartitionIndex(dayTs));
+            }
+            NearFullGeometryFixture.plantCommittedRecord(
+                    engine,
+                    "x",
+                    dayTs,
+                    NearFullGeometryFixture.LAST_GENERATION,
+                    isRoomForTheFold ? pieceCount + 1 : pieceCount,
+                    false,
+                    0,
+                    0,
+                    0
+            );
+
+            assertFoldPreservesTheDay();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
+            Assert.assertEquals("whether the target stays composite after the fold", isRoomForTheFold, isComposite(DAY));
+        });
+    }
+
     /**
      * Lowers the split limit, drives one more commit so housekeeping folds, then asserts the day came
      * back with fewer directories and the same rows in the same order.
@@ -697,6 +739,8 @@ public class CompositePartitionSquashTest extends AbstractCairoTest {
             path.trimTo(partitionPathSize);
             Assert.assertEquals(splitSize * 4 - (isBelowLimit ? 1 : 0), ff.getDirSize(path));
         }
+        // The target's cleanup shortens its files, so it waits for a save point past its geometry.
+        releaseSavePointHolds("x");
         final long writtenBefore = node1.getMetrics().tableWriterMetrics().getPhysicallyWrittenRows();
         try (TableWriter writer = getWriter(token)) {
             writer.squashAllPartitionsIntoOne();

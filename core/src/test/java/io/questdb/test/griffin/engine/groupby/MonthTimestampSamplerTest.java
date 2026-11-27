@@ -26,17 +26,24 @@ package io.questdb.test.griffin.engine.groupby;
 
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestTimestampType;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
+import java.time.LocalDate;
+import java.time.YearMonth;
 import java.util.Arrays;
 import java.util.Collection;
+
+import static io.questdb.test.griffin.engine.groupby.TimestampSamplerTestUtils.assertRoundMatchesGridWalk;
+import static io.questdb.test.griffin.engine.groupby.TimestampSamplerTestUtils.assertRoundOfLargestTimestamps;
 
 @RunWith(Parameterized.class)
 public class MonthTimestampSamplerTest {
@@ -210,6 +217,63 @@ public class MonthTimestampSamplerTest {
     }
 
     @Test
+    public void testOffsetMatchesFloorWithOffset() throws Exception {
+        // Regression test for #7769 and #7798. round() after setOffset() must return the same bucket as
+        // timestamp_floor_utc() on the GROUP BY path, including negative offsets, where the GROUP BY path anchors
+        // at the last day of December 1969 and used to put the end of a month shorter than 31 days into the
+        // previous bucket.
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final TimestampDriver.TimestampFloorWithOffsetMethod floorMethod = timestampDriver.getTimestampFloorWithOffsetMethod('M');
+        final long[] offsets = {
+                timestampDriver.fromMinutes(-(23 * 60 + 59)),
+                timestampDriver.fromMinutes(-60),
+                -1,
+                1,
+                timestampDriver.fromMinutes(10 * 60),
+                timestampDriver.fromMinutes(23 * 60 + 59),
+        };
+        final int[] strides = {1, 2, 3, 5, 7, 12};
+        final long lo = timestampDriver.parseFloorLiteral("1970-03-01T00:00:00.000000Z");
+        final long hi = timestampDriver.parseFloorLiteral("2030-01-01T00:00:00.000000Z");
+        final long step = timestampDriver.fromMinutes(7 * 60 + 13) + 17;
+        for (int stride : strides) {
+            final TimestampSampler sampler = timestampDriver.getTimestampSampler(stride, 'M', 0);
+            for (long offset : offsets) {
+                sampler.setOffset(offset);
+                for (long value = lo; value < hi; value += step) {
+                    final long rounded = sampler.round(value);
+                    Assert.assertEquals(floorMethod.floor(value, stride, offset), rounded);
+                    Assert.assertTrue(rounded <= value);
+                    Assert.assertTrue(value < sampler.nextTimestamp(rounded));
+                }
+            }
+        }
+    }
+
+    @Test
+    public void testPositiveOffset() throws Exception {
+        // Regression test for #7769. A positive offset moves bucket starts past the start of their calendar month,
+        // and round() used to return that bucket start even for values before it.
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final TimestampSampler sampler = timestampDriver.getTimestampSampler(1, 'M', 0);
+        sampler.setOffset(timestampDriver.fromMinutes(10 * 60));
+        assertRound(sampler, "2024-02-01T06:00:00.000000Z", "2024-01-01T10:00:00.000000Z");
+        assertRound(sampler, "2024-02-01T09:59:59.999999Z", "2024-01-01T10:00:00.000000Z");
+        assertRound(sampler, "2024-02-01T10:00:00.000000Z", "2024-02-01T10:00:00.000000Z");
+        assertRound(sampler, "2024-02-29T23:59:59.999999Z", "2024-02-01T10:00:00.000000Z");
+        assertRound(sampler, "2024-01-01T00:00:00.000000Z", "2023-12-01T10:00:00.000000Z");
+        assertGrid(
+                sampler,
+                "2023-12-01T10:00:00.000000Z",
+                """
+                        2024-01-01T10:00:00.000000Z
+                        2024-02-01T10:00:00.000000Z
+                        2024-03-01T10:00:00.000000Z
+                        """
+        );
+    }
+
+    @Test
     public void testPreviousTimestamp() throws Exception {
         final TimestampDriver timestampDriver = timestampType.getDriver();
         final TimestampSampler sampler = timestampDriver.getTimestampSampler(1, 'M', 0);
@@ -249,7 +313,8 @@ public class MonthTimestampSamplerTest {
                 "2014-02-01T00:00:00.000000Z",
                 "2022-02-01T00:00:00.000000Z",
                 "2014-01-01T00:00:00.000000Z",
-                "2024-11-01T00:00:00.000000Z",
+                // a stride that doesn't divide 12 counts months from January 1970, as Micros.floorMM() does
+                "2024-03-01T00:00:00.000000Z",
         };
         final int[] strides = new int[]{
                 1,
@@ -297,6 +362,193 @@ public class MonthTimestampSamplerTest {
             Assert.assertEquals(floorWithStrideMethod.floor(ts, 1), roundedTs);
             Assert.assertEquals(floorWithOffsetMethod.floor(ts, 1, 0), roundedTs);
         }
+    }
+
+    @Test
+    public void testRoundMatchesGridWalk() throws Exception {
+        // round() must return the last bucket start, as reached by nextTimestamp(), at or before the value, for every
+        // state that setStart() and setOffset() can leave: anchors on the first, middle and last days of a month,
+        // before and after the values, with a time of day, and offsets of either sign up to 23:59 (the WITH OFFSET
+        // limit) and 47:58 (what a mat view refresh passes for WITH OFFSET in a fixed-offset time zone)
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final String[] anchors = {
+                "1965-03-01T00:00:00.000000Z",
+                "1999-01-15T10:30:15.123456Z",
+                "2018-01-28T23:59:59.999999Z",
+                "2018-01-29T00:00:00.000000Z",
+                "2018-03-30T12:00:00.000000Z",
+                "2018-01-31T00:00:00.000001Z",
+                "2024-02-29T08:00:00.000000Z",
+                "2029-12-31T10:00:00.000000Z",
+        };
+        final long[] offsets = {
+                timestampDriver.fromMinutes(-(47 * 60 + 58)),
+                timestampDriver.fromMinutes(-(23 * 60 + 59)),
+                timestampDriver.fromMinutes(-60),
+                -1,
+                0,
+                1,
+                timestampDriver.fromMinutes(10 * 60),
+                timestampDriver.fromMinutes(23 * 60 + 59),
+                timestampDriver.fromMinutes(47 * 60 + 58),
+        };
+        final int[] strides = {1, 2, 3, 4, 5, 6, 7, 12, 13, 24};
+        final long lo = timestampDriver.parseFloorLiteral("1960-01-01T00:00:00.000000Z");
+        final long hi = timestampDriver.parseFloorLiteral("2030-01-01T00:00:00.000000Z");
+        final long step = timestampDriver.fromMinutes(3 * 24 * 60 + 7 * 60 + 13) + 17;
+        for (int stride : strides) {
+            // an unconfigured sampler (no setStart() or setOffset() call) anchors its grid at January 1970
+            assertRoundMatchesGridWalk(timestampDriver.getTimestampSampler(stride, 'M', 0), 0, lo, hi, step);
+            final TimestampSampler sampler = timestampDriver.getTimestampSampler(stride, 'M', 0);
+            for (String anchor : anchors) {
+                final long anchorTs = timestampDriver.parseFloorLiteral(anchor);
+                sampler.setStart(anchorTs);
+                assertRoundMatchesGridWalk(sampler, anchorTs, lo, hi, step);
+            }
+            for (long offset : offsets) {
+                sampler.setOffset(offset);
+                // the offset grid starts at January 1970 plus the offset
+                assertRoundMatchesGridWalk(sampler, offset, lo, hi, step);
+            }
+            // setStart() after setOffset() re-anchors the grid at a month that is off the January 1970 grid for every
+            // multi-month stride
+            final long anchorTs = timestampDriver.parseFloorLiteral("2029-12-31T10:00:00.000000Z");
+            sampler.setStart(anchorTs);
+            assertRoundMatchesGridWalk(sampler, anchorTs, lo, hi, step);
+        }
+    }
+
+    @Test
+    public void testRoundMatchesGridWalkAroundYearZero() throws Exception {
+        // TIMESTAMP reaches years before year 0, where the month index (12 * year + month - 1) of the value and of
+        // the anchor is negative. round() must count strides from the anchor month across year 0 as well.
+        Assume.assumeTrue(timestampType == TestTimestampType.MICRO);
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final long[] anchors = {
+                Micros.toMicros(-2, 11, 30) + 10 * Micros.HOUR_MICROS,
+                Micros.toMicros(-1, 1, 1),
+                Micros.toMicros(0, 2, 29) + 8 * Micros.HOUR_MICROS,
+                Micros.toMicros(1, 12, 31) + 23 * Micros.HOUR_MICROS,
+        };
+        final long[] offsets = {-Micros.HOUR_MICROS, Micros.HOUR_MICROS};
+        final int[] strides = {1, 2, 3, 4, 5, 6, 7, 12, 13, 24};
+        final long lo = Micros.toMicros(-4, 1, 1);
+        final long hi = Micros.toMicros(4, 1, 1);
+        final long step = timestampDriver.fromMinutes(3 * 24 * 60 + 7 * 60 + 13) + 17;
+        for (int stride : strides) {
+            final TimestampSampler sampler = timestampDriver.getTimestampSampler(stride, 'M', 0);
+            assertRoundMatchesGridWalk(sampler, 0, lo, hi, step);
+            for (long anchor : anchors) {
+                sampler.setStart(anchor);
+                assertRoundMatchesGridWalk(sampler, anchor, lo, hi, step);
+            }
+            for (long offset : offsets) {
+                sampler.setOffset(offset);
+                assertRoundMatchesGridWalk(sampler, offset, lo, hi, step);
+            }
+        }
+    }
+
+    @Test
+    public void testRoundMatchesJavaTimeOracle() throws Exception {
+        // round() must return the last bucket start at or before the value. java.time computes the expected bucket
+        // starts without the sampler: the anchor month plus a whole number of strides, on the anchor's day of month
+        // clamped to the month length, plus the anchor's time of day or the offset. One sampler per stride goes
+        // through all anchors and offsets in turn, and consecutive anchors fall in different months, so each
+        // setStart() and setOffset() call must replace the grid that the previous call set.
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final long dayUnits = timestampDriver.fromDays(1);
+        final long[] offsets = {
+                timestampDriver.fromMinutes(-60),
+                timestampDriver.fromMinutes(-(23 * 60 + 59)),
+                timestampDriver.fromMinutes(10 * 60),
+                timestampDriver.fromMinutes(47 * 60 + 58),
+                timestampDriver.fromMinutes(-(47 * 60 + 58)),
+                -1,
+        };
+        final int[] startDays = {1, 15, 28, 29, 30, 31};
+        final int[] strides = {1, 2, 3, 4, 5, 6, 7, 12, 24};
+        for (int stride : strides) {
+            final TimestampSampler sampler = timestampDriver.getTimestampSampler(stride, 'M', 0);
+            // an unconfigured sampler anchors its grid at January 1970
+            assertRoundMatchesJavaTimeOracle(sampler, stride, 12 * 1970, 1, 0);
+            int anchorCount = 0;
+            for (int startDay : startDays) {
+                for (int month = 1; month <= 12; month++) {
+                    // 12 * year modulo the stride differs between the two years for the strides that don't divide 12
+                    final int year = month % 2 == 0 ? 1965 : 2018;
+                    if (startDay > YearMonth.of(year, month).lengthOfMonth()) {
+                        continue;
+                    }
+                    final long timeOfDay = timestampDriver.fromMinutes(((month * 5 + startDay) % 24) * 60 + 17) + 3;
+                    sampler.setStart(LocalDate.of(year, month, startDay).toEpochDay() * dayUnits + timeOfDay);
+                    assertRoundMatchesJavaTimeOracle(sampler, stride, 12 * year + month - 1, startDay, timeOfDay);
+                    if (++anchorCount % 5 == 0) {
+                        // the offset grid starts on the first day of January 1970, shifted by the offset
+                        final long offset = offsets[(anchorCount / 5) % offsets.length];
+                        sampler.setOffset(offset);
+                        assertRoundMatchesJavaTimeOracle(sampler, stride, 12 * 1970, 1, offset);
+                    }
+                }
+            }
+            final long timeOfDay = timestampDriver.fromMinutes(8 * 60 + 30) + 1;
+            sampler.setStart(LocalDate.of(2024, 2, 29).toEpochDay() * dayUnits + timeOfDay);
+            assertRoundMatchesJavaTimeOracle(sampler, stride, 12 * 2024 + 1, 29, timeOfDay);
+        }
+    }
+
+    @Test
+    public void testRoundNearEndOfTimestampRange() throws Exception {
+        // The candidate bucket in the value's calendar month may start after the largest timestamp, overflowing a
+        // long. round() must return the previous bucket.
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final TimestampSampler sampler = timestampDriver.getTimestampSampler(1, 'M', 0);
+        sampler.setStart(timestampDriver.parseFloorLiteral("2024-01-15T08:00:00.000000Z"));
+        final long expected = timestampType == TestTimestampType.MICRO
+                ? Micros.toMicros(294_246, 12, 15) + 8 * Micros.HOUR_MICROS
+                : timestampDriver.parseFloorLiteral("2262-03-15T08:00:00.000000Z");
+        Assert.assertEquals(expected, sampler.round(Long.MAX_VALUE));
+        Assert.assertEquals(expected, sampler.round(expected + 1));
+    }
+
+    @Test
+    public void testRoundNearEndOfTimestampRangeWithNegativeOffset() throws Exception {
+        // round() shifts the value by a negative offset to find the calendar month of its bucket. Near the largest
+        // timestamp, the shift overflows a long, so round() uses the value as is, which belongs to the bucket of the
+        // last calendar month: 294247-01 for TIMESTAMP and 2262-04 for TIMESTAMP_NS.
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final long oneHour = timestampDriver.fromMinutes(60);
+        final long almostTwoDays = timestampDriver.fromMinutes(47 * 60 + 58);
+        final int stride;
+        final long expectedOneHour;
+        final long expectedAlmostTwoDays;
+        final long expectedStride;
+        if (timestampType == TestTimestampType.MICRO) {
+            // 294246-12-31T23:00, 294246-12-30T00:02 and, for 5 months counted from January 1970, 294246-08-31T23:00
+            stride = 5;
+            expectedOneHour = 9_223_371_241_200_000_000L;
+            expectedAlmostTwoDays = 9_223_371_072_120_000_000L;
+            expectedStride = 9_223_360_700_400_000_000L;
+            Assert.assertEquals(expectedOneHour, Micros.toMicros(294_247, 1, 1) - oneHour);
+            Assert.assertEquals(expectedAlmostTwoDays, Micros.toMicros(294_247, 1, 1) - almostTwoDays);
+            Assert.assertEquals(expectedStride, Micros.toMicros(294_246, 9, 1) - oneHour);
+        } else {
+            // 2 months counted from January 1970 start a bucket in 2262-03
+            stride = 2;
+            expectedOneHour = timestampDriver.parseFloorLiteral("2262-03-31T23:00:00.000000Z");
+            expectedAlmostTwoDays = timestampDriver.parseFloorLiteral("2262-03-30T00:02:00.000000Z");
+            expectedStride = timestampDriver.parseFloorLiteral("2262-02-28T23:00:00.000000Z");
+        }
+
+        final TimestampSampler sampler = timestampDriver.getTimestampSampler(1, 'M', 0);
+        sampler.setOffset(-oneHour);
+        assertRoundOfLargestTimestamps(sampler, expectedOneHour);
+        sampler.setOffset(-almostTwoDays);
+        assertRoundOfLargestTimestamps(sampler, expectedAlmostTwoDays);
+
+        final TimestampSampler strideSampler = timestampDriver.getTimestampSampler(stride, 'M', 0);
+        strideSampler.setOffset(-oneHour);
+        assertRoundOfLargestTimestamps(strideSampler, expectedStride);
     }
 
     @Test
@@ -391,6 +643,79 @@ public class MonthTimestampSamplerTest {
         );
     }
 
+    @Test
+    public void testStartMatchesFloorWithOffset() throws Exception {
+        // Regression test for #7769. round() after setStart() must return the last bucket start at or before the
+        // value. It used to return the bucket start in the value's calendar month, which lies after values that come
+        // earlier in their month than the anchor, and it counted multi-month strides from January.
+        // timestamp_floor_utc() on the GROUP BY path counts months from the anchor that FROM sets.
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final TimestampDriver.TimestampFloorWithOffsetMethod floorMethod = timestampDriver.getTimestampFloorWithOffsetMethod('M');
+        final String[] anchors = {
+                "2018-01-15T08:00:00.000000Z",
+                "2018-02-15T08:00:00.000000Z",
+                "2018-01-28T23:59:59.999999Z",
+                "2018-01-29T12:00:00.000000Z",
+                "2018-03-30T00:00:00.000000Z",
+                "2018-01-31T00:00:00.000000Z",
+                "2018-08-31T22:30:00.000000Z",
+        };
+        final int[] strides = {1, 2, 3, 5, 7, 12};
+        final long hi = timestampDriver.parseFloorLiteral("2030-01-01T00:00:00.000000Z");
+        final long step = timestampDriver.fromMinutes(7 * 60 + 13) + 17;
+        for (int stride : strides) {
+            final TimestampSampler sampler = timestampDriver.getTimestampSampler(stride, 'M', 0);
+            for (String anchor : anchors) {
+                final long anchorTs = timestampDriver.parseFloorLiteral(anchor);
+                sampler.setStart(anchorTs);
+                Assert.assertEquals(anchorTs, sampler.round(anchorTs));
+                for (long value = anchorTs; value < hi; value += step) {
+                    final long rounded = sampler.round(value);
+                    Assert.assertEquals(floorMethod.floor(value, stride, anchorTs), rounded);
+                    Assert.assertTrue(rounded <= value);
+                    Assert.assertTrue(value < sampler.nextTimestamp(rounded));
+                }
+            }
+        }
+    }
+
+    @Test
+    public void testStartMidMonth() throws Exception {
+        // GitHub issue #7769
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final TimestampSampler sampler = timestampDriver.getTimestampSampler(1, 'M', 0);
+        sampler.setStart(timestampDriver.parseFloorLiteral("2024-01-15T08:00:00.000000Z"));
+        assertRound(sampler, "2024-02-10T12:00:00.000000Z", "2024-01-15T08:00:00.000000Z");
+        assertRound(sampler, "2024-02-15T07:59:59.999999Z", "2024-01-15T08:00:00.000000Z");
+        assertRound(sampler, "2024-02-15T08:00:00.000000Z", "2024-02-15T08:00:00.000000Z");
+        assertRound(sampler, "2024-01-01T00:00:00.000000Z", "2023-12-15T08:00:00.000000Z");
+
+        // the grid of a multi-month stride starts in the month of the anchor, not in January
+        final TimestampSampler quarterSampler = timestampDriver.getTimestampSampler(3, 'M', 0);
+        quarterSampler.setStart(timestampDriver.parseFloorLiteral("2024-02-15T08:00:00.000000Z"));
+        assertRound(quarterSampler, "2024-02-15T08:00:00.000000Z", "2024-02-15T08:00:00.000000Z");
+        assertRound(quarterSampler, "2024-05-15T07:59:59.999999Z", "2024-02-15T08:00:00.000000Z");
+        assertRound(quarterSampler, "2024-06-01T00:00:00.000000Z", "2024-05-15T08:00:00.000000Z");
+        assertRound(quarterSampler, "2024-02-01T00:00:00.000000Z", "2023-11-15T08:00:00.000000Z");
+
+        // an anchor on the 31st clamps to the last day of shorter months
+        sampler.setStart(timestampDriver.parseFloorLiteral("2024-01-31T00:00:00.000000Z"));
+        assertRound(sampler, "2024-02-29T12:00:00.000000Z", "2024-02-29T00:00:00.000000Z");
+        assertRound(sampler, "2024-03-30T23:59:59.999999Z", "2024-02-29T00:00:00.000000Z");
+        assertRound(sampler, "2024-03-31T00:00:00.000000Z", "2024-03-31T00:00:00.000000Z");
+        assertRound(sampler, "2024-04-30T05:00:00.000000Z", "2024-04-30T00:00:00.000000Z");
+        assertGrid(
+                sampler,
+                "2024-01-31T00:00:00.000000Z",
+                """
+                        2024-02-29T00:00:00.000000Z
+                        2024-03-31T00:00:00.000000Z
+                        2024-04-30T00:00:00.000000Z
+                        2024-05-31T00:00:00.000000Z
+                        """
+        );
+    }
+
     // Walks the grid from a bucket start: nextTimestamp() returns each next bucket start, round() returns each
     // bucket start for itself and the previous one for the instant before it, and previousTimestamp() and
     // nextTimestamp(ts, n) agree with the walk.
@@ -420,5 +745,71 @@ public class MonthTimestampSamplerTest {
                 timestampDriver.parseFloorLiteral(expected),
                 sampler.round(timestampDriver.parseFloorLiteral(value))
         );
+    }
+
+    // Checks round() against JavaTimeMonthGrid for the values around the start of each month and around the grid's
+    // day and time in each month, which is a bucket start in the months of the grid, and for the middle of each
+    // month, in years before and after 1970.
+    private void assertRoundMatchesJavaTimeOracle(
+            TimestampSampler sampler,
+            int stride,
+            int anchorMonthIndex,
+            int startDay,
+            long timeOfDay
+    ) {
+        final long dayUnits = timestampType.getDriver().fromDays(1);
+        final JavaTimeMonthGrid grid = new JavaTimeMonthGrid(stride, anchorMonthIndex, startDay, timeOfDay, dayUnits);
+        final int[] monthIndexRanges = {12 * 1966, 12 * 1974, 12 * 2022, 12 * 2026};
+        for (int i = 0; i < monthIndexRanges.length; i += 2) {
+            for (long monthIndex = monthIndexRanges[i]; monthIndex < monthIndexRanges[i + 1]; monthIndex++) {
+                final long monthStart = grid.dayStart(monthIndex, 1);
+                final long gridInstant = grid.dayStart(monthIndex, startDay) + timeOfDay;
+                assertRoundMatchesJavaTimeOracle(sampler, grid, monthStart - 1);
+                assertRoundMatchesJavaTimeOracle(sampler, grid, monthStart);
+                assertRoundMatchesJavaTimeOracle(sampler, grid, monthStart + 14 * dayUnits + dayUnits / 2);
+                assertRoundMatchesJavaTimeOracle(sampler, grid, gridInstant - 1);
+                assertRoundMatchesJavaTimeOracle(sampler, grid, gridInstant);
+                assertRoundMatchesJavaTimeOracle(sampler, grid, gridInstant + 1);
+            }
+        }
+    }
+
+    private void assertRoundMatchesJavaTimeOracle(TimestampSampler sampler, JavaTimeMonthGrid grid, long value) {
+        final long expected = grid.floor(value);
+        final long actual = sampler.round(value);
+        if (actual != expected) {
+            Assert.fail("round(" + value + ") returned " + actual + " instead of " + expected + " on " + grid);
+        }
+    }
+
+    // Bucket starts that java.time computes without the sampler: bucket k starts in the month with the index
+    // anchorMonthIndex + k * stride (12 * year + month - 1), on startDay or on the last day of a shorter month,
+    // timeOfDay after midnight. An offset grid starts on the first day of the month, and its timeOfDay is the
+    // offset, which can be negative or longer than a day.
+    private record JavaTimeMonthGrid(int stride, int anchorMonthIndex, int startDay, long timeOfDay, long dayUnits) {
+
+        long bucketStart(long k) {
+            return dayStart(anchorMonthIndex + k * stride, startDay) + timeOfDay;
+        }
+
+        // Returns the midnight of the day of month in the month with the given index, clamped to the month length.
+        long dayStart(long monthIndex, int dayOfMonth) {
+            final YearMonth yearMonth = YearMonth.of((int) Math.floorDiv(monthIndex, 12), (int) Math.floorMod(monthIndex, 12) + 1);
+            return yearMonth.atDay(Math.min(dayOfMonth, yearMonth.lengthOfMonth())).toEpochDay() * dayUnits;
+        }
+
+        // Returns the last bucket start at or before the value.
+        long floor(long value) {
+            final LocalDate date = LocalDate.ofEpochDay(Math.floorDiv(value, dayUnits));
+            final long monthIndex = 12L * date.getYear() + date.getMonthValue() - 1;
+            // start from the first bucket in a month after the value's month; offsets under two days move a bucket
+            // start at most to the end of the previous month, so the bucket after it starts after the value
+            long k = Math.floorDiv(monthIndex - anchorMonthIndex, stride) + 1;
+            while (bucketStart(k) > value) {
+                k--;
+            }
+            Assert.assertTrue(bucketStart(k + 1) > value);
+            return bucketStart(k);
+        }
     }
 }

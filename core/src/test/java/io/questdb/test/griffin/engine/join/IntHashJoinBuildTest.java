@@ -1337,51 +1337,23 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
     @Test
     public void testReusableBuildGrowthDoesNotAllocateHeap() throws Exception {
         assertMemoryLeak(() -> {
-            com.sun.management.ThreadMXBean bean = (com.sun.management.ThreadMXBean) java.lang.management.ManagementFactory.getThreadMXBean();
-            org.junit.Assume.assumeTrue(bean.isThreadAllocatedMemorySupported());
-            bean.setThreadAllocatedMemoryEnabled(true);
             String[] values = new String[65_536];
             for (int i = 0; i < values.length; i++) {
                 values[i] = Integer.toString(i);
             }
-            // The source hands out one retained view, so only the build itself can allocate.
-            Symbols symbols = new Symbols(values);
-            symbols.isViewShared = true;
-            RowIdPayloadSource payloads = new RowIdPayloadSource(symbols, 0);
-            FrozenHashJoinBuild.IntProbe probe = null;
-            try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(64 * 1024 * 1024);
-                 IntHashJoinBuild build = new IntHashJoinBuild(true, 2, 16, true)) {
-                long allocated = 0;
-                // Keep the setup cardinality fixed while warming the JVM's loop backedges.
-                // A short setup can charge VM String/byte[] allocations
-                // at the probe-loop backedge to the first measured native growth.
-                final int warmupExecutions = 200;
-                for (int execution = 0; execution < warmupExecutions + 2; execution++) {
-                    long before = bean.getCurrentThreadAllocatedBytes();
-                    build.open(tracker, NOOP);
-                    int rows = execution < warmupExecutions ? 512 : 65_536;
-                    for (int row = 0; row < rows; row++) {
-                        build.append(row, row);
-                    }
-                    FrozenHashJoinBuild.IntKeyed snapshot = build.freeze(payloads);
-                    if (probe == null) probe = snapshot.newProbe();
-                    else probe.reopen();
-                    for (int row = 0; row < rows; row++) {
-                        Assert.assertTrue(probe.findSingleUnchecked(row));
-                        probe.getRecord().getSymA(0).length();
-                        probe.find(row);
-                        probe.next();
-                        probe.getRecord().getSymA(0).length();
-                    }
-                    probe.close();
-                    build.close();
-                    long bytes = bean.getCurrentThreadAllocatedBytes() - before;
-                    if (execution >= warmupExecutions) allocated += bytes;
-                    Assert.assertEquals(0, tracker.getUsed());
+            try (TestUtils.ThreadMetricsScope<com.sun.management.ThreadMXBean> scope = TestUtils.threadAllocationScope()) {
+                // When HotSpot queues a C2 compilation, the requesting thread resolves the string
+                // constants of the compiled method's class, so a compile request inside the measured
+                // window charges String/byte[] allocations to this thread. A deoptimization sends the
+                // probe loop back to the interpreter, whose counters then fire compile requests at
+                // points no warmup can pin. Each attempt measures fresh instances, so a heap
+                // allocation by the build recurs in every attempt, while HotSpot resolves each class's
+                // string constants only once.
+                long minAllocated = Long.MAX_VALUE;
+                for (int attempt = 0; attempt < 5 && minAllocated > 0; attempt++) {
+                    minAllocated = Math.min(minAllocated, measureReusableBuildGrowthHeapBytes(scope.getBean(), values));
                 }
-                Assert.assertEquals("fresh builds, unseen symbols and forced native growth", 0, allocated);
-            } finally {
-                Misc.free(probe);
+                Assert.assertEquals("fresh builds, unseen symbols and forced native growth", 0, minAllocated);
             }
         });
     }
@@ -1651,6 +1623,52 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
         Field addressField = slots.getClass().getDeclaredField("address");
         addressField.setAccessible(true);
         return addressField.getLong(slots);
+    }
+
+    /**
+     * Warms up fresh build, probe and payload instances on small builds, then returns the heap
+     * bytes the current thread allocates across two builds that grow native memory and read
+     * symbols the warmup never touched.
+     */
+    private static long measureReusableBuildGrowthHeapBytes(com.sun.management.ThreadMXBean bean, String[] values) {
+        // The source hands out one retained view, so only the build itself can allocate.
+        Symbols symbols = new Symbols(values);
+        symbols.isViewShared = true;
+        RowIdPayloadSource payloads = new RowIdPayloadSource(symbols, 0);
+        FrozenHashJoinBuild.IntProbe probe = null;
+        try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(64 * 1024 * 1024);
+             IntHashJoinBuild build = new IntHashJoinBuild(true, 2, 16, true)) {
+            long allocated = 0;
+            // Keep the setup cardinality fixed while warming the JVM's loop backedges, so that
+            // most compile requests land before the measured executions.
+            final int warmupExecutions = 200;
+            for (int execution = 0; execution < warmupExecutions + 2; execution++) {
+                long before = bean.getCurrentThreadAllocatedBytes();
+                build.open(tracker, NOOP);
+                int rows = execution < warmupExecutions ? 512 : 65_536;
+                for (int row = 0; row < rows; row++) {
+                    build.append(row, row);
+                }
+                FrozenHashJoinBuild.IntKeyed snapshot = build.freeze(payloads);
+                if (probe == null) probe = snapshot.newProbe();
+                else probe.reopen();
+                for (int row = 0; row < rows; row++) {
+                    Assert.assertTrue(probe.findSingleUnchecked(row));
+                    probe.getRecord().getSymA(0).length();
+                    probe.find(row);
+                    probe.next();
+                    probe.getRecord().getSymA(0).length();
+                }
+                probe.close();
+                build.close();
+                long bytes = bean.getCurrentThreadAllocatedBytes() - before;
+                if (execution >= warmupExecutions) allocated += bytes;
+                Assert.assertEquals(0, tracker.getUsed());
+            }
+            return allocated;
+        } finally {
+            Misc.free(probe);
+        }
     }
 
     private static void populate(IntHashJoinBuild build, LimitedMemoryTracker tracker, SqlExecutionCircuitBreaker breaker) {

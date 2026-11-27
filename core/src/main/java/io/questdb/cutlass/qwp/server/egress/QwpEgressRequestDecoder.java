@@ -80,8 +80,19 @@ public class QwpEgressRequestDecoder {
      */
     private final QwpVarint.DecodeResult varintScratch = new QwpVarint.DecodeResult();
     public long initialCredit;
+    /**
+     * The most rows the result stream may carry: {@code max_rows} when
+     * {@link QwpEgressMsgKind#QUERY_FLAG_MAX_ROWS} is set, {@code Long.MAX_VALUE}
+     * otherwise.
+     */
+    public long maxRows = Long.MAX_VALUE;
     public long queryFlags;
     public long requestId;
+    /**
+     * Rows to leave out at the start of the result set: {@code skip_rows} when
+     * {@link QwpEgressMsgKind#QUERY_FLAG_SKIP_ROWS} is set, 0 otherwise.
+     */
+    public long skipRows;
     /**
      * Per-query timeout in milliseconds, from the {@code timeout_ms} field that
      * follows {@link #queryFlags} when it carries
@@ -162,14 +173,16 @@ public class QwpEgressRequestDecoder {
      * {@code payloadLen}. The first byte (msg_kind) must already be QUERY_REQUEST.
      * <p>
      * Populates {@link #requestId}, {@link #sql}, {@link #initialCredit},
-     * {@link #queryFlags}, {@link #timeoutMs}, and pushes bind parameters into
-     * {@code bindVars}.
+     * {@link #queryFlags}, {@link #timeoutMs}, {@link #skipRows}, {@link #maxRows},
+     * and pushes bind parameters into {@code bindVars}.
      */
     public void decodeQueryRequest(long payload, int payloadLen, BindVariableService bindVars)
             throws QwpParseException, SqlException {
         long limit = payload + payloadLen;
         long p = payload + 1; // skip msg_kind
         queryFlags = 0;
+        skipRows = 0;
+        maxRows = Long.MAX_VALUE;
         timeoutMs = 0;
         if (p + 8 > limit) {
             throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA).put("QUERY_REQUEST: header truncated");
@@ -218,7 +231,12 @@ public class QwpEgressRequestDecoder {
             QwpVarint.decode(p, limit, varintScratch);
             queryFlags = varintScratch.value;
             p += varintScratch.bytesRead;
-            // Flag-gated fields follow the flags in flag-bit order.
+            // Flags that carry a field append it after the flags, in ascending
+            // order of their bits: timeout_ms, then skip_rows, then max_rows.
+            // Bytes after the known fields are ignored, as they are after the
+            // flags of a baseline request. A decoded skip_rows or max_rows is
+            // negative only when the unsigned varint is 2^63 or more, so the
+            // message names the bound, not the value.
             if ((queryFlags & QwpEgressMsgKind.QUERY_FLAG_TIMEOUT) != 0) {
                 if (p >= limit) {
                     throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA)
@@ -234,6 +252,24 @@ public class QwpEgressRequestDecoder {
                             .put("QUERY_REQUEST: timeout_ms must be positive: ").put(timeout);
                 }
                 timeoutMs = timeout;
+            }
+            if ((queryFlags & QwpEgressMsgKind.QUERY_FLAG_SKIP_ROWS) != 0) {
+                QwpVarint.decode(p, limit, varintScratch);
+                skipRows = varintScratch.value;
+                p += varintScratch.bytesRead;
+                if (skipRows < 0) {
+                    throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA)
+                            .put("QUERY_REQUEST: skip_rows exceeds ").put(Long.MAX_VALUE);
+                }
+            }
+            if ((queryFlags & QwpEgressMsgKind.QUERY_FLAG_MAX_ROWS) != 0) {
+                QwpVarint.decode(p, limit, varintScratch);
+                maxRows = varintScratch.value;
+                p += varintScratch.bytesRead;
+                if (maxRows < 0) {
+                    throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA)
+                            .put("QUERY_REQUEST: max_rows exceeds ").put(Long.MAX_VALUE);
+                }
             }
         }
     }
@@ -254,6 +290,8 @@ public class QwpEgressRequestDecoder {
         requestId = 0;
         initialCredit = 0;
         queryFlags = 0;
+        skipRows = 0;
+        maxRows = Long.MAX_VALUE;
         timeoutMs = 0;
     }
 

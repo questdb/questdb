@@ -93,6 +93,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
 
     @Test
     public void testChunkedSequencerPartsRemoved() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync"); // mode-independent: adaptive keeps the WAL until a second save point
         assertMemoryLeak(() -> {
             int txnChunkSize = 10;
             node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 10);
@@ -144,6 +145,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
 
     @Test
     public void testClosedButUnappliedSegment() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync"); // mode-independent: adaptive keeps the WAL until a second save point
         // Test two segment with changes committed to the sequencer, but never applied to the table.
         // The WAL is closed but nothing can be purged.
         assertMemoryLeak(() -> {
@@ -200,6 +202,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
 
     @Test
     public void testDirectorySequencerRace() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync"); // mode-independent: adaptive keeps the WAL until a second save point
         // We need to enter a state where `tableName`:
         //   * Has two WAL directories, wal1 and wal2.
         //   * Both wal1 and wal2 have an inactive segment 0 and an active segment 1.
@@ -580,7 +583,12 @@ public class WalPurgeJobTest extends AbstractCairoTest {
         final FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public long findFirst(LPSZ path) {
-                counter.incrementAndGet();
+                // Count SWEEPS, not directory scans. A sweep scans the table directory and, under the
+                // V2 sequencer, the _txn_parts directory as well -- so counting every findFirst would
+                // count 2 per sweep and measure the format rather than the interval this test is about.
+                if (!Utf8s.containsAscii(path, WalUtils.TXNLOG_PARTS_DIR)) {
+                    counter.incrementAndGet();
+                }
                 return super.findFirst(path);
             }
         };
@@ -1138,6 +1146,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
 
     @Test
     public void testOneSegment() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync"); // mode-independent: adaptive keeps the WAL until a second save point
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
             execute("create table " + tableName + " as (" +
@@ -1182,6 +1191,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
 
     @Test
     public void testPendingSegmentTasks() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync"); // mode-independent: adaptive keeps the WAL until a second save point
         assertMemoryLeak(() -> {
             // Creating a table creates a new WAL with a first segment.
             final String tableName = testName.getMethodName();
@@ -1292,6 +1302,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
 
     @Test
     public void testRemoveWalLockFailure() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync"); // mode-independent: adaptive keeps the WAL until a second save point
         AtomicBoolean allowRemove = new AtomicBoolean();
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
@@ -1339,6 +1350,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
 
     @Test
     public void testRmWalDirFailure() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync"); // mode-independent: adaptive keeps the WAL until a second save point
         String tableName = testName.getMethodName();
         execute("create table " + tableName + "("
                 + "x long,"
@@ -1375,6 +1387,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
 
     @Test
     public void testRollback() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync"); // mode-independent: adaptive keeps the WAL until a second save point
         String tableName = testName.getMethodName();
         execute("create table " + tableName + "("
                 + "x long,"
@@ -1415,6 +1428,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
 
     @Test
     public void testSegmentDirnamePattern() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync"); // deterministic: adaptive adds a non-deterministic epoch (wall-clock lastEpochTs) / epoch-gated purge; this test asserts mode-independent behavior
         // We create a directory called "stuff" inside the wal1 and ensure it's not deleted.
         // This tests that non-numeric directories aren't matched.
         assertMemoryLeak(() -> {
@@ -1465,6 +1479,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
 
     @Test
     public void testSegmentLockedWhenSweeping() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync"); // deterministic: adaptive adds a non-deterministic epoch (wall-clock lastEpochTs) / epoch-gated purge; this test asserts mode-independent behavior
 
         AtomicReference<WalWriter> walWriter1Ref = new AtomicReference<>();
         FilesFacade testFF = new TestFilesFacadeImpl() {
@@ -1546,6 +1561,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
 
     @Test
     public void testSegmentScanFailureReleasesLocks() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync"); // mode-independent: adaptive keeps the WAL until a second save point
         final String tableName = testName.getMethodName();
         final String tableDirName = tableName + "~1";
         final AtomicBoolean isArmed = new AtomicBoolean(false);
@@ -1654,6 +1670,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
 
     @Test
     public void testSegmentsCreatedWhenSweeping() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync"); // deterministic: adaptive adds a non-deterministic epoch (wall-clock lastEpochTs) / epoch-gated purge; this test asserts mode-independent behavior
 
         AtomicReference<WalWriter> walWriter1Ref = new AtomicReference<>();
         FilesFacade testFF = new TestFilesFacadeImpl() {
@@ -1728,6 +1745,72 @@ public class WalPurgeJobTest extends AbstractCairoTest {
                 drainPurgeJob();
                 assertWalExistence(false, tableName, walWriter1.getWalId());
             }
+        });
+    }
+
+    @Test
+    public void testSequencerProbeFailureClosesTableListing() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync"); // mode-independent: the probe fails before any purge decision
+        final String tableName = testName.getMethodName();
+        final String tableDirName = tableName + "~1";
+        final AtomicBoolean isArmed = new AtomicBoolean(false);
+        final AtomicInteger openTableListings = new AtomicInteger();
+        final RuntimeException probeFailure = new RuntimeException("sequencer probe failure");
+        final FilesFacade testFf = new TestFilesFacadeImpl() {
+            private long tableListingPtr = -1;
+
+            @Override
+            public long findClose(long findPtr) {
+                if (findPtr == tableListingPtr) {
+                    tableListingPtr = -1;
+                    openTableListings.decrementAndGet();
+                }
+                return super.findClose(findPtr);
+            }
+
+            @Override
+            public long findFirst(LPSZ path) {
+                final long ptr = super.findFirst(path);
+                if (isArmed.get() && ptr > 0 && Utf8s.endsWithAscii(path, tableDirName)) {
+                    tableListingPtr = ptr;
+                    openTableListings.incrementAndGet();
+                }
+                return ptr;
+            }
+        };
+        engine.setWalDirectoryPolicy(
+                new DefaultWalDirectoryPolicy() {
+                    @Override
+                    public boolean isInUse(Path path) {
+                        if (isArmed.get() && Utf8s.endsWithAscii(path, SEQ_DIR)) {
+                            throw probeFailure;
+                        }
+                        return false;
+                    }
+                }
+        );
+
+        assertMemoryLeak(testFf, () -> {
+            execute("CREATE TABLE " + tableName + " (x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO " + tableName + " VALUES (1, '2022-02-24T00:00:00.000000Z')");
+            engine.releaseInactive();
+            assertWalExistence(true, tableName, 1);
+
+            // The sequencer probe fails while the purge walks the table directory: the listing must still close.
+            isArmed.set(true);
+            try (WalPurgeJob job = new WalPurgeJob(
+                    engine,
+                    testFf,
+                    engine.getConfiguration().getMicrosecondClock()
+            )) {
+                try {
+                    RuntimeException e = Assert.assertThrows(RuntimeException.class, () -> job.drain(0));
+                    Assert.assertSame(probeFailure, e);
+                } finally {
+                    isArmed.set(false);
+                }
+            }
+            Assert.assertEquals("table directory listings left open", 0, openTableListings.get());
         });
     }
 
@@ -1829,6 +1912,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
 
     @Test
     public void testTwoSegments() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync"); // mode-independent: adaptive keeps the WAL until a second save point
         assertMemoryLeak(() -> {
             // Creating a table creates a new WAL with a single segment.
             String tableName = testName.getMethodName();
@@ -1963,6 +2047,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
 
     @Test
     public void testWalPurgeJobLock() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync"); // mode-independent: adaptive keeps the WAL until a second save point
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
             execute("create table " + tableName + " as (" +
@@ -2016,6 +2101,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
 
     @Test
     public void testWalPurgedAfterUpdateZeroRecordsTransaction() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync"); // mode-independent: adaptive keeps the WAL until a second save point
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
             execute("create table " + tableName + " as (" +
@@ -2049,6 +2135,218 @@ public class WalPurgeJobTest extends AbstractCairoTest {
 
             assertSegmentExistence(false, tableName, 1, 0);
             assertWalExistence(false, tableName, 1);
+        });
+    }
+
+    /**
+     * Verifies the adaptive WAL-purge floor: with commit.mode=adaptive, WAL segments for seqTxns
+     * above the lowest save point on disk are retained, so the WAL goes only after a second save point.
+     * Also verifies that with commit.mode=nosync the durableEpochSeqTxn field is ignored.
+     */
+    @Test
+    public void testAdaptiveDurableEpochPurgeFloor() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 100);
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        // Disable the automatic apply-worker epoch (Plan 3B) so this test drives durableEpochSeqTxn
+        // MANUALLY and exercises the WAL-purge floor (Task D) in isolation; otherwise the worker
+        // would auto-advance the floor to the applied seqTxn during drainWalQueue.
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+
+        assertMemoryLeak(() -> {
+            final String tableName = testName.getMethodName();
+            execute("create table " + tableName + "("
+                    + "x long,"
+                    + "ts timestamp"
+                    + ") timestamp(ts) partition by DAY WAL");
+
+            // Commit several transactions into the WAL.
+            execute("insert into " + tableName + " values (1, '2022-02-24T00:00:00.000000Z')");
+            execute("insert into " + tableName + " values (2, '2022-02-24T00:00:01.000000Z')");
+            execute("insert into " + tableName + " values (3, '2022-02-24T00:00:02.000000Z')");
+
+            // Apply all WAL txns to the table so readerSeqTxn advances.
+            drainWalQueue();
+
+            final TableToken tableToken = engine.verifyTableName(tableName);
+
+            // Confirm there is a WAL segment on disk.
+            assertWalExistence(true, tableName, 1);
+            assertSegmentExistence(true, tableName, 1, 0);
+
+            // Grab the tracker and set durableEpochSeqTxn to 0 (default — retain all WAL).
+            // With epoch=0, purge must retain the WAL segment even though all txns are applied.
+            final io.questdb.cairo.wal.seq.SeqTxnTracker tracker =
+                    engine.getTableSequencerAPI().getTxnTracker(tableToken);
+            Assert.assertEquals("fresh tracker should have durableEpochSeqTxn=0", 0, tracker.getDurableEpochSeqTxn());
+
+            engine.releaseInactive();
+
+            // RED assertion: without the floor the segment would be purged; with it, it must be retained.
+            drainPurgeJob();
+
+            // Epoch still 0 → no WAL should be purged (adaptive retains all).
+            assertWalExistence(true, tableName, 1);
+            assertSegmentExistence(true, tableName, 1, 0);
+
+            // A save point at the applied cut: recovery still falls back to the creation baseline if this one is
+            // damaged, so the WAL after the baseline stays.
+            try (TableWriter writer = getWriter(tableToken)) {
+                writer.advanceDurableEpoch(1L);
+            }
+            Assert.assertTrue("the save point moves the tracker floor", tracker.getDurableEpochSeqTxn() > 0);
+            engine.releaseInactive();
+            drainPurgeJob();
+            assertWalExistence(true, tableName, 1);
+            assertSegmentExistence(true, tableName, 1, 0);
+
+            // A second save point at the same cut replaces the baseline, so both name the applied cut.
+            try (TableWriter writer = getWriter(tableToken)) {
+                writer.advanceDurableEpoch(2L);
+            }
+            engine.releaseInactive();
+            drainPurgeJob();
+
+            assertSegmentExistence(false, tableName, 1, 0);
+            assertWalExistence(false, tableName, 1);
+        });
+    }
+
+    /**
+     * A table whose tracker holds a save point pin keeps the WAL from its save point in any mode. On a start outside
+     * adaptive only a refused conversion to non-WAL keeps its save point and pin, and the next start rewinds the
+     * table to that save point and replays the WAL after it.
+     */
+    @Test
+    public void testNosyncModeKeepsDurableEpochFloorOfPinnedTable() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 100);
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+
+        assertMemoryLeak(() -> {
+            final String tableName = testName.getMethodName();
+            execute("create table " + tableName + "("
+                    + "x long,"
+                    + "ts timestamp"
+                    + ") timestamp(ts) partition by DAY WAL");
+
+            execute("insert into " + tableName + " values (1, '2022-02-24T00:00:00.000000Z')");
+            execute("insert into " + tableName + " values (2, '2022-02-24T00:00:01.000000Z')");
+
+            drainWalQueue();
+
+            final TableToken tableToken = engine.verifyTableName(tableName);
+            final io.questdb.cairo.wal.seq.SeqTxnTracker tracker =
+                    engine.getTableSequencerAPI().getTxnTracker(tableToken);
+            tracker.setPinnedEpoch(1, true, -1, 0);
+            tracker.setDurableEpochSeqTxn(0);
+
+            engine.releaseInactive();
+            drainPurgeJob();
+
+            assertWalExistence(true, tableName, 1);
+            assertSegmentExistence(true, tableName, 1, 0);
+
+            tracker.clearPinnedEpoch();
+            drainPurgeJob();
+
+            assertSegmentExistence(false, tableName, 1, 0);
+            assertWalExistence(false, tableName, 1);
+        });
+    }
+
+    /**
+     * Verifies that with commit.mode=nosync the durableEpochSeqTxn field in the tracker
+     * is NOT consulted — purge proceeds to the applied seqTxn as usual.
+     */
+    @Test
+    public void testNosyncModeIgnoresDurableEpochFloor() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 100);
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+
+        assertMemoryLeak(() -> {
+            final String tableName = testName.getMethodName();
+            execute("create table " + tableName + "("
+                    + "x long,"
+                    + "ts timestamp"
+                    + ") timestamp(ts) partition by DAY WAL");
+
+            execute("insert into " + tableName + " values (1, '2022-02-24T00:00:00.000000Z')");
+            execute("insert into " + tableName + " values (2, '2022-02-24T00:00:01.000000Z')");
+
+            drainWalQueue();
+
+            final TableToken tableToken = engine.verifyTableName(tableName);
+
+            assertWalExistence(true, tableName, 1);
+            assertSegmentExistence(true, tableName, 1, 0);
+
+            // Set durableEpochSeqTxn=0 on the tracker — under nosync mode this should NOT floor purge.
+            final io.questdb.cairo.wal.seq.SeqTxnTracker tracker =
+                    engine.getTableSequencerAPI().getTxnTracker(tableToken);
+            tracker.setDurableEpochSeqTxn(0);
+
+            engine.releaseInactive();
+
+            // Under nosync, WAL is purgeable once applied regardless of durableEpochSeqTxn.
+            drainPurgeJob();
+
+            assertSegmentExistence(false, tableName, 1, 0);
+            assertWalExistence(false, tableName, 1);
+        });
+    }
+
+    /**
+     * G1 coexistence fix: on a replica (LocalDurabilityPolicy.REPLICA_SKIP) the adaptive apply-side durable
+     * epoch is never advanced (durableEpochSeqTxn stays 0), so the epoch-based WAL-purge floor must NOT
+     * apply. Otherwise the floor is permanently pinned at 0 and WAL segments accumulate forever on the
+     * replica — the standard cluster-uniform ADAPTIVE deployment. The floor is a local-durability (primary)
+     * concern; a replica's retention is governed by the upload/download/apply floors instead.
+     */
+    @Test
+    public void testReplicaSkipIgnoresDurableEpochPurgeFloor() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 100);
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        // Epoch eligible on every apply batch, so the ONLY thing keeping durableEpochSeqTxn at 0 is the
+        // REPLICA_SKIP policy gate (mirrors a live replica), not a disabled cadence.
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);
+
+        assertMemoryLeak(() -> {
+            final String tableName = testName.getMethodName();
+            execute("create table " + tableName + "("
+                    + "x long,"
+                    + "ts timestamp"
+                    + ") timestamp(ts) partition by DAY WAL");
+
+            // Model a replica: install REPLICA_SKIP before applying so the apply-side epoch is skipped.
+            engine.setLocalDurabilityPolicy(io.questdb.cairo.wal.LocalDurabilityPolicy.REPLICA_SKIP);
+            try {
+                execute("insert into " + tableName + " values (1, '2022-02-24T00:00:00.000000Z')");
+                execute("insert into " + tableName + " values (2, '2022-02-24T00:00:01.000000Z')");
+                execute("insert into " + tableName + " values (3, '2022-02-24T00:00:02.000000Z')");
+
+                // Apply all WAL txns; under REPLICA_SKIP the durable-epoch frontier must stay pinned at 0.
+                drainWalQueue();
+
+                final TableToken tableToken = engine.verifyTableName(tableName);
+                final io.questdb.cairo.wal.seq.SeqTxnTracker tracker =
+                        engine.getTableSequencerAPI().getTxnTracker(tableToken);
+                Assert.assertEquals("REPLICA_SKIP must leave durableEpochSeqTxn pinned at 0",
+                        0, tracker.getDurableEpochSeqTxn());
+
+                assertWalExistence(true, tableName, 1);
+                assertSegmentExistence(true, tableName, 1, 0);
+
+                engine.releaseInactive();
+
+                // All txns are applied and this node is a replica, so the fully-applied WAL segment is
+                // reclaimable: the epoch floor (pinned at 0) must NOT retain it. RED before the fix
+                // (WalPurgeJob clamps to durableEpochSeqTxn=0 whenever effective mode == ADAPTIVE).
+                drainPurgeJob();
+
+                assertSegmentExistence(false, tableName, 1, 0);
+                assertWalExistence(false, tableName, 1);
+            } finally {
+                engine.setLocalDurabilityPolicy(io.questdb.cairo.wal.LocalDurabilityPolicy.ALWAYS_ON);
+            }
         });
     }
 

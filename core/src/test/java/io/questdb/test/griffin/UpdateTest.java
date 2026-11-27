@@ -42,6 +42,7 @@ import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
@@ -51,6 +52,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.mp.SCSequence;
+import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Micros;
@@ -1329,6 +1331,43 @@ public class UpdateTest extends AbstractCairoTest {
                         .timestamp("ts")
                         .returns(expected);
             }
+        });
+    }
+
+    @Test
+    public void testUpdateDoesNotRegisterPageFrameSequences() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE up AS (
+                        SELECT x, timestamp_sequence(0, 3_600_000_000) ts FROM long_sequence(100)
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            final ObjList<PageFrameSequence<?>> registered = new ObjList<>();
+            try (
+                    SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, 2) {
+                        @Override
+                        public void registerPageFrameSequence(PageFrameSequence<?> frameSequence) {
+                            registered.add(frameSequence);
+                            super.registerPageFrameSequence(frameSequence);
+                        }
+                    }.with(AllowAllSecurityContext.INSTANCE)
+            ) {
+                TestUtils.printSql(engine, context, "EXPLAIN UPDATE up SET x = 0 WHERE x % 2 = 0", sink);
+                TestUtils.assertContains(sink, "Async Filter");
+                Assert.assertEquals(1, registered.size());
+                registered.clear();
+
+                execute("UPDATE up SET x = 0 WHERE x % 2 = 0", context);
+                Assert.assertEquals(0, registered.size());
+            }
+            assertQuery("SELECT count() FROM up WHERE x = 0")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            count
+                            50
+                            """);
         });
     }
 
@@ -3274,6 +3313,67 @@ public class UpdateTest extends AbstractCairoTest {
                             1970-01-08T16:40:00.000000Z\tquestdb1\t14\tquestdb2
                             1970-01-08T22:40:00.000000Z\trdgb\t15\t
                             """);
+        });
+    }
+
+    @Test
+    public void testUpdateVarcharColumnWithColumnTopLoweredByLaterUpdate() throws Exception {
+        assertMemoryLeak(() -> {
+            final String wal = walEnabled ? " WAL" : "";
+            execute("""
+                    CREATE TABLE up AS (
+                        SELECT timestamp_sequence(0, 4 * 60 * 60 * 1_000_000L) ts,
+                            x lng2,
+                            rnd_bin(10, 20, 2) b0,
+                            rnd_double_array(1) a0
+                        FROM long_sequence(12)
+                    ) TIMESTAMP(ts) PARTITION BY DAY""" + wal);
+            drainWalQueue();
+            // The reference table has every column from the start, so it has no column tops.
+            execute("""
+                    CREATE TABLE ref (
+                        ts TIMESTAMP, lng2 LONG, b0 BINARY, a0 DOUBLE[],
+                        v VARCHAR, s STRING, b BINARY, a DOUBLE[]
+                    ) TIMESTAMP(ts) PARTITION BY DAY""" + wal);
+            execute("INSERT INTO ref(ts, lng2, b0, a0) SELECT ts, lng2, b0, a0 FROM up");
+
+            execute("ALTER TABLE up ADD COLUMN v VARCHAR");
+            execute("ALTER TABLE up ADD COLUMN s STRING");
+            execute("ALTER TABLE up ADD COLUMN b BINARY");
+            execute("ALTER TABLE up ADD COLUMN a DOUBLE[]");
+            drainWalQueue();
+
+            // The last partition gets two rows above its column top; a later update has to copy them.
+            for (String table : new String[]{"ref", "up"}) {
+                execute("INSERT INTO " + table + """
+                         SELECT dateadd('h', x::INT, ts), 12 + x, b0, a0,
+                            'pre-existing varchar value ' || x, 'pre-existing string value ' || x, b0, a0
+                        FROM up CROSS JOIN long_sequence(2)
+                        WHERE lng2 = 12""");
+                drainWalQueue();
+            }
+
+            final String[] updates = {
+                    // Create the column files in the first partition. In the second, lower the column top from row 6 to
+                    // row 4 and write row 6, so the update copies row 7 while the new column top is still above row 0.
+                    "SET v = 'long varchar value ' || lng2, s = 'long string value ' || lng2, b = b0, a = a0 WHERE lng2 IN (5, 11, 13)",
+                    // Lower the column top of both partitions; the values above it move up the new files.
+                    "SET v = 'another varchar value ' || lng2, s = 'another string value ' || lng2, b = b0, a = a0 WHERE lng2 IN (2, 8)",
+                    // Write on both sides of the column top, adjacent rows and row 0 included, with NULL and empty values.
+                    """
+                    SET v = CASE lng2 % 3 WHEN 0 THEN NULL WHEN 1 THEN '' ELSE 'third varchar value ' || lng2 END,
+                        s = CASE lng2 % 3 WHEN 0 THEN NULL WHEN 1 THEN '' ELSE 'third string value ' || lng2 END,
+                        b = NULL, a = NULL
+                    WHERE lng2 IN (1, 3, 4, 6, 7, 10, 13)""",
+                    // The columns now start at row 0 of both partitions.
+                    "SET v = 'final varchar value ' || lng2, s = 'final string value ' || lng2, b = b0, a = a0 WHERE lng2 IN (1, 9, 12, 14)",
+            };
+            for (String update : updates) {
+                update("UPDATE ref " + update);
+                update("UPDATE up " + update);
+                drainWalQueue();
+                assertSqlCursors("ref", "up");
+            }
         });
     }
 

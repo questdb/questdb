@@ -212,6 +212,11 @@ public record SqlExecutionContextStub(CairoEngine engine) implements SqlExecutio
     }
 
     @Override
+    public boolean isExpiryReadFilterEnabled() {
+        return true;
+    }
+
+    @Override
     public boolean isParallelFilterEnabled() {
         return false;
     }
@@ -248,6 +253,11 @@ public record SqlExecutionContextStub(CairoEngine engine) implements SqlExecutio
 
     @Override
     public boolean isParallelWindowJoinEnabled() {
+        return false;
+    }
+
+    @Override
+    public boolean isStreamGroupByEnabled() {
         return false;
     }
 
@@ -328,6 +338,12 @@ public record SqlExecutionContextStub(CairoEngine engine) implements SqlExecutio
     }
 
     @Override
+    public void setExpiryReadFilterEnabled(boolean enabled) {
+        // This stub only drives already-compiled cursors, so no compile can toggle the filter through it.
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public void setIntervalFunctionType(int intervalFunctionType) {
     }
 
@@ -373,6 +389,10 @@ public record SqlExecutionContextStub(CairoEngine engine) implements SqlExecutio
 
     @Override
     public void setRandom(Rnd rnd) {
+    }
+
+    @Override
+    public void setStreamGroupByEnabled(boolean isEnabled) {
     }
 
     @Override

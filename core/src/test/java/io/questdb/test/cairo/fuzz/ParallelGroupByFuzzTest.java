@@ -1441,16 +1441,13 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                 "explain select ts, max(array_position(arr, a)) as v from tango sample by 1d",
                                 """
                                         QUERY PLAN
-                                        Encode sort light
+                                        Async Stream Group By workers: 4
                                           keys: [ts]
-                                            Async Group By workers: 4
-                                              keys: [ts]
-                                              keyFunctions: [timestamp_floor_utc('1d',ts)]
-                                              values: [max(array_position(arr, a))]
-                                              filter: null
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: tango
+                                          keyFunctions: [timestamp_floor_utc('1d',ts)]
+                                          values: [max(array_position(arr, a))]
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: tango
                                         """,
                                 "select ts, max(array_position(arr, a)) as v from tango sample by 1d",
                                 """
@@ -1467,16 +1464,13 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                 "explain select ts, max(array_position(arr, a)) as v from tango sample by 1d",
                                 """
                                         QUERY PLAN
-                                        Encode sort light
+                                        Async Stream Group By workers: 4
                                           keys: [ts]
-                                            Async Group By workers: 4
-                                              keys: [ts]
-                                              keyFunctions: [timestamp_floor_utc('1d',ts)]
-                                              values: [max(array_position(arr, a))]
-                                              filter: null
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: tango
+                                          keyFunctions: [timestamp_floor_utc('1d',ts)]
+                                          values: [max(array_position(arr, a))]
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: tango
                                         """,
                                 "select ts, max(array_position(arr, a)) as v from tango sample by 1d",
                                 """
@@ -1493,16 +1487,13 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                 "explain select ts, min(insertion_point(arr, a)) as v from tango sample by 1d",
                                 """
                                         QUERY PLAN
-                                        Encode sort light
+                                        Async Stream Group By workers: 4
                                           keys: [ts]
-                                            Async Group By workers: 4
-                                              keys: [ts]
-                                              keyFunctions: [timestamp_floor_utc('1d',ts)]
-                                              values: [min(insertion_point(arr,a))]
-                                              filter: null
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: tango
+                                          keyFunctions: [timestamp_floor_utc('1d',ts)]
+                                          values: [min(insertion_point(arr,a))]
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: tango
                                         """,
                                 "select ts, min(insertion_point(arr, a)) as v from tango sample by 1d",
                                 """
@@ -1519,16 +1510,13 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                 "explain select ts, sum(array_count(arr)) as v from tango sample by 1d",
                                 """
                                         QUERY PLAN
-                                        Encode sort light
+                                        Async Stream Group By workers: 4
                                           keys: [ts]
-                                            Async Group By workers: 4
-                                              keys: [ts]
-                                              keyFunctions: [timestamp_floor_utc('1d',ts)]
-                                              values: [sum(array_count(arr))]
-                                              filter: null
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: tango
+                                          keyFunctions: [timestamp_floor_utc('1d',ts)]
+                                          values: [sum(array_count(arr))]
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: tango
                                         """,
                                 "select ts, sum(array_count(arr)) as v from tango sample by 1d",
                                 """
@@ -1545,16 +1533,13 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                 "explain select ts, sum(array_avg(arr)) as v from tango sample by 1d",
                                 """
                                         QUERY PLAN
-                                        Encode sort light
+                                        Async Stream Group By workers: 4
                                           keys: [ts]
-                                            Async Group By workers: 4
-                                              keys: [ts]
-                                              keyFunctions: [timestamp_floor_utc('1d',ts)]
-                                              values: [sum(array_avg(arr))]
-                                              filter: null
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: tango
+                                          keyFunctions: [timestamp_floor_utc('1d',ts)]
+                                          values: [sum(array_avg(arr))]
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: tango
                                         """,
                                 "select ts, sum(array_avg(arr)) as v from tango sample by 1d",
                                 """
@@ -1571,13 +1556,13 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                 "explain select ts, array_sum(array_cum_sum(arr)), sum(a) from tango sample by 1d order by ts, array_sum",
                                 """
                                         QUERY PLAN
-                                        Encode sort light
+                                        Encode sort
                                           keys: [ts, array_sum]
-                                            Async Group By workers: 4
+                                            Async Stream Group By workers: 4
+                                              segmentKey: timestamp_floor_utc('1d',ts)
                                               keys: [ts,array_sum]
                                               keyFunctions: [timestamp_floor_utc('1d',ts),array_sum(array_cum_sum(arr))]
                                               values: [sum(a)]
-                                              filter: null
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: tango
@@ -1602,16 +1587,14 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                 "explain select ts, dot_product(arr, 2), first(a) from tango sample by 1d",
                                 """
                                         QUERY PLAN
-                                        Encode sort light
-                                          keys: [ts]
-                                            Async Group By workers: 4
-                                              keys: [ts,dot_product]
-                                              keyFunctions: [timestamp_floor_utc('1d',ts),dot_product(arr,2)]
-                                              values: [first(a)]
-                                              filter: null
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: tango
+                                        Async Stream Group By workers: 4
+                                          segmentKey: timestamp_floor_utc('1d',ts)
+                                          keys: [ts,dot_product]
+                                          keyFunctions: [timestamp_floor_utc('1d',ts),dot_product(arr,2)]
+                                          values: [first(a)]
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: tango
                                         """,
                                 "select ts, dot_product(arr, 2), first(a) from tango sample by 1d order by ts, dot_product",
                                 """
@@ -1633,16 +1616,13 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                 "explain select ts, sum(array_sum((arr * 5 + 3 - 1)/2)) from tango sample by 1d",
                                 """
                                         QUERY PLAN
-                                        Encode sort light
+                                        Async Stream Group By workers: 4
                                           keys: [ts]
-                                            Async Group By workers: 4
-                                              keys: [ts]
-                                              keyFunctions: [timestamp_floor_utc('1d',ts)]
-                                              values: [sum(array_sum(arr*5+3-1/2))]
-                                              filter: null
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: tango
+                                          keyFunctions: [timestamp_floor_utc('1d',ts)]
+                                          values: [sum(array_sum(arr*5+3-1/2))]
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: tango
                                         """,
                                 "select ts, sum(array_sum((arr * 5 + 3 - 1)/2)) from tango sample by 1d",
                                 """
@@ -1659,16 +1639,13 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                 "explain select ts, sum(array_sum(arr[a::int:a::int + 2])) from tango sample by 1d",
                                 """
                                         QUERY PLAN
-                                        Encode sort light
+                                        Async Stream Group By workers: 4
                                           keys: [ts]
-                                            Async Group By workers: 4
-                                              keys: [ts]
-                                              keyFunctions: [timestamp_floor_utc('1d',ts)]
-                                              values: [sum(array_sum(arr[a::int:a::int+2]))]
-                                              filter: null
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: tango
+                                          keyFunctions: [timestamp_floor_utc('1d',ts)]
+                                          values: [sum(array_sum(arr[a::int:a::int+2]))]
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: tango
                                         """,
                                 "select ts, sum(array_sum(arr[a::int:a::int + 2])) from tango sample by 1d",
                                 """
@@ -1902,6 +1879,45 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         k4\t-1.172914311098\t-1.172699075325
                         """
         );
+    }
+
+    @Test
+    public void testParallelGroupByNullKey() throws Exception {
+        // A NULL key takes no bytes in the map key: the per-worker maps of an all-NULL key merge into
+        // one group, and a string key after a NULL one reads its own value once the maps are sharded.
+        // Expected values come from x = 1..ROW_COUNT: x % 1000 = 0 holds 1000, 2000, ... and
+        // x % 1000 = 1 holds 1, 1001, ...
+        Assume.assumeTrue(enableParallelGroupBy);
+        final long perClass = ROW_COUNT / 1000;
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(rnd));
+            executeWithPool(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
+                        execute(
+                                compiler,
+                                "CREATE TABLE tab AS (SELECT x, timestamp_sequence(0, 864_000_000) ts FROM long_sequence(" + ROW_COUNT + ")) TIMESTAMP(ts) PARTITION BY DAY",
+                                sqlExecutionContext
+                        );
+                        if (convertToParquet) {
+                            execute(compiler, "ALTER TABLE tab CONVERT PARTITION TO PARQUET WHERE ts >= 0", sqlExecutionContext);
+                        }
+                        assertQueriesAndPlans(
+                                engine,
+                                sqlExecutionContext,
+                                "SELECT null AS k, count() AS c, sum(x) AS s FROM tab GROUP BY 1",
+                                "k\tc\ts\n" + "null\t" + ROW_COUNT + "\t" + ((long) ROW_COUNT * (ROW_COUNT + 1) / 2) + "\n",
+                                "Async Group By",
+                                "SELECT CASE WHEN x > 0 THEN NULL END AS k, concat('v', x % 1000) AS b, count() AS c, sum(x) AS s FROM tab GROUP BY 1, 2 ORDER BY 2 LIMIT 2",
+                                "k\tb\tc\ts\n"
+                                        + "null\tv0\t" + perClass + "\t" + (1000 * perClass * (perClass + 1) / 2) + "\n"
+                                        + "null\tv1\t" + perClass + "\t" + (perClass + 1000 * perClass * (perClass - 1) / 2) + "\n",
+                                "Async Group By"
+                        );
+                    }
+            );
+        });
     }
 
     @Test

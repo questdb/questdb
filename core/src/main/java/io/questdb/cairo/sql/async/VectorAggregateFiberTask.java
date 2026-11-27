@@ -144,7 +144,6 @@ final class VectorAggregateFiberTask extends AbstractQueryParallelFiberTask {
             cursor = -1;
             subSeq = null;
             claimedSubSeq.done(claimedCursor);
-            signalQueueProgress();
         }
     }
 }

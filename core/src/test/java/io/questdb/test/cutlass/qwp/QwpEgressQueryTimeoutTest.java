@@ -34,6 +34,7 @@ import io.questdb.client.cutlass.qwp.client.QwpColumnBatch;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatchHandler;
 import io.questdb.client.cutlass.qwp.client.QwpEgressMsgKind;
 import io.questdb.client.cutlass.qwp.client.QwpQueryClient;
+import io.questdb.client.cutlass.qwp.client.QwpQueryOptions;
 import io.questdb.client.cutlass.qwp.client.QwpServerInfo;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.test.TestServerMain;
@@ -256,6 +257,39 @@ public class QwpEgressQueryTimeoutTest extends AbstractReusedServerQwpEgressTest
         });
     }
 
+    @Test
+    public void testTimeoutComposesWithRowWindow() throws Exception {
+        // timeout_ms goes on the wire ahead of skip_rows and max_rows. A server
+        // that read them in another order would page the wrong rows, or run the
+        // query under a wrong timeout.
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestServerMain _ = startServerWithRetry(
+                    PropertyKey.GRIFFIN_QUERY_CONTINUATION_WAKE_INTERVAL.getEnvVarName(), "100"
+            )) {
+                try (QwpQueryClient client = connectClient()) {
+                    final QwpQueryOptions window = new QwpQueryOptions().skipRows(10).maxRows(5);
+                    RecordingHandler handler = new RecordingHandler();
+                    client.execute("SELECT x FROM long_sequence(100)", null, handler, window, 30_000);
+                    Assert.assertTrue("the query must complete: " + handler.errorMessage, handler.isEnded);
+                    Assert.assertEquals(5, handler.rowCount);
+                    Assert.assertEquals(11, handler.firstValue);
+
+                    RecordingHandler timedOut = new RecordingHandler();
+                    long startNanos = System.nanoTime();
+                    client.execute("sleep(10)", null, timedOut, window, 1_000);
+                    long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNanos);
+                    Assert.assertEquals("expected a query timeout, got: " + timedOut.errorMessage,
+                            QwpConstants.STATUS_QUERY_TIMEOUT, timedOut.errorStatus);
+                    // The server's own message: it applied the client's timeout.
+                    TestUtils.assertContains(timedOut.errorMessage, "timeout, query aborted");
+                    Assert.assertTrue("sleep(10) must end near the 1s client timeout, took " + elapsedMs + "ms",
+                            elapsedMs >= 900 && elapsedMs < 4_000);
+                    Assert.assertFalse(client.hasTerminalFailure());
+                }
+            }
+        });
+    }
+
     private static RecordingHandler assertExecDonePastTimeout(QwpQueryClient client, String sql) {
         final long timeoutMs = 100;
         RecordingHandler handler = new RecordingHandler();
@@ -285,6 +319,7 @@ public class QwpEgressQueryTimeoutTest extends AbstractReusedServerQwpEgressTest
         String errorMessage;
         byte errorStatus;
         int failoverResetCount;
+        long firstValue = Long.MIN_VALUE;
         boolean isEnded;
         boolean isExecDone;
         long rowCount;
@@ -292,6 +327,9 @@ public class QwpEgressQueryTimeoutTest extends AbstractReusedServerQwpEgressTest
 
         @Override
         public void onBatch(QwpColumnBatch batch) {
+            if (rowCount == 0 && batch.getRowCount() > 0) {
+                firstValue = batch.getLongValue(0, 0);
+            }
             rowCount += batch.getRowCount();
         }
 

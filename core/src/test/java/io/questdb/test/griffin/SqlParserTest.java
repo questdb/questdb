@@ -3734,7 +3734,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "timestamp(t) " +
                         "partition by EPOCH",
                 128,
-                "'NONE', 'HOUR', 'DAY', 'WEEK', 'MONTH' or 'YEAR' expected"
+                "'NONE', 'HOUR', 'DAY', 'WEEK', 'MONTH', 'YEAR' or '<n> MINUTES' expected"
         );
     }
 
@@ -4640,6 +4640,20 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH maxUncommittedRows=10000, o3invalid=250ms",
                 112,
                 "unrecognized o3invalid after WITH"
+        );
+    }
+
+    /**
+     * The commit mode is instance-wide ({@code cairo.commit.mode}), read once at startup. The per-table
+     * {@code WITH commit_mode='...'} syntax is rejected like any other unknown WITH parameter, so no DDL can
+     * quietly ask for a durability grade the server will not give.
+     */
+    @Test
+    public void testCreateTableWithCommitModeIsRejected() throws Exception {
+        assertSyntaxError(
+                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH commit_mode='adaptive'",
+                93,
+                "unrecognized commit_mode after WITH"
         );
     }
 
@@ -8635,6 +8649,19 @@ public class SqlParserTest extends AbstractSqlParserTest {
                           CASE\s
                             WHEN col10 > '3975' THEN col7\s
                             WHEN col5 < '4045' FILL -3754167527262084558\s
+                          END
+                        FROM t1\s
+                        ORDER BY col1,,col2;""", 77,
+                "'then' expected"
+        );
+
+        // the same statement with THEN in place of the stray FILL
+        assertSyntaxError(
+                """
+                        SELECT  a,
+                          CASE\s
+                            WHEN col10 > '3975' THEN col7\s
+                            WHEN col5 < '4045' THEN -3754167527262084558\s
                           END
                         FROM t1\s
                         ORDER BY col1,,col2;""", 133,
@@ -12671,7 +12698,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testSelectSumSquared() throws Exception {
         assertQuery("select x, sum(x)*sum(x) x from long_sequence(2) order by x")
-                .expectSize()
                 .noLeakCheck()
                 .returns("""
                         x1\tx
@@ -13367,6 +13393,10 @@ public class SqlParserTest extends AbstractSqlParserTest {
                     } catch (SqlException e) {
                         Assert.assertEquals(14, e.getPosition());
                         TestUtils.assertContains(e.getFlyweightMessage(), "table is locked");
+                        // the view compiler tells a lock from other errors by the flag
+                        Assert.assertTrue(e.isTableLocked());
+                        Assert.assertFalse(e.isTableBusy());
+                        Assert.assertEquals(0, e.getErrorCode());
                     }
                 } finally {
                     try (Path path = new Path()) {
@@ -13785,7 +13815,16 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "2026-07-22T10:32:41.213795Z',) col2 AS a2, 'p', 0.0 AS a3 FROM t1 a4 LT JOIN t2 " +
                         "a5 ON a4.timestamp = a5.timestamp LEFT OUTER JOIN t3 ON a4.col3 = t3.col3 LEFT col7 <= false " +
                         "OR a4.sym <> col2 GROUP BY a5.col4, col4, a5.col7, col10 ORDER BY col7 ASC NULLS FIRST, a5.col10 DESC," +
-                        " a5.col3 DESC NULLS FIRST, 3 DESC LIMIT 194", 222,
+                        " a5.col3 DESC NULLS FIRST, 3 DESC LIMIT 194", 112,
+                "'then' expected"
+        );
+        // the same statement with 'qocvwy' in place of the stray qocvwy
+        assertSyntaxError("SELECT ts, col6 AS a1, CASE WHEN col5 <> '192.168.150.217' THEN 754326 WHEN col1 = false THEN '' " +
+                        "WHEN ts <= 'qocvwy' THEN col4 ELSE sym END, col4, -109639495026, '1986-05-10T21:39:17Z', '" +
+                        "2026-07-22T10:32:41.213795Z',) col2 AS a2, 'p', 0.0 AS a3 FROM t1 a4 LT JOIN t2 " +
+                        "a5 ON a4.timestamp = a5.timestamp LEFT OUTER JOIN t3 ON a4.col3 = t3.col3 LEFT col7 <= false " +
+                        "OR a4.sym <> col2 GROUP BY a5.col4, col4, a5.col7, col10 ORDER BY col7 ASC NULLS FIRST, a5.col10 DESC," +
+                        " a5.col3 DESC NULLS FIRST, 3 DESC LIMIT 194", 216,
                 "unexpected token [)]"
         );
 

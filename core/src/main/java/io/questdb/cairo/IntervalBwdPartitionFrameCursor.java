@@ -24,7 +24,6 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.PartitionFrame;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
@@ -33,6 +32,8 @@ import io.questdb.log.LogFactory;
 
 public class IntervalBwdPartitionFrameCursor extends AbstractIntervalPartitionFrameCursor {
     private static final Log LOG = LogFactory.getLog(IntervalBwdPartitionFrameCursor.class);
+    private long searchHi;
+    private int searchPartitionIndex = -1;
 
     /**
      * Cursor for partition frames that chronologically intersect collection of intervals.
@@ -57,89 +58,70 @@ public class IntervalBwdPartitionFrameCursor extends AbstractIntervalPartitionFr
         int intervalsHi1 = this.intervalsHi;
         int partitionLo1 = this.partitionLo;
         int partitionHi1 = this.partitionHi;
-        long partitionLimit1 = this.partitionLimit;
-        long size = this.sizeSoFar;
+        long searchHi1 = this.searchHi;
+        int searchPartitionIndex1 = this.searchPartitionIndex;
+        long size = 0;
 
         while (intervalsLo1 < intervalsHi1 && partitionLo1 < partitionHi1) {
             final int currentInterval = intervalsHi1 - 1;
             final int currentPartition = partitionHi1 - 1;
-            // We don't need to worry about column tops and null column because we
-            // are working with timestamp. Timestamp column cannot be added to existing table.
-            final long rowCount = reader.getPartitionRowCountFromMetadata(currentPartition);
-            if (rowCount > 0) {
-                final TimestampFinder timestampFinder = initTimestampFinder(currentPartition, rowCount);
-
-                final long intervalLo = intervals.getQuick(currentInterval * 2);
-                final long intervalHi = intervals.getQuick(currentInterval * 2 + 1);
-
-                final long limitHi = partitionLimit1 == -1 ? rowCount - 1 : partitionLimit1 - 1;
-
-                final long partitionTimestampLoApprox = timestampFinder.minTimestampApproxFromMetadata();
-                // interval is wholly above partition, skip partition
-                if (partitionTimestampLoApprox > intervalHi) {
+            final long intervalLo = intervals.getQuick(currentInterval * 2);
+            final long intervalHi = intervals.getQuick(currentInterval * 2 + 1);
+            if (hasAnyDelta()) {
+                final long calendarLo = getPartitionCalendarLo(currentPartition);
+                if (calendarLo > intervalHi) {
                     partitionHi1 = currentPartition;
-                    partitionLimit1 = -1;
                     continue;
                 }
-
-                final long partitionTimestampHiApprox = timestampFinder.maxTimestampApproxFromMetadata();
-                // interval is wholly below partition, skip interval
-                if (partitionTimestampHiApprox < intervalLo) {
-                    partitionLimit1 = limitHi + 1;
+                final long calendarHi = getPartitionCalendarHi(currentPartition);
+                if (calendarHi != Long.MAX_VALUE && calendarHi <= intervalLo) {
                     intervalsHi1 = currentInterval;
                     continue;
                 }
+            }
 
-                reader.openPartition(currentPartition);
-                timestampFinder.prepare();
-
-                // interval is wholly below partition, skip interval
-                final long partitionTimestampHiExact = timestampFinder.timestampAt(limitHi);
-                if (partitionTimestampHiExact < intervalLo) {
-                    partitionLimit1 = limitHi + 1;
-                    intervalsHi1 = currentInterval;
-                    continue;
-                }
-
-                // calculate intersection for inclusive intervals "intervalLo" and "intervalHi"
-                final long partitionTimestampLoExact = timestampFinder.minTimestampExact();
-                final long lo;
-                if (partitionTimestampLoExact < intervalLo) {
-                    // intervalLo is inclusive of value. We will look for bottom index of intervalLo - 1
-                    // and then do index + 1 to skip to top of where we need to be.
-                    lo = timestampFinder.findTimestamp(intervalLo - 1, 0, limitHi) + 1;
-                } else {
-                    lo = 0;
-                }
-
-                final long hi;
-                if (partitionTimestampHiExact > intervalHi) {
-                    hi = timestampFinder.findTimestamp(intervalHi, lo, limitHi) + 1;
-                } else {
-                    hi = limitHi + 1;
-                }
-
-                if (lo == 0) {
-                    // whole partition, skip to next one
-                    partitionHi1 = currentPartition;
-                    partitionLimit1 = -1;
-                } else {
-                    // only fragment, skip to next interval
-                    partitionLimit1 = lo;
-                    intervalsHi1 = currentInterval;
-                }
-
-                if (lo < hi) {
-                    size += hi - lo;
-                }
-            } else {
-                // partition was empty, just skip to next
-                partitionLimit1 = -1;
+            final long baseRowCount = reader.getPartitionRowCountFromMetadata(currentPartition);
+            final boolean hasDelta = reader.getTxFile().getPartitionHasDelta(currentPartition);
+            if (baseRowCount == 0 && !hasDelta) {
                 partitionHi1 = currentPartition;
+                continue;
+            }
+            final TimestampFinder timestampFinder = initTimestampFinder(currentPartition, baseRowCount);
+            final long logicalRowCount = getCurrentLogicalRowCount();
+            if (logicalRowCount == 0) {
+                partitionHi1 = currentPartition;
+                continue;
+            }
+            if (getCurrentPartitionFrameState() == 0) {
+                if (timestampFinder.minTimestampLowerBound() > intervalHi) {
+                    partitionHi1 = currentPartition;
+                    continue;
+                }
+                if (timestampFinder.maxTimestampUpperBound() < intervalLo) {
+                    intervalsHi1 = currentInterval;
+                    continue;
+                }
+            }
+
+            reader.openPartition(currentPartition);
+            timestampFinder.prepare();
+            final long limitHi = searchPartitionIndex1 == currentPartition ? searchHi1 : logicalRowCount - 1;
+            final long lo = timestampFinder.countBefore(intervalLo, 0, limitHi);
+            final long hi = timestampFinder.countThrough(intervalHi, lo, limitHi);
+            validateIntervalBounds(currentPartition, lo, hi);
+            searchPartitionIndex1 = currentPartition;
+            searchHi1 = lo - 1;
+            if (lo < hi) {
+                size = Math.addExact(size, hi - lo);
+            }
+            if (lo == 0) {
+                partitionHi1 = currentPartition;
+            } else {
+                intervalsHi1 = currentInterval;
             }
         }
 
-        counter.add(size - this.sizeSoFar);
+        counter.add(size);
     }
 
     @Override
@@ -151,101 +133,70 @@ public class IntervalBwdPartitionFrameCursor extends AbstractIntervalPartitionFr
             // are working with timestamp. Timestamp column cannot be added to existing table.
             final int currentInterval = intervalsHi - 1;
             final int currentPartition = partitionHi - 1;
-            long rowCount = reader.getPartitionRowCountFromMetadata(currentPartition);
-            if (rowCount > 0) {
-                final TimestampFinder timestampFinder = initTimestampFinder(currentPartition, rowCount);
-
-                final long intervalLo = intervals.getQuick(currentInterval * 2);
-                final long intervalHi = intervals.getQuick(currentInterval * 2 + 1);
-
-                final long limitHi;
-                if (partitionLimit == -1) {
-                    limitHi = rowCount - 1;
-                } else {
-                    limitHi = partitionLimit - 1;
-                }
-
-                LOG.debug()
-                        .$("next [partition=").$(currentPartition)
-                        .$(", intervalLo=").$ts(intervalModel.getTimestampDriver(), intervalLo)
-                        .$(", intervalHi=").$ts(intervalModel.getTimestampDriver(), intervalHi)
-                        .$(", limitHi=").$(limitHi)
-                        .$(", rowCount=").$(rowCount)
-                        .$(", currentInterval=").$(currentInterval)
-                        .I$();
-
-                final long partitionTimestampLoApprox = timestampFinder.minTimestampApproxFromMetadata();
-                // interval is wholly above partition, skip partition
-                if (partitionTimestampLoApprox > intervalHi) {
-                    skipPartition(currentPartition);
+            final long intervalLo = intervals.getQuick(currentInterval * 2);
+            final long intervalHi = intervals.getQuick(currentInterval * 2 + 1);
+            if (hasAnyDelta()) {
+                final long calendarLo = getPartitionCalendarLo(currentPartition);
+                if (calendarLo > intervalHi) {
+                    partitionHi = currentPartition;
                     continue;
                 }
-
-                final long partitionTimestampHiApprox = timestampFinder.maxTimestampApproxFromMetadata();
-                // interval is wholly below partition, skip interval
-                if (partitionTimestampHiApprox < intervalLo) {
-                    skipInterval(currentInterval, limitHi + 1);
+                final long calendarHi = getPartitionCalendarHi(currentPartition);
+                if (calendarHi != Long.MAX_VALUE && calendarHi <= intervalLo) {
+                    intervalsHi = currentInterval;
                     continue;
                 }
+            }
 
-                reader.openPartition(currentPartition);
-                timestampFinder.prepare();
-
-                // interval is wholly below partition, skip interval
-                final long partitionTimestampHiExact = timestampFinder.timestampAt(limitHi);
-                if (partitionTimestampHiExact < intervalLo) {
-                    skipInterval(currentInterval, limitHi + 1);
-                    continue;
-                }
-
-                // calculate intersection for inclusive intervals "intervalLo" and "intervalHi"
-                final long partitionTimestampLoExact = timestampFinder.minTimestampExact();
-                final long lo;
-                if (partitionTimestampLoExact < intervalLo) {
-                    // intervalLo is inclusive of value. We will look for bottom index of intervalLo - 1
-                    // and then do index + 1 to skip to top of where we need to be.
-                    lo = timestampFinder.findTimestamp(intervalLo - 1, 0, limitHi) + 1;
-                } else {
-                    lo = 0;
-                }
-
-                final long hi;
-                if (partitionTimestampHiExact > intervalHi) {
-                    hi = timestampFinder.findTimestamp(intervalHi, lo, limitHi) + 1;
-                } else {
-                    hi = limitHi + 1;
-                }
-
-                if (lo == 0) {
-                    // interval yielded empty partition frame, skip partition
-                    skipPartition(currentPartition);
-                } else {
-                    // only fragment, need to skip to next interval
-                    skipInterval(currentInterval, lo);
-                }
-
-                if (lo < hi) {
-                    frame.partitionIndex = currentPartition;
-                    frame.rowLo = lo;
-                    frame.rowHi = hi;
-                    sizeSoFar += hi - lo;
-
-                    final byte format = reader.getPartitionFormat(currentPartition);
-                    if (format == PartitionFormat.PARQUET) {
-                        frame.format = PartitionFormat.PARQUET;
-                        frame.parquetMetaDecoder = reader.getAndInitParquetPartitionDecoder(currentPartition);
-                    } else {
-                        assert format == PartitionFormat.NATIVE;
-                        frame.format = PartitionFormat.NATIVE;
-                        frame.parquetMetaDecoder = null;
-                    }
-
-                    return frame;
-                }
-            } else {
-                // partition was empty, just skip to next
-                partitionLimit = -1;
+            final long baseRowCount = reader.getPartitionRowCountFromMetadata(currentPartition);
+            final boolean hasDelta = reader.getTxFile().getPartitionHasDelta(currentPartition);
+            if (baseRowCount == 0 && !hasDelta) {
                 partitionHi = currentPartition;
+                continue;
+            }
+            final TimestampFinder timestampFinder = initTimestampFinder(currentPartition, baseRowCount);
+            final long logicalRowCount = getCurrentLogicalRowCount();
+            if (logicalRowCount == 0) {
+                partitionHi = currentPartition;
+                continue;
+            }
+            if (getCurrentPartitionFrameState() == 0) {
+                if (timestampFinder.minTimestampLowerBound() > intervalHi) {
+                    partitionHi = currentPartition;
+                    continue;
+                }
+                if (timestampFinder.maxTimestampUpperBound() < intervalLo) {
+                    intervalsHi = currentInterval;
+                    continue;
+                }
+            }
+
+            LOG.debug()
+                    .$("next [partition=").$(currentPartition)
+                    .$(", intervalLo=").$ts(intervalModel.getTimestampDriver(), intervalLo)
+                    .$(", intervalHi=").$ts(intervalModel.getTimestampDriver(), intervalHi)
+                    .$(", rowCount=").$(logicalRowCount)
+                    .$(", currentInterval=").$(currentInterval)
+                    .I$();
+
+            reader.openPartition(currentPartition);
+            timestampFinder.prepare();
+            final long limitHi = searchPartitionIndex == currentPartition ? searchHi : logicalRowCount - 1;
+            final long lo = timestampFinder.countBefore(intervalLo, 0, limitHi);
+            final long hi = timestampFinder.countThrough(intervalHi, lo, limitHi);
+            validateIntervalBounds(currentPartition, lo, hi);
+            // Earlier intervals cannot contain rows at or above this interval's lower bound.
+            searchPartitionIndex = currentPartition;
+            searchHi = lo - 1;
+            if (lo == 0) {
+                partitionHi = currentPartition;
+            } else {
+                intervalsHi = currentInterval;
+            }
+            if (lo < hi) {
+                populateFrame(currentPartition, lo, hi, intervalLo, intervalHi);
+                sizeSoFar = Math.addExact(sizeSoFar, hi - lo);
+                return frame;
             }
         }
         return null;
@@ -254,18 +205,6 @@ public class IntervalBwdPartitionFrameCursor extends AbstractIntervalPartitionFr
     @Override
     public void toTop() {
         super.toTop();
-        partitionLimit = -1;
-    }
-
-    private void skipInterval(int intervalIndex, long limit) {
-        LOG.debug().$("next skips interval [partitionLimit=").$(limit).$(", intervalsHi=").$(intervalIndex).$(']').$();
-        partitionLimit = limit; // use "limit" for max
-        intervalsHi = intervalIndex;
-    }
-
-    private void skipPartition(int currentPartition) {
-        LOG.debug().$("next skips partition").$();
-        partitionHi = currentPartition;
-        partitionLimit = -1;
+        searchPartitionIndex = -1;
     }
 }

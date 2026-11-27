@@ -84,6 +84,11 @@ public class IsIPv4OrderedGroupByFunction extends BooleanFunction implements Gro
     }
 
     @Override
+    public boolean hasNonNullEmptyValue() {
+        return true;
+    }
+
+    @Override
     public void initValueIndex(int valueIndex) {
         this.valueIndex = valueIndex;
     }
@@ -108,5 +113,10 @@ public class IsIPv4OrderedGroupByFunction extends BooleanFunction implements Gro
     @Override
     public boolean supportsParallelism() {
         return false;
+    }
+
+    @Override
+    public boolean isStateSelfContained() {
+        return true;
     }
 }

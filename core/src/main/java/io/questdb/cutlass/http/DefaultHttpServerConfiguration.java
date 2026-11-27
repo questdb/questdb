@@ -198,11 +198,6 @@ public class DefaultHttpServerConfiguration extends DefaultIODispatcherConfigura
     }
 
     @Override
-    public boolean isQwpBrowserTlsTerminationEnabled() {
-        return false;
-    }
-
-    @Override
     public boolean isSettingsReadOnly() {
         return false;
     }
@@ -267,6 +262,11 @@ public class DefaultHttpServerConfiguration extends DefaultIODispatcherConfigura
         @Override
         public long getQwpMaxUncommittedRows() {
             return QwpConstants.DEFAULT_MAX_UNCOMMITTED_ROWS;
+        }
+
+        @Override
+        public long getQwpMinIdleMsBeforeWriterRelease() {
+            return QwpConstants.DEFAULT_MIN_IDLE_MS_BEFORE_WRITER_RELEASE;
         }
 
         @Override

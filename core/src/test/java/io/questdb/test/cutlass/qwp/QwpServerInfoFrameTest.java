@@ -224,8 +224,8 @@ public class QwpServerInfoFrameTest {
                 info.getCapabilities() & QwpEgressMsgKind.CAP_QUERY_TIMEOUT
         );
         Assert.assertEquals(
-                "the provider reported nothing else, so nothing else may be set",
-                QwpEgressMsgKind.CAP_QUERY_TIMEOUT,
+                "the provider reported nothing, so only the processor's own bits may be set",
+                QwpEgressMsgKind.CAP_QUERY_TIMEOUT | io.questdb.cutlass.qwp.codec.QwpEgressMsgKind.CAP_QUERY_DETAILS,
                 info.getCapabilities()
         );
     }
@@ -260,6 +260,39 @@ public class QwpServerInfoFrameTest {
         Assert.assertEquals("questdb", info.getClusterId());
         Assert.assertEquals("node-a", info.getNodeId());
         Assert.assertNull(info.getZoneId());
+    }
+
+    @Test
+    public void testUpgradeFrameAdvertisesQueryDetailsForEveryProvider() throws Exception {
+        // CAP_QUERY_DETAILS describes the egress processor, not the node: the
+        // upgrade writer sets it whatever the provider reports, and leaves the
+        // provider's own bits as they are. It adds no field to the frame.
+        // CAP_QUERY_TIMEOUT describes the processor too, so it is always set.
+        final int[] providerCapabilities = {
+                0,
+                io.questdb.cutlass.qwp.codec.QwpEgressMsgKind.CAP_QUERY_FLAGS,
+                io.questdb.cutlass.qwp.codec.QwpEgressMsgKind.CAP_QUERY_DETAILS,
+                io.questdb.cutlass.qwp.codec.QwpEgressMsgKind.CAP_QUERY_FLAGS | 0x40000000,
+        };
+        for (int providerCapability : providerCapabilities) {
+            for (boolean isCompressionAdvertised : new boolean[]{false, true}) {
+                QwpServerInfo info = decodeUpgradeFrame(
+                        new FixedServerInfoProvider(providerCapability),
+                        isCompressionAdvertised,
+                        QwpConstants.COMPRESSION_ZSTD,
+                        (byte) 3
+                );
+                final int expected = providerCapability
+                        | io.questdb.cutlass.qwp.codec.QwpEgressMsgKind.CAP_QUERY_DETAILS
+                        | io.questdb.cutlass.qwp.codec.QwpEgressMsgKind.CAP_QUERY_TIMEOUT
+                        | (isCompressionAdvertised ? io.questdb.cutlass.qwp.codec.QwpEgressMsgKind.CAP_COMPRESSION : 0);
+                Assert.assertEquals("provider capabilities 0x" + Integer.toHexString(providerCapability),
+                        expected, info.getCapabilities());
+                Assert.assertEquals("questdb", info.getClusterId());
+                Assert.assertEquals("node-a", info.getNodeId());
+                Assert.assertNull(info.getZoneId());
+            }
+        }
     }
 
     @Test

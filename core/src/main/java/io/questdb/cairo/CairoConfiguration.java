@@ -32,6 +32,8 @@ import io.questdb.Metrics;
 import io.questdb.TelemetryConfiguration;
 import io.questdb.VolumeDefinitions;
 import io.questdb.cairo.idx.PostingIndexUtils;
+import io.questdb.cairo.sql.PartitionFrameDecoder;
+import io.questdb.cairo.sql.PartitionFrameStateFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.qwp.codec.DefaultQwpServerInfoProvider;
 import io.questdb.cutlass.qwp.codec.QwpServerInfoProvider;
@@ -57,11 +59,13 @@ import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 import io.questdb.std.datetime.nanotime.NanosecondClockImpl;
 import io.questdb.std.str.CharSink;
+import io.questdb.tasks.ColumnPurgeTask;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.Map;
 import java.util.function.LongSupplier;
+import java.util.function.ObjIntConsumer;
 
 public interface CairoConfiguration {
 
@@ -201,9 +205,86 @@ public interface CairoConfiguration {
 
     int getColumnPurgeTaskPoolCapacity();
 
+    /**
+     * Receives the task and the offset in {@link ColumnPurgeTask#getUpdatedColumnInfo()} of each entry
+     * whose files the column purge job leaves in place because DROP PARTITION, ATTACH, DETACH or
+     * TRUNCATE changed the truncate version of the table after the purge was queued. The purge log
+     * marks such an entry completed, as it marks a purged one, so tests read the refusals here.
+     *
+     * @return the listener, or null when nothing listens
+     */
+    @Nullable
+    default ObjIntConsumer<ColumnPurgeTask> getColumnPurgeTruncateRefusalListener() {
+        return null;
+    }
+
     long getCommitLatency();
 
     int getCommitMode();
+
+    /**
+     * Minimum interval, in milliseconds, between durable epochs of one table under {@link CommitMode#ADAPTIVE}.
+     * {@code 0} advances the epoch on every apply batch; a negative value disables adaptive epochs, including
+     * the {@link #getAdaptiveEpochMaxRows()} cap, which is a deliberate opt-out: the WAL is then never purged
+     * and recovery replays all of it.
+     * <p>This default (1000 ms) serves embedded configurations and tests; the server default is 60000 ms since
+     * {@link #getAdaptiveEpochMaxRows()} already bounds the backlog under load.
+     *
+     * @return the minimum per-table durable-epoch interval in milliseconds; negative disables epochs
+     */
+    default long getAdaptiveEpochIntervalMs() {
+        return 1000;
+    }
+
+    /**
+     * The maximum rows applied to a table since its last durable epoch before the apply worker advances the
+     * epoch, independent of {@link #getAdaptiveEpochIntervalMs()}. Bounds post-epoch WAL retention and
+     * post-crash recovery-replay lag so the interval can stay long. {@code <= 0} disables the cap.
+     *
+     * @return the per-table un-epoched applied-row cap; {@code <= 0} disables it
+     */
+    default long getAdaptiveEpochMaxRows() {
+        return 5_000_000;
+    }
+
+    /**
+     * The adaptive group-commit window in microseconds ({@code cairo.adaptive.commit.group.window}). Under
+     * {@link CommitMode#ADAPTIVE}, {@code commit0} makes the writer's own segment files durable, then returns
+     * once the shared sequencer record is in the page cache; the sequencer fdatasync is batched across the
+     * commits within the window. {@code localDurableSeqTxn}, the durable-ack frontier, advances only when
+     * that fdatasync completes, so a crash loses only commits whose batch fdatasync had not completed.
+     * <p>{@code 0} fdatasyncs each commit before {@code commit0} returns, at {@code sync} latency; a negative
+     * value counts as {@code 0}. Other modes ignore the setting; the mat-view refresh WAL always fdatasyncs.
+     *
+     * @return the group-commit window in microseconds; {@code 0} commits synchronously
+     */
+    default long getAdaptiveCommitGroupWindowUs() {
+        return 50_000;
+    }
+
+    /**
+     * Whether startup recovery ({@link RecoveryCoordinator}) restores each WAL table that has a save point
+     * from it, before WAL apply replays the transactions after it. When {@code false}, startup refuses a
+     * table that has a save point rather than expose applied state that may be torn; no effect otherwise.
+     * Not a server property: only tests turn it off, to drive the refusal path.
+     *
+     * @return {@code true} to run the adaptive epoch roll-forward on startup
+     */
+    default boolean isAdaptiveRecoveryRollForwardEnabled() {
+        return true;
+    }
+
+    /**
+     * Whether a clean {@link io.questdb.cairo.TableWriter} close flushes a final durable epoch over any
+     * committed tail the last epoch does not cover (ADAPTIVE only). When {@code true} (default), a graceful
+     * close advances the durable epoch to the committed frontier, leaving nothing to roll forward; when
+     * {@code false}, the tail is left for the next boot's idempotent WAL replay. No effect otherwise.
+     *
+     * @return {@code true} to flush a durable epoch on a clean writer close
+     */
+    default boolean isAdaptiveEpochFlushOnClose() {
+        return true;
+    }
 
     int getCompileViewModelPoolCapacity();
 
@@ -547,6 +628,49 @@ public interface CairoConfiguration {
      * attempt. {@code 0} means unlimited; only the global RSS limit applies.
      */
     long getMatViewRefreshMemoryLimitBytes();
+
+    /**
+     * The number of materialized view partitions, across all views, for which the EXPIRE ROWS cleanup job
+     * remembers that the partition is unchanged and holds no expired row, so that its next run skips the
+     * partition instead of counting its rows again.
+     * <p>
+     * The job remembers partitions for a policy that decides each row from that row's own data. The
+     * exception is a policy that is a single comparison putting the designated timestamp below a
+     * TIMESTAMP-typed constant ({@code ts < T}, {@code ts <= T}, {@code T > ts}, {@code T >= ts}); the job
+     * decides those partitions from their bounds instead. A string or numeric threshold such as
+     * {@code ts < '2024-01-03'} binds as STRING or LONG, so it uses the cache.
+     * <p>
+     * Once the job remembers this many partitions, it keeps those and adds no more, so each run counts the
+     * rows of every other unchanged partition again. The job keeps this information in memory only, so its
+     * first run after a restart counts the rows of every partition once. Set 0 to make every run count every
+     * partition.
+     */
+    int getMatViewRowExpiryCleanupMaxCachedPartitions();
+
+    /**
+     * The fraction of a materialized view partition's rows that must be expired before the EXPIRE ROWS
+     * cleanup job compacts that partition. To compact a partition, the job rewrites all of the rows that
+     * are not expired.
+     * <p>
+     * This value doesn't apply to a fully expired partition because deleting it wholesale is a cheap
+     * operation. It concerns a partition that's only partially expired, specifically when the expiration
+     * policy is based on wall clock time, such as {@code ts < now() - 7d}. When the job checks this
+     * partition, it will find more rows that are newly expired due to the passage of time. It will want
+     * to copy all the surviving rows to a new partition file, and this will repeat on every cleanup run.
+     * <p>
+     * To prevent copying the partition data over and over, there's a threshold configured by this value:
+     * what fraction of the partition must be expired to warrant the copying of still-live data.
+     * A value of 0 makes the job compact a partition whenever any row expires. A value of 1 stops
+     * all compaction, and the job then frees the disk only when it reclaims a full partition.
+     * <p>
+     * This value applies to clock-based policies only. A clock-free predicate, such as {@code v < 2.0},
+     * decides each row from that row's own data, so the expired fraction of a partition changes only when
+     * the partition's rows change. One compaction pass clears the partition, and the job leaves it alone
+     * until a later refresh back-fills rows into it. The job therefore copies such a partition once per
+     * back-fill rather than once per cleanup run, and copies nothing at all while nothing writes to the
+     * view.
+     */
+    double getMatViewRowExpiryCleanupMinExpiredFraction();
 
     long getMatViewRowsPerQueryEstimate();
 
@@ -1052,6 +1176,8 @@ public interface CairoConfiguration {
 
     int getSqlMapMaxResizes();
 
+    int getSqlMaxGroupingSets();
+
     int getSqlMaxNegativeLimit();
 
     int getSqlModelPoolCapacity();
@@ -1216,6 +1342,12 @@ public interface CairoConfiguration {
 
     int getVectorAggregateQueueCapacity();
 
+    /**
+     * Returns the delay, in milliseconds, before the view compiler compiles a view again after its
+     * compile found a table locked, for example by a TRUNCATE, DROP or RENAME of a non-WAL table.
+     */
+    long getViewCompileBusyRetryTimeout();
+
     int getViewLexerPoolCapacity();
 
     int getViewWalWriterPoolMaxSegments();
@@ -1368,11 +1500,37 @@ public interface CairoConfiguration {
     int getWriterTickRowsCountMod();
 
     /**
+     * Whether the adaptive durable epoch batches its column flushes (start writeback of every column, wait for
+     * it, then one {@code syncfs}) instead of flushing each file with {@code msync(MS_SYNC)}, which is slower
+     * but durable on every filesystem.
+     *
+     * @return {@code true} if the batched adaptive durable-epoch column flush should be used
+     */
+    default boolean isAdaptiveEpochColumnSyncBatched() {
+        return true;
+    }
+
+    /**
      * When true, SQL compilation does not reject UPDATE, ALTER COLUMN TYPE and ADD INDEX on
      * tables whose partition layout (parquet, read-only or cold storage partitions) cannot
      * support them. Such statements then fail when applied, which suspends a WAL table.
      */
     boolean isAllPartitionOperationsAllowed();
+
+    /**
+     * Whether an ADAPTIVE WAL commit drains writeback across its whole segment before taking barriers: starts
+     * every column and {@code _event} file's writeback first ({@code sync_file_range(WRITE)}), then waits on
+     * each ({@code WRITE|WAIT_AFTER}), so the device writes files back concurrently instead of serially inside
+     * each file's own fdatasync.
+     * <p>The pass is advisory and never the barrier: every file still gets its own {@code fdatasync}. Where
+     * the call does nothing (ZFS, see {@link io.questdb.std.FilesFacade#isSyncFileRangeEffective(io.questdb.std.str.Utf8Sequence)})
+     * the commit only loses the speedup.
+     *
+     * @return {@code true} if the drain pass should run
+     */
+    default boolean isWalCommitWritebackDrainEnabled() {
+        return true;
+    }
 
     boolean isCairoMetadataCacheSnapshotOrdered();
 
@@ -1401,6 +1559,16 @@ public interface CairoConfiguration {
      * @return true if SqlParser should return the expression normalized instead of the default behavior.
      */
     boolean isColumnAliasExpressionEnabled();
+
+    /**
+     * Whether this start prepares the database for an older release
+     * ({@code cairo.commit.mode.adaptive.downgrade}); the server accepts it under {@link CommitMode#NOSYNC} only.
+     * When {@code true}, the start removes the {@code _cv} checksum trailers and the downgrade lock from every
+     * table ({@code RecoveryCoordinator.unlockTablesForDowngrade}), and the instance writes neither while it
+     * runs. When {@code false}, the default, every commit mode stores the trailers and locks the tables it
+     * writes in {@code _meta} ({@link ColumnType#DOWNGRADE_LOCKED_STORAGE_VERSION}).
+     */
+    boolean isCommitModeAdaptiveDowngrade();
 
     boolean isCopierChunkedEnabled();
 
@@ -1466,6 +1634,14 @@ public interface CairoConfiguration {
 
     boolean isMatViewRefreshMissingWalFilesFatal();
 
+    /**
+     * When this is false, queries against a materialized view that has an EXPIRE ROWS policy stay correct,
+     * because the read-time EXPIRE filter continues to hide the expired rows. But the server does not
+     * schedule the background row-expiry cleanup job, so the job never removes an expired row from disk.
+     * EXPIRE ROWS applies to materialized views only, so this value schedules no work for an ordinary table.
+     */
+    boolean isMatViewRowExpiryCleanupEnabled();
+
     boolean isMultiKeyDedupEnabled();
 
     boolean isO3PartitionMergeAppendEnabled();
@@ -1496,6 +1672,14 @@ public interface CairoConfiguration {
     // DistinctTimeSeriesRecordCursorFactory.
     boolean isSqlDistinctGroupByRewriteEnabled();
 
+    // Test-only seam, with no backing production property: always true in a running server, so the
+    // optimiser always rewrites a LATEST ON over a plain sub-query into a direct table read. Tests
+    // override it to false in a CairoConfiguration subclass to obtain the un-rewritten plan, which
+    // LatestByHoistEquivalenceTest compares against, shape by shape.
+    default boolean isSqlLatestOnHoistEnabled() {
+        return true;
+    }
+
     boolean isSqlJitDebugEnabled();
 
     boolean isSqlLatestByJitEnabled();
@@ -1517,6 +1701,8 @@ public interface CairoConfiguration {
     boolean isSqlParallelWindowJoinEnabled();
 
     boolean isSqlParquetRowGroupPruningEnabled();
+
+    boolean isSqlStreamGroupByEnabled();
 
     boolean isSqlWindowCachedLightEnabled();
 
@@ -1595,8 +1781,32 @@ public interface CairoConfiguration {
 
     int maxArrayElementCount();
 
+    default DeltaCheckpoint newDeltaCheckpoint() {
+        return new UnsupportedDeltaCheckpoint(this);
+    }
+
     default ParquetPartitionDecoder newParquetPartitionDecoder() {
         return new ParquetPartitionDecoder();
+    }
+
+    @Nullable
+    default PartitionFrameDecoder newPartitionFrameDecoder() {
+        return null;
+    }
+
+    @Nullable
+    default PartitionFrameStateFactory newPartitionFrameStateFactory(TableToken tableToken) {
+        return null;
+    }
+
+    @Nullable
+    default PartitionDeltaWriter newPartitionDeltaWriter() {
+        return null;
+    }
+
+    @Nullable
+    default AbstractTimestampFinder newTimestampFinder() {
+        return null;
     }
 
     boolean useWithinLatestByOptimisation();

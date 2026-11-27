@@ -25,24 +25,39 @@
 package io.questdb.test.cairo.parquet;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnPurgeJob;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.O3PartitionJob;
+import io.questdb.cairo.ParquetMetaFileReader;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.PartitionCompactionScanJob;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableSnapshotRestore;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TxWriter;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.cairo.wal.WalWriter;
+import io.questdb.griffin.engine.table.parquet.ParquetMetadataWriter;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.FindVisitor;
+import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.datetime.Clock;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.fuzz.O3ParquetPathCounts;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -50,7 +65,13 @@ import org.junit.Test;
 
 import java.io.File;
 import java.util.Arrays;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
+
+import static io.questdb.cairo.wal.WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
 
 /**
  * End-to-end coverage for the idle-triggered Parquet partition compaction: {@link PartitionCompactionScanJob}
@@ -68,6 +89,7 @@ public class ParquetPartitionCompactionTest extends AbstractCairoTest {
     private static final String ADD_COLUMN = "ALTER TABLE %s ADD COLUMN x SYMBOL";
     private static final String ADD_COVERING_POSTING_INDEX = "ALTER TABLE %s ALTER COLUMN x ADD INDEX TYPE POSTING INCLUDE (a)";
     private static final String ADD_POSTING_INDEXED_COLUMN = "ALTER TABLE %s ADD COLUMN x SYMBOL INDEX TYPE POSTING";
+    private static final long DAY_2020_01_01 = 1_577_836_800_000_000L;
 
     /**
      * A writer held by another thread cannot apply the swap directly: the job builds the compacted
@@ -107,18 +129,16 @@ public class ParquetPartitionCompactionTest extends AbstractCairoTest {
     }
 
     /**
-     * {@link TableWriter#swapCompactedParquetPartition} refuses to run inside an open transaction: the staged
-     * copy was built off a reader snapshot taken before those uncommitted rows existed, so swapping it in
-     * would drop them. Declining leaves the transaction for its owner to commit normally - which is asserted
+     * {@link TableWriter#swapCompactedParquetPartition} refuses to run inside an open transaction holding a row for
+     * the partition: the staged copy predates that row, so swapping it in would drop it. Declining leaves the
+     * transaction for its owner to commit normally - which is asserted
      * here, row by row.
      * <p>
      * The table stays non-WAL because that is the shape the guard was written for: {@code
      * TableUpdateDetails.commitIfMaxUncommittedRowsCountReached()} ticks a non-WAL writer every {@code
      * cairo.writer.tick.rows.count} rows WITHOUT committing first, so an ILP-over-TCP table sits
-     * mid-transaction for most of a tick. The background sweep no longer reaches a non-WAL table at all
-     * (see {@link #testIdleSweepLeavesANonWalTableAlone}), so nothing queues a swap here any more and the
-     * test calls the entry point directly. The guard itself stays: the entry point is public and its
-     * contract holds for whoever calls it.
+     * mid-transaction for most of a tick. A swap commits around a transaction that cannot touch the partition; an
+     * O3 row inside the partition is what it must refuse.
      */
     @Test
     public void testSwapInsideAnOpenTransactionIsRefused() throws Exception {
@@ -153,7 +173,8 @@ public class ParquetPartitionCompactionTest extends AbstractCairoTest {
                             parquetFileSizeBefore,
                             ownerWriter.getMetadataVersion(),
                             parquetFileSizeBefore,
-                            false
+                            false,
+                            new IntList()
                     );
                     Assert.fail("the swap ran inside an open transaction");
                 } catch (TableReferenceOutOfDateException ignore) {
@@ -173,6 +194,232 @@ public class ParquetPartitionCompactionTest extends AbstractCairoTest {
             // and every row the partition already held is still there.
             assertDataIntactPlusLagRow("q");
         });
+    }
+
+    /**
+     * Compaction moves no row, so the rows of the column tops read as before it. Columns with a top inside the
+     * partition (6 of 8 rows, row groups of 4), a top of the whole partition, and columns the file lacks; CHAR
+     * is the control, its 0 is NULL. CONVERT TO PARQUET writes the rows of the first two kinds of top as NULLs,
+     * which BOOLEAN, BYTE and SHORT do not have. DROP COLUMN triggers the compaction, which keeps the row
+     * groups. After it, each column changes to a type with NULL; lazily from the parquet partition, after a
+     * reopen and after CONVERT TO NATIVE, the rows of the tops read NULL or false/0 and every other row reads
+     * as on the native twin. Without statistics CONVERT TO NATIVE runs first, see
+     * assertIdleSweepKeepsColumnTops().
+     */
+    @Test
+    public void testIdleSweepKeepsColumnTops() throws Exception {
+        assertIdleSweepKeepsColumnTops(true);
+    }
+
+    @Test
+    public void testIdleSweepKeepsColumnTopsStatisticsDisabled() throws Exception {
+        assertIdleSweepKeepsColumnTops(false);
+    }
+
+    /**
+     * After the compaction, m BYTE is added and the row at 00:30 merges into row group 0: it ends the top of bt
+     * BYTE (2 rows, inside row group 0) and of m, absent from the file, all 8 rows. The rows of both tops read 0,
+     * as the native twin materializes them.
+     */
+    @Test
+    public void testIdleSweepThenO3EndsColumnTops() throws Exception {
+        setUpSmallRowGroupsNoAutoRewrite();
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL, "0");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "60m");
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, false);
+        assertMemoryLeak(() -> {
+            for (String t : new String[]{"pt", "tw"}) {
+                execute("CREATE TABLE " + t + " (v INT, filler INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("INSERT INTO " + t + " (v, ts) VALUES (1, '2020-01-01T00:00:00.000Z'), (2, '2020-01-01T01:00:00.000Z')");
+                execute("ALTER TABLE " + t + " ADD COLUMN bt BYTE");
+                execute("INSERT INTO " + t + " (v, ts, bt) VALUES (3, '2020-01-01T02:00:00.000Z', 3), (4, '2020-01-01T03:00:00.000Z', 4), "
+                        + "(5, '2020-01-01T04:00:00.000Z', 5), (6, '2020-01-01T05:00:00.000Z', 6), "
+                        + "(7, '2020-01-01T06:00:00.000Z', 7), (8, '2020-01-01T07:00:00.000Z', 8), (99, '2020-01-02T00:00:00.000Z', 99)");
+            }
+            drainWalQueue();
+            execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+            for (String t : new String[]{"pt", "tw"}) {
+                execute("ALTER TABLE " + t + " DROP COLUMN filler");
+            }
+            drainWalQueue();
+            engine.releaseInactive();
+            final TableToken tableToken = engine.verifyTableName("pt");
+            final long nameTxnBefore = parquetPartitionNameTxn(tableToken);
+            runSweepPastTheIdleTimeout();
+            Assert.assertNotEquals("the sweep should have compacted the partition", nameTxnBefore, parquetPartitionNameTxn(tableToken));
+            for (String t : new String[]{"pt", "tw"}) {
+                execute("ALTER TABLE " + t + " ADD COLUMN m BYTE");
+                execute("INSERT INTO " + t + " (v, ts, bt, m) VALUES (50, '2020-01-01T00:30:00.000Z', 9, 9)");
+                execute("ALTER TABLE " + t + " ALTER COLUMN bt TYPE INT");
+                execute("ALTER TABLE " + t + " ALTER COLUMN m TYPE INT");
+            }
+            drainWalQueue();
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, "tw ORDER BY ts", "pt ORDER BY ts", LOG, false);
+            assertQuery("SELECT v, bt, m FROM pt WHERE ts IN '2020-01-01' ORDER BY ts")
+                    .noLeakCheck()
+                    .returns("""
+                            v\tbt\tm
+                            1\t0\t0
+                            50\t9\t9
+                            2\t0\t0
+                            3\t3\t0
+                            4\t4\t0
+                            5\t5\t0
+                            6\t6\t0
+                            7\t7\t0
+                            8\t8\t0
+                            """);
+        });
+    }
+
+    /**
+     * The swap commits an in-order open transaction that opened a new partition, then lands through the ordinary
+     * commit: a swap committed around it would move {@code _txn} past that directory's name txn without listing it,
+     * and the O3 purge job would delete it.
+     */
+    @Test
+    public void testSwapCommitsAnOpenTransactionThatOpenedAPartition() throws Exception {
+        setUpSmallRowGroupsNoAutoRewrite();
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL, "-1");
+
+        assertMemoryLeak(() -> {
+            createTableWithDeadRowGroupBytes("op", false);
+            final TableToken tableToken = engine.verifyTableName("op");
+            final long nameTxnBefore = parquetPartitionNameTxn(tableToken);
+            final String stagingDir = stagingDir(tableToken);
+
+            try (TableWriter ownerWriter = engine.getWriter(tableToken, "owner")) {
+                appendRow(ownerWriter, "2020-01-03T00:00:00.000000Z", 202, "k1");
+                Assert.assertTrue(ownerWriter.inTransaction());
+                Assert.assertFalse("the fixture must hold no O3 row", ownerWriter.hasO3());
+                Assert.assertEquals("the row must have opened a partition", 3, ownerWriter.getPartitionCount());
+
+                Assert.assertTrue(engine.getPartitionCompactionRequestQueue().tryRequest(tableToken, DAY_2020_01_01));
+                runSweepOnAnotherThread();
+                Assert.assertTrue("the busy writer must have been handed a queued swap", dirExists(stagingDir));
+
+                ownerWriter.tick();
+                Assert.assertFalse("the swap must commit the open transaction first", ownerWriter.inTransaction());
+                Assert.assertFalse("the swap should have renamed the staging directory in", dirExists(stagingDir));
+                Assert.assertNotEquals("the swap did not land", nameTxnBefore, parquetPartitionNameTxn(tableToken));
+                assertUnusedBytesZero(tableToken);
+            }
+
+            assertQuery("SELECT count() FROM op")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n17\n");
+            assertQuery("SELECT a, s, ts FROM op WHERE ts >= '2020-01-02'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(
+                            """
+                                    a\ts\tts
+                                    99\tk1\t2020-01-02T00:00:00.000000Z
+                                    202\tk1\t2020-01-03T00:00:00.000000Z
+                                    """
+                    );
+        });
+    }
+
+    /**
+     * The last committed partition is never swapped around an open transaction, even one with no rows for it.
+     */
+    @Test
+    public void testSwapOfTheLastPartitionAroundAnOpenTransactionIsRefused() throws Exception {
+        setUpSmallRowGroupsNoAutoRewrite();
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL, "-1");
+
+        assertMemoryLeak(() -> {
+            createTableWithDeadRowGroupBytes("lp", false);
+            execute("ALTER TABLE lp DROP PARTITION LIST '2020-01-02'");
+            final TableToken tableToken = engine.verifyTableName("lp");
+            final long nameTxnBefore = parquetPartitionNameTxn(tableToken);
+            final long parquetFileSizeBefore = parquetPartitionFileSize(tableToken);
+
+            try (TableWriter ownerWriter = engine.getWriter(tableToken, "owner")) {
+                Assert.assertEquals("the parquet day must be the last partition", 1, ownerWriter.getPartitionCount());
+                appendRow(ownerWriter, "2019-12-31T12:00:00.000000Z", 201, "k2");
+                Assert.assertTrue(ownerWriter.inTransaction());
+                Assert.assertTrue("the fixture must hold an O3 row", ownerWriter.hasO3());
+
+                try {
+                    ownerWriter.swapCompactedParquetPartition(
+                            DAY_2020_01_01,
+                            nameTxnBefore,
+                            parquetFileSizeBefore,
+                            ownerWriter.getMetadataVersion(),
+                            parquetFileSizeBefore,
+                            false,
+                            new IntList()
+                    );
+                    Assert.fail("the swap of the last partition ran around an open transaction");
+                } catch (TableReferenceOutOfDateException ignore) {
+                }
+
+                Assert.assertTrue("the swap committed the writer's open transaction", ownerWriter.inTransaction());
+                Assert.assertEquals("a declined swap must not replace the live partition", nameTxnBefore, parquetPartitionNameTxn(tableToken));
+                ownerWriter.commit();
+            }
+
+            assertQuery("SELECT count() FROM lp")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n16\n");
+            assertQuery("SELECT a, s, ts FROM lp WHERE ts < '2020-01-01'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(
+                            """
+                                    a\ts\tts
+                                    201\tk2\t2019-12-31T12:00:00.000000Z
+                                    """
+                    );
+        });
+    }
+
+    /**
+     * The sweep skips non-WAL tables, but Enterprise cold storage requests the rebuild explicitly.
+     */
+    @Test
+    public void testRequestCompactsANonWalParquetPartition() throws Exception {
+        setUpSmallRowGroupsNoAutoRewrite();
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL, "-1");
+
+        assertMemoryLeak(() -> {
+            createTableWithDeadRowGroupBytes("rn", false);
+            final TableToken tableToken = engine.verifyTableName("rn");
+            assertUnusedBytesPositive(tableToken);
+            final long nameTxnBefore = parquetPartitionNameTxn(tableToken);
+
+            Assert.assertTrue(engine.getPartitionCompactionRequestQueue().tryRequest(tableToken, DAY_2020_01_01));
+            try (PartitionCompactionScanJob job = new PartitionCompactionScanJob(engine)) {
+                Assert.assertTrue("the request must dispatch the rebuild", job.run());
+                Assert.assertTrue(engine.getPartitionCompactionRequestQueue().tryRequest(tableToken, DAY_2020_01_01));
+                Assert.assertFalse("a compact partition must not be rebuilt again", job.run());
+            }
+            engine.releaseInactive();
+
+            Assert.assertNotEquals("the requested rebuild did not land", nameTxnBefore, parquetPartitionNameTxn(tableToken));
+            assertUnusedBytesZero(tableToken);
+            assertDataIntact("rn");
+        });
+    }
+
+    /**
+     * A swap commits around an open non-WAL transaction none of whose rows can land in the swapped partition.
+     */
+    @Test
+    public void testSwapCommitsAroundAnOpenTransactionThatMissesThePartition() throws Exception {
+        assertSwapAroundOpenTransaction(true);
+    }
+
+    @Test
+    public void testSwapCommittedAroundAnOpenTransactionSurvivesItsRollback() throws Exception {
+        assertSwapAroundOpenTransaction(false);
     }
 
     /**
@@ -362,6 +609,46 @@ public class ParquetPartitionCompactionTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testRestoredPostingIndexSurvivesParquetCompaction() throws Exception {
+        setUpSmallRowGroupsNoAutoRewrite();
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL, "0");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "60m");
+        assertMemoryLeak(() -> {
+            createCleanParquetPartition("t");
+            execute("ALTER TABLE t ALTER COLUMN s ADD INDEX TYPE POSTING INCLUDE (a)");
+            drainWalQueue();
+            final TableToken token = engine.verifyTableName("t");
+            final File valueFile;
+            try (TableReader reader = engine.getReader(token); Path partitionPath = new Path().of(configuration.getDbRoot()).concat(token)) {
+                final int partitionIndex = findParquetPartitionIndex(reader);
+                TableUtils.setPathForNativePartition(partitionPath, reader.getMetadata().getTimestampType(), reader.getPartitionedBy(),
+                        reader.getTxFile().getPartitionTimestampByIndex(partitionIndex), reader.getTxFile().getPartitionNameTxn(partitionIndex));
+                valueFile = new File(partitionPath.toString(), "s.pv.0");
+            }
+            engine.clear();
+            Assert.assertTrue(valueFile.delete());
+            try (
+                    Path tablePath = new Path().of(configuration.getDbRoot()).concat(token).slash();
+                    TableSnapshotRestore restore = new TableSnapshotRestore(configuration)
+            ) {
+                restore.rebuildTableFiles(tablePath, new AtomicInteger(), false);
+            }
+            assertQuery("SELECT count(), sum(a) FROM t WHERE s = 'k1'")
+                    .noRandomAccess().expectSize().withPlanContaining("CoveringIndex on: s")
+                    .returns("count\tsum\n3\t103\n");
+            execute("ALTER TABLE t DROP COLUMN b");
+            drainWalQueue();
+            engine.releaseInactive();
+            final long nameTxnBefore = parquetPartitionNameTxn(token);
+            runSweepPastTheIdleTimeout();
+            Assert.assertNotEquals("compaction must rebuild the restored index", nameTxnBefore, parquetPartitionNameTxn(token));
+            assertQuery("SELECT count(), sum(a) FROM t WHERE s = 'k1'")
+                    .noRandomAccess().expectSize().withPlanContaining("CoveringIndex on: s")
+                    .returns("count\tsum\n3\t103\n");
+        });
+    }
+
     /**
      * An INDEXed column added after the partition went parquet is absent from the file, so the compaction
      * re-encodes the partition fully materialized and the swap zeroes every column top - including the
@@ -462,6 +749,102 @@ public class ParquetPartitionCompactionTest extends AbstractCairoTest {
             assertCoveredVarSizeValues(expected);
             assertNoIndexBuildLeftovers(tableToken);
         });
+    }
+
+    /**
+     * A pinned reader defers the purge of an index version an in-place O3 update superseded to
+     * {@code ColumnPurgeJob}, which targets the old directory. A sweep that rewrites the partition
+     * meanwhile must carry only the version {@code _cv} names, or the superseded copy leaks.
+     */
+    @Test
+    public void testIdleSweepCarriesOnlyTheLiveIndexVersionBitmap() throws Exception {
+        assertIdleSweepCarriesOnlyTheLiveIndexVersion("INDEX", false);
+    }
+
+    @Test
+    public void testIdleSweepCarriesOnlyTheLiveIndexVersionPosting() throws Exception {
+        assertIdleSweepCarriesOnlyTheLiveIndexVersion("INDEX TYPE POSTING", false);
+    }
+
+    @Test
+    public void testIdleSweepCarriesOnlyTheLiveIndexVersionPostingCovering() throws Exception {
+        assertIdleSweepCarriesOnlyTheLiveIndexVersion("INDEX TYPE POSTING INCLUDE (a)", true);
+    }
+
+    /**
+     * DROP INDEX and ADD INDEX with a reader pinned leave the dropped version of the index waiting for its purge in the
+     * parquet partition directory. A sweep that carries the source's index files into the rewritten partition must
+     * leave that version out. A directory is carried whatever its name: only files are classified.
+     */
+    @Test
+    public void testIdleSweepCarriesOnlyTheLiveVersionOfAReAddedIndex() throws Exception {
+        setUpSmallRowGroupsNoAutoRewrite();
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL, "0");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "60m");
+        assertMemoryLeak(() -> {
+            // The index comes after the in-place commits that left dead bytes, so the sweep carries it
+            createTableWithDeadRowGroupBytes("ra", true, "");
+            execute("ALTER TABLE ra ALTER COLUMN s ADD INDEX");
+            drainWalQueue();
+            final TableToken tableToken = engine.verifyTableName("ra");
+            assertUnusedBytesPositive(tableToken);
+            final long live;
+            try (TableReader ignore = engine.getReader(tableToken)) {
+                execute("ALTER TABLE ra ALTER COLUMN s DROP INDEX");
+                drainWalQueue();
+                execute("ALTER TABLE ra ALTER COLUMN s ADD INDEX");
+                drainWalQueue();
+                live = parquetPartitionColumnNameTxn(tableToken, "s");
+                Assert.assertNotEquals(TableUtils.COLUMN_NAME_TXN_NONE, live);
+                Assert.assertEquals("s.k,s.k." + live + ",s.v,s.v." + live, liveIndexFileNames(tableToken, "s"));
+                // named as a superseded index version would be
+                Assert.assertTrue(new File(liveParquetPartitionDir(tableToken), "s.k.0").mkdir());
+
+                final long nameTxnBefore = parquetPartitionNameTxn(tableToken);
+                runSweepPastTheIdleTimeout();
+                Assert.assertNotEquals("the sweep did not rewrite the parquet partition", nameTxnBefore, parquetPartitionNameTxn(tableToken));
+            }
+            Assert.assertEquals("s.k.0,s.k." + live + ",s.v." + live, liveIndexFileNames(tableToken, "s"));
+            Assert.assertTrue(new File(liveParquetPartitionDir(tableToken), "s.k.0").isDirectory());
+            assertQuery("SELECT a, s, ts FROM ra WHERE s = 'k2'")
+                    .noLeakCheck()
+                    .expectSize(false)
+                    .inferRandomAccess()
+                    .timestamp("ts")
+                    .returns(
+                            """
+                                    a\ts\tts
+                                    2\tk2\t2020-01-01T01:00:00.000000Z
+                                    102\tk2\t2020-01-01T02:30:00.000000Z
+                                    4\tk2\t2020-01-01T03:00:00.000000Z
+                                    6\tk2\t2020-01-01T05:00:00.000000Z
+                                    8\tk2\t2020-01-01T07:00:00.000000Z
+                                    10\tk2\t2020-01-01T09:00:00.000000Z
+                                    12\tk2\t2020-01-01T11:00:00.000000Z
+                                    """
+                    );
+            assertSqlCursors("SELECT a, s, ts FROM ra WHERE concat(s, '') = 'k1'", "SELECT a, s, ts FROM ra WHERE s = 'k1'");
+        });
+    }
+
+    /**
+     * An index added to a column of an already-converted parquet partition gets no column name txn in
+     * {@code _cv}, so its files carry no txn suffix. The sweep must still recognise them as the live version
+     * and carry them into the rewritten partition.
+     */
+    @Test
+    public void testIdleSweepCarriesTheUnsuffixedIndexOfAnIndexAddedAfterConversionBitmap() throws Exception {
+        assertIdleSweepCarriesTheUnsuffixedIndexOfAnIndexAddedAfterConversion("ALTER TABLE ni ALTER COLUMN s ADD INDEX", "s.k", false);
+    }
+
+    @Test
+    public void testIdleSweepCarriesTheUnsuffixedIndexOfAnIndexAddedAfterConversionPosting() throws Exception {
+        assertIdleSweepCarriesTheUnsuffixedIndexOfAnIndexAddedAfterConversion("ALTER TABLE ni ALTER COLUMN s ADD INDEX TYPE POSTING", "s.pk", false);
+    }
+
+    @Test
+    public void testIdleSweepCarriesTheUnsuffixedIndexOfAnIndexAddedAfterConversionPostingCovering() throws Exception {
+        assertIdleSweepCarriesTheUnsuffixedIndexOfAnIndexAddedAfterConversion("ALTER TABLE ni ALTER COLUMN s ADD INDEX TYPE POSTING INCLUDE (a)", "s.pci", true);
     }
 
     /**
@@ -586,7 +969,8 @@ public class ParquetPartitionCompactionTest extends AbstractCairoTest {
                             fileSizeBefore,
                             ownerWriter.getMetadataVersion(),
                             fileSizeBefore,
-                            false
+                            false,
+                            new IntList()
                     );
                     Assert.fail("the swap replaced a partition written to since the snapshot");
                 } catch (TableReferenceOutOfDateException ignore) {
@@ -604,6 +988,116 @@ public class ParquetPartitionCompactionTest extends AbstractCairoTest {
             assertQuery("SELECT a FROM v WHERE ts = '2020-01-01T04:30:00.000000Z'")
                     .noLeakCheck()
                     .returns("a\n104\n");
+        });
+    }
+
+    /**
+     * A commit that leaves the parquet partition as it is - here a DEDUP re-send of rows it already holds - lands
+     * after the sweep has carried the partition's covering index files into staging, as hard links, and before the
+     * swap. The swap's staleness check sees neither the name txn nor the parquet file size move, so it installs the
+     * staged links: the commit must not have written the index files they share with the live directory, or the
+     * swapped-in key file names a value file the new directory does not have.
+     * <p>
+     * The covering index is added after the in-place O3 updates, so the file carries no index row map and the sweep
+     * links the index files instead of building them - the path a file written before index row maps existed takes
+     * too.
+     */
+    @Test
+    public void testSwapAfterDedupIdenticalCommitKeepsCoveringIndexPosting() throws Exception {
+        assertSwapAfterNoopCommitKeepsCoveringIndex("POSTING", false);
+    }
+
+    @Test
+    public void testSwapAfterDedupIdenticalCommitKeepsCoveringIndexPostingDelta() throws Exception {
+        assertSwapAfterNoopCommitKeepsCoveringIndex("POSTING DELTA", false);
+    }
+
+    @Test
+    public void testSwapAfterDedupIdenticalCommitKeepsCoveringIndexPostingEf() throws Exception {
+        assertSwapAfterNoopCommitKeepsCoveringIndex("POSTING EF", false);
+    }
+
+    /**
+     * The replace twin of {@link #testSwapAfterDedupIdenticalCommitKeepsCoveringIndexPosting}: a replace range that
+     * holds no row and brings none.
+     */
+    @Test
+    public void testSwapAfterReplaceNoopCommitKeepsCoveringIndex() throws Exception {
+        assertSwapAfterNoopCommitKeepsCoveringIndex("POSTING", true);
+    }
+
+    /**
+     * The interleaving of {@link #testSwapAfterDedupIdenticalCommitKeepsCoveringIndexPosting} with no hook in the
+     * sweep: WAL apply holds the writer from before it decides the commit changes nothing, so the sweep queues the
+     * swap onto the writer's command queue, and the writer applies it once the commit is done.
+     */
+    @Test
+    public void testBusyWriterSwapQueuedAcrossDedupIdenticalCommitKeepsCoveringIndex() throws Exception {
+        assertBusyWriterSwapQueuedAcrossNoopCommitKeepsCoveringIndex(false);
+    }
+
+    @Test
+    public void testBusyWriterSwapQueuedAcrossReplaceNoopCommitKeepsCoveringIndex() throws Exception {
+        assertBusyWriterSwapQueuedAcrossNoopCommitKeepsCoveringIndex(true);
+    }
+
+    /**
+     * A seal can stamp the source between the build and the swap: it leaves the nameTxn, the parquet file
+     * size and the metadata version alone, so the swap goes ahead. The copy holds the source's rows, so it
+     * carries the seal's stamp and keeps the bit, rather than the stamp the build read.
+     */
+    @Test
+    public void testSwapCarriesASealStampAppliedSinceTheBuild() throws Exception {
+        setUpSmallRowGroupsNoAutoRewrite();
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL, "0");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "60m");
+
+        assertMemoryLeak(() -> {
+            createTableWithDeadRowGroupBytes("ss", true);
+            final TableToken tableToken = engine.verifyTableName("ss");
+            final long nameTxnBefore = parquetPartitionNameTxn(tableToken);
+            final long sealSeqTxn = 1;
+            Assert.assertNotEquals("fixture: the seal must change the stamp", sealSeqTxn, parquetPartitionSeqTxn(tableToken));
+
+            try (TableWriter ownerWriter = engine.getWriter(tableToken, "owner")) {
+                runSweepOnAnotherThread();
+                Assert.assertTrue("the build should have staged a compacted copy", dirExists(stagingDir(tableToken)));
+
+                // What a seal applies: the source's _pm takes the seal's stamp, and the bit marks it.
+                final TxWriter tx = ownerWriter.getTxWriter();
+                final int partitionIndex = tx.getPartitionIndex(MicrosFormatUtils.parseTimestamp("2020-01-01T00:00:00.000000Z"));
+                final FilesFacade ff = configuration.getFilesFacade();
+                try (Path path = new Path()) {
+                    path.of(configuration.getDbRoot()).concat(tableToken.getDirName());
+                    TableUtils.setPathForParquetPartitionMetadata(
+                            path,
+                            ownerWriter.getMetadata().getTimestampType(),
+                            PartitionBy.DAY,
+                            tx.getPartitionTimestampByIndex(partitionIndex),
+                            tx.getPartitionNameTxn(partitionIndex)
+                    );
+                    final long fd = ff.openRW(path.$(), CairoConfiguration.O_NONE);
+                    Assert.assertTrue(fd > -1);
+                    try {
+                        ParquetMetadataWriter.setBaseSeqTxn(Files.toOsFd(fd), tx.getPartitionParquetFileSize(partitionIndex), sealSeqTxn);
+                    } finally {
+                        ff.close(fd);
+                    }
+                }
+                tx.setPartitionSealStamped(partitionIndex, true);
+                ownerWriter.bumpPartitionTableVersion();
+                ownerWriter.commit();
+
+                ownerWriter.tick();
+            }
+
+            Assert.assertNotEquals("the queued swap did not land", nameTxnBefore, parquetPartitionNameTxn(tableToken));
+            Assert.assertEquals("the copy must carry the seal's stamp", sealSeqTxn, parquetPartitionSeqTxn(tableToken));
+            try (TableReader reader = engine.getReader(tableToken)) {
+                Assert.assertTrue("the swap keeps the seal bit", reader.getTxFile().isPartitionSealStamped(findParquetPartitionIndex(reader)));
+            }
+            assertUnusedBytesZero(tableToken);
+            assertDataIntact("ss");
         });
     }
 
@@ -645,6 +1139,13 @@ public class ParquetPartitionCompactionTest extends AbstractCairoTest {
                 ff.rmdir(path.of(inFlightDir), false);
             }
         });
+    }
+
+    private static void appendRow(TableWriter writer, String timestamp, int a, String s) throws Exception {
+        final TableWriter.Row row = writer.newRow(MicrosFormatUtils.parseTimestamp(timestamp));
+        row.putInt(0, a);
+        row.putSym(1, s);
+        row.append();
     }
 
     private static boolean dirExists(String dir) {
@@ -761,8 +1262,41 @@ public class ParquetPartitionCompactionTest extends AbstractCairoTest {
     }
 
     private static PartitionCompactionScanJob newSweepPastTheIdleTimeout() {
+        return newSweepPastTheIdleTimeout(configuration.getFilesFacade());
+    }
+
+    private static PartitionCompactionScanJob newSweepPastTheIdleTimeout(FilesFacade ff) {
         final Clock twoHoursAhead = () -> configuration.getMicrosecondClock().getTicks() + 2 * Micros.HOUR_MICROS;
-        return new PartitionCompactionScanJob(engine, configuration.getFilesFacade(), twoHoursAhead);
+        return new PartitionCompactionScanJob(engine, ff, twoHoursAhead);
+    }
+
+    /**
+     * The parquet O3 paths one commit of {@link #queueNoopCommit} takes: the dedup or the replace no-op, nothing else.
+     */
+    private static String noopCommitPaths(boolean isReplace) {
+        return "inPlace=0, rewrite=0, dropInPlace=0, dropRewrite=0, replaceNoop=" + (isReplace ? 1 : 0)
+                + ", replaceRemoval=0, dedupIdentical=" + (isReplace ? 0 : 1);
+    }
+
+    /**
+     * Writes, without applying it, a commit that leaves the 2020-01-01 partition of the
+     * {@link #createDedupTableWithCoveringIndexAddedAfterO3} fixture unchanged: a re-send of two of its rows, or a
+     * replace range holding no row that brings none.
+     */
+    private static void queueNoopCommit(TableToken tableToken, boolean isReplace) throws Exception {
+        if (isReplace) {
+            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                // [05:10, 05:20) falls between the rows at 05:00 and 06:00
+                walWriter.commitWithParams(
+                        MicrosFormatUtils.parseTimestamp("2020-01-01T05:10:00.000000Z"),
+                        MicrosFormatUtils.parseTimestamp("2020-01-01T05:20:00.000000Z"),
+                        WAL_DEDUP_MODE_REPLACE_RANGE
+                );
+            }
+        } else {
+            execute("INSERT INTO " + tableToken.getTableName() + "(a, s, ts) VALUES" +
+                    "(1, 'k1', '2020-01-01T00:00:00.000Z'), (2, 'k2', '2020-01-01T01:00:00.000Z')");
+        }
     }
 
     /**
@@ -800,6 +1334,37 @@ public class ParquetPartitionCompactionTest extends AbstractCairoTest {
         engine.releaseInactive();
     }
 
+    // the rows of the table, with NULL and false/0 as one value in the rows of the tops that
+    // assertTwinMatches() describes
+    private static String twinRows(String table, String[][] columns) throws Exception {
+        sink.clear();
+        printSql(table + " ORDER BY ts");
+        final String[] lines = sink.toString().split("\n", -1);
+        final String[] header = lines[0].split("\t", -1);
+        final int[] tops = new int[header.length];
+        for (String[] column : columns) {
+            tops[Arrays.asList(header).indexOf(column[0])] = column[0].endsWith("6") ? 6 : 8;
+        }
+        final StringSink rows = new StringSink();
+        rows.put(lines[0]);
+        for (int i = 1; i < lines.length; i++) {
+            rows.put('\n');
+            final String[] cells = lines[i].split("\t", -1);
+            for (int c = 0; c < cells.length; c++) {
+                if (c > 0) {
+                    rows.put('\t');
+                }
+                final boolean isNullOrZero = switch (cells[c]) {
+                    case "", "0", "0.0", "false", "null" -> true;
+                    default -> false;
+                };
+                // line i holds row i - 1, and the first 8 rows are those of 2020-01-01
+                rows.put(c < tops.length && i <= tops[c] && isNullOrZero ? "NULL or 0" : cells[c]);
+            }
+        }
+        return rows.toString();
+    }
+
     private void assertAddedIndexedColumnQueries(
             String tableName,
             String expectedValueRows,
@@ -832,6 +1397,192 @@ public class ParquetPartitionCompactionTest extends AbstractCairoTest {
                 .returns("sum\n" + expectedNullSum + "\n");
     }
 
+    private void assertBusyWriterSwapQueuedAcrossNoopCommitKeepsCoveringIndex(boolean isReplace) throws Exception {
+        setUpSmallRowGroupsNoAutoRewrite();
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL, "0");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "60m");
+
+        final AtomicReference<Thread> applyThread = new AtomicReference<>();
+        final AtomicReference<String> pauseAtPath = new AtomicReference<>();
+        final CountDownLatch applyPaused = new CountDownLatch(1);
+        final CountDownLatch sweepDone = new CountDownLatch(1);
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                final String pausePath = pauseAtPath.get();
+                if (pausePath != null
+                        && Thread.currentThread() == applyThread.get()
+                        && Utf8s.equalsAscii(pausePath, name)
+                        && pauseAtPath.compareAndSet(pausePath, null)) {
+                    applyPaused.countDown();
+                    try {
+                        if (!sweepDone.await(60, TimeUnit.SECONDS)) {
+                            throw new AssertionError("the sweep did not finish");
+                        }
+                    } catch (InterruptedException e) {
+                        throw new AssertionError(e);
+                    }
+                }
+                return super.openRO(name);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            createDedupTableWithCoveringIndexAddedAfterO3("bw", "POSTING");
+            final TableToken tableToken = engine.verifyTableName("bw");
+            final long nameTxnBefore = parquetPartitionNameTxn(tableToken);
+            final String stagingDir = stagingDir(tableToken);
+            final String liveParquetMetaFile;
+            try (Path path = new Path()) {
+                liveParquetMetaFile = path.of(liveParquetPartitionDir(tableToken)).concat(TableUtils.PARQUET_METADATA_FILE_NAME).toString();
+            }
+            queueNoopCommit(tableToken, isReplace);
+
+            final O3ParquetPathCounts paths = new O3ParquetPathCounts();
+            final Throwable[] applyFailure = new Throwable[1];
+            final Thread applier = new Thread(() -> {
+                try {
+                    drainWalQueue();
+                } catch (Throwable e) {
+                    applyFailure[0] = e;
+                } finally {
+                    Misc.free(O3PartitionJob.THREAD_LOCAL_CLEANER);
+                    Path.clearThreadLocals();
+                }
+            });
+            applyThread.set(applier);
+            // WAL apply opens the live _pm before it decides the commit changes nothing, holding the writer.
+            pauseAtPath.set(liveParquetMetaFile);
+            applier.start();
+            try {
+                Assert.assertTrue("WAL apply never reached the parquet partition", applyPaused.await(60, TimeUnit.SECONDS));
+                try (PartitionCompactionScanJob job = newSweepPastTheIdleTimeout()) {
+                    job.run();
+                }
+                Assert.assertTrue("the busy writer must have been handed a queued swap", dirExists(stagingDir));
+                Assert.assertEquals("a busy writer must not have been swapped by another thread", nameTxnBefore, parquetPartitionNameTxn(tableToken));
+            } finally {
+                sweepDone.countDown();
+                applier.join();
+            }
+            if (applyFailure[0] != null) {
+                throw new AssertionError("WAL apply failed", applyFailure[0]);
+            }
+            engine.releaseInactive();
+
+            Assert.assertEquals(noopCommitPaths(isReplace), paths.toString());
+            Assert.assertFalse("the swap should have renamed the staging directory in", dirExists(stagingDir));
+            Assert.assertNotEquals("the queued swap did not land", nameTxnBefore, parquetPartitionNameTxn(tableToken));
+            assertUnusedBytesZero(tableToken);
+            assertCoveringIndexAnswers("bw");
+        });
+    }
+
+    private void assertIdleSweepKeepsColumnTops(boolean isStatisticsEnabled) throws Exception {
+        setUpSmallRowGroupsNoAutoRewrite();
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_STATISTICS_ENABLED, isStatisticsEnabled);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL, "0");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "60m");
+        // {column, type, the value of the rows after the top, the type it changes to after the compaction}
+        final String[][] columns = {
+                {"bt6", "BYTE", "6", "INT"}, {"sh6", "SHORT", "6", "LONG"}, {"bo6", "BOOLEAN", "true", "DOUBLE"}, {"ch6", "CHAR", "'c'", "VARCHAR"},
+                {"bt8", "BYTE", "8", "LONG"}, {"sh8", "SHORT", "8", "DOUBLE"}, {"bo8", "BOOLEAN", "true", "VARCHAR"}, {"ch8", "CHAR", "'c'", "STRING"},
+                {"btm", "BYTE", "9", "DOUBLE"}, {"shm", "SHORT", "9", "VARCHAR"}, {"bom", "BOOLEAN", "true", "INT"}, {"chm", "CHAR", "'c'", "VARCHAR"},
+        };
+        assertMemoryLeak(() -> {
+            for (String t : new String[]{"pt", "tw"}) {
+                execute("CREATE TABLE " + t + " (v INT, filler INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("INSERT INTO " + t + " (v, ts) VALUES (1, '2020-01-01T00:00:00.000Z'), (2, '2020-01-01T01:00:00.000Z'), "
+                        + "(3, '2020-01-01T02:00:00.000Z'), (4, '2020-01-01T03:00:00.000Z'), "
+                        + "(5, '2020-01-01T04:00:00.000Z'), (6, '2020-01-01T05:00:00.000Z')");
+                for (int i = 0; i < 4; i++) {
+                    execute("ALTER TABLE " + t + " ADD COLUMN " + columns[i][0] + " " + columns[i][1]);
+                }
+                final String values6 = columns[0][2] + ", " + columns[1][2] + ", " + columns[2][2] + ", " + columns[3][2];
+                execute("INSERT INTO " + t + " (v, ts, bt6, sh6, bo6, ch6) VALUES (7, '2020-01-01T06:00:00.000Z', " + values6
+                        + "), (8, '2020-01-01T07:00:00.000Z', " + values6 + ")");
+                // added after the 8 rows of 2020-01-01, while it is the last partition: a top of the whole partition
+                for (int i = 4; i < 8; i++) {
+                    execute("ALTER TABLE " + t + " ADD COLUMN " + columns[i][0] + " " + columns[i][1]);
+                }
+                execute("INSERT INTO " + t + " (v, ts, bt6, sh6, bo6, ch6, bt8, sh8, bo8, ch8) VALUES (99, '2020-01-02T00:00:00.000Z', "
+                        + values6 + ", " + columns[4][2] + ", " + columns[5][2] + ", " + columns[6][2] + ", " + columns[7][2] + ")");
+            }
+            drainWalQueue();
+            execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+            // added after the conversion: the parquet file lacks them
+            for (String t : new String[]{"pt", "tw"}) {
+                for (int i = 8; i < 12; i++) {
+                    execute("ALTER TABLE " + t + " ADD COLUMN " + columns[i][0] + " " + columns[i][1]);
+                }
+                execute("ALTER TABLE " + t + " DROP COLUMN filler");
+            }
+            drainWalQueue();
+            engine.releaseInactive();
+
+            final TableToken tableToken = engine.verifyTableName("pt");
+            final long nameTxnBefore = parquetPartitionNameTxn(tableToken);
+            final long fileSizeBefore = parquetPartitionFileSize(tableToken);
+            final String rowGroupsBefore = parquetRowGroupSizes(tableToken);
+            Assert.assertEquals("2 row groups: 4, 4", "4,4", rowGroupsBefore);
+            runSweepPastTheIdleTimeout();
+            Assert.assertNotEquals("the sweep should have compacted the partition", nameTxnBefore, parquetPartitionNameTxn(tableToken));
+            Assert.assertEquals("the compaction keeps the row groups", rowGroupsBefore, parquetRowGroupSizes(tableToken));
+            // the dropped INT column leaves the file, the 4 columns it lacked come in as chunks of NULL definition levels
+            // of a few bytes each, 2 row groups
+            Assert.assertTrue(
+                    "the compacted file grew from " + fileSizeBefore + " to " + parquetPartitionFileSize(tableToken),
+                    parquetPartitionFileSize(tableToken) < fileSizeBefore + 4 * 2 * 128
+            );
+            assertTwinMatches(columns);
+
+            if (!isStatisticsEnabled) {
+                // Without statistics the _pm decoder sees no column top in a chunk: a lazy change that decodes at
+                // the width of the source type reads the NULL top rows as 0, with or without the compaction. The
+                // changes then run on the native partition
+                execute("ALTER TABLE pt CONVERT PARTITION TO NATIVE LIST '2020-01-01'");
+                drainWalQueue();
+            }
+            for (String t : new String[]{"pt", "tw"}) {
+                for (String[] column : columns) {
+                    execute("ALTER TABLE " + t + " ALTER COLUMN " + column[0] + " TYPE " + column[3]);
+                }
+            }
+            drainWalQueue();
+            assertTwinMatches(columns);
+            // the rows of the tops read NULL or false/0: 6 and 8 rows, and the 8 rows of the columns the file lacked
+            assertQuery("SELECT count() FROM pt WHERE ts IN '2020-01-01' AND coalesce(bt6, 0) = 0 AND coalesce(sh6, 0) = 0 AND coalesce(bo6, 0) = 0")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n6\n");
+            assertQuery("SELECT count() FROM pt WHERE ts IN '2020-01-01' AND coalesce(bt8, 0) = 0 AND coalesce(sh8, 0) = 0 "
+                    + "AND coalesce(bo8, 'false') = 'false' AND coalesce(btm, 0) = 0 AND coalesce(shm, '0') = '0' AND coalesce(bom, 0) = 0")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n8\n");
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            assertTwinMatches(columns);
+            if (isStatisticsEnabled) {
+                execute("ALTER TABLE pt CONVERT PARTITION TO NATIVE LIST '2020-01-01'");
+                drainWalQueue();
+                assertTwinMatches(columns);
+            }
+        });
+    }
+
+    /**
+     * pt reads as tw, but a row of 2020-01-01 in the top of a column of {@code columns}, 6 rows for the columns
+     * that end with 6 and 8 for the others, reads NULL or false/0 on either: CONVERT TO PARQUET writes the rows
+     * of a top as NULLs, which BOOLEAN, BYTE and SHORT do not have.
+     */
+    private void assertTwinMatches(String[][] columns) throws Exception {
+        TestUtils.assertEquals(twinRows("tw", columns), twinRows("pt", columns));
+    }
+
     private void assertCleanParquetDataIntact(String tableName) throws Exception {
         assertQuery("SELECT count() FROM " + tableName)
                 .noLeakCheck()
@@ -852,6 +1603,41 @@ public class ParquetPartitionCompactionTest extends AbstractCairoTest {
                                 99\tk1\t2020-01-02T00:00:00.000000Z
                                 """
                 );
+    }
+
+    /**
+     * What the covering index of the {@link #createDedupTableWithCoveringIndexAddedAfterO3} fixture answers: the rows
+     * and covered values its inserts put there, the same as a scan that reads no index, with the table not suspended.
+     */
+    private void assertCoveringIndexAnswers(String tableName) throws Exception {
+        Assert.assertFalse("table suspended", engine.getTableSequencerAPI().isSuspended(engine.verifyTableName(tableName)));
+        final String k2Lookup = "SELECT a, s, ts FROM " + tableName + " WHERE s = 'k2'";
+        assertQuery(k2Lookup)
+                .noLeakCheck()
+                .expectSize()
+                .inferRandomAccess()
+                .withPlanContaining("CoveringIndex")
+                .timestamp("ts")
+                .returns(
+                        """
+                                a\ts\tts
+                                2\tk2\t2020-01-01T01:00:00.000000Z
+                                102\tk2\t2020-01-01T02:30:00.000000Z
+                                4\tk2\t2020-01-01T03:00:00.000000Z
+                                6\tk2\t2020-01-01T05:00:00.000000Z
+                                8\tk2\t2020-01-01T07:00:00.000000Z
+                                10\tk2\t2020-01-01T09:00:00.000000Z
+                                12\tk2\t2020-01-01T11:00:00.000000Z
+                                """
+                );
+        assertSqlCursors("SELECT a, s, ts FROM " + tableName + " WHERE s::string = 'k2'", k2Lookup);
+        // 1 + 3 + 5 + 7 + 9 + 11, then 101 + 103 from the O3 updates and 99 on 2020-01-02
+        assertQuery("SELECT sum(a) FROM " + tableName + " WHERE s = 'k1'")
+                .noLeakCheck()
+                .expectSize()
+                .noRandomAccess()
+                .withPlanContaining("CoveringIndex")
+                .returns("sum\n339\n");
     }
 
     private void assertCoveredVarSizeValues(String expected) throws Exception {
@@ -951,6 +1737,120 @@ public class ParquetPartitionCompactionTest extends AbstractCairoTest {
                 );
     }
 
+    private void assertSwapAfterNoopCommitKeepsCoveringIndex(String postingType, boolean isReplace) throws Exception {
+        setUpSmallRowGroupsNoAutoRewrite();
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL, "0");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "60m");
+
+        assertMemoryLeak(() -> {
+            createDedupTableWithCoveringIndexAddedAfterO3("nc", postingType);
+            final TableToken tableToken = engine.verifyTableName("nc");
+            assertUnusedBytesPositive(tableToken);
+            final long nameTxnBefore = parquetPartitionNameTxn(tableToken);
+            final String liveDir = liveParquetPartitionDir(tableToken);
+            queueNoopCommit(tableToken, isReplace);
+
+            final O3ParquetPathCounts paths = new O3ParquetPathCounts();
+            final AtomicBoolean isHookArmed = new AtomicBoolean(true);
+            final FilesFacade ff = new TestFilesFacadeImpl() {
+                @Override
+                public void iterateDir(LPSZ path, FindVisitor func) {
+                    // Read before the visit: the sweep's visitor reuses the path's buffer for every file it carries.
+                    final boolean isLiveDir = Utf8s.equalsAscii(liveDir, path);
+                    super.iterateDir(path, func);
+                    // The sweep has just carried the live index files into staging; the commit lands before the swap.
+                    if (isLiveDir && isHookArmed.compareAndSet(true, false)) {
+                        drainWalQueue();
+                    }
+                }
+            };
+            try (PartitionCompactionScanJob job = newSweepPastTheIdleTimeout(ff)) {
+                job.run();
+            }
+            engine.releaseInactive();
+
+            Assert.assertFalse("the sweep did not carry the index files over", isHookArmed.get());
+            Assert.assertEquals(noopCommitPaths(isReplace), paths.toString());
+            Assert.assertNotEquals("the swap did not land", nameTxnBefore, parquetPartitionNameTxn(tableToken));
+            assertUnusedBytesZero(tableToken);
+            assertCoveringIndexAnswers("nc");
+
+            // The same commit again, now over the swapped-in directory, then a reopen.
+            queueNoopCommit(tableToken, isReplace);
+            drainWalQueue();
+            assertCoveringIndexAnswers("nc");
+            engine.releaseInactive();
+            assertCoveringIndexAnswers("nc");
+        });
+    }
+
+    private void assertSwapAroundOpenTransaction(boolean isCommit) throws Exception {
+        setUpSmallRowGroupsNoAutoRewrite();
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL, "-1");
+
+        assertMemoryLeak(() -> {
+            createTableWithDeadRowGroupBytes("ot", false);
+            final TableToken tableToken = engine.verifyTableName("ot");
+            assertUnusedBytesPositive(tableToken);
+            final long nameTxnBefore = parquetPartitionNameTxn(tableToken);
+            final String stagingDir = stagingDir(tableToken);
+
+            try (TableWriter ownerWriter = engine.getWriter(tableToken, "owner")) {
+                appendRow(ownerWriter, "2020-01-02T01:00:00.000000Z", 201, "k2");
+                appendRow(ownerWriter, "2020-01-02T00:30:00.000000Z", 203, "k2");
+                Assert.assertTrue(ownerWriter.inTransaction());
+                Assert.assertTrue("the fixture must hold O3 rows", ownerWriter.hasO3());
+
+                Assert.assertTrue(engine.getPartitionCompactionRequestQueue().tryRequest(tableToken, DAY_2020_01_01));
+                runSweepOnAnotherThread();
+                Assert.assertTrue("the busy writer must have been handed a queued swap", dirExists(stagingDir));
+                Assert.assertEquals(nameTxnBefore, parquetPartitionNameTxn(tableToken));
+
+                ownerWriter.tick();
+                Assert.assertFalse("the swap should have renamed the staging directory in", dirExists(stagingDir));
+                Assert.assertTrue("the swap must leave the transaction open", ownerWriter.inTransaction());
+                Assert.assertNotEquals("the swap did not land", nameTxnBefore, parquetPartitionNameTxn(tableToken));
+                assertUnusedBytesZero(tableToken);
+                // Readers see the swapped-in partition and none of the transaction's rows.
+                assertDataIntact("ot");
+
+                if (isCommit) {
+                    ownerWriter.commit();
+                } else {
+                    ownerWriter.rollback();
+                }
+            }
+
+            Assert.assertNotEquals("the swap must outlive the transaction", nameTxnBefore, parquetPartitionNameTxn(tableToken));
+            assertUnusedBytesZero(tableToken);
+            if (!isCommit) {
+                assertDataIntact("ot");
+                return;
+            }
+            assertQuery("SELECT count() FROM ot")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n18\n");
+            assertQuery("SELECT count() FROM ot WHERE s = 'k1' AND ts IN '2020-01-01'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n8\n");
+            assertQuery("SELECT a, s, ts FROM ot WHERE ts >= '2020-01-02'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(
+                            """
+                                    a\ts\tts
+                                    99\tk1\t2020-01-02T00:00:00.000000Z
+                                    203\tk2\t2020-01-02T00:30:00.000000Z
+                                    201\tk2\t2020-01-02T01:00:00.000000Z
+                                    """
+                    );
+        });
+    }
+
     private void assertIdleSweepAfterDropColumnIndexesAddedColumn(String... ddl) throws Exception {
         setUpSmallRowGroupsNoAutoRewrite();
         node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL, "0");
@@ -1025,6 +1925,142 @@ public class ParquetPartitionCompactionTest extends AbstractCairoTest {
                     .expectSize()
                     .noRandomAccess()
                     .returns("count\n9\n");
+        });
+    }
+
+    private void assertIdleSweepCarriesOnlyTheLiveIndexVersion(String indexClause, boolean isCovering) throws Exception {
+        setUpSmallRowGroupsNoAutoRewrite();
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL, "0");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "60m");
+        // Retry the column purge on every run; the test clock drives the retry schedule.
+        node1.setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY, 1);
+        setCurrentMicros(MicrosecondClockImpl.INSTANCE.getTicks());
+        try {
+            assertMemoryLeak(() -> {
+                createTableWithDeadRowGroupBytes("lv", true, indexClause);
+                final TableToken tableToken = engine.verifyTableName("lv");
+                final long sNameTxnBefore = parquetPartitionColumnNameTxn(tableToken, "s");
+
+                try (ColumnPurgeJob purgeJob = new ColumnPurgeJob(engine)) {
+                    final long nameTxnBefore;
+                    try (TableReader ignore = engine.getReader(tableToken)) {
+                        // The pinned reader defers the superseded version's purge past the in-place commit.
+                        execute("INSERT INTO lv(a, s, ts) VALUES (104, 'k2', '2020-01-01T04:30:00.000Z')");
+                        drainWalQueue();
+                        Assert.assertNotEquals(
+                                "the O3 update did not version the index",
+                                sNameTxnBefore,
+                                parquetPartitionColumnNameTxn(tableToken, "s")
+                        );
+                        nameTxnBefore = parquetPartitionNameTxn(tableToken);
+                        runSweepPastTheIdleTimeout();
+                    }
+                    engine.releaseInactive();
+                    setCurrentMicros(currentMicros + 10);
+                    purgeJob.run();
+                    setCurrentMicros(currentMicros + 10);
+                    purgeJob.run();
+                    Assert.assertNotEquals("the sweep did not rewrite the parquet partition", nameTxnBefore, parquetPartitionNameTxn(tableToken));
+                }
+
+                final long sNameTxn = parquetPartitionColumnNameTxn(tableToken, "s");
+                final String[] files = new File(liveParquetPartitionDir(tableToken)).list();
+                Assert.assertNotNull(files);
+                Arrays.sort(files);
+                int indexFileCount = 0;
+                for (String file : files) {
+                    if (!file.startsWith("s.")) {
+                        continue;
+                    }
+                    indexFileCount++;
+                    // s.k.<txn>, s.v.<txn>, s.pk.<txn>, s.pci.<txn>, s.pv.<txn>.<seal>, s.pc0.<txn>.<seal>
+                    final String[] parts = file.split("\\.");
+                    Assert.assertTrue("unexpected index file name " + file, parts.length >= 3);
+                    Assert.assertEquals(
+                            "the sweep carried a superseded index version into the new directory " + Arrays.toString(files) + ": " + file,
+                            sNameTxn,
+                            Long.parseLong(parts[2])
+                    );
+                }
+                Assert.assertTrue("no index files in " + Arrays.toString(files), indexFileCount > 0);
+
+                assertQuery("SELECT a, s, ts FROM lv WHERE s = 'k2'")
+                        .noLeakCheck()
+                        .expectSize(isCovering)
+                        .inferRandomAccess()
+                        .timestamp("ts")
+                        .returns(
+                                """
+                                        a\ts\tts
+                                        2\tk2\t2020-01-01T01:00:00.000000Z
+                                        102\tk2\t2020-01-01T02:30:00.000000Z
+                                        4\tk2\t2020-01-01T03:00:00.000000Z
+                                        104\tk2\t2020-01-01T04:30:00.000000Z
+                                        6\tk2\t2020-01-01T05:00:00.000000Z
+                                        8\tk2\t2020-01-01T07:00:00.000000Z
+                                        10\tk2\t2020-01-01T09:00:00.000000Z
+                                        12\tk2\t2020-01-01T11:00:00.000000Z
+                                        """
+                        );
+            });
+        } finally {
+            setCurrentMicros(-1);
+        }
+    }
+
+    private void assertIdleSweepCarriesTheUnsuffixedIndexOfAnIndexAddedAfterConversion(
+            String addIndexSql,
+            String expectedKeyFile,
+            boolean isCovering
+    ) throws Exception {
+        setUpSmallRowGroupsNoAutoRewrite();
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL, "0");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "60m");
+        assertMemoryLeak(() -> {
+            createTableWithDeadRowGroupBytes("ni", true, "");
+            execute(addIndexSql);
+            drainWalQueue();
+            engine.releaseInactive();
+
+            final TableToken tableToken = engine.verifyTableName("ni");
+            Assert.assertEquals(
+                    "the added index got a column name txn",
+                    TableUtils.COLUMN_NAME_TXN_NONE,
+                    parquetPartitionColumnNameTxn(tableToken, "s")
+            );
+            assertUnusedBytesPositive(tableToken);
+            final String indexFilesBefore = liveIndexFileNames(tableToken, "s");
+            Assert.assertTrue(
+                    "no " + expectedKeyFile + " in " + indexFilesBefore,
+                    Arrays.asList(indexFilesBefore.split(",")).contains(expectedKeyFile)
+            );
+
+            final long nameTxnBefore = parquetPartitionNameTxn(tableToken);
+            runSweepPastTheIdleTimeout();
+            Assert.assertNotEquals("the sweep did not rewrite the parquet partition", nameTxnBefore, parquetPartitionNameTxn(tableToken));
+            Assert.assertEquals(
+                    "the sweep did not carry the live unsuffixed index files",
+                    indexFilesBefore,
+                    liveIndexFileNames(tableToken, "s")
+            );
+
+            assertQuery("SELECT a, s, ts FROM ni WHERE s = 'k2'")
+                    .noLeakCheck()
+                    .expectSize(isCovering)
+                    .inferRandomAccess()
+                    .timestamp("ts")
+                    .returns(
+                            """
+                                    a\ts\tts
+                                    2\tk2\t2020-01-01T01:00:00.000000Z
+                                    102\tk2\t2020-01-01T02:30:00.000000Z
+                                    4\tk2\t2020-01-01T03:00:00.000000Z
+                                    6\tk2\t2020-01-01T05:00:00.000000Z
+                                    8\tk2\t2020-01-01T07:00:00.000000Z
+                                    10\tk2\t2020-01-01T09:00:00.000000Z
+                                    12\tk2\t2020-01-01T11:00:00.000000Z
+                                    """
+                    );
         });
     }
 
@@ -1137,6 +2173,20 @@ public class ParquetPartitionCompactionTest extends AbstractCairoTest {
     }
 
     /**
+     * {@link #createTableWithDeadRowGroupBytes} with no index on {@code s} through the in-place O3 updates, then
+     * DEDUP UPSERT KEYS(ts) and a covering index on {@code s} INCLUDE (a). With no symbol indexed, the updates left
+     * the file without an index row map, so the sweep carries the index files over as hard links rather than
+     * building them.
+     */
+    private void createDedupTableWithCoveringIndexAddedAfterO3(String tableName, String postingType) throws Exception {
+        createTableWithDeadRowGroupBytes(tableName, true, "");
+        execute("ALTER TABLE " + tableName + " DEDUP ENABLE UPSERT KEYS(ts)");
+        execute("ALTER TABLE " + tableName + " ALTER COLUMN s ADD INDEX TYPE " + postingType + " INCLUDE (a)");
+        drainWalQueue();
+        engine.releaseInactive();
+    }
+
+    /**
      * {@code count} clean parquet day-partitions from 2020-01-01, plus one later native day so the converted
      * ones are never the active partition. None is touched after conversion, so every one stays clean (no
      * dead row-group bytes, schema unchanged) - the shape the sweep footer-probes once and then memoizes.
@@ -1163,8 +2213,12 @@ public class ParquetPartitionCompactionTest extends AbstractCairoTest {
      * INDEXed: odd values of {@code a} carry {@code k1}, even ones {@code k2}.
      */
     private void createTableWithDeadRowGroupBytes(String tableName, boolean isWal) throws Exception {
+        createTableWithDeadRowGroupBytes(tableName, isWal, "INDEX");
+    }
+
+    private void createTableWithDeadRowGroupBytes(String tableName, boolean isWal, String indexClause) throws Exception {
         execute(
-                "CREATE TABLE " + tableName + " (a INT, s SYMBOL INDEX, ts TIMESTAMP)\n" +
+                "CREATE TABLE " + tableName + " (a INT, s SYMBOL " + indexClause + ", ts TIMESTAMP)\n" +
                         "TIMESTAMP(ts) PARTITION BY DAY " + (isWal ? "WAL" : "BYPASS WAL")
         );
         execute(
@@ -1210,6 +2264,30 @@ public class ParquetPartitionCompactionTest extends AbstractCairoTest {
     }
 
     /**
+     * The sorted, comma-separated names of {@code columnName}'s index files in the live parquet partition.
+     */
+    private String liveIndexFileNames(TableToken tableToken, String columnName) {
+        final String[] files = new File(liveParquetPartitionDir(tableToken)).list();
+        Assert.assertNotNull(files);
+        Arrays.sort(files);
+        final StringBuilder names = new StringBuilder();
+        for (String file : files) {
+            if (file.startsWith(columnName + ".")) {
+                if (!names.isEmpty()) {
+                    names.append(',');
+                }
+                names.append(file);
+            }
+        }
+        return names.toString();
+    }
+
+    private String liveParquetPartitionDir(TableToken tableToken) {
+        final String stagingDir = stagingDir(tableToken);
+        return stagingDir.substring(0, stagingDir.indexOf(TableUtils.COMPACTING_DIR_MARKER));
+    }
+
+    /**
      * The type the parquet FILE holds for {@code columnName}, or -1 when the file no longer carries it.
      */
     private int parquetColumnType(TableToken tableToken, String columnName) {
@@ -1223,6 +2301,20 @@ public class ParquetPartitionCompactionTest extends AbstractCairoTest {
         }
     }
 
+    /**
+     * The column name txn {@code _cv} records for {@code columnName} in the parquet partition.
+     */
+    private long parquetPartitionColumnNameTxn(TableToken tableToken, String columnName) {
+        try (TableReader reader = engine.getReader(tableToken)) {
+            final int parquetIdx = findParquetPartitionIndex(reader);
+            Assert.assertTrue("expected a parquet partition", parquetIdx >= 0);
+            return reader.getColumnVersionReader().getColumnNameTxn(
+                    reader.getTxFile().getPartitionTimestampByIndex(parquetIdx),
+                    reader.getMetadata().getWriterIndex(reader.getMetadata().getColumnIndex(columnName))
+            );
+        }
+    }
+
     private long parquetPartitionFileSize(TableToken tableToken) {
         try (TableReader reader = engine.getReader(tableToken)) {
             final int parquetIdx = findParquetPartitionIndex(reader);
@@ -1231,11 +2323,53 @@ public class ParquetPartitionCompactionTest extends AbstractCairoTest {
         }
     }
 
+    // the row counts of the row groups of the parquet partition, comma-separated
+    private String parquetRowGroupSizes(TableToken tableToken) {
+        try (TableReader reader = engine.getReader(tableToken)) {
+            final int parquetIdx = findParquetPartitionIndex(reader);
+            Assert.assertTrue("expected a parquet partition", parquetIdx >= 0);
+            reader.openPartition(parquetIdx);
+            final var meta = reader.getAndInitParquetPartitionDecoder(parquetIdx).metadata();
+            final StringBuilder sizes = new StringBuilder();
+            for (int rg = 0, n = meta.getRowGroupCount(); rg < n; rg++) {
+                sizes.append(rg > 0 ? "," : "").append(meta.getRowGroupSize(rg));
+            }
+            return sizes.toString();
+        }
+    }
+
     private long parquetPartitionNameTxn(TableToken tableToken) {
         try (TableReader reader = engine.getReader(tableToken)) {
             final int parquetIdx = findParquetPartitionIndex(reader);
             Assert.assertTrue("expected a parquet partition", parquetIdx >= 0);
             return reader.getTxFile().getPartitionNameTxn(parquetIdx);
+        }
+    }
+
+    private long parquetPartitionSeqTxn(TableToken tableToken) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        final ParquetMetaFileReader parquetMetaReader = new ParquetMetaFileReader();
+        try (TableReader reader = engine.getReader(tableToken); Path path = new Path()) {
+            final int parquetIdx = findParquetPartitionIndex(reader);
+            Assert.assertTrue("expected a parquet partition", parquetIdx >= 0);
+            path.of(configuration.getDbRoot()).concat(tableToken.getDirName());
+            TableUtils.setPathForParquetPartitionMetadata(
+                    path,
+                    reader.getMetadata().getTimestampType(),
+                    reader.getPartitionedBy(),
+                    reader.getTxFile().getPartitionTimestampByIndex(parquetIdx),
+                    reader.getTxFile().getPartitionNameTxn(parquetIdx)
+            );
+            final long addr = ParquetMetaFileReader.openAndMapRO(ff, path.$(), parquetMetaReader);
+            Assert.assertTrue("the _pm must open", addr != 0);
+            final long size = parquetMetaReader.getFileSize();
+            try {
+                Assert.assertTrue(parquetMetaReader.resolveFooter(reader.getTxFile().getPartitionParquetFileSize(parquetIdx)));
+                return parquetMetaReader.getResolvedSeqTxn();
+            } finally {
+                parquetMetaReader.clear();
+                ff.munmap(addr, size, MemoryTag.MMAP_PARQUET_METADATA_READER);
+            }
         }
     }
 

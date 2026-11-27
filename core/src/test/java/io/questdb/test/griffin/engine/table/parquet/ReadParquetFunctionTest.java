@@ -593,6 +593,121 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testEmptyRowGroupKeepsDesignatedTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            final String fixture = copyFixture("empty_row_group_stats.parquet");
+            assertQuery("SELECT * FROM read_parquet('" + fixture + "')")
+                    .noLeakCheck()
+                    .supportsRandomAccess(parallel)
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            k\tts
+                            1\t2024-01-01T00:00:00.000000Z
+                            2\t2024-01-02T00:00:00.000000Z
+                            1\t2024-01-03T00:00:00.000000Z
+                            2\t2024-01-04T00:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testRowGroupsOutOfTimestampOrder() throws Exception {
+        // Each row group sorts by ts and declares it in sorting_columns, but the first row group holds the later rows.
+        assertMemoryLeak(() -> {
+            for (String fixture : new String[]{"row_groups_out_of_order.parquet", "row_groups_out_of_order_stats.parquet"}) {
+                final String file = "read_parquet('" + copyFixture(fixture) + "')";
+                assertQuery("SELECT * FROM " + file)
+                        .noLeakCheck()
+                        .supportsRandomAccess(parallel)
+                        .expectSize()
+                        .returns("""
+                                k\tts
+                                1\t2024-01-03T00:00:00.000000Z
+                                2\t2024-01-04T00:00:00.000000Z
+                                1\t2024-01-01T00:00:00.000000Z
+                                2\t2024-01-02T00:00:00.000000Z
+                                """);
+                assertQuery("SELECT * FROM " + file + " ORDER BY ts")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                k\tts
+                                1\t2024-01-01T00:00:00.000000Z
+                                2\t2024-01-02T00:00:00.000000Z
+                                1\t2024-01-03T00:00:00.000000Z
+                                2\t2024-01-04T00:00:00.000000Z
+                                """);
+                assertExceptionNoLeakCheck("SELECT ts, count() FROM " + file + " SAMPLE BY 1d", 0, "base query does not provide designated TIMESTAMP column");
+                assertQuery("SELECT ts, count() c FROM (SELECT * FROM " + file + " ORDER BY ts) SAMPLE BY 1d")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .noRandomAccess()
+                        .returns("""
+                                ts\tc
+                                2024-01-01T00:00:00.000000Z\t1
+                                2024-01-02T00:00:00.000000Z\t1
+                                2024-01-03T00:00:00.000000Z\t1
+                                2024-01-04T00:00:00.000000Z\t1
+                                """);
+                final String latestPlan = parallel ? "LatestBy light order_by_timestamp: false" : "LatestBy";
+                final String latest = """
+                        k\tts
+                        1\t2024-01-03T00:00:00.000000Z
+                        2\t2024-01-04T00:00:00.000000Z
+                        """;
+                assertQuery("SELECT * FROM " + file + " LATEST ON ts PARTITION BY k ORDER BY k").noLeakCheck().expectSize().withPlanContaining(latestPlan).returns(latest);
+                assertQuery("SELECT * FROM (SELECT * FROM " + file + ") LATEST ON ts PARTITION BY k ORDER BY k").noLeakCheck().expectSize().withPlanContaining(latestPlan).returns(latest);
+            }
+        });
+    }
+
+    @Test
+    public void testRowGroupsWithoutStatisticsDropDesignatedTimestamp() throws Exception {
+        // Without timestamp statistics nothing orders one row group after another, but sorting_columns orders a single one.
+        assertMemoryLeak(() -> {
+            final String noStatistics = "read_parquet('" + copyFixture("empty_row_group.parquet") + "')";
+            assertExceptionNoLeakCheck("SELECT ts, count() FROM " + noStatistics + " SAMPLE BY 1d", 0, "base query does not provide designated TIMESTAMP column");
+            assertQuery("SELECT ts, count() c FROM (SELECT * FROM " + noStatistics + " ORDER BY ts) SAMPLE BY 1d")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tc
+                            2024-01-01T00:00:00.000000Z\t1
+                            2024-01-02T00:00:00.000000Z\t1
+                            2024-01-03T00:00:00.000000Z\t1
+                            2024-01-04T00:00:00.000000Z\t1
+                            """);
+
+            assertQuery("SELECT * FROM read_parquet('" + copyFixture("single_row_group_no_stats.parquet") + "')")
+                    .noLeakCheck()
+                    .supportsRandomAccess(parallel)
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            k\tts
+                            1\t2024-01-01T00:00:00.000000Z
+                            2\t2024-01-02T00:00:00.000000Z
+                            1\t2024-01-03T00:00:00.000000Z
+                            2\t2024-01-04T00:00:00.000000Z
+                            """);
+
+            execute("CREATE TABLE x AS (SELECT x id, (x * 1_000_000)::TIMESTAMP ts FROM long_sequence(100)) TIMESTAMP(ts) PARTITION BY DAY");
+            encodeParquet("x", "x_row_groups.parquet", 10);
+            assertQuery("SELECT ts, count() c FROM read_parquet('x_row_groups.parquet') SAMPLE BY 1d")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tc
+                            1970-01-01T00:00:00.000000Z\t100
+                            """);
+        });
+    }
+
+    @Test
     public void testDictionaryNumValuesOverBuffer() throws Exception {
         // A foreign parquet whose dictionary page header declares more values than its
         // buffer can hold (each var-width value needs at least a 4-byte length prefix)
@@ -1814,7 +1929,7 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
     public void testVarcharSliceOrderByLimitMultipleRowGroups() throws Exception {
         // Regression test: the Async Top K path stores a comparator reference
         // pointing to decoded Parquet row group data. Between frames,
-        // releaseParquetBuffers() frees that data, leaving a dangling pointer.
+        // releaseDecodedFrameBuffers() frees that data, leaving a dangling pointer.
         // The comparator then reads freed memory, producing wrong sort results.
         // We use many small row groups and ORDER BY varchar LIMIT to trigger
         // the LimitedSizeLongTreeChain cross-frame comparison path.
@@ -2037,6 +2152,36 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                     sink,
                     LOG,
                     true
+            );
+        }
+    }
+
+    private static String copyFixture(String fixture) throws java.io.IOException {
+        try (java.io.InputStream is = ReadParquetFunctionTest.class.getResourceAsStream("/parquet-unordered/" + fixture)) {
+            Assert.assertNotNull("missing test fixture on classpath", is);
+            java.nio.file.Files.write(java.nio.file.Paths.get(root, fixture), is.readAllBytes());
+        }
+        return fixture;
+    }
+
+    private static void encodeParquet(String tableName, String fileName, long rowGroupSize) {
+        try (
+                Path path = new Path();
+                PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                TableReader reader = engine.getReader(tableName)
+        ) {
+            path.of(root).concat(fileName);
+            PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+            PartitionEncoder.encodeWithOptions(
+                    partitionDescriptor,
+                    path,
+                    ParquetCompression.COMPRESSION_UNCOMPRESSED,
+                    true,
+                    false,
+                    rowGroupSize,
+                    0,
+                    ParquetVersion.PARQUET_VERSION_V1,
+                    0.0
             );
         }
     }

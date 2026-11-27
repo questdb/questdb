@@ -56,6 +56,31 @@ public class ShortGroupByFunctionBatchTest extends AbstractGroupByFunctionBatchT
     }
 
     @Test
+    public void testAvgShortBatchAccumulatesAndMerges() throws Exception {
+        assertMemoryLeak(() -> {
+            AvgShortGroupByFunction function = new AvgShortGroupByFunction(ShortColumn.newInstance(COLUMN_INDEX));
+            try (
+                    SimpleMapValue value = prepare(function);
+                    SimpleMapValue dest = prepare(function)
+            ) {
+                function.computeBatch(value, allocateShorts((short) 2, (short) 4), 2, 0);
+                function.computeBatch(value, allocateShorts((short) -32768, (short) 32767), 2, 0);
+                Assert.assertEquals(1.25, function.getDouble(value), 0.0);
+
+                function.merge(dest, value);
+                Assert.assertEquals(1.25, function.getDouble(dest), 0.0);
+                function.merge(dest, value);
+                Assert.assertEquals(1.25, function.getDouble(dest), 0.0);
+
+                function.setDouble(dest, 1.5);
+                Assert.assertEquals(1.5, function.getDouble(dest), 0.0);
+            } finally {
+                freeLast();
+            }
+        });
+    }
+
+    @Test
     public void testAvgShortSetEmpty() throws Exception {
         assertMemoryLeak(() -> {
             AvgShortGroupByFunction function = new AvgShortGroupByFunction(ShortColumn.newInstance(COLUMN_INDEX));

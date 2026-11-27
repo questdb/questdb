@@ -316,8 +316,8 @@ impl Pushable for DeltaLAVarcharSliceDecoder<'_> {
         while count >= 32 {
             self.unpack_next()?;
             let min_delta = self.iterator.min_delta;
-            for i in 0..32 {
-                current_value = current_value.wrapping_add(min_delta.wrapping_add(self.values[i]));
+            for (i, &value) in self.values.iter().enumerate() {
+                current_value = current_value.wrapping_add(min_delta.wrapping_add(value));
                 let len = current_value;
                 let value_ptr = checked_advance!(len, pos);
                 let len_u = len as u32;
@@ -416,26 +416,12 @@ impl Pushable for DeltaLAVarcharSliceDecoder<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::allocator::{AcVec, TestAllocatorState};
+    use crate::allocator::TestAllocatorState;
     use crate::parquet_read::column_sink::Pushable;
     use crate::parquet_read::ColumnChunkBuffers;
-    use std::ptr;
 
     fn create_test_buffers(allocator: &crate::allocator::QdbAllocator) -> ColumnChunkBuffers {
-        ColumnChunkBuffers {
-            data_size: 0,
-            data_ptr: ptr::null_mut(),
-            data_vec: AcVec::new_in(allocator.clone()),
-            aux_size: 0,
-            aux_ptr: ptr::null_mut(),
-            aux_vec: AcVec::new_in(allocator.clone()),
-            page_buffers_size: 0,
-            page_buffers: Vec::new(),
-            column_top: 0,
-            page_buffers_capacity: 0,
-            page_buffers_charged: 0,
-            page_buffers_counted: 0,
-        }
+        ColumnChunkBuffers::new(allocator.clone())
     }
 
     /// Encode ULEB128

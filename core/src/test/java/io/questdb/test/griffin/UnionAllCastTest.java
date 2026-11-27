@@ -1593,6 +1593,47 @@ public class UnionAllCastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGeoSameStorageNarrowsToPrefix() throws Exception {
+        // Each pair shares a storage width (GEOBYTE, GEOSHORT, GEOINT, GEOLONG) and differs in
+        // precision. The set operation keeps the coarser precision, so the wider value must be
+        // cut to its leading bits, the cell that contains it.
+        assertMemoryLeak(() -> {
+            final String[][] pairs = {
+                    {"3b", "5b", "##101", "##10111", "101"},
+                    {"2c", "3c", "'sp'", "'spz'", "sp"},
+                    {"4c", "6c", "'sp01'", "'sp01zz'", "sp01"},
+                    {"7c", "12c", "'sp01zzz'", "'sp01zzz12345'", "sp01zzz"},
+            };
+            for (int i = 0; i < pairs.length; i++) {
+                final String[] pair = pairs[i];
+                final String narrow = "narrow" + i;
+                final String wide = "wide" + i;
+                execute("CREATE TABLE " + narrow + " (g GEOHASH(" + pair[0] + "))");
+                execute("INSERT INTO " + narrow + " VALUES (" + pair[2] + ")");
+                execute("CREATE TABLE " + wide + " (g GEOHASH(" + pair[1] + "))");
+                execute("INSERT INTO " + wide + " VALUES (" + pair[3] + ")");
+                final String prefix = pair[4];
+
+                assertQuery("SELECT g FROM " + narrow + " UNION ALL SELECT g FROM " + wide)
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("g\n" + prefix + "\n" + prefix + "\n");
+                assertQuery("SELECT g FROM " + wide + " UNION ALL SELECT g FROM " + narrow)
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("g\n" + prefix + "\n" + prefix + "\n");
+                assertQuery("SELECT g FROM " + narrow + " UNION SELECT g FROM " + wide)
+                        .noRandomAccess()
+                        .returns("g\n" + prefix + "\n");
+                assertQuery("SELECT g FROM " + narrow + " INTERSECT SELECT g FROM " + wide)
+                        .returns("g\n" + prefix + "\n");
+                assertQuery("SELECT g FROM " + narrow + " EXCEPT SELECT g FROM " + wide)
+                        .returns("g\n");
+            }
+        });
+    }
+
+    @Test
     public void testGeoShortExact() throws Exception {
         // long + geohash overlap via string type
         testUnionAll(
@@ -1642,11 +1683,11 @@ public class UnionAllCastTest extends AbstractCairoTest {
         testUnionAll(
                 """
                         a
-                        k0
-                        0c
-                        5f
-                        fg
-                        w5
+                        wh
+                        s2
+                        1c
+                        mm
+                        71
                         9v
                         46
                         jn

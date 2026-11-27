@@ -38,6 +38,7 @@ import io.questdb.std.FiberLocal;
 import io.questdb.std.IntList;
 import io.questdb.std.LongIntHashMap;
 import io.questdb.std.LongObjHashMap;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
@@ -62,7 +63,15 @@ public class CaseCommon {
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         int argType = arg.getType();
+        if (argType == toType) {
+            // a decimal cast to its own type would still wrap the value, and is not thread-safe
+            return arg;
+        }
         if (isNull(argType)) {
+            // Close the argument the NULL constant replaces: a CASE whose every branch is NULL owns
+            // its conditions, which can hold native memory. A caller that frees the argument again
+            // after an error finds nothing left to free.
+            Misc.free(arg);
             return Constants.getNullConstant(toType);
         }
         if (ColumnType.isArray(argType)) {
@@ -86,6 +95,30 @@ public class CaseCommon {
         }
 
         return arg;
+    }
+
+    /**
+     * Casts a CASE, SWITCH or coalesce branch to the common type of all branches.
+     * getCommonType() folds the branch types left to right, so the common type can be one that
+     * the branch type does not escalate to on its own: SYMBOL, STRING, IPv4 gives IPv4. Such a
+     * branch has neither a cast factory nor a getter for the common type, so this method rejects
+     * it, as getCommonType() rejects the pair of the branch type and the common type.
+     */
+    public static Function getCastToCommonTypeFunction(
+            Function branch,
+            int branchPosition,
+            int commonType,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        final int branchType = branch.getType();
+        if (branchType != commonType && !isNull(branchType) && !ColumnType.isDecimal(commonType)) {
+            final long typePair = Numbers.encodeLowHighInts(branchType, commonType);
+            if (castFactories.keyIndex(typePair) > -1 && typeEscalationMap.get(typePair) != commonType) {
+                throw SqlException.inconvertibleTypes(branchPosition, branchType, ColumnType.nameOf(branchType), commonType, ColumnType.nameOf(commonType));
+            }
+        }
+        return getCastFunction(branch, branchPosition, commonType, configuration, sqlExecutionContext);
     }
 
     // public for testing
@@ -250,7 +283,7 @@ public class CaseCommon {
         typeEscalationMap.put(Numbers.encodeLowHighInts(CHAR, CHAR), CHAR);
         typeEscalationMap.put(Numbers.encodeLowHighInts(CHAR, STRING), STRING);
         typeEscalationMap.put(Numbers.encodeLowHighInts(CHAR, VARCHAR), VARCHAR);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(CHAR, SYMBOL), SYMBOL);
+        typeEscalationMap.put(Numbers.encodeLowHighInts(CHAR, SYMBOL), STRING);
 
         typeEscalationMap.put(Numbers.encodeLowHighInts(SHORT, BYTE), SHORT);
         typeEscalationMap.put(Numbers.encodeLowHighInts(SHORT, SHORT), SHORT);

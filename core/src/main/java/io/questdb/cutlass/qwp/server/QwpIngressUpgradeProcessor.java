@@ -25,14 +25,19 @@
 package io.questdb.cutlass.qwp.server;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.wal.DurabilityTier;
+import io.questdb.cairo.wal.DurableAckRegistry;
 import io.questdb.cutlass.http.HttpConnectionContext;
+import io.questdb.cutlass.http.HttpConstants;
 import io.questdb.cutlass.http.HttpException;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpRawSocket;
 import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.cutlass.http.LocalValue;
+import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
 import io.questdb.cutlass.qwp.codec.QwpEgressMsgKind;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.protocol.QwpMessageHeader;
@@ -52,6 +57,8 @@ import io.questdb.std.CharSequenceLongHashMap;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
+import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
 
@@ -111,7 +118,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
      */
     public static final int GRACEFUL_CLOSE_DRAIN_BYTE_BUDGET = 256 * 1024;
     // Cumulative ACK batch size
-    private static final int ACK_BATCH_SIZE = 8;
+    private static final int ACK_BATCH_SIZE = 64;
     // Per-dispatch BYTE budget for the post-CLOSE drain in resumeRecv. The recv-
     // count guard also bounds syscalls, but its byte cost scales with the configured
     // HTTP recv buffer. Capping each recv to the remainder limits a worker turn to
@@ -188,6 +195,8 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                     \r
                     """).getBytes(StandardCharsets.US_ASCII);
     // Dependencies for ILP processing (safe as instance fields — config only)
+    // Same clock QwpIngressProcessorState stamps lastDataPassEndMicros with.
+    private final MicrosecondClock clock;
     // Effective ingest payload cap in bytes: the recv buffer minus the
     // worst-case WebSocket frame header, floored at the QWP protocol ceiling.
     // Zero when the recv buffer cannot fit a frame header at all, which
@@ -212,8 +221,10 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
     // WebSocket frame parser (scratchpad — fully reset within each processWebSocketFrames call)
     private final WebSocketFrameParser frameParser = new WebSocketFrameParser();
     private final HttpFullFatServerConfiguration httpConfiguration;
+    // qwp.min.idle.ms.before.writer.release in micros; 0 disables the release.
+    private final long idleWriterReleaseMicros;
+    private final boolean isBrowserTlsTerminationEnabled;
     private final int maxResponseContentLength;
-    private final boolean qwpBrowserTlsTerminationEnabled;
     private final int recvBufferSize;
 
     public QwpIngressUpgradeProcessor(CairoEngine engine, HttpFullFatServerConfiguration httpConfiguration) {
@@ -221,7 +232,10 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         this.forceRecvFragmentationChunkSize = httpConfiguration.getHttpContextConfiguration()
                 .getForceRecvFragmentationChunkSize();
         this.httpConfiguration = httpConfiguration;
-        this.qwpBrowserTlsTerminationEnabled = httpConfiguration.isQwpBrowserTlsTerminationEnabled();
+        final LineHttpProcessorConfiguration lineConfiguration = httpConfiguration.getLineHttpProcessorConfiguration();
+        this.clock = lineConfiguration.getMicrosecondClock();
+        this.idleWriterReleaseMicros = lineConfiguration.getQwpMinIdleMsBeforeWriterRelease() * 1000L;
+        this.isBrowserTlsTerminationEnabled = httpConfiguration.isBrowserTlsTerminationEnabled();
         this.recvBufferSize = httpConfiguration.getRecvBufferSize();
         // Advertise the effective batch cap, not the QWP protocol ceiling. The
         // HTTP recv buffer is the actual binding constraint on inbound
@@ -368,13 +382,20 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
     @Override
     public boolean isBrowserCredentialAccepted(HttpConnectionContext context) {
         final HttpRequestHeader requestHeader = context.getRequestHeader();
-        return httpConfiguration.getQwpBrowserAllowedOrigins().isAllowed(requestHeader.getHeader(QwpIngressHttpProcessor.HEADER_ORIGIN))
+        return httpConfiguration.getQwpBrowserAllowedOrigins().isAllowed(requestHeader.getHeader(HttpConstants.HEADER_ORIGIN))
                 && selectBrowserWebSocketProtocol(requestHeader.getHeader(QwpIngressHttpProcessor.HEADER_SEC_WEBSOCKET_PROTOCOL)) != null;
     }
 
     @Override
     public boolean isCrossOriginBrowserUpgrade(HttpConnectionContext context) {
         return QwpIngressHttpProcessor.isCrossOrigin(context.getRequestHeader(), isSecureConnection(context));
+    }
+
+    @Override
+    public boolean isCrossSiteRequestAccepted() {
+        // validateHandshake() admits browser origins by the QWP policy, which
+        // includes the origins listed in qwp.browser.allowed.origins
+        return true;
     }
 
     @Override
@@ -486,23 +507,45 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
 
         byte[] acceptKey = QwpIngressHttpProcessor.computeAcceptKey(wsKey);
 
-        // Resolve durable-ack opt-in before sizing the 101 response, since
-        // the X-QWP-Durable-Ack confirmation header affects the response size.
-        // The header is silently dropped when the engine has no durable-ack
-        // registry installed (OSS build or primary replication disabled), so
-        // opted-in clients on such servers receive a 101 without confirmation
-        // and fail at the client side.
+        // Resolve durable-ack tier negotiation before sizing the 101 response,
+        // since the X-QWP-Durable-Ack confirmation header affects the response
+        // size. An opted-in client whose requested tier set this server cannot
+        // grant in full (registry disabled, or a tier the registry does not
+        // offer) receives a 101 without the confirmation header, so it can fail
+        // at once instead of waiting for durable-ack frames that never arrive.
         Utf8Sequence durableAckHeader = requestHeader.getHeader(
                 QwpIngressHttpProcessor.HEADER_X_QWP_REQUEST_DURABLE_ACK);
-        boolean durableAckHeaderRequested = durableAckHeader != null
-                && Utf8s.equalsIgnoreCaseAscii(durableAckHeader, QwpIngressHttpProcessor.HEADER_VALUE_DURABLE_ACK_ENABLED);
         Utf8Sequence selectedWebSocketProtocol = selectBrowserWebSocketProtocol(
                 requestHeader.getHeader(QwpIngressHttpProcessor.HEADER_SEC_WEBSOCKET_PROTOCOL));
         boolean durableAckWebSocketProtocolRequested =
                 selectedWebSocketProtocol == QwpIngressHttpProcessor.WEBSOCKET_PROTOCOL_QWP_DURABLE_ACK;
         boolean isQwpV1WebSocketProtocolSelected = selectedWebSocketProtocol == QwpIngressHttpProcessor.WEBSOCKET_PROTOCOL_QWP_V1;
-        boolean durableAckRequested = durableAckHeaderRequested || durableAckWebSocketProtocolRequested;
-        boolean durableAckEnabled = durableAckRequested && engine.getDurableAckRegistry().isEnabled();
+        int requestedTiers = DurabilityTier.fromHeaderValue(durableAckHeader);
+        if (durableAckWebSocketProtocolRequested) {
+            // The browser subprotocol token carries no tier parameter, so it
+            // requests what the legacy "true" header requests: REPLICATED,
+            // confirmed with the "enabled" token. A browser cannot ask for the
+            // "local" tier. When both carriers arrive, the requested sets combine.
+            requestedTiers |= DurabilityTier.REPLICATED | DurabilityTier.LEGACY_TRUE;
+        }
+        DurableAckRegistry ackRegistry = engine.getDurableAckRegistry();
+        int grantedTiers;
+        if (requestedTiers == DurabilityTier.NONE || !ackRegistry.isEnabled()) {
+            grantedTiers = DurabilityTier.NONE;
+        } else {
+            // All or nothing: grant the full requested set or nothing, so a
+            // client that asked for "replicated" is never downgraded to a
+            // local-only guarantee. The legacy "true" request means REPLICATED,
+            // so an OSS server denies it, as released servers do.
+            grantedTiers = ackRegistry.isTierSetAvailable(requestedTiers & DurabilityTier.TIERS_MASK)
+                    ? requestedTiers
+                    : DurabilityTier.NONE;
+        }
+        boolean durableAckEnabled = grantedTiers != DurabilityTier.NONE;
+        // Echo the granted set ("local", "replicated" or "local,replicated");
+        // a legacy "true" grant echoes "enabled", the token released clients
+        // expect. Omit the header when nothing is granted.
+        Utf8Sequence durableAckConfirmToken = DurabilityTier.responseToken(grantedTiers);
         // Echo the subprotocol whenever it was offered, enabled or not. The
         // token confirms the browser negotiation dialect, NOT the capability:
         // a browser fails the whole connection when it offered a subprotocol
@@ -525,7 +568,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                     .$(context.getFd()).I$();
         }
         int requiredHandshakeSize = QwpIngressHttpProcessor.responseSize(
-                acceptKey, negotiatedVersion, null, durableAckEnabled, roleBytes,
+                acceptKey, negotiatedVersion, null, durableAckConfirmToken, roleBytes,
                 effectiveMaxBatchSizeBytes, sessionCookieValueBytes,
                 durableAckWebSocketProtocolRequested, isQwpV1WebSocketProtocolSelected);
         if (browserServerInfoRequested) {
@@ -552,10 +595,11 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         state.of(context.getFd(), context.getSecurityContext());
         state.setNegotiatedVersion((byte) negotiatedVersion);
         state.setDurableAckEnabled(durableAckEnabled);
+        state.setDurableAckTiers(grantedTiers);
 
         // Write the 101 Switching Protocols response (reuse the pre-computed accept key)
         int bytesWritten = QwpIngressHttpProcessor.writeResponse(
-                bufferAddr, acceptKey, negotiatedVersion, null, durableAckEnabled, roleBytes,
+                bufferAddr, acceptKey, negotiatedVersion, null, durableAckConfirmToken, roleBytes,
                 effectiveMaxBatchSizeBytes, sessionCookieValueBytes,
                 durableAckWebSocketProtocolRequested, isQwpV1WebSocketProtocolSelected);
         if (bytesWritten <= 0) {
@@ -824,6 +868,20 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
 
     @Override
     public void resumeSend(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+        try {
+            resumeSend0(context);
+        } catch (PeerDisconnectedException | PeerIsSlowToReadException | ServerDisconnectException e) {
+            throw e;
+        } catch (Throwable e) {
+            // As in resumeRecv: an unexpected error disconnects, and onConnectionClosed frees the connection's
+            // writers. Escaping, it would leave them checked out. The send path reaches the frame loop through
+            // drainBufferedFrames, so a failed batch commit can throw here.
+            LOG.error().$("WebSocket send error [fd=").$(context.getFd()).$(", error=").$(e).I$();
+            throw ServerDisconnectException.INSTANCE;
+        }
+    }
+
+    private void resumeSend0(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         RejectFlushTracker rejectTracker = REJECT_FLUSH.get(context);
         if (rejectTracker != null && rejectTracker.pendingBytes > 0) {
             // Residual bytes of a 4xx upgrade reject were parked mid-write.
@@ -852,6 +910,8 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         }
 
         boolean wasAwaitingCloseEcho = state.isAwaitingCloseEcho();
+        // The continuations below finish only what the send buffer holds.
+        finishStagedFrame(context, state);
         switch (state.getSendState()) {
             case QwpIngressProcessorState.SEND_STATE_READY -> {
             }
@@ -991,6 +1051,58 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         context.switchProtocol();
     }
 
+    /**
+     * Finishes a staged frame whose send blocked: first the part the send buffer holds, then
+     * the staged rest. Must run before anything else goes out, so that nothing interleaves
+     * with the frame.
+     */
+    private static void finishStagedFrame(HttpConnectionContext context, QwpIngressProcessorState state)
+            throws PeerDisconnectedException, PeerIsSlowToReadException {
+        if (state.hasStagedFrame()) {
+            context.resumeResponseSend();
+            sendStagedFrame(context, state);
+        }
+    }
+
+    /**
+     * Returns the address to write a server frame of {@code frameSize} bytes to: the send
+     * buffer, or, when the frame does not fit it, the connection's staging memory. An ack
+     * names every table it covers, so it can outgrow a lowered {@code http.send.buffer.size}.
+     */
+    private static long reserveFrame(HttpConnectionContext context, QwpIngressProcessorState state, int frameSize)
+            throws PeerDisconnectedException {
+        final HttpRawSocket rawSocket = context.getRawResponseSocket();
+        if (frameSize <= rawSocket.getBufferSize()) {
+            return rawSocket.getBufferAddress();
+        }
+        try {
+            return state.stageFrame(frameSize);
+        } catch (CairoException e) {
+            LOG.critical().$("cannot stage response frame larger than send buffer [fd=").$(context.getFd())
+                    .$(", frameSize=").$(frameSize)
+                    .$(", bufferSize=").$(rawSocket.getBufferSize())
+                    .$(", error=").$((Throwable) e).I$();
+            throw PeerDisconnectedException.INSTANCE;
+        }
+    }
+
+    /**
+     * False for a frame that can never join a commit batch. See the commit batch
+     * fields of {@link QwpIngressProcessorState} for how batching works.
+     */
+    private static boolean isCommitBatchCandidate(long payload, int length) {
+        return length >= QwpConstants.HEADER_SIZE
+                && !QwpMessageHeader.isDeferCommit(payload, length)
+                && !QwpMessageHeader.isDurableAckPoll(payload, length);
+    }
+
+    private static void logCommitBatchFailed(HttpConnectionContext context, long firstSeq, long seq, CharSequence errorMessage) {
+        LOG.error().$("WebSocket commit batch failed [fd=").$(context.getFd())
+                .$(", firstSeq=").$(firstSeq)
+                .$(", seq=").$(seq)
+                .$(", error=").$safe(errorMessage).I$();
+    }
+
     private static byte[] precomputeBadRequestResponse(String reason) {
         byte[] reasonBytes = reason.getBytes(StandardCharsets.US_ASCII);
         byte[] contentLengthBytes = Integer.toString(reasonBytes.length).getBytes(StandardCharsets.US_ASCII);
@@ -1044,6 +1156,17 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                 .put(']');
     }
 
+    private static byte responseStatusOf(QwpIngressProcessorState state) {
+        return switch (state.getStatus()) {
+            case PARSE_ERROR -> STATUS_PARSE_ERROR;
+            case SCHEMA_MISMATCH -> STATUS_SCHEMA_MISMATCH;
+            case SECURITY_ERROR -> STATUS_SECURITY_ERROR;
+            case INTERNAL_ERROR -> STATUS_INTERNAL_ERROR;
+            case DICTIONARY_GAP -> STATUS_DICTIONARY_GAP;
+            default -> STATUS_WRITE_ERROR;
+        };
+    }
+
     /**
      * Returns the subprotocol the 101 response names for a browser offer:
      * durable ACK when offered, otherwise questdb.qwp.v1 when offered, otherwise
@@ -1059,6 +1182,35 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             return QwpIngressHttpProcessor.WEBSOCKET_PROTOCOL_QWP_V1;
         }
         return null;
+    }
+
+    /**
+     * Sends the frame of {@code frameSize} bytes written to the address {@link #reserveFrame}
+     * returned: whole from the send buffer, or in pieces when reserveFrame staged it.
+     */
+    private static void sendFrame(HttpConnectionContext context, QwpIngressProcessorState state, int frameSize)
+            throws PeerDisconnectedException, PeerIsSlowToReadException {
+        if (state.hasStagedFrame()) {
+            sendStagedFrame(context, state);
+        } else {
+            context.getRawResponseSocket().send(frameSize);
+        }
+    }
+
+    /**
+     * Copies the staged frame to the send buffer and sends it, one buffer at a time. When a
+     * send blocks, the send buffer keeps the unsent part of its piece, the rest stays staged,
+     * and the caller parks the send state; {@link #finishStagedFrame} resumes from there.
+     */
+    private static void sendStagedFrame(HttpConnectionContext context, QwpIngressProcessorState state)
+            throws PeerDisconnectedException, PeerIsSlowToReadException {
+        final HttpRawSocket rawSocket = context.getRawResponseSocket();
+        while (state.hasStagedFrame()) {
+            final int count = Math.min(rawSocket.getBufferSize(), state.getStagedFrameRemaining());
+            Vect.memcpy(rawSocket.getBufferAddress(), state.getStagedFrameCopyAddress(), count);
+            state.onStagedFrameCopied(count);
+            rawSocket.send(count);
+        }
     }
 
     private static void stageReject(HttpConnectionContext context, int bytesWritten) {
@@ -1222,6 +1374,8 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
 
     private void drainPendingResponse(HttpConnectionContext context, QwpIngressProcessorState state)
             throws PeerDisconnectedException, PeerIsSlowToReadException {
+        // The branches below finish only what the send buffer holds.
+        finishStagedFrame(context, state);
         switch (state.getSendState()) {
             case QwpIngressProcessorState.SEND_STATE_READY -> {
             }
@@ -1387,7 +1541,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             boolean isDurableAckPollAllowed,
             boolean isDurableProgressCollected
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        if (state.isAwaitingCloseEcho() || state.isCloseDraining()) {
+        if (state.hasSentClose()) {
             // A server CLOSE is already on the wire and RFC 6455 forbids any
             // frame following it. The final ACKs went out before the CLOSE;
             // this gate keeps "no ack after CLOSE" structural for both the
@@ -1523,6 +1677,14 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                 .$(", len=").$(length)
                 .$(", seq=").$(seq).I$();
 
+        // A frame that cannot join the commit batch -- deferred (its rows must
+        // not share a commit with the batch) or a durable-ack poll (it may move
+        // the watermark) -- commits the batch first.
+        if (state.isCommitBatchPending() && !isCommitBatchCandidate(payload, length) && !commitPendingBatch(context, state)) {
+            state.markSequenceUnresolved(seq);
+            return;
+        }
+
         // INVARIANT B enforcement: while a role-change close deferral is armed,
         // the connection exists ONLY to deliver the final durable ack before
         // the CLOSE frame. Data frames arriving in this window must not touch
@@ -1603,73 +1765,146 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         byte responseStatus = STATUS_OK;
         String errorMessage = null;
         boolean roleChangeClose = false;
+        // The sequence an error response names: this frame, except when the batch itself
+        // fails and the client must replay it from an earlier frame.
+        long responseSeq = seq;
 
         boolean deferCommit = false;
         boolean closesDeferredGroup = false;
         boolean deferredFrameFullyCommitted = false;
+        // True when this frame's rows joined or opened the commit batch: no ack
+        // until the batch commits.
+        boolean isBatched = false;
+        // Deferred frames and durable-ack polls committed the batch at the top of
+        // this method, so a batch pending here can only meet a plain frame.
+        final boolean isBatchPending = state.isCommitBatchPending();
+        // Everything inside this try only decides: it updates the watermark, the
+        // unresolved sequence and the batch, and records the response. Frames go out
+        // after the finally. The catch below turns any throwable into INTERNAL_ERROR,
+        // so a send that blocked in here would replace this frame's own status.
         try {
             // Add the binary data to the state buffer
             state.addData(payload, payload + length);
 
             deferCommit = state.isDeferCommit();
+            assert !isBatchPending || !deferCommit;
 
-            // Process the QWP v1 message
-            state.processMessage();
+            state.prepareMessage();
 
-            if (state.isOk() && !deferCommit) {
-                // Capture BEFORE commit(): a successful commitAll() clears the
-                // uncommitted-deferred-rows flag, and this frame's ack must then
-                // flush eagerly -- the group's deferred frames were never
-                // individually acked, so the client's store-and-forward slots
-                // (and, in durable-ack mode, seqTxn tracking) all hinge on the
-                // ack that covers this group-closing sequence.
-                closesDeferredGroup = state.hasUncommittedDeferredRows();
-                state.commit();
-            }
-            if (state.isOk() && deferCommit) {
-                // Capture BEFORE the refresh below, for the same reason the
-                // non-deferred arm captures before commit(): if earlier deferred
-                // frames are still withheld, an ack that finally covers them
-                // must flush eagerly rather than wait for unrelated traffic.
-                closesDeferredGroup = state.hasUncommittedDeferredRows();
-                state.commitIfMaxUncommittedRowsReached();
-                if (state.isOk()) {
-                    // The force-commit above fires per-table at the
-                    // max-uncommitted-rows cap, so it may have covered
-                    // everything, something, or nothing. Ask what is actually
-                    // uncommitted instead of assuming the worst -- and require
-                    // that THIS frame's own rows are what became durable. Both
-                    // terms are load-bearing; see refreshDeferredAckCoverage.
-                    deferredFrameFullyCommitted = state.refreshDeferredAckCoverage();
-                }
-            }
-            // Read AFTER the commit calls: processMessage's read-only gate AND the
-            // commit path's authorization-refusal containment (rejectCairoError)
-            // can both flag the role-change close; reading before commit() would
-            // miss the latter and send a client-visible error status instead of
-            // the graceful reconnect-eligible close.
-            roleChangeClose = state.isRoleChangeClosePending();
-            // commit() swallows exceptions internally
-            if (state.isOk()) {
-                if (deferCommit) {
-                    LOG.debug().$("WebSocket deferred commit [fd=").$(context.getFd())
-                            .$(", seq=").$(seq).I$();
+            boolean isNormalPath = true;
+            if (isBatchPending) {
+                if (state.joinCommitBatch(seq)) {
+                    isNormalPath = false;
+                    isBatched = true;
                 } else {
-                    LOG.debug().$("WebSocket message committed [fd=").$(context.getFd())
-                            .$(", seq=").$(seq).I$();
+                    // The frame failed or cannot join, and joinCommitBatch rewound its rows.
+                    final boolean isFrameFailed = !state.isOk();
+                    final byte frameStatus = responseStatusOf(state);
+                    // Read only for a failed frame: a frame that only cannot join has no error.
+                    final String frameError = isFrameFailed ? state.getErrorText() : null;
+                    final boolean isFrameRoleChangeClose = state.isRoleChangeClosePending();
+                    if (!state.isCommitBatchIntact()) {
+                        // The frame's failure or its rewind left the writers in doubt, so the
+                        // batch cannot commit. NACK this frame, retriably: the watermark stays
+                        // below the batch, the client replays it, and a failure that recurs
+                        // strikes this frame in the client's poison detector, not the batch's
+                        // first frame.
+                        assert isFrameFailed : "a frame that left the table cache distressed has not failed";
+                        isNormalPath = false;
+                        LOG.error().$("WebSocket commit batch lost with a failed frame [fd=").$(context.getFd())
+                                .$(", firstSeq=").$(state.getFirstCommitBatchSequence())
+                                .$(", failedSeq=").$(seq)
+                                .$(", error=").$safe(frameError).I$();
+                        roleChangeClose = isFrameRoleChangeClose;
+                        errorMessage = frameError;
+                        responseStatus = STATUS_INTERNAL_ERROR;
+                        state.abandonCommitBatch();
+                    } else {
+                        // A boundary: commit the batch before this frame goes on, so that the
+                        // frame is answered as it would be without a batch. If the commit
+                        // fails, the frame is not processed: the finally's clear() discards
+                        // it and the client replays it behind the batch's failed frame.
+                        if (isFrameFailed) {
+                            state.clearFrameErrorForBatchCommit();
+                        }
+                        if (!state.commitBatch()) {
+                            isNormalPath = false;
+                            roleChangeClose = state.isRoleChangeClosePending();
+                            errorMessage = state.getErrorText();
+                            responseStatus = responseStatusOf(state);
+                            responseSeq = state.getCommitBatchFailureSequence();
+                            logCommitBatchFailed(context, state.getFirstCommitBatchSequence(), seq, errorMessage);
+                            state.abandonCommitBatch();
+                        } else if (isFrameFailed) {
+                            // The watermark is past the batch; this frame gets its own answer.
+                            isNormalPath = false;
+                            roleChangeClose = isFrameRoleChangeClose;
+                            errorMessage = frameError;
+                            responseStatus = frameStatus;
+                        }
+                    }
                 }
-            } else {
-                errorMessage = state.getErrorText();
-                LOG.error().$("WebSocket message processing failed [fd=").$(context.getFd())
-                        .$(", error=").$safe(errorMessage).I$();
-                responseStatus = switch (state.getStatus()) {
-                    case PARSE_ERROR -> STATUS_PARSE_ERROR;
-                    case SCHEMA_MISMATCH -> STATUS_SCHEMA_MISMATCH;
-                    case SECURITY_ERROR -> STATUS_SECURITY_ERROR;
-                    case INTERNAL_ERROR -> STATUS_INTERNAL_ERROR;
-                    case DICTIONARY_GAP -> STATUS_DICTIONARY_GAP;
-                    default -> STATUS_WRITE_ERROR;
-                };
+            }
+
+            if (isNormalPath && state.isOk() && !deferCommit && state.joinCommitBatch(seq)) {
+                // No batch was pending: this frame opened one.
+                isNormalPath = false;
+                isBatched = true;
+            }
+
+            if (isNormalPath) {
+                state.processPreparedMessage();
+
+                if (state.isOk() && !deferCommit) {
+                    // Capture BEFORE commit(): a successful commitAll() clears the
+                    // uncommitted-deferred-rows flag, and this frame's ack must then
+                    // flush eagerly -- the group's deferred frames were never
+                    // individually acked, so the client's store-and-forward slots
+                    // (and, in durable-ack mode, seqTxn tracking) all hinge on the
+                    // ack that covers this group-closing sequence. A rowless
+                    // deferred frame also opens a group that this frame closes; such
+                    // a frame commits through commit(), which clears the rowless
+                    // marker, and never opens a commit batch.
+                    closesDeferredGroup = state.hasUncommittedDeferredRows() || state.hasWithheldRowlessDeferredFrame();
+                    state.commit();
+                }
+                if (state.isOk() && deferCommit) {
+                    // Capture BEFORE the refresh below, for the same reason the
+                    // non-deferred arm captures before commit(): if earlier deferred
+                    // frames are still withheld, an ack that finally covers them
+                    // must flush eagerly rather than wait for unrelated traffic.
+                    closesDeferredGroup = state.hasUncommittedDeferredRows();
+                    state.commitIfMaxUncommittedRowsReached();
+                    if (state.isOk()) {
+                        // The force-commit above fires per-table at the
+                        // max-uncommitted-rows cap, so it may have covered
+                        // everything, something, or nothing. Ask what is actually
+                        // uncommitted instead of assuming the worst -- and require
+                        // that THIS frame's own rows are what became durable. Both
+                        // terms are load-bearing; see refreshDeferredAckCoverage.
+                        deferredFrameFullyCommitted = state.refreshDeferredAckCoverage();
+                    }
+                }
+                // Read AFTER the commit calls: the live read-only gate AND the
+                // commit path's authorization-refusal containment (rejectCairoError)
+                // can both flag the role-change close; reading before commit() would
+                // miss the latter and send a client-visible error status instead of
+                // the graceful reconnect-eligible close.
+                roleChangeClose = state.isRoleChangeClosePending();
+                if (state.isOk()) {
+                    if (deferCommit) {
+                        LOG.debug().$("WebSocket deferred commit [fd=").$(context.getFd())
+                                .$(", seq=").$(seq).I$();
+                    } else {
+                        LOG.debug().$("WebSocket message committed [fd=").$(context.getFd())
+                                .$(", seq=").$(seq).I$();
+                    }
+                } else {
+                    errorMessage = state.getErrorText();
+                    LOG.error().$("WebSocket message processing failed [fd=").$(context.getFd())
+                            .$(", error=").$safe(errorMessage).I$();
+                    responseStatus = responseStatusOf(state);
+                }
             }
         } catch (Throwable e) {
             LOG.error().$("WebSocket ILP processing error [fd=").$(context.getFd())
@@ -1678,12 +1913,22 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
 
             responseStatus = STATUS_INTERNAL_ERROR;
             errorMessage = e.getMessage();
+            roleChangeClose = false;
+            isBatched = false;
+            if (state.isCommitBatchPending()) {
+                // Nothing of the batch can be vouched for: refuse it from its first frame.
+                responseSeq = state.getFirstCommitBatchSequence();
+                state.abandonCommitBatch();
+            }
         } finally {
-            if (deferCommit && state.isOk()) {
-                // Preserve WAL state for the next message in the deferred batch
+            if ((deferCommit || isBatched) && state.isOk()) {
+                // Preserve WAL state for the next message in the deferred group or
+                // the commit batch.
                 state.clearMessageState();
             } else {
-                // Reset state for next message (but preserve connectionSymbolDict for delta encoding)
+                // Reset state for next message (but preserve connectionSymbolDict for
+                // delta encoding). Rolls back whatever is uncommitted, including a
+                // commit batch abandoned above.
                 state.clear();
             }
         }
@@ -1706,6 +1951,10 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         }
 
         // Send response using cumulative ACK strategy
+        if (responseStatus == STATUS_OK && isBatched) {
+            // The ack waits for the batch commit.
+            return;
+        }
         if (responseStatus == STATUS_OK) {
             if (deferCommit && !deferredFrameFullyCommitted) {
                 // Deferred frame with rows still uncommitted. NO watermark
@@ -1739,30 +1988,75 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                 // re-sending rows that are already durable and duplicating them.
                 //
                 // A frame that closes a run of withheld deferred frames flushes
-                // eagerly (hasPendingAck) instead of waiting for the batch
-                // threshold: those frames were never individually acked, and the
-                // client's transaction confirmation should not wait for
-                // unrelated follow-up traffic.
+                // eagerly (hasPendingAck) instead of waiting for the
+                // ACK_BATCH_SIZE threshold: those frames were never
+                // individually acked, and the client's transaction
+                // confirmation should not wait for unrelated follow-up traffic.
                 state.setHighestProcessedSequence(seq);
                 if (closesDeferredGroup ? state.hasPendingAck() : state.shouldSendAck(ACK_BATCH_SIZE)) {
                     trySendAck(context, state);
                 }
             }
         } else {
-            // Before any flush that may defer, so a blocked error frame still
-            // clamps the watermark and refuses the pipelined tail.
-            state.markSequenceUnresolved(seq);
-            // Error - first ACK all successful messages (if in READY state), then send error
-            if (state.hasPendingAck()) {
-                try {
-                    trySendAck(context, state);
-                } catch (PeerIsSlowToReadException e) {
-                    state.onErrorBlocked(responseStatus, seq, errorMessage);
-                    throw e;
-                }
-            }
-            sendErrorResponse(context, state, seq, responseStatus, errorMessage);
+            rejectFrame(context, state, responseSeq, responseStatus, errorMessage);
         }
+    }
+
+    /**
+     * Commits the pending commit batch outside {@link #handleBinaryMessage}'s frame
+     * processing (see the commit batch fields of {@link QwpIngressProcessorState} for
+     * where) and sends the failure response itself. On success the watermark is past
+     * the batch. On failure the tables that did not commit are rolled back, the
+     * watermark is pinned below the failed table's first frame, and the failure goes out
+     * against that frame (the frame the client replays first, so a deterministic
+     * failure keeps striking it), or as the role-change close; returns false.
+     * <p>
+     * A failed batch may leave prepared WAL writers (WalWriter.prepareCommit). None of
+     * its exits frees them under the role-switch lock, and every exit frees them: a
+     * failure return abandons the batch here, which distresses the table cache, and the
+     * clear() below discards every writer. An unexpected throw out of commitBatch()
+     * unwinds processWebSocketFrames, whose finally abandons the batch, and reaches the
+     * catch-all of resumeRecv or resumeSend, which disconnects; onConnectionClosed then
+     * clears the state. handleBinaryMessage's boundary commit abandons in its catch and
+     * clears in its finally.
+     */
+    private boolean commitPendingBatch(HttpConnectionContext context, QwpIngressProcessorState state)
+            throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+        final long firstSeq = state.getFirstCommitBatchSequence();
+        if (state.commitBatch()) {
+            return true;
+        }
+        final long failedSeq = state.getCommitBatchFailureSequence();
+        final boolean isRoleChangeClose = state.isRoleChangeClosePending();
+        final String errorMessage = state.getErrorText();
+        final byte status = responseStatusOf(state);
+        logCommitBatchFailed(context, firstSeq, failedSeq, errorMessage);
+        state.abandonCommitBatch();
+        // Rolls back the tables the batch did not commit and frees the distressed cache.
+        state.clear();
+        if (isRoleChangeClose) {
+            roleChangeCloseWithUploadGrace(context, state, errorMessage);
+        } else {
+            rejectFrame(context, state, failedSeq, status, errorMessage);
+        }
+        return false;
+    }
+
+    private void rejectFrame(HttpConnectionContext context, QwpIngressProcessorState state, long seq, byte status, String errorMessage)
+            throws PeerDisconnectedException, PeerIsSlowToReadException {
+        // Before any flush that may defer, so a blocked error frame still
+        // clamps the watermark and refuses the pipelined tail.
+        state.markSequenceUnresolved(seq);
+        // Error - first ACK all successful messages (if in READY state), then send error
+        if (state.hasPendingAck()) {
+            try {
+                trySendAck(context, state);
+            } catch (PeerIsSlowToReadException e) {
+                state.onErrorBlocked(status, seq, errorMessage);
+                throw e;
+            }
+        }
+        sendErrorResponse(context, state, seq, status, errorMessage);
     }
 
     private void handleClose(HttpConnectionContext context, QwpIngressProcessorState state, long payload, int length)
@@ -1886,6 +2180,16 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
 
     private void handlePing(HttpConnectionContext context, QwpIngressProcessorState state, long payload, int length)
             throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+        // A client keepalive PING on a connection that has sent no data for a
+        // while is the cue to return its idle WAL writers to the pool, so a quiet
+        // but open connection does not pin them (and block WAL purge) until it
+        // closes. Runs first because flushPendingAck below can throw.
+        if (idleWriterReleaseMicros > 0
+                && !state.hasProcessedDataInRecvPass()
+                && clock.getTicks() - state.getLastDataPassEndMicros() >= idleWriterReleaseMicros) {
+            state.releaseIdleWriters();
+        }
+
         // PING is a documented flush point for pending ACK/durable-ACK frames.
         // A client may send PING specifically to prod the server into emitting
         // acks for commits whose uploads have completed since the last message.
@@ -1916,7 +2220,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             boolean isDurableProgressFlushed = state.isSendReady();
             boolean isDurableWorkFullyUploaded = isDurableProgressFlushed
                     ? state.isDurableProgressSnapshotFullyUploaded()
-                    : state.isDurableWorkFullyUploaded(engine.getDurableAckRegistry());
+                    : state.isDurableWorkFullyCovered(engine.getDurableAckRegistry());
             if (isDurableWorkFullyUploaded || isGraceExpired) {
                 roleChangeCloseWithUploadGrace(
                         context,
@@ -2043,7 +2347,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             // so preserve it for onDurableAckSent and use the coverage-only
             // traversal. The continuation performs a fresh fused pass after
             // the genuine blocked-send interval when pending work remains.
-            isDurableWorkFullyUploaded = state.isDurableWorkFullyUploaded(engine.getDurableAckRegistry());
+            isDurableWorkFullyUploaded = state.isDurableWorkFullyCovered(engine.getDurableAckRegistry());
         }
         roleChangeCloseWithUploadGrace(
                 context,
@@ -2095,6 +2399,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             // Grace expired with genuinely un-acked durable work according to
             // the fused completion snapshot: the one close the operator must
             // see. Do not repeat the registry traversal just for diagnostics.
+
             LOG.error().$("role-change close upload grace expired; closing with un-acked durable work, client replay may duplicate [fd=")
                     .$(context.getFd()).I$();
         }
@@ -2192,7 +2497,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
     }
 
     private boolean isSecureConnection(HttpConnectionContext context) {
-        return context.getSocket().isTlsSessionStarted() || qwpBrowserTlsTerminationEnabled;
+        return context.getSocket().isTlsSessionStarted() || isBrowserTlsTerminationEnabled;
     }
 
     private int negotiateQwpVersion(HttpRequestHeader requestHeader, long fd) {
@@ -2272,6 +2577,14 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                         LOG.error().$("WebSocket frame too large [fd=").$(context.getFd())
                                 .$(", payloadLength=").$(frameParser.getPayloadLength())
                                 .$(", bufferSize=").$(recvBufferSize).I$();
+                        if (state.isCommitBatchPending()) {
+                            // The fatal CLOSE flushes acks first: the frames before
+                            // this one must be committed by then. A demote refusing
+                            // the commit sends the role-change CLOSE instead, and the
+                            // checks below then stand down as they would for any
+                            // CLOSE already on the wire.
+                            commitPendingBatch(context, state);
+                        }
                         if (state.isAwaitingCloseEcho()) {
                             // The frame can never complete within the buffer, so
                             // frame sync is unrecoverable and the echo can never
@@ -2282,6 +2595,12 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                             // CLOSE opcode. No second CLOSE may go out.
                             state.onCloseEchoSyncLost();
                             checkCloseEchoWaitExpiry(context, state);
+                            pos = bufferEnd;
+                            return;
+                        }
+                        if (state.isCloseDraining()) {
+                            // The refused batch commit sent the role-change CLOSE and
+                            // half-closed: no second CLOSE may follow it.
                             pos = bufferEnd;
                             return;
                         }
@@ -2298,8 +2617,26 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                 }
 
                 // Frame parsed successfully
-                boolean wasAwaitingCloseEcho = state.isAwaitingCloseEcho();
                 int opcode = frameParser.getOpcode();
+                if ((opcode != WebSocketOpcode.BINARY || !frameParser.isFin()) && state.isCommitBatchPending()) {
+                    // Anything but a complete data frame -- a control frame (a CLOSE's
+                    // final acks precede the echo), or a fragment refused with a fatal
+                    // CLOSE that flushes acks -- sees every earlier data frame
+                    // committed. Commit BEFORE unmasking the frame and advancing past
+                    // it: if the commit fails and its error send blocks, the frame
+                    // stays buffered, still masked, and the resume pass parses and
+                    // handles it once the batch is resolved.
+                    if (!commitPendingBatch(context, state) && state.hasSentClose()) {
+                        // A demote refused the commit and the server sent its CLOSE.
+                        // This frame and the rest of the buffer arrived before that
+                        // CLOSE: drop them, as the checks after handleWebSocketFrame
+                        // below do. Nothing may follow the CLOSE, and none of these
+                        // bytes can be the client's close echo.
+                        pos = bufferEnd;
+                        return;
+                    }
+                }
+                boolean wasAwaitingCloseEcho = state.isAwaitingCloseEcho();
                 long payloadPtr = pos + frameParser.getHeaderSize();
                 int payloadLen = (int) frameParser.getPayloadLength();
 
@@ -2350,12 +2687,28 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                 }
             }
 
+            if (state.isCommitBatchPending() && !commitPendingBatch(context, state) && state.hasSentClose()) {
+                // A demote refused the commit and the server sent its CLOSE. A
+                // partial frame still buffered arrived before that CLOSE, so it
+                // cannot be the start of the client's close echo: drop it.
+                pos = bufferEnd;
+                return;
+            }
             // Keep cumulative ACK progress available even when this recv ends
             // mid-frame. Durable progress polling is different: it scans every
             // table with outstanding work, so a partial-frame-only re-entry
             // must not repeat that scan without a meaningful frame event.
             flushPendingAck(context, state, hasProcessedFrame && !hasPolledDurableProgress);
         } catch (ServerDisconnectException e) {
+            if (state.isCommitBatchPending()) {
+                // Disconnecting without a CLOSE (a malformed frame): no ack can
+                // reach the client, so committing would only turn its replay
+                // into duplicates. The disconnect rolls the rows back; pin the
+                // watermark below them meanwhile.
+                LOG.info().$("WebSocket commit batch abandoned by a disconnect [fd=").$(context.getFd())
+                        .$(", firstSeq=").$(state.getFirstCommitBatchSequence()).I$();
+                state.abandonCommitBatch();
+            }
             // Every teardown this method can reach -- handleWebSocketFrame's
             // CLOSE arm and the entry expiry poll both go through
             // gracefulCloseAndDisconnect -- drains inbound bytes into THIS
@@ -2371,6 +2724,14 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             pos = bufferEnd;
             throw e;
         } finally {
+            if (state.isCommitBatchPending()) {
+                // Every path out of the frame loop commits the batch first; one
+                // that did not must not let a later ack cover rows that may never
+                // commit. Pin the watermark below them; the client replays them.
+                LOG.critical().$("WebSocket commit batch left pending by the frame loop [fd=").$(context.getFd())
+                        .$(", firstSeq=").$(state.getFirstCommitBatchSequence()).I$();
+                state.abandonCommitBatch();
+            }
             // Compact unprocessed bytes to buffer start and update state.
             // Handles both normal exit (remaining=0) and exception unwind
             // (e.g. PeerIsSlowToReadException from trySendAck after a committed frame).
@@ -2385,6 +2746,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                 LOG.debug().$("WebSocket frames discarded awaiting close echo [fd=").$(context.getFd())
                         .$(", frames=").$(closeEchoDiscardedFrames).I$();
             }
+            state.onRecvPassComplete(idleWriterReleaseMicros > 0);
         }
 
     }
@@ -2645,30 +3007,19 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             throws PeerDisconnectedException, PeerIsSlowToReadException {
         assert state.isSendReady() : "trySendAck called in wrong state";
 
-        HttpRawSocket rawSocket = context.getRawResponseSocket();
-        long bufferAddr = rawSocket.getBufferAddress();
-        int bufferSize = rawSocket.getBufferSize();
-
         int payloadLen = state.computeAckPayloadSize();
         int frameSize = WebSocketFrameWriter.headerSize(payloadLen, false) + payloadLen;
-
-        if (frameSize > bufferSize) {
-            // Buffer capacity too small for even a single ACK frame
-            LOG.critical().$("Buffer too small for ACK response [fd=").$(context.getFd())
-                    .$(", required=").$(frameSize)
-                    .$(", bufferSize=").$(bufferSize).I$();
-            throw PeerDisconnectedException.INSTANCE;
-        }
+        long frameAddr = reserveFrame(context, state, frameSize);
 
         long sequence = state.getHighestProcessedSequence();
-        int headerLen = WebSocketFrameWriter.writeBinaryFrameHeader(bufferAddr, payloadLen);
-        long writeAddr = bufferAddr + headerLen;
+        int headerLen = WebSocketFrameWriter.writeBinaryFrameHeader(frameAddr, payloadLen);
+        long writeAddr = frameAddr + headerLen;
         Unsafe.putByte(writeAddr, STATUS_OK);
         Unsafe.putLong(writeAddr + 1, sequence);
         QwpIngressProcessorState.writeTableSeqTxnEntries(writeAddr + 9, state.getPendingAckSeqTxns());
 
         try {
-            rawSocket.send(headerLen + payloadLen);
+            sendFrame(context, state, frameSize);
             state.onAckSent(sequence);
             LOG.debug().$("Sent cumulative ACK [fd=").$(context.getFd()).$(", upTo=").$(sequence).I$();
         } catch (PeerIsSlowToReadException e) {
@@ -2684,34 +3035,62 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             throws PeerDisconnectedException, PeerIsSlowToReadException {
         assert state.isSendReady() : "trySendCollectedDurableAck called in wrong state";
 
+        // Additive LOCAL stream first (LOCAL|REPLICATED grants only): the local
+        // frontier runs ahead of the replicated one, so its progress frame is
+        // the earlier signal. A blocked send parks with the stream marker set
+        // (see setSendingLocalDurableAck), so completing it advances only the
+        // LOCAL watermark. The RESUME_DURABLE_ACK continuation then re-enters
+        // trySendDurableAck, which re-collects both streams and sends whatever
+        // remains. The close continuations do the same before they close:
+        // RESUME_DURABLE_ACK_THEN_CLOSE (finishDeferredFatalClose) and
+        // RESUME_DURABLE_ACK_THEN_CLOSE_RESPONSE (finishClientCloseResponse)
+        // run flushPendingAck, so the final replicated ack precedes the CLOSE,
+        // and a new block re-parks the close behind that frame. Teardown is
+        // different on purpose: onConnectionClosed's drainPendingResponse
+        // finishes a frame parked ahead of a client-close response and skips
+        // the response, and leaves a parked fatal close unsent; only the
+        // best-effort flushPendingAck that follows may send more.
+        CharSequenceLongHashMap localProgress = state.getLocalDurableProgressSnapshot();
+        if (localProgress.size() > 0) {
+            state.setSendingLocalDurableAck(true);
+            trySendDurableAckFrame(context, state, STATUS_LOCAL_DURABLE_ACK, localProgress,
+                    state.computeLocalDurableAckPayloadSize());
+        }
+
         CharSequenceLongHashMap progress = state.getDurableProgressSnapshot();
         if (progress.size() == 0) {
             return;
         }
+        state.setSendingLocalDurableAck(false);
+        // A LOCAL-only grant's primary stream reports the local-fsync frontier
+        // and must carry the matching status byte; any grant that includes
+        // REPLICATED reports the replicated frontier as STATUS_DURABLE_ACK.
+        byte status = DurabilityTier.hasReplicated(state.getDurableAckTiers())
+                ? STATUS_DURABLE_ACK
+                : STATUS_LOCAL_DURABLE_ACK;
+        trySendDurableAckFrame(context, state, status, progress, state.computeDurableAckPayloadSize());
+    }
 
-        HttpRawSocket rawSocket = context.getRawResponseSocket();
-        long bufferAddr = rawSocket.getBufferAddress();
-        int bufferSize = rawSocket.getBufferSize();
-
-        int payloadLen = state.computeDurableAckPayloadSize();
+    private void trySendDurableAckFrame(
+            HttpConnectionContext context,
+            QwpIngressProcessorState state,
+            byte status,
+            CharSequenceLongHashMap progress,
+            int payloadLen
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         int frameSize = WebSocketFrameWriter.headerSize(payloadLen, false) + payloadLen;
+        long frameAddr = reserveFrame(context, state, frameSize);
 
-        if (frameSize > bufferSize) {
-            LOG.critical().$("Buffer too small for durable ACK response [fd=").$(context.getFd())
-                    .$(", required=").$(frameSize)
-                    .$(", bufferSize=").$(bufferSize).I$();
-            throw PeerDisconnectedException.INSTANCE;
-        }
-
-        int headerLen = WebSocketFrameWriter.writeBinaryFrameHeader(bufferAddr, payloadLen);
-        long writeAddr = bufferAddr + headerLen;
-        Unsafe.putByte(writeAddr, STATUS_DURABLE_ACK);
+        int headerLen = WebSocketFrameWriter.writeBinaryFrameHeader(frameAddr, payloadLen);
+        long writeAddr = frameAddr + headerLen;
+        Unsafe.putByte(writeAddr, status);
         QwpIngressProcessorState.writeTableSeqTxnEntries(writeAddr + 1, progress);
 
         try {
-            rawSocket.send(headerLen + payloadLen);
+            sendFrame(context, state, frameSize);
             state.onDurableAckSent();
             LOG.debug().$("Sent durable ACK [fd=").$(context.getFd())
+                    .$(", status=").$(status)
                     .$(", numOfTables=").$(progress.size()).I$();
         } catch (PeerIsSlowToReadException e) {
             state.onDurableAckBlocked();

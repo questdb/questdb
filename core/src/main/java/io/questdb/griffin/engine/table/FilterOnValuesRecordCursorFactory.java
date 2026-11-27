@@ -119,6 +119,13 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
         return SCAN_DIRECTION_OTHER;
     }
 
+    // The per-key index cursors walk forward, so the heap cursor merges the rows of an ascending frame in row id
+    // order, the one case getScanDirection() reports a forward scan for.
+    @Override
+    public boolean hasTableScanTimestamp() {
+        return isTimestampTableDesignated();
+    }
+
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return true;
@@ -170,22 +177,13 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
         // go through the list and if duplicate is found push it to the end of the list
         int idx = 0;
         int max = cursorFactories.size();
-
-        OUT:
         while (idx < max - 1) {
-            CharSequence symbol = symbol(idx);
-            idx++;
-
-            while (equals(symbol, symbol(idx))) {
-                FunctionBasedRowCursorFactory tmp = cursorFactories.get(idx);
+            final CharSequence symbol = symbol(idx++);
+            while (idx < max && equals(symbol, symbol(idx))) {
+                final FunctionBasedRowCursorFactory tmp = cursorFactories.get(idx);
                 cursorFactories.remove(idx);
                 cursorFactories.add(tmp);
-
-                idx++;
                 max--;
-                if (idx >= max) {
-                    break OUT;
-                }
             }
         }
         cursorFactoriesIdx[0] = max;

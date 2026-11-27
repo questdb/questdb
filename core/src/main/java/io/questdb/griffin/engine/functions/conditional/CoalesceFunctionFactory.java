@@ -56,6 +56,7 @@ import io.questdb.std.Decimals;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -101,7 +102,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
 
         for (int i = 0; i < argsSize; i++) {
-            args.setQuick(i, CaseCommon.getCastFunction(args.getQuick(i), argPositions.getQuick(i), returnType, configuration, sqlExecutionContext));
+            args.setQuick(i, CaseCommon.getCastToCommonTypeFunction(args.getQuick(i), argPositions.getQuick(i), returnType, configuration, sqlExecutionContext));
         }
 
         return switch (tagOf(returnType)) {
@@ -132,9 +133,14 @@ public class CoalesceFunctionFactory implements FunctionFactory {
             case VARCHAR ->
                     argsSize == 2 ? new TwoVarcharCoalesceFunction(args) : new VarcharCoalesceFunction(args, argsSize);
             case UUID -> argsSize == 2 ? new TwoUuidCoalesceFunction(args) : new UuidCoalesceFunction(args, argsSize);
-            case BOOLEAN, SHORT, BYTE, CHAR ->
-                // Null on these data types not supported
-                    args.getQuick(0);
+            case BOOLEAN, SHORT, BYTE, CHAR -> {
+                // coalesce() supports no NULL for these types and returns the first argument; close
+                // the others, which nothing reads
+                for (int i = 1; i < argsSize; i++) {
+                    args.setQuick(i, Misc.free(args.getQuick(i)));
+                }
+                yield args.getQuick(0);
+            }
             case DECIMAL8 ->
                     argsSize == 2 ? new TwoDecimal8CoalesceFunction(returnType, args) : new Decimal8CoalesceFunction(returnType, args, argsSize);
             case DECIMAL16 ->

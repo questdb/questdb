@@ -53,7 +53,6 @@ import io.questdb.std.datetime.millitime.Dates;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-
 /**
  * Shared base for {@link TimestampFloorFromOffsetFunctionFactory} and
  * {@link TimestampFloorFromOffsetUtcFunctionFactory}.
@@ -616,6 +615,13 @@ abstract class AbstractTimestampFloorFromOffsetFunctionFactory implements Functi
         }
 
         @Override
+        public boolean preservesTimestampOrder() {
+            return returnUtc && effectiveOffset == 0 && CommonUtils.isSubDayUnit(unit)
+                    && tsFunc.getType() == getType()
+                    && TimestampFloorFunctions.preservesOrder(unit, stride, getType(), tzRules.getStandardOffset());
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val(name).val("('");
             sink.val(stride);
@@ -695,6 +701,12 @@ abstract class AbstractTimestampFloorFromOffsetFunctionFactory implements Functi
         @Override
         public Function getTimestampArg() {
             return tsFunc;
+        }
+
+        @Override
+        public boolean preservesTimestampOrder() {
+            return effectiveOffset == 0 && tsFunc.getType() == getType()
+                    && TimestampFloorFunctions.preservesOrder(unit, stride, getType(), tzOffset);
         }
 
         @Override
@@ -796,6 +808,13 @@ abstract class AbstractTimestampFloorFromOffsetFunctionFactory implements Functi
         @Override
         public int invertTimestampInterval(Interval io) {
             return invertFloorNamedTz(io, timestampDriver, tzRules, floorFunc, unit, stride, effectiveOffset, returnUtc);
+        }
+
+        @Override
+        public boolean preservesTimestampOrder() {
+            return returnUtc && effectiveOffset == 0 && CommonUtils.isSubDayUnit(unit)
+                    && tsFunc.getType() == getType()
+                    && TimestampFloorFunctions.preservesOrder(unit, stride, getType(), tzRules.getStandardOffset());
         }
 
         @Override

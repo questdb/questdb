@@ -416,8 +416,20 @@ public class PartitionGeometry implements Closeable, Mutable {
 
     public void addPiece(long tsLo, long tsHi, long rowOffset, long rowCount, long writerTxn, long lastWriteMicros) {
         assert pendingRec != NO_PARTITION : "addPiece outside beginUpdate/commitUpdate";
-        assert pending.size() == 0 || tsLo > pending.getQuick(pending.size() - LONGS_PER_PIECE + PIECE_TS_LO)
-                : "pieces must ascend by tsLo";
+        // Pieces are looked up by tsLo, so two pieces starting on one timestamp would be ambiguous to readers.
+        // A hard check, not an assert: publishing such a list in production would corrupt reads silently.
+        if (pending.size() > 0) {
+            final long prevTsLo = pending.getQuick(pending.size() - LONGS_PER_PIECE + PIECE_TS_LO);
+            if (tsLo <= prevTsLo) {
+                final int partitionIndex = pendingRec;
+                abandonUpdate();
+                throw CairoException.critical(0)
+                        .put("pieces must ascend by tsLo [partitionIndex=").put(partitionIndex)
+                        .put(", tsLo=").put(tsLo)
+                        .put(", prevTsLo=").put(prevTsLo)
+                        .put(']');
+            }
+        }
         final long cumulativeLo = pending.size() == 0
                 ? 0
                 : pending.getQuick(pending.size() - LONGS_PER_PIECE + PIECE_CUMULATIVE_LO)
@@ -492,13 +504,14 @@ public class PartitionGeometry implements Closeable, Mutable {
         int slot = findResolved(txReader.getPartitionTimestampByIndex(partitionIndex), txReader.getPartitionNameTxn(partitionIndex));
         if (slot < 0) {
             slot = insertResolved(txReader.getPartitionTimestampByIndex(partitionIndex), txReader.getPartitionNameTxn(partitionIndex));
-            resolved.setQuick(slot + RES_COMMITTED_RECORD_SIZE, 0);
-            resolved.setQuick(slot + RES_GEOMETRY_REF, -1L);
-            resolved.setQuick(slot + RES_WRITER_TXN, -1L);
-            resolved.setQuick(slot + RES_SEQ_TXN, -1L);
-            resolved.setQuick(slot + RES_GEOMETRY_VERSION, txReader.getGeometryVersion());
+            resetCommittedRecord(slot);
         } else {
             pieceHoles += (int) resolved.getQuick(slot + RES_PIECE_COUNT) * LONGS_PER_PIECE;
+            // The slot outlived a chain that _txn no longer names, so the next publish starts a new one.
+            if (resolved.getQuick(slot + RES_GEOMETRY_REF) != txReader.getGeometryRef(partitionIndex)) {
+                assert !txReader.isPartitionComposite(partitionIndex) : "beginUpdate left a composite slot unresolved";
+                resetCommittedRecord(slot);
+            }
         }
         final int lo = pieces.size();
         pieces.add(pending);
@@ -843,6 +856,14 @@ public class PartitionGeometry implements Closeable, Mutable {
         resolved.setQuick(slot + RES_FLAGS, 0);
         resolved.setQuick(slot + RES_GEOMETRY_VERSION, txReader.getGeometryVersion());
         return slot;
+    }
+
+    private void resetCommittedRecord(int slot) {
+        resolved.setQuick(slot + RES_COMMITTED_RECORD_SIZE, 0);
+        resolved.setQuick(slot + RES_GEOMETRY_REF, -1L);
+        resolved.setQuick(slot + RES_WRITER_TXN, -1L);
+        resolved.setQuick(slot + RES_SEQ_TXN, -1L);
+        resolved.setQuick(slot + RES_GEOMETRY_VERSION, txReader.getGeometryVersion());
     }
 
     /**

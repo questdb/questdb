@@ -90,6 +90,8 @@ public class HttpResponseSink implements Closeable, Mutable {
     private int crc = 0;
     private boolean deflateBeforeSend = false;
     private boolean headersSent;
+    // true when the client of the current request asked to close the connection after the response
+    private boolean isConnectionCloseRequested;
     private Socket socket;
     private long total = 0;
     private long totalBytesSent = 0;
@@ -116,6 +118,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         headersSent = false;
         chunkedRequestDone = false;
         deflateBeforeSend = false;
+        isConnectionCloseRequested = false;
         simpleResponse.clear();
         resetZip();
     }
@@ -160,6 +163,14 @@ public class HttpResponseSink implements Closeable, Mutable {
                 break;
             }
         }
+    }
+
+    /**
+     * Tells whether the client of the current request asked to close the connection after
+     * the response, which then carries the Connection: close header.
+     */
+    public void setConnectionCloseRequested(boolean isConnectionCloseRequested) {
+        this.isConnectionCloseRequested = isConnectionCloseRequested;
     }
 
     public void setDeflateBeforeSend(boolean deflateBeforeSend, long bufferSize) {
@@ -673,7 +684,7 @@ public class HttpResponseSink implements Closeable, Mutable {
                 putAscii("Content-Type: ").put(contentType).putEOL();
             }
 
-            if (connectionCloseHeader) {
+            if (connectionCloseHeader || isConnectionCloseRequested) {
                 putAscii("Connection: close").putEOL();
             }
         }
@@ -774,8 +785,7 @@ public class HttpResponseSink implements Closeable, Mutable {
 
         public void sendStatusNoContent(int code, @Nullable CharSequence header) throws PeerDisconnectedException, PeerIsSlowToReadException {
             if (!headerSent) {
-                buffer.clearAndPrepareToWriteToBuffer();
-                headerImpl.status(httpVersion, code, null, -2L);
+                initNoContentHeader(code);
                 if (header != null) {
                     headerImpl.put(header).put(Misc.EOL);
                 }
@@ -787,8 +797,7 @@ public class HttpResponseSink implements Closeable, Mutable {
 
         public void sendStatusNoContent(int code, @NotNull Utf8Sequence header) throws PeerDisconnectedException, PeerIsSlowToReadException {
             if (!headerSent) {
-                buffer.clearAndPrepareToWriteToBuffer();
-                headerImpl.status(httpVersion, code, null, -2L);
+                initNoContentHeader(code);
                 headerImpl.put(header).put(Misc.EOL);
                 prepareHeaderSink();
                 headerSent = true;
@@ -849,6 +858,15 @@ public class HttpResponseSink implements Closeable, Mutable {
 
         public void shutdownWrite() {
             socket.shutdown(Net.SHUT_WR);
+        }
+
+        private void initNoContentHeader(int code) {
+            buffer.clearAndPrepareToWriteToBuffer();
+            headerImpl.status(httpVersion, code, null, -2L);
+            // 1xx/204 prohibit Content-Length; 304 would require the selected representation's length.
+            if (code >= 200 && code != HTTP_NO_CONTENT && code != HTTP_NOT_MODIFIED) {
+                headerImpl.put("Content-Length: 0").put(Misc.EOL);
+            }
         }
 
         private void sendStatusWithContent(

@@ -34,6 +34,7 @@ import io.questdb.mp.continuation.Fiber;
 import io.questdb.mp.continuation.FiberRuntime;
 import io.questdb.mp.continuation.FiberRuntimeState;
 import io.questdb.mp.continuation.LaunchResult;
+import io.questdb.std.Misc;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -184,6 +185,76 @@ public class MatViewFiberRefreshTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPendingSourceDeferralYieldsOncePerFiberCompletion() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE MATERIALIZED VIEW source_mv AS (SELECT * FROM base)");
+            execute("CREATE MATERIALIZED VIEW dependent_mv REFRESH MANUAL DEFERRED AS (SELECT * FROM source_mv)");
+            drainWalAndMatViewQueues();
+
+            final var sourceToken = engine.verifyTableName("source_mv");
+            final var dependentToken = engine.verifyTableName("dependent_mv");
+            final var store = engine.getMatViewStateStore();
+            final var state = store.getViewState(dependentToken);
+            final MatViewRefreshTask task = new MatViewRefreshTask();
+            while (store.tryDequeueRefreshTask(task)) {
+                // Discard CREATE-time work before submitting explicit requests.
+            }
+            final WorkerPool pool = newFiberHostPool();
+            final FiberRuntime runtime = pool.getFiberRuntime();
+            final MatViewRefreshJob job = new MatViewRefreshJob(engine, 1, runtime);
+            pool.assign(job);
+            engine.getMetadataCache().markExpiryPolicyPossible(sourceToken.getTableId());
+            try {
+                for (int operation : new int[]{MatViewRefreshTask.INCREMENTAL_REFRESH, MatViewRefreshTask.RANGE_REFRESH, MatViewRefreshTask.FULL_REFRESH}) {
+                    Object fullOwner = null;
+                    switch (operation) {
+                        case MatViewRefreshTask.INCREMENTAL_REFRESH -> store.enqueueIncrementalRefresh(dependentToken);
+                        case MatViewRefreshTask.RANGE_REFRESH ->
+                                store.enqueueRangeRefresh(dependentToken, 11, Long.MAX_VALUE - 1);
+                        default -> {
+                            state.markAsPendingFullRefreshForTesting();
+                            fullOwner = state.getPendingFullRefreshOwnerForTesting();
+                            store.enqueueFullRefresh(dependentToken, fullOwner);
+                        }
+                    }
+                    for (int attempt = 0; attempt < 2; attempt++) {
+                        Assert.assertTrue(job.run());
+                        Assert.assertFalse("an outstanding fiber must block further dispatch", job.run());
+                        TestUtils.assertEventually(() -> {
+                            runtime.drain(8);
+                            Assert.assertEquals(0, runtime.getOutstandingTaskCount());
+                        });
+                        final long mounts = runtime.getMountCount();
+                        Assert.assertFalse("a deferred completion must yield one dispatch pass", job.run());
+                        Assert.assertEquals(mounts, runtime.getMountCount());
+                        Assert.assertEquals(0, runtime.getOutstandingTaskCount());
+                        Assert.assertTrue(store.tryDequeueRefreshTask(task));
+                        Assert.assertEquals(operation, task.operation);
+                        Assert.assertEquals(dependentToken, task.matViewToken);
+                        if (operation == MatViewRefreshTask.RANGE_REFRESH) {
+                            Assert.assertEquals(11, task.rangeFrom);
+                            Assert.assertEquals(Long.MAX_VALUE - 1, task.rangeTo);
+                        } else if (operation == MatViewRefreshTask.FULL_REFRESH) {
+                            Assert.assertSame(fullOwner, task.fullRefreshOwner);
+                        }
+                        final MatViewRefreshTask duplicate = new MatViewRefreshTask();
+                        Assert.assertFalse("only one retry may remain queued", store.tryDequeueRefreshTask(duplicate));
+                        if (attempt == 0) {
+                            store.reenqueueRefreshTask(task);
+                        }
+                    }
+                }
+                Assert.assertFalse(state.isInvalid());
+            } finally {
+                engine.getMetadataCache().cancelExpiryPolicyUpdate(sourceToken.getTableId());
+                closeRuntime(runtime);
+                Assert.assertTrue(pool.haltWithin(TimeUnit.SECONDS.toNanos(10)));
+            }
+        });
+    }
+
+    @Test
     public void testQuiesceLeavesRefreshQueued() throws Exception {
         assertMemoryLeak(() -> {
             execute(CREATE_BASE_TABLE);
@@ -259,6 +330,14 @@ public class MatViewFiberRefreshTest extends AbstractCairoTest {
                     engine.verifyTableName("price_1h")
             );
             Assert.assertNotNull(viewState);
+            // Preflight can cache a factory even for the initial empty refresh. Discard it
+            // so the next refresh compiles the replacement SQL rather than the original query.
+            Assert.assertTrue(viewState.tryLock());
+            try {
+                Misc.free(viewState.acquireRecordFactory());
+            } finally {
+                viewState.unlock();
+            }
             viewState.getViewDefinition().setMatViewSqlForTesting("""
                     SELECT b.sym, last(b.price) AS price, b.ts
                     FROM base_price b

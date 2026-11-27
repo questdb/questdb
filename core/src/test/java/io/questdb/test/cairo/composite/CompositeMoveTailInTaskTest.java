@@ -178,6 +178,9 @@ public class CompositeMoveTailInTaskTest extends AbstractCairoTest {
             createDayWithABigPrefixAndASmallTailPiece(true);
             insertBoth("SELECT x + 480, timestamp_sequence('2024-01-01T00:06:50', 1_000_000L) FROM long_sequence(10)");
             Assert.assertEquals(2, dayFolderCount());
+            // The prefix's MAKE-PLAIN (which the backfill below relies on) shortens its files, so it waits for a
+            // save point past the move; the next commit then runs it.
+            releaseSavePointHolds("x");
             // Grow the sibling at 00:06:40 the same way: 440 rows above its range, then a 40-row backfill over the
             // top 40 of those, which the pre-split cuts into an untouched prefix and a small tail.
             insertBoth("SELECT x + 1000, timestamp_sequence('2024-01-01T00:10:00', 1_000_000L) FROM long_sequence(440)");

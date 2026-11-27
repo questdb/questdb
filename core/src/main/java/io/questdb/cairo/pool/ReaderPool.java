@@ -78,6 +78,11 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
         return getWithSupervisor(tableToken, asReaderSupervisor(supervisor));
     }
 
+    /**
+     * Returns a reader fixed at the source reader's current snapshot.
+     * The source reader must stay active at that snapshot until the returned reader closes.
+     * Do not close, reload, or make the source reader passive while the returned reader remains active.
+     */
     public TableReader getCopyOf(TableReader srcReader, @Nullable ResourcePoolSupervisor<TableReader> supervisor) {
         return getCopyOf((ReaderPool.R) srcReader, asReaderSupervisor(supervisor));
     }
@@ -212,14 +217,31 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
                         supervisor.onResourceReturned(this);
                         supervisor = null;
                     }
-                    goPassive();
                     final AbstractMultiTenantPool<R> pool = this.pool;
+                    try {
+                        goPassive();
+                    } catch (Throwable th) {
+                        try {
+                            super.close();
+                        } catch (Throwable closeFailure) {
+                            th.addSuppressed(closeFailure);
+                        } finally {
+                            if (pool != null) {
+                                pool.expelFromPool(this);
+                            }
+                            goodbye();
+                        }
+                        throw th;
+                    }
                     if (pool == null || entry == null || !pool.returnToPool(this)) {
                         super.close();
                     }
                 } else {
-                    closeExcessPartitions();
-                    detachedRefCount--;
+                    try {
+                        closeExcessPartitions();
+                    } finally {
+                        detachedRefCount--;
+                    }
                 }
             }
         }

@@ -24,21 +24,26 @@
 
 package io.questdb.test.cairo.fuzz;
 
+import io.questdb.PropertyKey;
+import io.questdb.cairo.ColumnType;
 import io.questdb.std.Rnd;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class ReplaceInsertFuzzTest extends AbstractFuzzTest {
     // Regression for the POSTING column rename bug where
     // linkPostingIndexAuxFiles skipped the .pv link when readSealTxnFromKeyFile
-    // returned -1, including the legitimate empty-chain (pre-seal) case. With
-    // this seed the WAL apply path adds sym_top SYMBOL INDEX and immediately
-    // renames it before any seal has run, so the live unsealed values still
-    // live in .pv.<colTxn>.0. Without the fix, the renamed column ends up
-    // with .d + .pk linked but no .pv, the table gets suspended on apply,
-    // and the parallel WAL harness fails checkNoSuspendedTables.
+    // returned -1, including the legitimate empty-chain (pre-seal) case. The
+    // failing scenario has the WAL apply path add a SYMBOL INDEX column and
+    // rename it before any seal has run, so the live unsealed values still
+    // live in .pv.<colTxn>.0. The non-zero column add and rename probabilities
+    // below let a random seed reach that sequence. Without the fix, the
+    // renamed column ends up with .d + .pk linked but no .pv, WAL apply
+    // suspends the table, and the parallel WAL harness fails
+    // checkNoSuspendedTables.
     @Test
     public void testRenamePostingColumnBeforeFirstSeal() throws Exception {
-        Rnd rnd = generateRandom(LOG, 7267207179444742L, 1778696418556L);
+        Rnd rnd = generateRandom(LOG);
         setFuzzProbabilities(
                 0.01,
                 0.2,
@@ -62,6 +67,26 @@ public class ReplaceInsertFuzzTest extends AbstractFuzzTest {
                 20, 10, 200, rnd.nextInt(1000), 1
         );
         runFuzz(rnd);
+    }
+
+    @Test
+    public void testReplaceOnFormatParquetTable() throws Exception {
+        runReplaceOnFormatParquetTable(ColumnType.TIMESTAMP_MICRO);
+    }
+
+    @Test
+    public void testReplaceOnFormatParquetTableNanos() throws Exception {
+        runReplaceOnFormatParquetTable(ColumnType.TIMESTAMP_NANO);
+    }
+
+    @Test
+    public void testReplaceWithParquetConversions() throws Exception {
+        runReplaceWithParquetConversions(ColumnType.TIMESTAMP_MICRO);
+    }
+
+    @Test
+    public void testReplaceWithParquetConversionsNanos() throws Exception {
+        runReplaceWithParquetConversions(ColumnType.TIMESTAMP_NANO);
     }
 
     @Test
@@ -118,5 +143,73 @@ public class ReplaceInsertFuzzTest extends AbstractFuzzTest {
                 20, 10, 200, rnd.nextInt(1000), 1
         );
         runFuzz(rnd);
+    }
+
+    // Half the runs keep rows at one timestamp rare, as the other fuzz tests do. The other half write long runs of rows
+    // at one timestamp, so that one timestamp often spans three of the small row groups (one row group ends at it, the
+    // next holds only it, the one after starts at it) and replace windows land on it. A run of rows at one timestamp
+    // must outgrow a row group, of up to 34 rows here, hence the high probability.
+    private static double rndEqualTsRowsProb(Rnd rnd) {
+        final double equalTsRowsProb = rnd.nextBoolean() ? 0.01 : 0.9 + 0.08 * rnd.nextDouble();
+        LOG.info().$("rows at one timestamp [equalTsRowsProb=").$(equalTsRowsProb).I$();
+        return equalTsRowsProb;
+    }
+
+    private void runReplaceOnFormatParquetTable(int timestampType) throws Exception {
+        Rnd rnd = generateRandom(LOG);
+        fuzzer.setTimestampType(timestampType);
+        setCreateWalAsParquet(true);
+        final double equalTsRowsProb = rndEqualTsRowsProb(rnd);
+        setFuzzProbabilities(
+                0.01, 0.2, 0.1, 0.01,
+                0.02, 0.02, 0.02, 0,
+                1.0, equalTsRowsProb, 0.01,
+                0, 0, 0, 0, 0,
+                0.5, 0.05, 0
+        );
+        setReplaceOnParquetCounts(rnd);
+        setSmallParquetRowGroups(rnd);
+        final O3ParquetPathCounts counts = new O3ParquetPathCounts();
+        runFuzz(rnd);
+        counts.log(LOG, getTestName());
+        // every partition is parquet, so every data commit writes one
+        Assert.assertTrue("no parquet O3 ran: " + counts, counts.getWritten() > 0);
+    }
+
+    private void runReplaceWithParquetConversions(int timestampType) throws Exception {
+        Rnd rnd = generateRandom(LOG);
+        fuzzer.setTimestampType(timestampType);
+        final double equalTsRowsProb = rndEqualTsRowsProb(rnd);
+        setFuzzProbabilities(
+                0.01, 0.2, 0.1, 0.01,
+                0.02, 0.02, 0.02, 0,
+                1.0, equalTsRowsProb, 0.01,
+                0.2, 0.02, 0, 0, 0,
+                0.5, 0.05, 0
+        );
+        setReplaceOnParquetCounts(rnd);
+        setSmallParquetRowGroups(rnd);
+        final O3ParquetPathCounts counts = new O3ParquetPathCounts();
+        runFuzz(rnd);
+        counts.log(LOG, getTestName());
+    }
+
+    // A few thousand rows over 2 to 4 partitions and up to 200 transactions, half of them
+    // replace commits: cheap, and enough commits per partition to reach in-place merges,
+    // in-place DROPs, no-op windows and partition removals.
+    private void setReplaceOnParquetCounts(Rnd rnd) {
+        setFuzzCounts(
+                rnd.nextBoolean(), 5_000, 50 + rnd.nextInt(150),
+                20, 10, 200, rnd.nextInt(1000), 2 + rnd.nextInt(3)
+        );
+    }
+
+    // Fuzz partitions hold ~1_000 rows, far below the default parquet row group size, so
+    // each partition would be a single row group: every replace would rewrite it, and a
+    // row group fully covered by a replace window (DROP) could not occur. A few rows per
+    // row group spreads replace windows across row groups and exercises in-place merges.
+    private void setSmallParquetRowGroups(Rnd rnd) {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 5 + rnd.nextInt(30));
+        setRndParquetRewriteGate(rnd);
     }
 }

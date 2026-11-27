@@ -260,7 +260,9 @@ public class TableReaderReloadFuzzTest extends AbstractCairoTest {
     private void testFuzzReload(int numOfReloads, int addFactor, int removeFactor, int renameFactor, int convertFactor) {
         createTable();
         try (TableWriter writer = newOffPoolWriter(configuration, "all")) {
-            try (TableReader reader = newOffPoolReader(configuration, "all")) {
+            // A pooled reader: an off-pool one takes its scoreboard slot by a test-local id that a pooled reader -
+            // the one CONVERT PARTITION builds the parquet file off - may share, and that reader could never lock.
+            try (TableReader reader = engine.getReader("all")) {
                 for (int i = 0; i < numOfReloads; i++) {
                     ingest(writer);
                     reader.reload();

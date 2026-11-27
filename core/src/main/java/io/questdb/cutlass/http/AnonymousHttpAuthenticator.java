@@ -36,4 +36,9 @@ public class AnonymousHttpAuthenticator implements HttpAuthenticator {
     public CharSequence getPrincipal() {
         return null;
     }
+
+    @Override
+    public boolean isCredentialRequired() {
+        return false;
+    }
 }

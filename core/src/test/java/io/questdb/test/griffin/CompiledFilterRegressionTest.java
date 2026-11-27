@@ -7168,6 +7168,97 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSymbolConstantArithmetic() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (sy SYMBOL, id INT, k TIMESTAMP) TIMESTAMP(k)");
+            execute("""
+                    INSERT INTO x VALUES
+                        ('1', 1, 0),
+                        ('2', 2, 1),
+                        ('3', 3, 2),
+                        ('-1', 4, 3),
+                        ('5000000001', 5, 4),
+                        (null, 6, 5),
+                        ('1', 7, 6)
+                    """);
+            final String rowsOf1 = """
+                    id
+                    1
+                    7
+                    """;
+            final String rowsOf2 = """
+                    id
+                    2
+                    """;
+            final String rowsOf3 = """
+                    id
+                    3
+                    """;
+            final String rowsOfNull = """
+                    id
+                    6
+                    """;
+            final String noRows = """
+                    id
+                    """;
+            assertJitScalarAndVectorMatchJava("select id from x where sy = 0 + 1", rowsOf1);
+            assertJitScalarAndVectorMatchJava("select id from x where 0 + 1 = sy", rowsOf1);
+            assertJitScalarAndVectorMatchJava("select id from x where sy = 2 * 1", rowsOf2);
+            assertJitScalarAndVectorMatchJava("select id from x where sy = (1 + 2) * 3 - 6", rowsOf3);
+            assertJitScalarAndVectorMatchJava("select id from x where sy = 7 / 2", rowsOf3);
+            assertJitScalarAndVectorMatchJava("select id from x where sy = -(2 - 1)", """
+                    id
+                    4
+                    """);
+            assertJitScalarAndVectorMatchJava("select id from x where sy = 5_000_000_000 + 1", """
+                    id
+                    5
+                    """);
+            // the INT sum wraps onto the NULL sentinel
+            assertJitScalarAndVectorMatchJava("select id from x where sy = 2_147_483_647 + 1", rowsOfNull);
+            assertJitScalarAndVectorMatchJava("select id from x where sy != 0 + 1", """
+                    id
+                    2
+                    3
+                    4
+                    5
+                    6
+                    """);
+            assertJitScalarAndVectorMatchJava("select id from x where sy = 0 + 1 or sy = 1 + 2", """
+                    id
+                    1
+                    3
+                    7
+                    """);
+            assertJitScalarAndVectorMatchJavaOnEmptyResult("select id from x where sy = 4 * 10", noRows);
+            assertJitMatchesJava("select id from x where sy = 1 / 0", false, rowsOfNull);
+            // sy inside a function leaves the predicate numeric, and the JIT declines the function
+            assertJitMatchesJava("select id from x where 1.5 < length(sy) * id::FLOAT", false, """
+                    id
+                    2
+                    3
+                    4
+                    5
+                    7
+                    """);
+            assertJitMatchesJava("select id from x where length(sy) * id > 1 + 1", false, """
+                    id
+                    3
+                    4
+                    5
+                    7
+                    """);
+            // arithmetic on a STRING bind or on the column itself would run on symbol keys
+            bindVariableService.clear();
+            bindVariableService.setStr(0, "2");
+            assertJitMatchesJava("select id from x where sy = $1 + 0", false, rowsOf2);
+            assertJitMatchesJava("select id from x where sy = 1 + $1", false, rowsOf3);
+            assertJitMatchesJavaOnEmptyResult("select id from x where sy = (1 + 1) * $1", false);
+            assertJitMatchesJava("select id from x where 1 + 1 = sy + 0", false);
+        });
+    }
+
+    @Test
     public void testSymbolKnownConstant() throws Exception {
         // The column order is important here, since we want
         // query and table column indexes to be different.
@@ -7257,6 +7348,36 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTemporalSingleStringInMatchesJava() throws Exception {
+        // InTimestampTimestampFunctionFactory runs an interval search when the only element of an IN
+        // is a string and the key is a DATE, TIMESTAMP or TIMESTAMP_NS, as for the unparenthesised
+        // form. The JIT used to compare the key with the start of the interval only.
+        final String ddl = "create table x as (select" +
+                " rnd_date(to_date('2020-01-01', 'yyyy-MM-dd'), to_date('2020-01-05', 'yyyy-MM-dd'), 5) dt," +
+                " rnd_timestamp(to_timestamp('2020-01-01', 'yyyy-MM-dd'), to_timestamp('2020-01-05', 'yyyy-MM-dd'), 5) tm," +
+                " rnd_timestamp(to_timestamp('2020-01-01', 'yyyy-MM-dd'), to_timestamp('2020-01-05', 'yyyy-MM-dd'), 5)::TIMESTAMP_NS tn," +
+                " rnd_int(0, 100, 0) i32" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + "))";
+        FilterGenerator gen = new FilterGenerator()
+                .withOptionalNot().withAnyOf("dt", "tm", "tn")
+                .withAnyOf(" in ")
+                .withAnyOf(
+                        "('2020-01-02')",
+                        "'2020-01-02'",
+                        "('2020-01')",
+                        "('2020-01-02T10')",
+                        "('2020-01-02T10:00;6h;1d;3')",
+                        "('[2020-01-02,2020-01-04]')",
+                        "('2020-01-02T00:00:00.000500')",
+                        "('2020-01-02', '2020-01-03')"
+                )
+                // An INT comparison in an AND chain mixes operand sizes, which takes the scalar
+                // short-circuit path.
+                .withAnyOf("", " and i32 > 50", " or i32 > 50");
+        assertGeneratedQueryNullable(ddl, gen);
+    }
+
+    @Test
     public void testTimestampComparison() throws Exception {
         final String query = "x where t1 != t2";
         final String ddl = "create table x as " +
@@ -7274,6 +7395,28 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 "(select case when x < 10 then cast(NULL as TIMESTAMP) else cast(x as TIMESTAMP) end ts" +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + "))";
         assertQueryNullable(query, ddl);
+    }
+
+    @Test
+    public void testTimestampInUnderOrOnDesignatedColumnMatchesJava() throws Exception {
+        // The interval scan takes an IN on the designated timestamp only from an AND chain. Under
+        // OR, the IN stays in the filter, and the JIT compiles it.
+        final String ddl = "create table x as (select" +
+                " timestamp_sequence(to_timestamp('2020-01-01', 'yyyy-MM-dd'), 600_000_000) ts," +
+                " rnd_int(0, 100, 0) i32" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(ts)";
+        FilterGenerator gen = new FilterGenerator()
+                .withOptionalNot()
+                .withAnyOf(
+                        "ts in ('2020-01-02')",
+                        "ts in '2020-01-02'",
+                        "ts in ('2020-01-02T10')",
+                        "ts in ('2020-01-02T10:00;6h;1d;2')",
+                        "ts in ('[2020-01-02,2020-01-04]')",
+                        "ts in ('2020-01-02T10:00:00.000000Z')"
+                )
+                .withAnyOf(" or i32 < 10", " or i32 < 10 and ts in ('2020-01-03')");
+        assertGeneratedQueryNotNull(ddl, gen);
     }
 
     @Test

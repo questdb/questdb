@@ -379,6 +379,14 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
         this.createOp = createOp;
     }
 
+    /**
+     * Sets whether the rows that the export streams descend by the timestamp, so that the writer marks the file's
+     * designated timestamp descending rather than ascending. Takes effect at the next set-up of the stream exporter.
+     */
+    public void setDescending(boolean descending) {
+        this.descending = descending;
+    }
+
     public void setMemoryTracker(@Nullable MemoryTracker memoryTracker) {
         this.memoryTracker = memoryTracker;
         streamPartitionParquetExporter.setMemoryTracker(memoryTracker);
@@ -413,6 +421,18 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
 
     public void setWriteCallback(@Nullable StreamWriteParquetCallBack writeCallback) {
         this.writeCallback = writeCallback;
+    }
+
+    // The zero-copy paths hand raw page addresses to the streaming writer. A custom
+    // (Delta) frame has none, so reading it would export wrong rows or abort the JVM.
+    // Callers route such cursors row by row; this catches a path that does not.
+    static void checkRawPageFrame(PageFrame frame) {
+        if (frame.getPartitionFrameState() != 0) {
+            throw CairoException.critical(0)
+                    .put("parquet export cannot read a custom page frame [partitionIndex=")
+                    .put(frame.getPartitionIndex())
+                    .put(']');
+        }
     }
 
     protected static void parseBloomFilterColumnIndexes(CharSequence columns, RecordMetadata meta, DirectIntList indexes, int bloomFilterColumnsPosition) {
@@ -692,9 +712,13 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
          * Unified writer setup for all export modes.
          *
          * @param meta          column metadata to encode
-         * @param pfc           page frame cursor for SYMBOL table lookup (null when cursor-based)
+         * @param pfc           page frame cursor for SYMBOL table lookup, or null for the cursor-based path,
+         *                      whose SYMBOL columns take the plain type, never the no-null hint, since a cursor
+         *                      can return a NULL symbol that the table's symbol map does not hold, and whose
+         *                      writer builds each row group's symbol dictionary from the symbols it uses
          * @param baseColumnMap per-output-column base index for hybrid path, or null for
          *                      direct/temp-table path (where every column is a real table column)
+         *                      and for the cursor-based path
          */
         public void setUp(RecordMetadata meta, PageFrameCursor pfc, IntList baseColumnMap) {
             metadata = meta;
@@ -720,7 +744,9 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
                 // real table column.  In the hybrid path (baseColumnMap != null)
                 // only pass-through columns (baseColumnMap >= 0) qualify;
                 // in the direct path (baseColumnMap == null) every column is real.
+                // The cursor-based path (pfc == null) has none.
                 boolean isPassThroughSymbol = ColumnType.isSymbol(columnType)
+                        && pfc != null
                         && (baseColumnMap == null || baseColumnMap.getQuick(i) >= 0);
 
                 if (isPassThroughSymbol) {
@@ -775,7 +801,8 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
                     bloomFilterIndexesPtr,
                     bloomFilterCount,
                     fpp,
-                    0.0
+                    0.0,
+                    pfc == null
             );
         }
 
@@ -798,6 +825,7 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
 
         public void writePageFrame(PageFrameCursor frameCursor, PageFrame frame) throws Exception {
             assert streamWriter != -1 && writeCallback != null;
+            checkRawPageFrame(frame);
             if (frame.getFormat() == PartitionFormat.NATIVE) {
                 columnData.clear();
                 final long frameRowCount = frame.getPartitionHi() - frame.getPartitionLo();

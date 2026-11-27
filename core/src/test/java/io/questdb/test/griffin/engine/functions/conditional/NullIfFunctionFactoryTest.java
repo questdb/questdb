@@ -317,6 +317,28 @@ public class NullIfFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNullCharConstantKeepsStringOverload() throws Exception {
+        assertMemoryLeak(() -> {
+            assertQuery("SELECT nullif('abc'::SYMBOL, null::CHAR) v, typeOf(nullif(null::CHAR, null)) t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("v\tt\nabc\tSTRING\n");
+            execute("CREATE TABLE x (s SYMBOL)");
+            execute("INSERT INTO x VALUES ('abc'), ('abd'), ('x'), (null)");
+            assertQuery("SELECT s, nullif(s, null::CHAR) v FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            s\tv
+                            abc\tabc
+                            abd\tabd
+                            x\tx
+                            \t
+                            """);
+        });
+    }
+
+    @Test
     public void testStrSimple() throws Exception {
         assertQuery("select str1,str2,nullif(str1,str2) from x")
                 .ddl("""

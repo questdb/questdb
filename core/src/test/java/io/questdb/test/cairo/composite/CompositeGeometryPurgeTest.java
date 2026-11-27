@@ -28,25 +28,27 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnPurgeJob;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.DurableEpochManifest;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.PartitionGeometry;
 import io.questdb.cairo.PartitionGeometryFile;
+import io.questdb.cairo.RecoveryCoordinator;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TxReader;
-import io.questdb.cairo.TxWriter;
+import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.griffin.PurgingOperator;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
-import io.questdb.std.ObjList;
 import io.questdb.std.Os;
+import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -178,6 +180,73 @@ public class CompositeGeometryPurgeTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * What the kept generation is for: the newest save point is damaged, recovery falls back to the older one, and
+     * that save point's {@code _txn} names the generation the rotation retired. The startup purge before the
+     * fallback keeps it, so the day reads and the WAL replay that follows the fallback does not suspend the table.
+     */
+    @Test
+    public void testAFallbackToTheOlderSavePointReadsTheDayTheStartupPurgeKept() throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+        assertMemoryLeak(() -> {
+            setCurrentMicros(0);
+            retireGenerationZeroBetweenTwoSavePoints();
+            final TableToken tt = engine.verifyTableName("x");
+            final File generationZero = geometryFileOfDay(0);
+            try (ColumnPurgeJob startupJob = new ColumnPurgeJob(engine)) {
+                Assert.assertNotNull(startupJob);
+            }
+            Assert.assertTrue(
+                    "the startup purge deleted the generation the older save point names: " + generationZero,
+                    generationZero.exists()
+            );
+
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+            // Drop the pooled scoreboard too, as a restart does: its max still carries the txn the fallback
+            // abandons, so no reader could acquire the txn recovery rewinds to.
+            engine.releaseInactive();
+            // The real clock from here on: a reader that cannot load the table then times out instead of spinning.
+            setCurrentMicros(-1);
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tt);
+            final long olderSavePointTxn = tracker.getOtherPinnedEpochTxn();
+            corruptSavePointSection(tt, tracker.getPinnedEpochGeneration());
+            new RecoveryCoordinator(engine).recover();
+            Assert.assertEquals(
+                    "recovery did not fall back to the older save point",
+                    olderSavePointTxn,
+                    engine.getTableSequencerAPI().getTxnTracker(tt).getPinnedEpochTxn()
+            );
+
+            // No leak check: its engine.clear() would drop the table's txn tracker, which holds the pins.
+            // 5760 fixture rows + the fixture's 200-row stride: the rotating commit is past the older save point.
+            assertQuery("SELECT count() FROM x WHERE ts IN '2020-02-03'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            5960
+                            """);
+
+            engine.notifyWalTxnRepublisher(tt);
+            drainWalQueue();
+            Assert.assertFalse(
+                    "the WAL replay after the fallback suspended the table",
+                    engine.getTableSequencerAPI().isSuspended(tt)
+            );
+            assertQuery("SELECT count() FROM x WHERE ts IN '2020-02-03'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            6160
+                            """);
+        });
+    }
+
     @Test
     public void testAPinnedReaderKeepsTheRotatedOutGeometryGeneration() throws Exception {
         assertMemoryLeak(() -> {
@@ -241,11 +310,10 @@ public class CompositeGeometryPurgeTest extends AbstractCairoTest {
      * partition it failed on - it does NOT silently overwrite one. Emptying a single generation's file is enough for
      * the very same publish to succeed, which is what keeps a stray file from costing a generation permanently.
      * <p>
-     * The exception is the last resort for a publish site that cannot rewrite the directory - the compaction, squash
-     * and trim sites in {@code TableWriter}, none of which can start a chain, so only a size-cap rotation reaches it
-     * there. The COMMIT path no longer does: see
-     * {@link #testEveryGenerationHoldingARecordRewritesTheDayIntoAFreshVersion}. So the publish is driven directly,
-     * off the same fixture, rather than through an apply that now recovers.
+     * The exception is the last resort for a publish whose caller did not ask first. The commit path asks, see
+     * {@link #testEveryGenerationHoldingARecordRewritesTheDayIntoAFreshVersion}, and so do the compaction, squash and
+     * split removal sites in {@code TableWriter}. So the publish is driven directly, off the same fixture, rather than
+     * through an apply that now recovers.
      */
     @Test
     public void testEveryGenerationHoldingARecordFailsAPublishThatCannotRewriteTheDirectory() throws Exception {
@@ -459,6 +527,7 @@ public class CompositeGeometryPurgeTest extends AbstractCairoTest {
                 }
 
                 engine.releaseInactive();
+                releaseSavePointHolds("x");
                 runPurgeJob(purgeJob);
                 Assert.assertFalse(
                         "the note deferred by the read fault never completed: " + generationZero,
@@ -497,6 +566,7 @@ public class CompositeGeometryPurgeTest extends AbstractCairoTest {
                 final File generationZero = geometryFileOfDay(0);
                 rotateGeneration();
                 engine.releaseInactive();
+                releaseSavePointHolds("x");
 
                 isFaultArmed.set(true);
                 runPurgeJob(purgeJob);
@@ -670,12 +740,77 @@ public class CompositeGeometryPurgeTest extends AbstractCairoTest {
                 }
 
                 engine.releaseInactive();
+                releaseSavePointHolds("x");
                 runPurgeJob(purgeJob);
                 Assert.assertFalse(
                         "the retired generation was never purged: " + generationZero,
                         generationZero.exists()
                 );
             }
+        });
+    }
+
+    /**
+     * A save point is not a reader. The STARTUP_ONLY replay skips the reader check, but the older save point's
+     * {@code _txn} still names the generation the rotation retired, and recovery restores that {@code _txn} when the
+     * newest save point is damaged. So the replay keeps the file, writes the held note back to the log, and the
+     * running job removes it once both save points have moved past the rotating commit.
+     */
+    @Test
+    public void testTheStartupPurgeKeepsTheGenerationTheOlderSavePointNames() throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+        assertMemoryLeak(() -> {
+            setCurrentMicros(0);
+            final long updateTxn = retireGenerationZeroBetweenTwoSavePoints();
+            final TableToken tt = engine.verifyTableName("x");
+            final File generationZero = geometryFileOfDay(0);
+            try (ColumnPurgeJob job = new ColumnPurgeJob(engine)) {
+                Assert.assertTrue(
+                        "the startup purge deleted the generation the older save point names: " + generationZero,
+                        generationZero.exists()
+                );
+                Assert.assertEquals("the startup purge dropped the held note", 1, job.getOutstandingPurgeTasks());
+                // No leak check: its engine.clear() would drop the table's txn tracker, which holds the pins.
+                assertQuery("SELECT count() FROM '" + job.getLogTableName() + "' WHERE completed = null")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                count
+                                1
+                                """);
+
+                releaseSavePointHolds("x");
+                final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tt);
+                Assert.assertTrue(
+                        "the save points did not move past the rotating commit",
+                        tracker.getPinnedEpochTxn() >= updateTxn && tracker.getOtherPinnedEpochTxn() >= updateTxn
+                );
+                runPurgeJobPastTheRetryBackoff(job);
+                Assert.assertFalse(
+                        "the held note never completed once the save points moved on: " + generationZero,
+                        generationZero.exists()
+                );
+                Assert.assertEquals("the completed note stayed outstanding", 0, job.getOutstandingPurgeTasks());
+                // The row the startup pass wrote back is marked completed, so the next start does not replay it.
+                assertQuery("SELECT count() FROM '" + job.getLogTableName() + "' WHERE completed = null")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                count
+                                0
+                                """);
+            }
+            assertDayResolvesItsPieces(tt);
+            assertQuery("SELECT count() FROM x WHERE ts IN '2020-02-03'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            6160
+                            """);
         });
     }
 
@@ -726,7 +861,7 @@ public class CompositeGeometryPurgeTest extends AbstractCairoTest {
                     reader.getTxFile().isPartitionComposite(reader.getTxFile().getPartitionIndex(DAY_03))
             );
         }
-        plantFakeGeometryRecordNearFileLimit("x", DAY_03, 0);
+        NearFullGeometryFixture.plantCommittedRecord(engine, "x", DAY_03, 0);
         return tt;
     }
 
@@ -834,6 +969,28 @@ public class CompositeGeometryPurgeTest extends AbstractCairoTest {
             final int partitionIndex = reader.getTxFile().getPartitionIndex(DAY_03);
             Assert.assertTrue("day has no partition", partitionIndex > -1);
             return TxReader.geometryGeneration(reader.getTxFile().getGeometryRef(partitionIndex));
+        }
+    }
+
+    /**
+     * Flips the first byte of save point {@code generation}'s {@code _txn} section, so recovery rejects that save
+     * point and falls back to the other one. Same as {@code RecoveryCoordinatorTest.corruptSavePointSection}.
+     */
+    private static void corruptSavePointSection(TableToken tt, int generation) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        try (Path path = new Path()) {
+            path.of(configuration.getDbRoot()).concat(tt).concat(DurableEpochManifest.FILE_NAME).put('.').put(generation);
+            final long fd = ff.openRW(path.$(), configuration.getWriterFileOpenOpts());
+            Assert.assertTrue("could not open the save point file", fd > 0);
+            final long buf = Unsafe.malloc(1, MemoryTag.NATIVE_DEFAULT);
+            try {
+                Assert.assertEquals(1, ff.read(fd, buf, 1, DurableEpochManifest.FILE_SIZE));
+                Unsafe.getUnsafe().putByte(buf, (byte) ~Unsafe.getUnsafe().getByte(buf));
+                Assert.assertEquals(1, ff.write(fd, buf, 1, DurableEpochManifest.FILE_SIZE));
+            } finally {
+                Unsafe.free(buf, 1, MemoryTag.NATIVE_DEFAULT);
+                ff.close(fd);
+            }
         }
     }
 
@@ -1017,38 +1174,6 @@ public class CompositeGeometryPurgeTest extends AbstractCairoTest {
     }
 
     /**
-     * Plants a byte-identical copy of the day's currently-committed {@code _geometry} record 8 bytes short of {@link
-     * PartitionGeometryFile#MAX_FILE_SIZE} - a sparse write, not 100MB of real I/O - and re-points {@code _txn}'s
-     * geometry ref at that copy, so the next commit sees a genuinely near-full generation. Same fake-up as {@code
-     * O3PartitionPreSplitTest.plantFakeGeometryRecordNearFileLimit}.
-     */
-    private static void plantFakeGeometryRecordNearFileLimit(String tableName, long partitionTs, int fakeGeneration) throws Exception {
-        try (TableWriter writer = getWriter(tableName)) {
-            final TxWriter tx = writer.getTxWriter();
-            final int partitionIndex = tx.getPartitionIndex(partitionTs);
-            final long committedRef = tx.getGeometryRef(partitionIndex);
-            Assert.assertTrue("partition is not composite ahead of the fake-up", tx.isPartitionComposite(partitionIndex));
-            final int realGeneration = TxReader.geometryGeneration(committedRef);
-            final long realOffset = TxReader.geometryOffset(committedRef);
-            final long partitionNameTxn = tx.getPartitionNameTxn(partitionIndex);
-
-            final long fakeOffset = PartitionGeometryFile.MAX_FILE_SIZE - 8;
-            final FilesFacade geometryFf = configuration.getFilesFacade();
-            try (Path path = new Path()) {
-                path.of(configuration.getDbRoot()).concat(writer.getTableToken());
-                TableUtils.setPathForNativePartition(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, partitionNameTxn);
-                try (PartitionGeometryFile geometryFile = new PartitionGeometryFile(MemoryTag.NATIVE_TABLE_WRITER)) {
-                    geometryFile.read(geometryFf, path, realGeneration, realOffset);
-                    geometryFile.append(geometryFf, path, fakeGeneration, fakeOffset, configuration.getCommitMode());
-                }
-            }
-
-            writer.setPartitionGeometryRefForTest(partitionTs, TxReader.packGeometryRef(fakeGeneration, fakeOffset));
-            tx.commit(new ObjList<>());
-        }
-    }
-
-    /**
      * Plants a byte-identical copy of the day's currently-committed {@code _geometry} record at offset 0 of {@code
      * _geometry.<generation>}, leaving {@code _txn} alone: a generation occupied by a record nothing points at, which
      * is what a retirement note the purge queue dropped leaves behind.
@@ -1176,6 +1301,44 @@ public class CompositeGeometryPurgeTest extends AbstractCairoTest {
     }
 
     /**
+     * Retires the day's generation 0 between two save points: the older one names it, the newer one does not. A
+     * running purge job takes the note into the purge log and holds it, and is closed again, as a shutdown leaves it.
+     *
+     * @return the txn of the commit that retired generation 0
+     */
+    private static long retireGenerationZeroBetweenTwoSavePoints() throws Exception {
+        final long updateTxn;
+        try (ColumnPurgeJob runtimeJob = new ColumnPurgeJob(engine)) {
+            final TableToken tt = buildNearFullGenerationZero();
+            final File generationZero = geometryFileOfDay(0);
+            final long firstWriterTxn = firstWriterTxnOfGeneration(0);
+            takeSavePoint(tt, 1);
+            rotateGeneration();
+            updateTxn = tableTxn(tt);
+            takeSavePoint(tt, 2);
+
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tt);
+            final long olderSavePointTxn = tracker.getOtherPinnedEpochTxn();
+            Assert.assertTrue(
+                    "the older save point does not name generation 0 [firstWriterTxn=" + firstWriterTxn
+                            + ", olderSavePointTxn=" + olderSavePointTxn + ", updateTxn=" + updateTxn + ']',
+                    firstWriterTxn <= olderSavePointTxn && olderSavePointTxn < updateTxn
+            );
+            Assert.assertTrue("the newer save point names generation 0", tracker.getPinnedEpochTxn() >= updateTxn);
+
+            runPurgeJob(runtimeJob);
+            runPurgeJob(runtimeJob);
+            Assert.assertTrue(
+                    "the running purge deleted the generation the older save point names: " + generationZero,
+                    generationZero.exists()
+            );
+            Assert.assertEquals("the running purge dropped the held note", 1, runtimeJob.getOutstandingPurgeTasks());
+        }
+        engine.releaseInactive();
+        return updateTxn;
+    }
+
+    /**
      * Another relocation into the same day, landing on the now-near-full generation: publish has to rotate rather than
      * grow past MAX_FILE_SIZE.
      */
@@ -1186,5 +1349,17 @@ public class CompositeGeometryPurgeTest extends AbstractCairoTest {
                 "the rotation commit suspended the table",
                 engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x"))
         );
+    }
+
+    private static long tableTxn(TableToken tt) {
+        try (TableReader reader = engine.getReader(tt)) {
+            return reader.getTxn();
+        }
+    }
+
+    private static void takeSavePoint(TableToken tt, long nowMs) {
+        try (TableWriter writer = getWriter(tt)) {
+            writer.advanceDurableEpoch(nowMs);
+        }
     }
 }

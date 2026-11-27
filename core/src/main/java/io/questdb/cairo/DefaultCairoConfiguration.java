@@ -230,7 +230,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public int getCommitMode() {
-        return CommitMode.NOSYNC;
+        return CommitMode.DEFAULT;
     }
 
     @Override
@@ -672,6 +672,16 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public long getMatViewRefreshMemoryLimitBytes() {
         return 0;
+    }
+
+    @Override
+    public int getMatViewRowExpiryCleanupMaxCachedPartitions() {
+        return 16_384;
+    }
+
+    @Override
+    public double getMatViewRowExpiryCleanupMinExpiredFraction() {
+        return 0.5;
     }
 
     @Override
@@ -1396,6 +1406,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlMaxGroupingSets() {
+        return 4096;
+    }
+
+    @Override
     public int getSqlMaxNegativeLimit() {
         return 10_000;
     }
@@ -1687,6 +1702,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getViewCompileBusyRetryTimeout() {
+        return 1000;
+    }
+
+    @Override
     public int getViewLexerPoolCapacity() {
         return 8;
     }
@@ -1881,6 +1901,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isCommitModeAdaptiveDowngrade() {
+        return false;
+    }
+
+    @Override
     public boolean isCopierChunkedEnabled() {
         return true;
     }
@@ -1928,6 +1953,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public boolean isMatViewRefreshMissingWalFilesFatal() {
         return false;
+    }
+
+    @Override
+    public boolean isMatViewRowExpiryCleanupEnabled() {
+        return true;
     }
 
     @Override
@@ -2047,6 +2077,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public boolean isSqlParquetRowGroupPruningEnabled() {
+        return true;
+    }
+
+    @Override
+    public boolean isSqlStreamGroupByEnabled() {
         return true;
     }
 

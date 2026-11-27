@@ -37,15 +37,23 @@ import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.std.Chars;
 import io.questdb.std.LongList;
 import io.questdb.std.Rnd;
-import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.test.tools.TestUtils;
 
 public class FuzzDropPartitionOperation implements FuzzTransactionOperation {
 
     private final long cutoffTimestamp;
+    // drops every partition from cutoffTimestamp on, rather than the partition before it
+    private final boolean isDroppingNewest;
+    private final long partitionDuration;
 
-    public FuzzDropPartitionOperation(long cutoffTimestamp) {
+    /**
+     * Applies to the partitions starting in (cutoffTimestamp - partitionDuration, cutoffTimestamp), or, when
+     * isDroppingNewest is set, to every partition from cutoffTimestamp on.
+     */
+    public FuzzDropPartitionOperation(long cutoffTimestamp, long partitionDuration, boolean isDroppingNewest) {
         this.cutoffTimestamp = cutoffTimestamp;
+        this.partitionDuration = partitionDuration;
+        this.isDroppingNewest = isDroppingNewest;
     }
 
     @Override
@@ -55,14 +63,10 @@ public class FuzzDropPartitionOperation implements FuzzTransactionOperation {
         ) {
             context.with(AllowAllSecurityContext.INSTANCE);
             TableRecordMetadata metadata = wApi.getMetadata();
-            String tsColumnName = metadata.getColumnName(metadata.getTimestampIndex());
-            String sql = String.format("ALTER TABLE %s DROP PARTITION WHERE %s > '%s' AND %s < '%s'",
-                    TestUtils.randomiseCase(tempRnd, wApi.getTableToken().getTableName()),
-                    tsColumnName,
-                    Micros.toUSecString(cutoffTimestamp - 86_400_000_000L),
-                    tsColumnName,
-                    Micros.toUSecString(cutoffTimestamp)
-            );
+            String sql = "ALTER TABLE " + TestUtils.randomiseCase(tempRnd, wApi.getTableToken().getTableName())
+                    + " DROP PARTITION WHERE " + (isDroppingNewest
+                    ? FuzzTransactionOperation.partitionsFromFilter(metadata, cutoffTimestamp)
+                    : FuzzTransactionOperation.partitionBeforeFilter(metadata, cutoffTimestamp, partitionDuration));
 
             try {
                 CompiledQuery query = sqlCompiler.compile(sql, context);
@@ -86,5 +90,13 @@ public class FuzzDropPartitionOperation implements FuzzTransactionOperation {
         } catch (SqlException e) {
             throw new RuntimeException(e);
         }
+    }
+
+    public long getCutoffTimestamp() {
+        return cutoffTimestamp;
+    }
+
+    public boolean isDroppingNewest() {
+        return isDroppingNewest;
     }
 }
