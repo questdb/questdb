@@ -766,8 +766,10 @@ mod tests {
     /// Interpret a byte slice as a sequence of little-endian i64 values.
     fn read_i64s(data: &[u8]) -> Vec<i64> {
         assert_eq!(data.len() % 8, 0, "data length must be a multiple of 8");
-        data.chunks_exact(8)
-            .map(|c| i64::from_le_bytes(c.try_into().unwrap()))
+        data.as_chunks::<8>()
+            .0
+            .iter()
+            .map(|c| i64::from_le_bytes(*c))
             .collect()
     }
 

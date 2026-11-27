@@ -240,6 +240,7 @@ public class ReaderPoolTableFunctionTest extends AbstractCairoTest {
             }
             assertQuery("select a.table_name l, b.table_name r from reader_pool() a cross join reader_pool() b order by l, r limit 20")
                     .noLeakCheck()
+                    .expectSize()
                     .returns("""
                             l\tr
                             a\ta

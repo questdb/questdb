@@ -28,14 +28,21 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.std.DirectLongLongSortedList;
+import io.questdb.std.Unsafe;
 
 public final class Unordered8MapCursor implements MapRecordCursor {
+    private static final int SCAN_SLOTS = 64;
+    private static final int SPARSE_SLOTS_PER_ENTRY = 8;
     private final long entrySize;
     private final Unordered8Map map;
     private final Unordered8MapRecord recordA;
     private final Unordered8MapRecord recordB;
     private long address;
     private int count;
+    private boolean isSparse;
+    private int liveCount;
+    private long[] liveEntries;
+    private int livePos;
     private long memLimit;
     private long memStart;
     private int remaining;
@@ -79,8 +86,10 @@ public final class Unordered8MapCursor implements MapRecordCursor {
                 remaining--;
                 return true;
             }
-            recordA.of(address);
-            skipToNonZeroKey();
+            if (livePos == liveCount) {
+                scan();
+            }
+            recordA.of(liveEntries[livePos++]);
             remaining--;
             return true;
         }
@@ -125,15 +134,38 @@ public final class Unordered8MapCursor implements MapRecordCursor {
     public void toTop() {
         address = memStart;
         remaining = count;
-        if (count > 0 && (zeroKeyAddress == 0 || count > 1) && map.isZeroKey(address)) {
-            skipToNonZeroKey();
-        }
+        liveCount = livePos = 0;
+        isSparse = entrySize * count * SPARSE_SLOTS_PER_ENTRY < memLimit - memStart;
     }
 
-    private void skipToNonZeroKey() {
-        do {
-            address += entrySize;
-        } while (address < memLimit && map.isZeroKey(address));
+    // Slot emptiness is random, so a branch per slot mispredicts about once per live entry at the usual load.
+    // Only a sparse table, where the branch predicts well, takes it.
+    private void scan() {
+        // A sharded map has hundreds of these cursors, and most never iterate.
+        if (liveEntries == null) {
+            liveEntries = new long[SCAN_SLOTS];
+        }
+        long addr = address;
+        int live = 0;
+        if (isSparse) {
+            while (addr < memLimit && map.isZeroKey(addr)) {
+                addr += entrySize;
+            }
+            liveEntries[live++] = addr;
+            addr += entrySize;
+        } else {
+            while (live == 0 && addr < memLimit) {
+                final long limit = Math.min(memLimit, addr + SCAN_SLOTS * entrySize);
+                for (; addr < limit; addr += entrySize) {
+                    final long key = Unsafe.getLong(addr);
+                    liveEntries[live] = addr;
+                    live += (int) ((key | -key) >>> 63);
+                }
+            }
+        }
+        address = addr;
+        liveCount = live;
+        livePos = 0;
     }
 
     Unordered8MapCursor init(long memStart, long memLimit, long zeroKeyAddress, int count) {

@@ -37,6 +37,7 @@ import io.questdb.griffin.engine.table.HorizonJoinRecordCursorFactory;
 import io.questdb.griffin.engine.table.MultiHorizonJoinNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.MultiHorizonJoinRecordCursorFactory;
 import io.questdb.mp.WorkerPool;
+import io.questdb.std.Chars;
 import io.questdb.std.MemoryTag;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.mp.TestWorkerPool;
@@ -133,16 +134,16 @@ public class SyncHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
     @Test
     public void testHorizonJoinOverSortedWindowJoinBreachesLimitInSort() throws Exception {
         // The single-threaded HORIZON JOIN reads a WINDOW JOIN sorted by its timestamp through the sort that ORDER BY
-        // keeps for it. The sort copies the rows into a record chain bound to the per-query tracker, whose first
-        // 16 MiB page breaches the 8 MiB limit. Reusing the factory checks that the failed execution released what
-        // it had charged.
-        setProperty(PropertyKey.CAIRO_SQL_SORT_VALUE_PAGE_SIZE, 16 * 1024 * 1024);
+        // keeps for it. The sort copies the rows into a record chain and their keys into an entry list, both bound
+        // to the per-query tracker, and 15_000 trades take them past the 512 KiB limit. Reusing the factory checks
+        // that the failed execution released what it had charged.
+        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 512 * 1024L);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
-                        createTrades(engine, sqlExecutionContext, 100, 8);
+                        createTrades(engine, sqlExecutionContext, 15_000, 8);
                         createPrices(engine, sqlExecutionContext, 1_000, 8);
                         try (RecordCursorFactory factory = compiler.compile(horizonOverSortedWindowJoin(SORTED_WINDOW_JOIN), sqlExecutionContext).getRecordCursorFactory()) {
                             TestUtils.assertFactoryInTree(factory, HorizonJoinRecordCursorFactory.class);
@@ -153,7 +154,10 @@ public class SyncHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
                                     }
                                     Assert.fail("expected a per-query memory breach in the sort at iteration " + i);
                                 } catch (CairoException e) {
-                                    assertBreachOn(e, "size=16777216, memoryTag=" + MemoryTag.NATIVE_RECORD_CHAIN + ']');
+                                    final String recordChainTag = "memoryTag=" + MemoryTag.NATIVE_RECORD_CHAIN + ']';
+                                    assertBreachOn(e, Chars.contains(e.getFlyweightMessage(), recordChainTag)
+                                            ? recordChainTag
+                                            : "memoryTag=" + MemoryTag.NATIVE_DEFAULT + ']');
                                 }
                             }
                         }

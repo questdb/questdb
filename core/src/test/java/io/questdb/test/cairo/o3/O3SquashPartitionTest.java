@@ -2388,7 +2388,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                     2020-02-04T00:00:00.000000Z\t439\t-200335819
                     2020-02-05T00:00:00.000000Z\t1320\t-2772660
                     """, timestampType.getTypeName());
-            assertQuery(dataSql).noLeakCheck().timestamp("day").expectSize().returns(expectedData);
+            assertQuery(dataSql).noLeakCheck().timestamp("day").noRandomAccess().returns(expectedData);
 
             latestReader.set(getReader("x"));
             try {
@@ -2407,7 +2407,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                                     2020-02-04T20:01:00.000000Z\t439\t2020-02-04
                                     2020-02-05T00:00:00.000000Z\t1320\t2020-02-05
                                     """, timestampType.getTypeName()));
-            assertQuery(dataSql).noLeakCheck().timestamp("day").expectSize().returns(expectedData);
+            assertQuery(dataSql).noLeakCheck().timestamp("day").noRandomAccess().returns(expectedData);
 
             // 439 squashed rows and 1320 in the next day; an interval scan would miss the squashed partition
             // because the force drop left the table's min timestamp at the next day
