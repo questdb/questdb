@@ -27,7 +27,8 @@ package io.questdb.griffin.engine.functions.groupby;
 import io.questdb.griffin.FunctionFactory;
 
 /**
- * A factory of count(), which reports zero over no rows and merges the counts of the parts of a group by summing them.
+ * A factory of count(), which counts the rows of a group whose arguments are not NULL, reports zero over no rows and
+ * merges the counts of the parts of a group by summing them.
  */
 public interface CountAggregate extends FunctionFactory {
 
@@ -39,5 +40,10 @@ public interface CountAggregate extends FunctionFactory {
     @Override
     default PartialMerge getPartialMerge() {
         return PartialMerge.SUM;
+    }
+
+    @Override
+    default boolean isNonNullRowCount() {
+        return true;
     }
 }

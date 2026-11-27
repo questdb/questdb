@@ -185,6 +185,14 @@ public final class FunctionExpression extends BoundExpression {
     }
 
     /**
+     * Whether the call counts every row of its group, as its overload declares it, see
+     * {@link FunctionFactoryDescriptor#isRowCount()}.
+     */
+    public boolean isRowCount() {
+        return overload.isRowCount();
+    }
+
+    /**
      * An IN parsed without parentheses, whose right operand is a single value or interval rather than a list.
      */
     public boolean isSetOperation() {

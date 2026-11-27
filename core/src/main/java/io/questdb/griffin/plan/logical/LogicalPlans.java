@@ -570,11 +570,7 @@ public final class LogicalPlans {
         if (aggregates.size() != 1) {
             return false;
         }
-        return isCountCall(aggregates.getQuick(0));
-    }
-
-    public static boolean isCountCall(FunctionExpression call) {
-        return call.getArgumentCount() == 0 && call.isAggregate() && SqlKeywords.isCountKeyword(call.getName());
+        return aggregates.getQuick(0).isRowCount();
     }
 
     /**

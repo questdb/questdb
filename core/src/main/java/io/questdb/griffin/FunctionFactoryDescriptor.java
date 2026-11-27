@@ -37,7 +37,6 @@ import io.questdb.griffin.engine.functions.array.DoubleArrayAccessFunctionFactor
 import io.questdb.griffin.engine.functions.array.DoubleArraySliceFunctionFactory;
 import io.questdb.griffin.engine.functions.conditional.CaseFunctionFactory;
 import io.questdb.griffin.engine.functions.conditional.SwitchFunctionFactory;
-import io.questdb.griffin.engine.functions.groupby.CountGroupByFunctionFactory;
 import io.questdb.std.IntObjHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.str.StringSink;
@@ -97,7 +96,6 @@ public class FunctionFactoryDescriptor {
         this.isNot = factoryClass == NotFunctionFactory.class;
         this.isOr = factoryClass == OrFunctionFactory.class;
         this.isRelocatableScalar = isRelocatableScalar;
-        this.isRowCount = factoryClass == CountGroupByFunctionFactory.class;
         this.isSwitch = factoryClass == SwitchFunctionFactory.class;
 
         final String sig = factory.getSignature();
@@ -150,6 +148,7 @@ public class FunctionFactoryDescriptor {
         this.argTypes = types;
         this.sigArgCount = typeCount;
         this.isEquality = sigArgCount == 2 && "=".equals(name);
+        this.isRowCount = sigArgCount == 0 && factory.isGroupBy() && factory.isNonNullRowCount();
     }
 
     public static short getArgTypeTag(char c) {
@@ -384,6 +383,10 @@ public class FunctionFactoryDescriptor {
         return isRelocatableScalar;
     }
 
+    /**
+     * Whether the overload counts every row of its group: it takes no argument and its factory counts the rows whose
+     * arguments are not NULL, see {@link FunctionFactory#isNonNullRowCount()}.
+     */
     public boolean isRowCount() {
         return isRowCount;
     }
