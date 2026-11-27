@@ -71,6 +71,7 @@ import io.questdb.griffin.plan.logical.ProjectPlan;
 import io.questdb.griffin.plan.logical.RequirementFact;
 import io.questdb.griffin.plan.logical.ScanPlan;
 import io.questdb.griffin.plan.logical.TypeExpression;
+import io.questdb.std.Chars;
 import io.questdb.std.Decimals;
 import io.questdb.std.IntIntHashMap;
 import io.questdb.std.IntList;
@@ -800,6 +801,23 @@ public class FunctionBinderTest extends AbstractCairoTest {
         assertConstantNull(true, newConstant().ofInterval(Numbers.LONG_NULL, Numbers.LONG_NULL, ColumnType.INTERVAL_TIMESTAMP_MICRO, 0));
         assertConstantNull(false, newConstant().ofInterval(0, 1, ColumnType.INTERVAL_TIMESTAMP_MICRO, 0));
         assertConstantNull(false, newConstant().ofInterval(Numbers.LONG_NULL, 1, ColumnType.INTERVAL_TIMESTAMP_MICRO, 0));
+    }
+
+    @Test
+    public void testConstantNodeKeepsTheSpellingOfAFloatingPointLiteral() throws Exception {
+        assertMemoryLeak(() -> {
+            final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
+            final OutputSchema input = new OutputSchema().add(7, "value", ColumnType.INT, true);
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
+                for (String literal : new String[]{"1.50", "1.5f", "'a'", "7"}) {
+                    final ConstantExpression constant = (ConstantExpression) binder.bind(constant(literal, 3), input, "t", sqlExecutionContext);
+                    final int tag = ColumnType.tagOf(constant.getDataType());
+                    final boolean isFloatingPoint = tag == ColumnType.DOUBLE || tag == ColumnType.FLOAT;
+                    Assert.assertEquals(literal, isFloatingPoint ? literal : null, Chars.toString(constant.getLiteralText()));
+                    binder.clear();
+                }
+            }
+        });
     }
 
     @Test
