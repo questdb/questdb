@@ -1019,6 +1019,19 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         }
 
         @Override
+        public long getResolvedRowCount() {
+            // Only a frame over a whole inexact window yields the window's resolved rows.
+            if (partitionFrameState == 0
+                    || rowGroupIndex < 0
+                    || rowGroupLo != 0
+                    || PartitionFrameState.isExactRowCount(partitionFrameState, rowGroupIndex)
+                    || rowGroupHi != PartitionFrameState.getLogicalRowCount(partitionFrameState, rowGroupIndex)) {
+                return -1;
+            }
+            return reader.getResolvedWindowRowCount(partitionFrameState, rowGroupIndex);
+        }
+
+        @Override
         public long getRowCountLo() {
             // Only a window that needs custom materialization can drop rows while decoding;
             // the Rust binding flags such windows, and the frame then promises nothing

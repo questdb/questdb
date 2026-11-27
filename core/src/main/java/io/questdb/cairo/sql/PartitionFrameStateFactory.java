@@ -77,6 +77,17 @@ public interface PartitionFrameStateFactory extends QuietCloseable {
     }
 
     /**
+     * The rows a full scan of inexact {@code window} of the bound {@code state} yields, when a
+     * reader resolved them before; {@code -1} otherwise. Implementations may know of counts
+     * resolved after the state was bound.
+     */
+    default long getResolvedWindowRowCount(long state, int window) {
+        return PartitionFrameState.isResolvedRowCount(state, window)
+                ? PartitionFrameState.getResolvedRowCount(state, window)
+                : -1;
+    }
+
+    /**
      * Checks row-count exactness. Implementations may rule out dedup from Run
      * metadata without binding windows or opening physical data columns.
      */

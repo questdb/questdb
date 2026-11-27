@@ -759,6 +759,14 @@ public class TableReader implements Closeable, SymbolTableSource {
         return partitionFrameStateFactory.getResolvedRowCount(this, state, partitionIndex);
     }
 
+    /**
+     * The rows a full scan of inexact {@code window} of the bound partition state yields, when a
+     * reader resolved them before; {@code -1} otherwise.
+     */
+    public long getResolvedWindowRowCount(long state, int window) {
+        return partitionFrameStateFactory == null ? -1 : partitionFrameStateFactory.getResolvedWindowRowCount(state, window);
+    }
+
     @TestOnly
     public ReaderScanProfile getScanProfile() {
         return scanProfile;
