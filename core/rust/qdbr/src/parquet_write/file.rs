@@ -13,7 +13,7 @@ use parquet2::write::{
 };
 use qdb_parquet_meta::SeqTxn;
 
-use crate::parquet_write::encode::encode_column_chunk;
+use crate::parquet_write::encode::encode_column_chunk_checking_ascii;
 use crate::parquet_write::schema::{
     to_compressions, to_encodings, to_parquet_schema, Column, Partition,
 };
@@ -284,6 +284,7 @@ impl<W: Write> ParquetWriter<W> {
             per_column_compressions,
             bloom_filter_columns: self.bloom_filter_columns,
             parallel,
+            chunk_ascii: None,
         })
     }
 
@@ -311,9 +312,25 @@ pub struct ChunkedWriter<W: Write> {
     per_column_compressions: Vec<Option<CompressionOptions>>,
     bloom_filter_columns: HashSet<usize>,
     parallel: bool,
+    // By row group written, then by column: whether every value of the column chunk is ASCII.
+    // None unless track_chunk_ascii() asked for it.
+    chunk_ascii: Option<Vec<Vec<bool>>>,
 }
 
 impl<W: Write> ChunkedWriter<W> {
+    /// Makes the writer record, for each row group it writes from now on, which VARCHAR column
+    /// chunks hold only ASCII values, by the bytes the encoder wrote. A writer that generates
+    /// `_pm` passes them on, see [`Self::chunk_ascii`].
+    pub fn track_chunk_ascii(&mut self) {
+        self.chunk_ascii = Some(Vec::new());
+    }
+
+    /// By row group written since [`Self::track_chunk_ascii`], then by column: whether every
+    /// value of the column chunk is ASCII. Empty when the writer does not track them.
+    pub fn chunk_ascii(&self) -> &[Vec<bool>] {
+        self.chunk_ascii.as_deref().unwrap_or(&[])
+    }
+
     /// Write a chunk to the parquet writer.
     pub fn write_chunk(&mut self, partition: &Partition) -> ParquetResult<()> {
         let row_group_size = self
@@ -333,7 +350,7 @@ impl<W: Write> ChunkedWriter<W> {
             });
         let schema = &self.parquet_schema;
         for (offset, length) in row_group_range {
-            let (row_group, bloom_hashes) = create_row_group(
+            let (row_group, bloom_hashes, is_chunk_ascii) = create_row_group(
                 partition,
                 offset,
                 length,
@@ -343,8 +360,12 @@ impl<W: Write> ChunkedWriter<W> {
                 &self.per_column_compressions,
                 &self.bloom_filter_columns,
                 self.parallel,
+                self.chunk_ascii.is_some(),
             )?;
             self.writer.write(row_group, &bloom_hashes)?;
+            if let Some(chunk_ascii) = self.chunk_ascii.as_mut() {
+                chunk_ascii.push(is_chunk_ascii);
+            }
         }
         Ok(())
     }
@@ -356,7 +377,7 @@ impl<W: Write> ChunkedWriter<W> {
         last_partition_end: usize,
     ) -> ParquetResult<()> {
         let schema = &self.parquet_schema;
-        let (row_group, bloom_hashes) = create_row_group_from_partitions(
+        let (row_group, bloom_hashes, is_chunk_ascii) = create_row_group_from_partitions(
             partitions,
             first_partition_start,
             last_partition_end,
@@ -366,8 +387,12 @@ impl<W: Write> ChunkedWriter<W> {
             &self.per_column_compressions,
             &self.bloom_filter_columns,
             self.parallel,
+            self.chunk_ascii.is_some(),
         )?;
         self.writer.write(row_group, &bloom_hashes)?;
+        if let Some(chunk_ascii) = self.chunk_ascii.as_mut() {
+            chunk_ascii.push(is_chunk_ascii);
+        }
         Ok(())
     }
 
@@ -418,7 +443,8 @@ pub fn create_row_group(
     per_column_compressions: &[Option<CompressionOptions>],
     bloom_filter_columns: &HashSet<usize>,
     parallel: bool,
-) -> ParquetResult<(RowGroupIter<'static, ParquetError>, BloomHashes)> {
+    check_ascii: bool,
+) -> ParquetResult<(RowGroupIter<'static, ParquetError>, BloomHashes, Vec<bool>)> {
     // A single-partition row group is a degenerate multi-partition write with
     // one partition; the bounds collapse to (offset, offset + length).
     let partitions = [partition];
@@ -432,6 +458,7 @@ pub fn create_row_group(
         per_column_compressions,
         bloom_filter_columns,
         parallel,
+        check_ascii,
     )
 }
 
@@ -449,6 +476,10 @@ pub fn create_row_group(
 /// * `encoding` - Encoding for each column
 /// * `options` - Write options
 /// * `parallel` - Whether to process columns in parallel
+///
+/// With `check_ascii`, also returns, by column, whether the column is VARCHAR and the bytes of
+/// every value the row group holds are ASCII. Without it every flag is `false` and no byte is
+/// checked.
 #[allow(clippy::too_many_arguments)]
 pub fn create_row_group_from_partitions(
     partitions: &[&Partition],
@@ -460,7 +491,8 @@ pub fn create_row_group_from_partitions(
     per_column_compressions: &[Option<CompressionOptions>],
     bloom_filter_columns: &HashSet<usize>,
     parallel: bool,
-) -> ParquetResult<(RowGroupIter<'static, ParquetError>, BloomHashes)> {
+    check_ascii: bool,
+) -> ParquetResult<(RowGroupIter<'static, ParquetError>, BloomHashes, Vec<bool>)> {
     if partitions.is_empty() {
         return Err(fmt_err!(
             InvalidLayout,
@@ -488,9 +520,10 @@ pub fn create_row_group_from_partitions(
     let col_to_iter = |col_idx: usize,
                        options: WriteOptions,
                        bloom_set: Option<Arc<Mutex<HashSet<u64>>>>|
-     -> ParquetResult<
+     -> ParquetResult<(
         DynStreamingIterator<'static, parquet2::page::CompressedPage, ParquetError>,
-    > {
+        bool,
+    )> {
         let column_type = &column_types[col_idx];
         let col_encoding = encoding[col_idx];
         let first_partition_column = partitions[0].columns[col_idx];
@@ -520,7 +553,7 @@ pub fn create_row_group_from_partitions(
                 columns[0].strided_row_group_slice(first_partition_start, last_partition_end)?;
         }
 
-        let pages = encode_column_chunk(
+        let (pages, is_ascii) = encode_column_chunk_checking_ascii(
             col_encoding,
             column_type,
             &columns,
@@ -528,6 +561,7 @@ pub fn create_row_group_from_partitions(
             last_partition_end,
             col_options,
             bloom_set,
+            check_ascii,
         )?;
 
         let compressor = Compressor::new(
@@ -536,7 +570,7 @@ pub fn create_row_group_from_partitions(
             vec![],
             col_options.min_compression_ratio,
         );
-        Ok(DynStreamingIterator::new(compressor))
+        Ok((DynStreamingIterator::new(compressor), is_ascii))
     };
 
     let columns: Vec<_> = if parallel {
@@ -554,5 +588,10 @@ pub fn create_row_group_from_partitions(
             .collect::<ParquetResult<Vec<_>>>()?
     };
 
-    Ok((DynIter::new(columns.into_iter().map(Ok)), bloom_hashes))
+    let (columns, is_chunk_ascii): (Vec<_>, Vec<_>) = columns.into_iter().unzip();
+    Ok((
+        DynIter::new(columns.into_iter().map(Ok)),
+        bloom_hashes,
+        is_chunk_ascii,
+    ))
 }

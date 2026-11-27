@@ -160,10 +160,12 @@ pub fn encode_binary(
                 }
             })))
         },
+        None,
     )
 }
 
-/// Encode a Varchar column as RleDictionary pages.
+/// Encode a Varchar column as RleDictionary pages. With `check_ascii`, also returns whether the
+/// bytes of every value are ASCII; without it, returns `false` and checks no value.
 pub fn encode_varchar(
     columns: &[Column],
     first_partition_start: usize,
@@ -171,8 +173,10 @@ pub fn encode_varchar(
     primitive_type: &PrimitiveType,
     options: WriteOptions,
     bloom_set: Option<Arc<Mutex<HashSet<u64>>>>,
-) -> ParquetResult<Vec<Page>> {
-    encode_byte_slices(
+    check_ascii: bool,
+) -> ParquetResult<(Vec<Page>, bool)> {
+    let mut is_ascii = false;
+    let pages = encode_byte_slices(
         columns,
         first_partition_start,
         last_partition_end,
@@ -180,9 +184,13 @@ pub fn encode_varchar(
         options,
         bloom_set,
         visit_varchar_aux_byte_slices,
-    )
+        check_ascii.then_some(&mut is_ascii),
+    )?;
+    Ok((pages, is_ascii))
 }
 
+/// `is_ascii`, when given, is set to whether the bytes of every value are ASCII.
+#[allow(clippy::too_many_arguments)]
 fn encode_byte_slices<F>(
     columns: &[Column],
     first_partition_start: usize,
@@ -191,6 +199,7 @@ fn encode_byte_slices<F>(
     options: WriteOptions,
     bloom_set: Option<Arc<Mutex<HashSet<u64>>>>,
     decode: F,
+    is_ascii: Option<&mut bool>,
 ) -> ParquetResult<Vec<Page>>
 where
     F: for<'a> Fn(
@@ -246,6 +255,11 @@ where
                 }
             }
         }
+    }
+
+    if let Some(is_ascii) = is_ascii {
+        // the dictionary holds every distinct value of the chunk
+        *is_ascii = dict_entries.iter().all(|entry| entry.is_ascii());
     }
 
     build_varlen_dict_pages(

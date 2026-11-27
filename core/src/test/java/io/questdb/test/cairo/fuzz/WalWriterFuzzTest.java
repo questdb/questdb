@@ -354,6 +354,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         setFuzzProperties(rnd);
         setRndConvertedDayShapeProperties(rnd, fuzzer);
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, getRndSmallParquetRowGroupSize(rnd));
+        fuzzer.setScanningTablesDuringParallelApply(true);
         runParquetFuzz(rnd, false);
     }
 
