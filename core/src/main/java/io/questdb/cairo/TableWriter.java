@@ -168,6 +168,7 @@ import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.LongAdder;
+import java.util.function.BooleanSupplier;
 import java.util.function.LongConsumer;
 
 import static io.questdb.cairo.TableUtils.*;
@@ -451,6 +452,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // Three longs per entry: [partitionTimestamp, oldPartitionNameTxn, lastPartitionConvertedFlag].
     private final LongList pendingParquetToNativeConversions = new LongList();
     private final LongAdder physicallyWrittenRowsSinceLastCommit = new LongAdder();
+    private final BooleanSupplier postingSealSavePointCover = this::isPostingSealCoveredBySavePoint;
     private final FindVisitor removePartitionDirsNotAttached = this::removePartitionDirsNotAttached;
     private final FindVisitor removeSupersededParquetIndexFileRef = this::removeSupersededParquetIndexFile;
     private final Row row = new RowImpl();
@@ -628,6 +630,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private long partitionPurgeOwedTxn = -1;
     private long partitionTimestampHi;
     private boolean performRecovery;
+    // The highest seqTxn this writer's own flush of the sequencer log covered, -1 before one; see
+    // isPostingSealCoveredBySavePoint(). Volatile: a seal on an O3 worker thread asks too.
+    private volatile long postingSealDurableSeqTxn = -1;
     // A staging writer under the COPY work directory, not on the table's own root.
     private boolean privateRootWriter;
     private boolean processingQueue;
@@ -13294,6 +13299,38 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return !hasO3RowInLogicalPartition(logicalPartitionTimestamp);
     }
 
+    // Whether the next save point covers a POSTING seal of the commit in progress, so that the seal may leave its
+    // value and cover files to it. It does when this table takes save points and holds one, the save point flushes
+    // the whole filesystem, and the WAL on disk holds a transaction after the save point. After a power loss
+    // recovery then cuts every POSTING chain back to the save point and deletes the files of what it cut, also
+    // when the _txn on disk still equals the save point's.
+    private boolean isPostingSealCoveredBySavePoint() {
+        if (!enrolledAdaptive || !ff.isSyncfsFileSystemWide() || getFlushCommitMode() != CommitMode.ADAPTIVE) {
+            return false;
+        }
+        final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
+        if (tracker.getPinnedEpochTxn() < 0) {
+            return false;
+        }
+        final long savePointSeqTxn = tracker.getDurableEpochSeqTxn();
+        if (tracker.getLocalDurableSeqTxn() > savePointSeqTxn || postingSealDurableSeqTxn > savePointSeqTxn) {
+            return true;
+        }
+        if (tracker.getSeqTxn() <= savePointSeqTxn) {
+            return false;
+        }
+        // The transactions after the save point still wait for their group flush. One flush of the sequencer log
+        // stands in for the flushes of every seal until a save point passes what it covered. It leaves alone the
+        // frontier that commits are acknowledged from, and proves nothing once a failed flush has fenced that
+        // frontier: the kernel reports a lost page to one flush only.
+        final long durableSeqTxn = engine.getTableSequencerAPI().fdatasyncTxnLog(tableToken);
+        if (tracker.isDurableFrontierFenced()) {
+            return false;
+        }
+        postingSealDurableSeqTxn = durableSeqTxn;
+        return durableSeqTxn > savePointSeqTxn;
+    }
+
     private void learnWalBlockCopyRatios() {
         walBlockCopyRatioMerge = learnWalBlockCopyRatio(walBlockCopyRatioMerge, o3MergeTouchedRows.sum(), o3MergeCopiedRows.sum());
         walBlockCopyRatioRewrite = learnWalBlockCopyRatio(walBlockCopyRatioRewrite, o3RewriteTouchedRows.sum(), o3RewriteCopiedRows.sum());
@@ -20378,28 +20415,25 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long maxTimestamp = txWriter.getMaxTimestamp();
             try {
                 final long tsLimit = txWriter.getPartitionTimestampByTimestamp(txWriter.getMaxTimestamp());
-                for (long ts = txWriter.getPartitionTimestampByTimestamp(txWriter.getMinTimestamp()); ts < tsLimit; ts = txWriter.getNextPartitionTimestamp(ts)) {
+                final long tsLo = txWriter.getPartitionTimestampByTimestamp(txWriter.getMinTimestamp());
+                // Walk the partitions recorded in the txn file rather than every partition-sized
+                // time slot between min and max: with fine-grained partitioning (e.g. MINUTE)
+                // and a wide timestamp range the slot walk is millions of file probes.
+                for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
+                    final long ts = txWriter.getPartitionTimestampByIndex(i);
+                    if (ts < tsLo) {
+                        continue;
+                    }
+                    if (ts >= tsLimit) {
+                        break;
+                    }
                     path.trimTo(pathSize);
                     setStateForTimestamp(path, ts);
-                    int p = path.size();
-
-                    long partitionSize = txWriter.getPartitionRowCountByTimestamp(ts);
-                    if (partitionSize >= 0 && ff.exists(path.$())) {
-                        fixedRowCount += partitionSize;
+                    if (ff.exists(path.$())) {
+                        fixedRowCount += txWriter.getPartitionSize(i);
                         lastTimestamp = ts;
                     } else {
-                        Path other = Path.getThreadLocal2(path.trimTo(p));
-                        oldPartitionName(other, getTxn());
-                        if (ff.exists(other.$())) {
-                            if (ff.rename(other.$(), path.$()) != FILES_RENAME_OK) {
-                                LOG.error().$("could not rename [from=").$(other).$(", to=").$(path).I$();
-                                throw new CairoError("could not restore directory, see log for details");
-                            } else {
-                                LOG.info().$("restored [path=").$substr(pathRootSize, path).I$();
-                            }
-                        } else {
-                            LOG.debug().$("missing partition [name=").$(path.trimTo(p).$()).I$();
-                        }
+                        LOG.debug().$("missing partition [name=").$(path).I$();
                     }
                 }
 
@@ -20407,36 +20441,25 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     path.trimTo(pathSize);
                     setStateForTimestamp(path, tsLimit);
                     if (!ff.exists(path.$())) {
-                        Path other = Path.getThreadLocal2(path);
-                        oldPartitionName(other, getTxn());
-                        if (ff.exists(other.$())) {
-                            if (ff.rename(other.$(), path.$()) != FILES_RENAME_OK) {
-                                LOG.error().$("could not rename [from=").$(other).$(", to=").$(path).I$();
-                                throw new CairoError("could not restore directory, see log for details");
-                            } else {
-                                LOG.info().$("restored [path=").$substr(pathRootSize, path).I$();
-                            }
-                        } else {
-                            LOG.error().$("last partition does not exist [name=").$(path).I$();
-                            // ok, create last partition we discovered the active
-                            // 1. read its size
-                            path.trimTo(pathSize);
-                            setStateForTimestamp(path, lastTimestamp);
-                            int p = path.size();
-                            transientRowCount = txWriter.getPartitionRowCountByTimestamp(lastTimestamp);
+                        LOG.error().$("last partition does not exist [name=").$(path).I$();
+                        // ok, create last partition we discovered the active
+                        // 1. read its size
+                        path.trimTo(pathSize);
+                        setStateForTimestamp(path, lastTimestamp);
+                        int p = path.size();
+                        transientRowCount = txWriter.getPartitionRowCountByTimestamp(lastTimestamp);
 
-                            // 2. read max timestamp
-                            dFile(path.trimTo(p), metadata.getColumnName(metadata.getTimestampIndex()), COLUMN_NAME_TXN_NONE);
-                            maxTimestamp = readLongAtOffset(ff, path.$(), tempMem16b, (transientRowCount - 1) * Long.BYTES);
-                            fixedRowCount -= transientRowCount;
-                            removeAttachedPartitionsTracked(txWriter.getMaxTimestamp());
-                            LOG.info()
-                                    .$("updated active partition [name=").$(path.trimTo(p).$())
-                                    .$(", maxTimestamp=").$ts(timestampDriver, maxTimestamp)
-                                    .$(", transientRowCount=").$(transientRowCount)
-                                    .$(", fixedRowCount=").$(txWriter.getFixedRowCount())
-                                    .I$();
-                        }
+                        // 2. read max timestamp
+                        dFile(path.trimTo(p), metadata.getColumnName(metadata.getTimestampIndex()), COLUMN_NAME_TXN_NONE);
+                        maxTimestamp = readLongAtOffset(ff, path.$(), tempMem16b, (transientRowCount - 1) * Long.BYTES);
+                        fixedRowCount -= transientRowCount;
+                        removeAttachedPartitionsTracked(txWriter.getMaxTimestamp());
+                        LOG.info()
+                                .$("updated active partition [name=").$(path.trimTo(p).$())
+                                .$(", maxTimestamp=").$ts(timestampDriver, maxTimestamp)
+                                .$(", transientRowCount=").$(transientRowCount)
+                                .$(", fixedRowCount=").$(txWriter.getFixedRowCount())
+                                .I$();
                     }
                 }
             } finally {
@@ -21490,7 +21513,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         // footer until rebuildSidecars() supersedes it),
                         // and recoveryDropAbandoned can drop it on a
                         // partial-publish distress.
-                        indexer.getWriter().setNextTxnAtSeal(txWriter.getTxn() + 1L);
+                        indexer.getWriter().setNextTxnAtSeal(txWriter.getTxn() + 1L, postingSealSavePointCover);
                         // Fold the fd-based O3 tentative state into
                         // the writer view before the reseal.
                         indexer.mergeTentativeIntoActiveIfAny();
@@ -21546,7 +21569,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         // distress. The matching purge is deferred until
                         // after txWriter.commit lands, so the old seal file
                         // remains available to T-pinned readers and recovery.
-                        indexer.getWriter().setNextTxnAtSeal(txWriter.getTxn() + 1L);
+                        indexer.getWriter().setNextTxnAtSeal(txWriter.getTxn() + 1L, postingSealSavePointCover);
                         indexer.rebuildSidecars();
                     } finally {
                         // Publish staged seal-purge entries even when the reseal
@@ -21580,7 +21603,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     try {
                         // Same getTxn()+1 convention as O3CopyJob and the
                         // covering branch above. See comment there.
-                        indexer.getWriter().setNextTxnAtSeal(txWriter.getTxn() + 1L);
+                        indexer.getWriter().setNextTxnAtSeal(txWriter.getTxn() + 1L, postingSealSavePointCover);
                         indexer.mergeTentativeIntoActiveIfAny();
                         if (canSkipRebuild) {
                             // See pure-append fast-path comment in the covering branch above.
@@ -24325,6 +24348,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     long getPartitionSizeByRawIndex(int index) {
         return txWriter.getPartitionSizeByRawIndex(index);
+    }
+
+    // For a POSTING seal of the commit in progress that another class stamps; see isPostingSealCoveredBySavePoint().
+    BooleanSupplier getPostingSealSavePointCover() {
+        return postingSealSavePointCover;
     }
 
     TxReader getTxReader() {

@@ -229,7 +229,8 @@ public class ReplaceOverParquetShapeCoverageTest extends AbstractCairoTest {
         final TableToken token = engine.verifyTableName(tableName);
         try (WalWriter walWriter = engine.getWalWriter(token)) {
             // as FuzzRunner.applyToWal applies the operation
-            final FuzzConvertPartitionToParquetOperation convert = new FuzzConvertPartitionToParquetOperation(cutoff);
+            final long oneDay = ColumnType.getTimestampDriver(walWriter.getMetadata().getTimestampType()).fromDays(1);
+            final FuzzConvertPartitionToParquetOperation convert = new FuzzConvertPartitionToParquetOperation(cutoff, oneDay);
             Assert.assertTrue(convert.apply(new Rnd(), engine, walWriter, -1, null));
         }
         drainWalQueue();
@@ -293,7 +294,7 @@ public class ReplaceOverParquetShapeCoverageTest extends AbstractCairoTest {
 
     private static FuzzTransaction convert(long cutoff) {
         final FuzzTransaction txn = new FuzzTransaction();
-        txn.operationList.add(new FuzzConvertPartitionToParquetOperation(cutoff));
+        txn.operationList.add(new FuzzConvertPartitionToParquetOperation(cutoff, Micros.DAY_MICROS));
         return txn;
     }
 

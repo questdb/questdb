@@ -327,6 +327,9 @@ public final class TestUtils {
                 Assert.fail("Actual cursor does not have record at " + rowIndex);
             }
             rowIndex++;
+            // Before a row can be stashed: the stash compares rows as printed, and printing ignores the flag.
+            assertVarcharAsciiCompliance(metadataActual, l);
+            assertVarcharAsciiCompliance(metadataExpected, r);
             if (timestampValue != -1) {
                 // we are or were stashing record with the same timestamp
                 long tsL = l.getTimestamp(timestampIndex);
@@ -1351,6 +1354,15 @@ public final class TestUtils {
     ) throws SqlException {
         printSqlWithTypes(compiler, sqlExecutionContext, sql, sink);
         assertEquals(expected, sink);
+    }
+
+    // A VARCHAR value flagged ASCII must be ASCII.
+    public static void assertVarcharAsciiCompliance(RecordMetadata metadata, Record record) {
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            if (metadata.getColumnType(i) == ColumnType.VARCHAR) {
+                assertAsciiCompliance(record.getVarcharA(i));
+            }
+        }
     }
 
     public static void assertViewState(boolean expectedInvalid, ViewState viewState) {
@@ -2986,6 +2998,14 @@ public final class TestUtils {
     ) {
         int colTypeL = metaL.getColumnType(col);
         int colTypeR = metaR.getColumnType(col);
+        // Two values of equal bytes compare equal whatever their ASCII flags say, and a wrong flag
+        // makes string functions return wrong results.
+        if (colTypeL == ColumnType.VARCHAR) {
+            assertAsciiCompliance(lr.getVarcharA(col));
+        }
+        if (colTypeR == ColumnType.VARCHAR) {
+            assertAsciiCompliance(rr.getVarcharA(col));
+        }
         if (genericStringMatch && colTypeL != colTypeR) {
             if (colTypeL != ColumnType.VARCHAR && colTypeR != ColumnType.VARCHAR) {
                 CharSequence left = readAsCharSequence(colTypeL, lr, col);

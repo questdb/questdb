@@ -100,6 +100,86 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCaseWithExtract() throws Exception {
+        assertMemoryLeak(() -> {
+            // July 6 and 7, 2013 were a Saturday and a Sunday
+            execute("CREATE TABLE t (k INT, ts " + timestampType.getTypeName() + ")");
+            execute("""
+                    INSERT INTO t VALUES
+                        (1, '2013-07-01T10:00:00.000000Z'),
+                        (2, '2013-07-06T00:00:00.000000Z'),
+                        (3, '2013-07-07T23:59:59.000000Z'),
+                        (4, '2013-07-08T00:00:00.000000Z'),
+                        (5, NULL)
+                    """);
+
+            // extract() in the WHEN condition; NULL matches no WHEN
+            assertQuery("""
+                    SELECT k, CASE WHEN (extract(day FROM ts) - 1) % 7 IN (5, 6) THEN 'weekend' ELSE 'weekday' END kind
+                    FROM t
+                    ORDER BY k
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            k\tkind
+                            1\tweekday
+                            2\tweekend
+                            3\tweekend
+                            4\tweekday
+                            5\tweekday
+                            """);
+
+            // extract() in the THEN and ELSE values, and as the operand of a simple CASE
+            assertQuery("""
+                    SELECT
+                        k,
+                        CASE WHEN k < 3 THEN extract(hour FROM ts) ELSE extract(minute FROM ts) END v,
+                        CASE extract(day FROM ts) WHEN 6 THEN 'sat' WHEN 7 THEN 'sun' ELSE 'other' END d
+                    FROM t
+                    ORDER BY k
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            k\tv\td
+                            1\t10\tother
+                            2\t0\tsat
+                            3\t59\tsun
+                            4\t0\tother
+                            5\tnull\tother
+                            """);
+
+            // extract() of an aggregate from a subquery, grouped by the CASE
+            assertQuery("""
+                    SELECT CASE WHEN extract(day FROM first_day) IN (6, 7) THEN 'weekend' ELSE 'weekday' END day_kind, count() n
+                    FROM (SELECT k, min(ts) first_day FROM t GROUP BY k)
+                    ORDER BY day_kind
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            day_kind\tn
+                            weekday\t3
+                            weekend\t2
+                            """);
+
+            // CASE as the WHERE filter
+            assertQuery("""
+                    SELECT k FROM t
+                    WHERE CASE WHEN extract(dow FROM ts) IN (0, 6) THEN true ELSE false END
+                    ORDER BY k
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            k
+                            2
+                            3
+                            """);
+        });
+    }
+
+    @Test
     public void testCenturyNull() throws Exception {
         assertQuery("select extract(century from null)")
                 .ddl(null)

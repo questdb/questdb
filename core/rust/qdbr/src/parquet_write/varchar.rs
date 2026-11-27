@@ -43,6 +43,37 @@ pub fn is_column_ascii(aux: &[[u8; 16]]) -> bool {
     true
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Calls of [`are_bytes_ascii`] on this thread: tests count them to prove that a writer
+    /// which keeps no ASCII flags skips the check.
+    pub(crate) static ARE_BYTES_ASCII_CALLS: std::cell::Cell<usize> =
+        const { std::cell::Cell::new(0) };
+}
+
+/// Whether every byte is ASCII. Faster than `<[u8]>::is_ascii` on the large slices the VARCHAR
+/// writers check, the values of a page: it ORs the bytes in blocks the compiler vectorizes and
+/// stops at the first block with a non-ASCII byte.
+pub fn are_bytes_ascii(bytes: &[u8]) -> bool {
+    #[cfg(test)]
+    ARE_BYTES_ASCII_CALLS.with(|calls| calls.set(calls.get() + 1));
+    const LANES: usize = 64;
+    const BLOCK: usize = 4096;
+    let (blocks, remainder) = bytes.as_chunks::<BLOCK>();
+    for block in blocks {
+        let mut acc = [0u8; LANES];
+        for chunk in block.as_chunks::<LANES>().0 {
+            for (acc, &byte) in acc.iter_mut().zip(chunk) {
+                *acc |= byte;
+            }
+        }
+        if acc.iter().fold(0u8, |a, &b| a | b) & 0x80 != 0 {
+            return false;
+        }
+    }
+    remainder.is_ascii()
+}
+
 pub fn append_varchar(
     aux_mem: &mut AcVec<u8>,
     data_mem: &mut AcVec<u8>,
@@ -307,6 +338,24 @@ mod tests {
 
         assert_eq!(bulk_aux.len(), ind_aux.len());
         assert_eq!(bulk_aux.as_slice(), ind_aux.as_slice());
+    }
+
+    #[test]
+    fn test_are_bytes_ascii_finds_a_non_ascii_byte_anywhere() {
+        let mut bytes = vec![b'a'; 3 * 4096 + 100];
+        assert!(are_bytes_ascii(&bytes));
+        assert!(are_bytes_ascii(&[]));
+        for pos in [0, 63, 64, 4095, 4096, 8191, 3 * 4096, bytes.len() - 1] {
+            bytes[pos] = 0x80;
+            assert!(!are_bytes_ascii(&bytes), "non-ASCII byte at {pos}");
+            // and from an unaligned start
+            assert_eq!(
+                are_bytes_ascii(&bytes[1..]),
+                pos == 0,
+                "non-ASCII byte at {pos}"
+            );
+            bytes[pos] = b'a';
+        }
     }
 
     #[test]

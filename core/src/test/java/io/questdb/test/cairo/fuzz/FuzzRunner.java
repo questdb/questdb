@@ -37,6 +37,7 @@ import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.O3ParquetCounters;
 import io.questdb.cairo.O3PartitionJob;
 import io.questdb.cairo.O3PartitionPurgeJob;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.PartitionCompactionRequestQueue;
 import io.questdb.cairo.PartitionCompactionScanJob;
 import io.questdb.cairo.SymbolMapReader;
@@ -51,12 +52,15 @@ import io.questdb.cairo.TxReader;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.pool.WriterPool;
 import io.questdb.cairo.pool.ex.EntryLockedException;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
@@ -67,6 +71,7 @@ import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
@@ -141,6 +146,9 @@ public class FuzzRunner {
     // the table that convertNoSentinelValues() converts every value of a type without a NULL sentinel in
     private static final String NO_SENTINEL_VALUES_TABLE = "fuzz_no_sentinel_values";
     private static final long OPEN_RETRY_TIMEOUT_MILLIS = 10_000;
+    private static final int[] PARTITION_BY_MINUTES = {
+            PartitionBy.MINUTE_5, PartitionBy.MINUTE_10, PartitionBy.MINUTE_15, PartitionBy.MINUTE_20, PartitionBy.MINUTE_30
+    };
     // Columns a covering index on sym2 / sym_top may INCLUDE; sym_top's add the column-top columns.
     private static final String[] SYM2_INCLUDE_CANDIDATES = {"c1", "c2", "c3", "rnd_str", "bool1"};
     private static final String[] SYM_TOP_INCLUDE_CANDIDATES = {"c1", "c3", "bool1", "long_top", "str_top"};
@@ -186,11 +194,14 @@ public class FuzzRunner {
     private boolean isNoSentinelTypeChangeEnabled;
     private boolean isNoSentinelWideningChecked;
     private boolean isO3;
+    private boolean isPartitionByPinned;
+    private boolean isScanningTablesDuringParallelApply;
     private double notSetProb;
     private double nullSetProb;
     private int parallelWalCount;
     private long parquetConversionRequestHint = Long.MIN_VALUE;
     private double parquetConversionRequestProb;
+    private int partitionBy = PartitionBy.DAY;
     private double partitionDropProb;
     private double partitionToNativeProb;
     private double partitionToParquetProb;
@@ -314,9 +325,10 @@ public class FuzzRunner {
 
             if (waitApply) {
                 int applyThreadCount = Math.max(fuzzTransactions.size(), 4);
+                final AtomicInteger runningApplyThreads = new AtomicInteger(applyThreadCount);
                 for (int thread = 0; thread < applyThreadCount; thread++) {
                     final Rnd threadApplyRnd = new Rnd(rnd.getSeed0(), rnd.getSeed1());
-                    Thread applyThread = new Thread(() -> runApplyThread(done, errors, threadApplyRnd));
+                    Thread applyThread = new Thread(() -> runApplyThread(done, runningApplyThreads, errors, threadApplyRnd));
                     applyThread.start();
                     applyThreads.add(applyThread);
                 }
@@ -324,6 +336,12 @@ public class FuzzRunner {
                 Thread purgeJobThread = new Thread(() -> runWalPurgeJob(done, errors));
                 purgeJobThread.start();
                 applyThreads.add(purgeJobThread);
+
+                if (isScanningTablesDuringParallelApply) {
+                    Thread scanThread = new Thread(() -> runVarcharAsciiFlagScans(runningApplyThreads, errors, tableNameBase, tableCount, multiTable));
+                    scanThread.start();
+                    applyThreads.add(scanThread);
+                }
 
                 Thread compactionJobThread = new Thread(() -> runPartitionCompactionJob(done, errors));
                 compactionJobThread.start();
@@ -490,6 +508,8 @@ public class FuzzRunner {
                 }
 
                 try {
+                    rdr1 = openIfClosed(rdr1, tableName);
+                    rdr2 = openIfClosed(rdr2, tableName);
                     purgeAndReloadReaders(reloadRnd, rdr1, rdr2, purgeJob, columnPurgeJob, reloadProbability);
                 } catch (CairoException | CairoError e) {
                     int failures = ff.failureGenerated();
@@ -830,7 +850,7 @@ public class FuzzRunner {
      * days from {@code start} (microseconds).
      */
     public ObjList<FuzzTransaction> generateTransactions(String tableName, Rnd rnd, long start) {
-        long end = start + partitionCount * Micros.DAY_MICROS;
+        long end = start + partitionCount * getPartitionDurationMicros();
         return generateTransactions(tableName, rnd, start, end);
     }
 
@@ -839,8 +859,8 @@ public class FuzzRunner {
      * days from 2022-02-24T17:00.
      */
     public ObjList<FuzzTransaction> generateTransactions(String tableName, Rnd rnd) throws NumericException {
-        long start = MicrosTimestampDriver.floor("2022-02-24T17");
-        long end = start + partitionCount * Micros.DAY_MICROS;
+        long start = getTransactionStartMicros();
+        long end = start + partitionCount * getPartitionDurationMicros();
         return generateTransactions(tableName, rnd, start, end);
     }
 
@@ -865,6 +885,13 @@ public class FuzzRunner {
     }
 
     /**
+     * The IO failures this runner planted that fired, on the non-WAL oracle and on WAL apply.
+     */
+    public int getIoFailuresObserved() {
+        return ioFailuresObserved;
+    }
+
+    /**
      * The commits that left a parquet partition unchanged - dedup re-sends identical to it, and replace ranges that
      * held none of its rows - which WAL apply landed between a requested parquet rebuild's build and its swap. See
      * {@link #requestParquetConversionDuringApply}.
@@ -873,11 +900,24 @@ public class FuzzRunner {
         return noopCommitsDuringParquetRebuild.get();
     }
 
+    public int getPartitionBy() {
+        return partitionBy;
+    }
+
     /**
-     * The IO failures this runner planted that fired, on the non-WAL oracle and on WAL apply.
+     * Returns the length of one partition of the fuzz tables in microseconds. The fuzz generates
+     * transactions over {@code partitionCount} partitions of this length.
      */
-    public int getIoFailuresObserved() {
-        return ioFailuresObserved;
+    public long getPartitionDurationMicros() {
+        return MicrosTimestampDriver.INSTANCE.approxPartitionDuration(partitionBy);
+    }
+
+    /**
+     * Returns how many partitions of the fuzz tables fit in a day. The fuzz spaces the rows by it, so that
+     * the tables hold about as many partitions as with DAY partitions, whatever the partitioning.
+     */
+    public long getPartitionsPerDay() {
+        return Micros.DAY_MICROS / getPartitionDurationMicros();
     }
 
     public int getTimestampType() {
@@ -886,6 +926,14 @@ public class FuzzRunner {
 
     public int getTransactionCount() {
         return transactionCount;
+    }
+
+    /**
+     * Returns where the generated transactions start by default: 17:00 of the first day of the initial
+     * rows for DAY partitions, and as many partitions into the initial rows for shorter partitions.
+     */
+    public long getTransactionStartMicros() throws NumericException {
+        return MicrosTimestampDriver.floor("2022-02-24") + Micros.HOUR_MICROS * 17 / getPartitionsPerDay();
     }
 
     public boolean isCreateWalAsParquet() {
@@ -1301,11 +1349,31 @@ public class FuzzRunner {
     }
 
     /**
+     * Sets the partitioning of the tables the runner creates, DAY, HOUR or a sub-hour size. Without it,
+     * {@link #generateRandom(Log)} picks one from the seeds. Call it before or after generateRandom(),
+     * for example to replay pinned seeds with the partitioning they were found with.
+     */
+    public void setPartitionBy(int partitionBy) {
+        assert partitionBy == PartitionBy.DAY || partitionBy == PartitionBy.HOUR || PartitionBy.isMinutePartitioned(partitionBy);
+        this.partitionBy = partitionBy;
+        this.isPartitionByPinned = true;
+    }
+
+    /**
      * Sets designated timestamp type of the tables the runner creates. {@link #generateRandom(Log)}
      * picks it randomly, call this after it to pin the type.
      */
     public void setTimestampType(int timestampType) {
         this.timestampType = timestampType;
+    }
+
+    /**
+     * Makes the parallel WAL apply read every table over and over while it runs and check each VARCHAR value's
+     * ASCII flag against its bytes. Comparing the tables once the apply is over cannot replace it: an in-place
+     * update of a Parquet partition left a wrong flag that the next rewrite of the partition corrected.
+     */
+    public void setScanningTablesDuringParallelApply(boolean isScanningTablesDuringParallelApply) {
+        this.isScanningTablesDuringParallelApply = isScanningTablesDuringParallelApply;
     }
 
     /**
@@ -1386,6 +1454,20 @@ public class FuzzRunner {
             return "TYPE POSTING DELTA";
         }
         return "TYPE POSTING EF";
+    }
+
+    /**
+     * Picks the partitioning of the fuzz tables: DAY half the time, HOUR 15 in 100, else a sub-hour size.
+     */
+    private static int randomPartitionBy(Rnd rnd) {
+        final int pick = rnd.nextInt(100);
+        if (pick < 50) {
+            return PartitionBy.DAY;
+        }
+        if (pick < 65) {
+            return PartitionBy.HOUR;
+        }
+        return PARTITION_BY_MINUTES[rnd.nextInt(PARTITION_BY_MINUTES.length)];
     }
 
     private static String timestampToString(TimestampDriver driver, long timestamp) {
@@ -2114,7 +2196,7 @@ public class FuzzRunner {
                 if (sym2Include == null) {
                     sink.put(", index(sym2 ").put(sym2IndexType).put(")");
                 }
-                sink.put(" timestamp(ts) partition by DAY BYPASS WAL");
+                sink.put(" timestamp(ts) partition by ").put(PartitionBy.toString(partitionBy)).put(" BYPASS WAL");
                 engine.execute(sink, sqlExecutionContext);
             }
             addInitialColumns(tableName, schemaRnd, sym2IndexType, sym2Include, false);
@@ -2141,7 +2223,7 @@ public class FuzzRunner {
                     "create atomic table " + dataTempTableName + " as (" +
                             "select x as c1, " +
                             " rnd_symbol('AB', 'BC', 'CD') c2, " +
-                            " " + tsSequence + "('2022-02-24'::" + ColumnType.nameOf(timestampType) + ", " + driver.fromSeconds(1) + "L) ts, " +
+                            " " + tsSequence + "('2022-02-24'::" + ColumnType.nameOf(timestampType) + ", " + driver.fromSeconds(1) / getPartitionsPerDay() + "L) ts, " +
                             " rnd_symbol('DE', null, 'EF', 'FG') sym2," +
                             " cast(x as int) c3," +
                             " rnd_bin() c4," +
@@ -2172,7 +2254,7 @@ public class FuzzRunner {
                 engine.execute(
                         "create atomic table " + tableName + " as (" +
                                 "select * from " + dataTempTableName +
-                                ")" + (sym2Include == null ? ", index(sym2 " + sym2IndexType + ")" : "") + " timestamp(ts) partition by DAY " + tail,
+                                ")" + (sym2Include == null ? ", index(sym2 " + sym2IndexType + ")" : "") + " timestamp(ts) partition by " + PartitionBy.toString(partitionBy) + " " + tail,
                         sqlExecutionContext
                 );
             }
@@ -2213,7 +2295,7 @@ public class FuzzRunner {
         // with sym2Include, addInitialColumns() adds the covering index of sym2 after the rows
         engine.execute(
                 "create atomic table " + tableName + " as (select c1, c2, ts, sym2, c3, c4, c5, rnd_str, bool1 from " + dataTempTableName + " where c1 < 0)"
-                        + (sym2Include == null ? ", index(sym2 " + sym2IndexType + ")" : "") + " timestamp(ts) partition by DAY " + tail,
+                        + (sym2Include == null ? ", index(sym2 " + sym2IndexType + ")" : "") + " timestamp(ts) partition by " + PartitionBy.toString(partitionBy) + " " + tail,
                 sqlExecutionContext
         );
         engine.execute("alter table " + tableName + " add column " + TXN_ZERO_SYMBOL_COLUMN + " symbol", sqlExecutionContext);
@@ -2523,7 +2605,12 @@ public class FuzzRunner {
         applySeed0 = rnd.nextLong();
         applySeed1 = rnd.nextLong();
         hasApplySeeds = true;
-        log.info().$("fuzz designated timestamp type: ").$(ColumnType.nameOf(timestampType)).$();
+        if (!isPartitionByPinned) {
+            // a separate Rnd, so the draws of rnd that follow do not change with the partitioning
+            partitionBy = randomPartitionBy(new Rnd(applySeed1, applySeed0));
+        }
+        log.info().$("fuzz designated timestamp type: ").$(ColumnType.nameOf(timestampType))
+                .$(", partition by: ").$(PartitionBy.toString(partitionBy)).$();
     }
 
     // Every apply path (non-WAL, WAL, parallel WAL threads) gets an Rnd with the same seeds,
@@ -2611,6 +2698,18 @@ public class FuzzRunner {
         } catch (SqlException e) {
             throw new RuntimeException(e);
         }
+    }
+
+    /**
+     * Returns the reader, or a fresh one in place of a closed one: a pooled reader that fails to go passive in
+     * close() is closed and dropped from the pool.
+     */
+    private @Nullable TableReader openIfClosed(@Nullable TableReader reader, String tableName) {
+        if (reader == null || reader.isOpen()) {
+            return reader;
+        }
+        readerSnapshots.remove(reader);
+        return getReader(tableName);
     }
 
     private String printReaderRows(TableReader reader, LongList rowIds) {
@@ -2872,7 +2971,7 @@ public class FuzzRunner {
         }
     }
 
-    private void runApplyThread(AtomicInteger done, ConcurrentLinkedQueue<Throwable> errors, Rnd applyRnd) {
+    private void runApplyThread(AtomicInteger done, AtomicInteger runningApplyThreads, ConcurrentLinkedQueue<Throwable> errors, Rnd applyRnd) {
         try {
             ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
             int i = 0;
@@ -2899,6 +2998,7 @@ public class FuzzRunner {
         } finally {
             Path.clearThreadLocals();
             Misc.free(O3PartitionJob.THREAD_LOCAL_CLEANER);
+            runningApplyThreads.decrementAndGet();
         }
     }
 
@@ -2910,6 +3010,50 @@ public class FuzzRunner {
     private void runColumnPurgeJob(@Nullable ColumnPurgeJob columnPurgeJob) {
         if (columnPurgeJob != null && !ff.isArmed()) {
             columnPurgeJob.run();
+        }
+    }
+
+    /**
+     * Scans the tables for VARCHAR values flagged ASCII that are not, while the apply threads run: a later commit can
+     * rewrite the partition and correct a wrong flag before the run ends. The apply threads drain the WAL after the
+     * writers finish, so the scans go on until the last of them exits, and then scan the tables once more.
+     */
+    private void runVarcharAsciiFlagScans(
+            AtomicInteger runningApplyThreads,
+            ConcurrentLinkedQueue<Throwable> errors,
+            String tableNameBase,
+            int tableCount,
+            boolean multiTable
+    ) {
+        try (SqlExecutionContextImpl scanContext = new SqlExecutionContextImpl(engine, 1)) {
+            scanContext.with(AllowAllSecurityContext.INSTANCE);
+            while (errors.isEmpty()) {
+                // read before the round: a round that starts after the last apply thread exits sees every commit
+                final boolean isLastRound = runningApplyThreads.get() == 0;
+                for (int i = 0; i < tableCount; i++) {
+                    final String tableName = multiTable ? getWalParallelApplyTableName(tableNameBase, i) : tableNameBase;
+                    try (
+                            RecordCursorFactory factory = engine.select(tableName, scanContext);
+                            RecordCursor cursor = factory.getCursor(scanContext)
+                    ) {
+                        final RecordMetadata metadata = factory.getMetadata();
+                        final Record record = cursor.getRecord();
+                        while (cursor.hasNext()) {
+                            TestUtils.assertVarcharAsciiCompliance(metadata, record);
+                        }
+                    } catch (SqlException | CairoException | TableReferenceOutOfDateException e) {
+                        // a concurrent DDL, a dropped table or a busy reader: the next round reads the table again
+                    }
+                }
+                if (isLastRound) {
+                    break;
+                }
+                Os.sleep(1);
+            }
+        } catch (Throwable e) {
+            errors.add(e);
+        } finally {
+            Path.clearThreadLocals();
         }
     }
 

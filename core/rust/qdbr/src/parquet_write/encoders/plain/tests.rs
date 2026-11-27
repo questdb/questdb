@@ -539,7 +539,8 @@ fn encode_varchar_inlined_and_split() {
     )
     .unwrap();
     let pt = primitive_type_for(ColumnTypeTag::Varchar);
-    let pages = encode_varchar(&[col], 0, aux.len(), &pt, write_options(), None).expect("encode");
+    let (pages, _) =
+        encode_varchar(&[col], 0, aux.len(), &pt, write_options(), None, true).expect("encode");
     assert_eq!(pages.len(), 1);
     let (num_values, num_nulls, _) = v2_header(&pages[0]);
     assert_eq!(num_values, 4);
@@ -1388,13 +1389,14 @@ fn encode_varchar_with_bloom_and_column_top() {
     .unwrap();
     let pt = primitive_type_for(ColumnTypeTag::Varchar);
     let bloom = Arc::new(Mutex::new(HashSet::<u64>::new()));
-    let pages = encode_varchar(
+    let (pages, _) = encode_varchar(
         &[col],
         0,
         aux.len() + 1,
         &pt,
         write_options(),
         Some(bloom.clone()),
+        true,
     )
     .expect("encode");
     assert_eq!(pages.len(), 1);
@@ -1533,8 +1535,16 @@ fn encode_varchar_with_nulls_and_column_top() {
     .unwrap();
     let pt = primitive_type_for(ColumnTypeTag::Varchar);
     let bloom = Arc::new(Mutex::new(HashSet::<u64>::new()));
-    let pages =
-        encode_varchar(&[col], 0, 4, &pt, write_options(), Some(bloom.clone())).expect("encode");
+    let (pages, _) = encode_varchar(
+        &[col],
+        0,
+        4,
+        &pt,
+        write_options(),
+        Some(bloom.clone()),
+        true,
+    )
+    .expect("encode");
     assert_eq!(pages.len(), 1);
     let (num_values, num_nulls, _) = v2_header(&pages[0]);
     assert_eq!(num_values, 4);
@@ -1620,7 +1630,7 @@ fn encode_varchar_no_stats() {
     .unwrap();
     let pt = primitive_type_for(ColumnTypeTag::Varchar);
     let opts = WriteOptions { write_statistics: false, ..write_options() };
-    let pages = encode_varchar(&[col], 0, aux.len(), &pt, opts, None).expect("encode");
+    let (pages, _) = encode_varchar(&[col], 0, aux.len(), &pt, opts, None, true).expect("encode");
     assert_eq!(pages.len(), 1);
 }
 
@@ -1860,4 +1870,56 @@ fn encode_boolean_no_stats() {
     let opts = WriteOptions { write_statistics: false, ..write_options() };
     let pages = encode_boolean(&[col], 0, data.len(), &pt, opts, None).expect("encode");
     assert_eq!(pages.len(), 1);
+}
+
+#[test]
+fn varchar_to_page_checking_ascii_reads_the_bytes_not_the_ascii_bit() {
+    // every aux entry sets the ASCII bit; the non-ASCII byte sits past the prefix of the split value
+    let split = "abcdefghij\u{e9}".as_bytes();
+    let pt = primitive_type_for(ColumnTypeTag::Varchar);
+    for encoding in [Encoding::Plain, Encoding::DeltaLengthByteArray] {
+        for (aux, data, expected) in [
+            (
+                vec![make_varchar_aux_inlined(b"hi"), make_varchar_aux_null()],
+                vec![],
+                true,
+            ),
+            (
+                vec![
+                    make_varchar_aux_inlined(b"hi"),
+                    make_varchar_aux_split(split, 0),
+                ],
+                split.to_vec(),
+                false,
+            ),
+            (
+                vec![make_varchar_aux_inlined("\u{e9}".as_bytes())],
+                vec![],
+                false,
+            ),
+            // the second non-ASCII value needs no check
+            (
+                vec![
+                    make_varchar_aux_inlined("\u{e9}".as_bytes()),
+                    make_varchar_aux_inlined("\u{fc}".as_bytes()),
+                ],
+                vec![],
+                false,
+            ),
+        ] {
+            let mut is_ascii = true;
+            varchar_to_page_checking_ascii(
+                &aux,
+                &data,
+                1,
+                write_options(),
+                pt.clone(),
+                encoding,
+                None,
+                &mut is_ascii,
+            )
+            .expect("encode");
+            assert_eq!(is_ascii, expected, "{encoding:?}");
+        }
+    }
 }

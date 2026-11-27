@@ -101,6 +101,8 @@ public class SampleByConfigTest extends AbstractBootstrapTest {
             if (!Chars.empty(alignment)) {
                 createDummyConfiguration(PropertyKey.CAIRO_SQL_SAMPLEBY_DEFAULT_ALIGNMENT_CALENDAR + "="
                         + Chars.equals(alignment, "calendar"));
+            } else {
+                createDummyConfiguration();
             }
         });
 
@@ -115,19 +117,12 @@ public class SampleByConfigTest extends AbstractBootstrapTest {
                 engine.execute(dml, sqlExecutionContext);
                 drainWalQueue(engine);
 
-                // CALENDAR alignment produces a fixed, indexable grid (random
-                // access + known size); FIRST OBSERVATION streams (neither). The
-                // effective alignment is the query's explicit ALIGN clause if
-                // present, otherwise the configured default.
-                final boolean calendarAligned = Chars.contains(query, "ALIGN TO CALENDAR")
-                        || (!Chars.contains(query, "ALIGN TO FIRST OBSERVATION") && expectedConfig);
                 new QueryAssertion(engine, sqlExecutionContext, () -> {
                 }, query)
                         .noLeakCheck()
                         .noMemoryUsageCheck()
                         .timestamp("ts")
-                        .supportsRandomAccess(calendarAligned)
-                        .expectSize(calendarAligned)
+                        .noRandomAccess()
                         .returns(expected);
             }
         }
