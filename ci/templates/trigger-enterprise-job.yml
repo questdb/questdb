@@ -1,21 +1,23 @@
-# Starts an enterprise CI run (questdb-enterprise, definition 23) for an OSS build. The full
-# run is every Enterprise test on every platform and replication store, Windows included. The
-# macwin pipeline (test-hosted-pipeline.yml) starts it: when someone comments
-# `/azp run macwin` on an OSS PR, in the merge queue, and on its master schedule. The run
-# tests the questdb submodule at the OSS commit, with the Enterprise
-# branch named like the OSS one or else main, and reports enterprise-ci, a required check, back
-# to that commit. When an open Enterprise PR comes from that same-named branch, the run skips its
-# tests and reports enterprise-ci as passed: that Enterprise PR tests the pair itself (see the
-# tandem step in questdb-enterprise ci/templates/check-changes-job.yml).
+# Starts an enterprise CI run (questdb-enterprise, definition 23) for an OSS build. The run
+# tests the questdb submodule at the OSS commit and reports a status back to that commit.
 #
 # Flavours (the Enterprise pipeline's ossFlavour parameter):
-#   full    -- everything above; test-hosted-pipeline.yml.
-#   compile -- only compiles Enterprise against the OSS commit and reports
-#              enterprise-ci-compile; test-pipeline.yml starts it on every PR build.
+#   full    -- every Enterprise test on every platform and replication store, Windows
+#              included; reports enterprise-ci. The macwin pipeline
+#              (test-hosted-pipeline.yml) starts it when someone comments `/azp run macwin`
+#              on an OSS PR, and in the merge queue.
+#   compile -- only compiles Enterprise against the OSS commit; reports
+#              enterprise-ci-compile. test-pipeline.yml starts it on every PR build.
 #
-# A scheduled run of test-hosted-pipeline.yml starts the full run against master's head and
-# Enterprise main, with no PR number: the Enterprise run then reports its status on the
-# master commit and posts no PR comment.
+# A PR's run uses the Enterprise branch named like the OSS one, or else main. When an open
+# Enterprise PR comes from that same-named branch, the run skips its work and reports
+# success: that Enterprise PR tests the pair itself (see the tandem step in
+# questdb-enterprise ci/templates/check-changes-job.yml).
+#
+# With isMasterRun (test-master-pipeline.yml), the job starts the full run against the
+# built commit, master's head, on Enterprise main, with no PR number: the Enterprise run
+# then reports its status on that commit, posts no PR comment, and alerts Slack itself when
+# it fails.
 parameters:
   - name: flavour
     type: string
@@ -23,6 +25,9 @@ parameters:
     values:
       - full
       - compile
+  - name: isMasterRun
+    type: boolean
+    default: false
 
 jobs:
   - job: TriggerEnterprise
@@ -68,15 +73,15 @@ jobs:
             OSS_COMMIT="$BUILD_SOURCEVERSION"
             OSS_BRANCH=$(gh_pr_field "$OSS_PR_NUMBER" '.head.ref')
             echo "Merge-queue build for PR #$OSS_PR_NUMBER; merge commit $OSS_COMMIT; source branch $OSS_BRANCH"
-          elif [ "$BUILD_REASON" = "Schedule" ]; then
-            # Scheduled master run: test master's head against Enterprise main.
+          elif [ "$IS_MASTER_RUN" = "true" ]; then
+            # Master CI: test the built commit against Enterprise main.
             OSS_PR_NUMBER=""
             OSS_COMMIT="$BUILD_SOURCEVERSION"
             OSS_BRANCH=""
-            echo "Scheduled build; master commit $OSS_COMMIT"
+            echo "Master run; commit $OSS_COMMIT"
           else
-            # Manual run: there is no PR to test enterprise against.
-            echo "Neither a PR, a merge-queue nor a scheduled build ($BUILD_SOURCEBRANCH); skipping enterprise CI"
+            # Manual or scheduled run: there is no PR to test enterprise against.
+            echo "Neither a PR nor a merge-queue build ($BUILD_SOURCEBRANCH); skipping enterprise CI"
             exit 0
           fi
 
@@ -131,5 +136,5 @@ jobs:
           OSS_BRANCH: $(System.PullRequest.SourceBranch)
           BUILD_SOURCEBRANCH: $(Build.SourceBranch)
           BUILD_SOURCEVERSION: $(Build.SourceVersion)
-          BUILD_REASON: $(Build.Reason)
+          IS_MASTER_RUN: ${{ lower(parameters.isMasterRun) }}
           FLAVOUR: ${{ parameters.flavour }}
