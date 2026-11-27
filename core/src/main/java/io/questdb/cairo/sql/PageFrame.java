@@ -277,6 +277,16 @@ public interface PageFrame {
     long getPartitionLo();
 
     /**
+     * The number of rows this inexact frame yields once decoded, when it is known without
+     * decoding: a frame over a whole cold-delta window whose row count a reader resolved
+     * before. {@code -1} otherwise, also for an exact frame, whose span is its row count.
+     * Counts and skips may use it instead of decoding the frame; reads still decode it.
+     */
+    default long getResolvedRowCount() {
+        return -1;
+    }
+
+    /**
      * Upper bound on the number of rows this frame yields once decoded. It is always
      * the declared input span, {@code getPartitionHi() - getPartitionLo()}: a frame
      * never produces more rows than it covers.

@@ -112,9 +112,7 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
             while (rowsProducedSinceSkip < maxRowsAfterSkip && (frame = frameCursor.next()) != null) {
                 this.circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
                 frameAddressCache.add(frameCount, frame);
-                final long rowCount = frame.isExactRowCount()
-                        ? frame.getPartitionHi() - frame.getPartitionLo()
-                        : frameMemoryPool.navigateTo(frameCount).getRowCount();
+                final long rowCount = frameRowCount(frame, frameCount);
                 frameCount++;
                 final long counted = Math.min(rowCount, maxRowsAfterSkip - rowsProducedSinceSkip);
                 counter.add(counted);
@@ -360,10 +358,10 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
                         + ", skipTarget=" + skipTarget + ']';
             }
 
-            // Only inexact frames need materialization to determine how many rows the
-            // skip consumes. Exact/custom and ordinary frames retain metadata skipping.
+            // Only inexact frames whose row count no reader resolved before need materialization
+            // to determine how many rows the skip consumes.
             if (!pageFrame.isExactRowCount()) {
-                frameSize = frameMemoryPool.navigateTo(frameCount - 1).getRowCount();
+                frameSize = frameRowCount(pageFrame, frameCount - 1);
             }
             if (frameSize > skipTarget) {
                 rowCount.dec(skipTarget);
@@ -421,6 +419,16 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         resetFrameCache();
         cachedSkipWalkFrameCount = -1;
         cachedSkipWalkTarget = NO_SKIP_WALK;
+    }
+
+    // The rows frame {@code frameIndex} yields: its span when exact, the count a reader resolved
+    // before when known, otherwise the row count of its decode.
+    private long frameRowCount(PageFrame frame, int frameIndex) {
+        if (frame.isExactRowCount()) {
+            return frame.getPartitionHi() - frame.getPartitionLo();
+        }
+        final long resolved = frame.getResolvedRowCount();
+        return resolved > -1 ? resolved : frameMemoryPool.navigateTo(frameIndex).getRowCount();
     }
 
     private void prepareRowCursorFactory() {

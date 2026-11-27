@@ -35,7 +35,8 @@ public final class PartitionFrameState {
     public static final int SUMMARY_BASE_ROWS = 0;
     public static final int SUMMARY_FLAGS = 3;
     public static final int SUMMARY_LOGICAL_ROWS = 2;
-    public static final int SUMMARY_LONGS = 4;
+    public static final int SUMMARY_LONGS = 5;
+    public static final int SUMMARY_RESOLVED_ROWS = 4;
     public static final long WINDOW_HAS_DELTA = 1;
     /**
      * Set when the window's logical row count is only an upper bound: decoding may drop
@@ -43,6 +44,12 @@ public final class PartitionFrameState {
      * {@code getRowCountLo() == 0} and consumers must use the decoded row count.
      */
     public static final long WINDOW_ROW_COUNT_INEXACT = 2;
+    /**
+     * Set on an inexact window whose row count after duplicate resolution a reader resolved
+     * before: {@link #getResolvedRowCount(long, int)} returns it. Frames over the window still
+     * resolve duplicates.
+     */
+    public static final long WINDOW_ROW_COUNT_RESOLVED = 4;
     private static final int HEADER_BASE_ID = 6;
     private static final int HEADER_BASE_ROWS = 5;
     private static final int HEADER_DEDUP_KEYS_ADDR = 11;
@@ -128,6 +135,13 @@ public final class PartitionFrameState {
         return headerValue(state, HEADER_PARQUET_METADATA_SIZE);
     }
 
+    /**
+     * The rows a full scan of the window yields, when {@link #isResolvedRowCount(long, int)}.
+     */
+    public static long getResolvedRowCount(long state, int window) {
+        return summaryValue(state, window, SUMMARY_RESOLVED_ROWS);
+    }
+
     public static long getSubframeSize(long state) {
         return headerValue(state, HEADER_SUBFRAME_SIZE);
     }
@@ -167,6 +181,14 @@ public final class PartitionFrameState {
      */
     public static boolean isExactRowCount(long state, int window) {
         return (summaryValue(state, window, SUMMARY_FLAGS) & WINDOW_ROW_COUNT_INEXACT) == 0;
+    }
+
+    /**
+     * Whether a reader resolved the row count of inexact {@code window} before; see
+     * {@link #WINDOW_ROW_COUNT_RESOLVED}.
+     */
+    public static boolean isResolvedRowCount(long state, int window) {
+        return (summaryValue(state, window, SUMMARY_FLAGS) & WINDOW_ROW_COUNT_RESOLVED) != 0;
     }
 
     public static boolean requiresMaterialization(long state, int window) {
