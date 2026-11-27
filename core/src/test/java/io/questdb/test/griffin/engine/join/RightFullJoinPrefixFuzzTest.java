@@ -1183,7 +1183,7 @@ public class RightFullJoinPrefixFuzzTest extends AbstractCairoTest {
             execute("INSERT INTO t" + t + " SELECT CASE WHEN (x + " + t + ") % 4 = 0 THEN NULL ELSE (x + " + t + ") % 3 END, x % 3,"
                     + " CASE WHEN (x + " + t + ") % 5 = 0 THEN NULL ELSE ((x * " + (t + 1) + ") % 4) * 1.5 END,"
                     + " CASE WHEN (x + " + t + ") % 4 = 1 THEN NULL WHEN (x * " + (t + 1) + ") % 3 = 0 THEN 'a' WHEN (x * " + (t + 1) + ") % 3 = 1 THEN 'b' ELSE 'c' END,"
-                    + " timestamp_sequence(" + (t * 1000) + ", 1000000) FROM long_sequence(" + (3 + t % 4) + ")");
+                    + " timestamp_sequence(" + (t * 1000) + ", 1_000_000) FROM long_sequence(" + (3 + t % 4) + ")");
         }
     }
 

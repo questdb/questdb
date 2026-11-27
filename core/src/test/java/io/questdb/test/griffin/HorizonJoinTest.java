@@ -3376,19 +3376,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
         // t.k = p.k AND t.k = p.m implies p.k = p.m, which filters the right-hand rows like
         // the explicit conjunct of testHorizonJoinOnSlaveColumnEqualityFilter. One key pair remains.
         assertMemoryLeak(() -> {
-            executeWithRewriteTimestamp("CREATE TABLE trades (id INT, k INT, ts #TIMESTAMP) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
-            executeWithRewriteTimestamp("CREATE TABLE prices (k INT, m INT, price DOUBLE, ts #TIMESTAMP) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
-            execute("""
-                    INSERT INTO prices VALUES
-                        (1, 1, 1.0, '1970-01-01T00:00:00.000001Z'),
-                        (2, 3, 2.0, '1970-01-01T00:00:00.000002Z')
-                    """);
-            execute("""
-                    INSERT INTO trades VALUES
-                        (1, 1, '1970-01-01T00:00:00.000010Z'),
-                        (2, 2, '1970-01-01T00:00:00.000020Z')
-                    """);
-
+            createHorizonJoinOnPredicateTables();
             assertQuery("""
                     SELECT t.id, avg(p.price)
                     FROM trades AS t

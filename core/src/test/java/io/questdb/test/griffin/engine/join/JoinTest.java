@@ -24137,7 +24137,7 @@ public class JoinTest extends AbstractCairoTest {
     private void createTablesForPrefixOrder(int... tables) throws SqlException {
         for (int t : tables) {
             execute("CREATE TABLE t" + t + " (c" + t + " INT, k INT, v" + t + " DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO t" + t + " SELECT (x + " + t + ") % 4, x % 3, x * 1.5, timestamp_sequence(" + (t * 1000) + ", 1000000) FROM long_sequence(4)");
+            execute("INSERT INTO t" + t + " SELECT (x + " + t + ") % 4, x % 3, x * 1.5, timestamp_sequence(" + (t * 1000) + ", 1_000_000) FROM long_sequence(4)");
         }
     }
 
