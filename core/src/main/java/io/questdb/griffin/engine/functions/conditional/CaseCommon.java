@@ -64,7 +64,15 @@ public class CaseCommon {
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         int argType = arg.getType();
+        if (argType == toType) {
+            // a decimal cast to its own type would still wrap the value, and is not thread-safe
+            return arg;
+        }
         if (isNull(argType)) {
+            // Close the argument the NULL constant replaces, should it hold native memory. An
+            // all-NULL CASE already folds to the NULL literal in getCaseFunction(). A caller that
+            // frees the argument again after an error finds nothing left to free.
+            Misc.free(arg);
             return Constants.getNullConstant(toType);
         }
         if (ColumnType.isArray(argType)) {

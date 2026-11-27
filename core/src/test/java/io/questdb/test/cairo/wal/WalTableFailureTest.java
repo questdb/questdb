@@ -1386,6 +1386,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
             // no key may appear twice after the skip
             assertQuery("select * from (select ts, k, count() c from d) where c > 1")
                     .noLeakCheck()
+                    .noRandomAccess()
                     .returns("ts\tk\tc\n");
         });
     }

@@ -1061,6 +1061,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.sql.parallel.hash.join.groupby.build.parallel.min.rows\tQDB_CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS\t300000\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.hash.join.groupby.build.rows.per.partition\tQDB_CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_ROWS_PER_PARTITION\t32768\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.hash.join.groupby.enabled\tQDB_CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.stream.groupby.enabled\tQDB_CAIRO_SQL_STREAM_GROUPBY_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.hash.join.groupby.payload.copy.max.size\tQDB_CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_MAX_SIZE\t134217728\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.hash.join.groupby.payload.copy.min.probe.ratio\tQDB_CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_MIN_PROBE_RATIO\t0.4\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.hash.join.groupby.payload.copy.parallel.min.probe.ratio\tQDB_CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_PARALLEL_MIN_PROBE_RATIO\t0.125\tdefault\tfalse\tfalse\n" +
@@ -1180,6 +1181,9 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "http.bind.to\tQDB_HTTP_BIND_TO\t0.0.0.0:" + HTTP_PORT + "\tconf\tfalse\tfalse\n" +
                                     "http.user\tQDB_HTTP_USER\t\tdefault\tfalse\tfalse\n" +
                                     "http.password\tQDB_HTTP_PASSWORD\t****\tdefault\ttrue\tfalse\n" +
+                                    "http.allowed.hosts\tQDB_HTTP_ALLOWED_HOSTS\t\tdefault\tfalse\ttrue\n" +
+                                    "http.browser.allowed.origins\tQDB_HTTP_BROWSER_ALLOWED_ORIGINS\t\tdefault\tfalse\ttrue\n" +
+                                    "browser.tls.termination.enabled\tQDB_BROWSER_TLS_TERMINATION_ENABLED\tfalse\tdefault\tfalse\tfalse\n" +
                                     "http.busy.retry.exponential.wait.multiplier\tQDB_HTTP_BUSY_RETRY_EXPONENTIAL_WAIT_MULTIPLIER\t2.0\tdefault\tfalse\tfalse\n" +
                                     "http.busy.retry.initialWaitQueueSize\tQDB_HTTP_BUSY_RETRY_INITIALWAITQUEUESIZE\t64\tdefault\tfalse\tfalse\n" +
                                     "http.busy.retry.maxProcessingQueueSize\tQDB_HTTP_BUSY_RETRY_MAXPROCESSINGQUEUESIZE\t4096\tdefault\tfalse\tfalse\n" +

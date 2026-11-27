@@ -49,4 +49,12 @@ public interface HttpAuthenticator extends Authenticator {
     default HttpSessionCredential getSessionCredential() {
         return null;
     }
+
+    /**
+     * Returns false when this authenticator admits every request without a
+     * credential, as it does when the server runs without authentication.
+     */
+    default boolean isCredentialRequired() {
+        return true;
+    }
 }
