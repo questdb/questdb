@@ -7142,6 +7142,73 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCopyWithPartitionByMinutes() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test_table (ts timestamp, x int) timestamp(ts) partition by DAY");
+            execute("""
+                    insert into test_table values
+                    ('2023-01-01T09:05:00.000000Z', 1),
+                    ('2023-01-01T09:15:00.000000Z', 2),
+                    ('2023-01-01T09:20:00.000000Z', 3),
+                    ('2023-01-01T09:40:00.000000Z', 4),
+                    ('2023-01-01T10:10:00.000000Z', 5)
+                    """);
+
+            CopyExportRunnable stmt = () ->
+                    runAndFetchCopyExportID("copy test_table to 'output_minutes' with format parquet partition_by 15 MINUTES", sqlExecutionContext);
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        final String dir = exportRoot + File.separator + "output_minutes" + File.separator;
+                        assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("export_path\tnum_exported_files\tstatus\n" + dir + "\t4\tfinished\n");
+                        assertQuery("select * from read_parquet('" + dir + "2023-01-01T0900.parquet')")
+                                .noLeakCheck()
+                                .expectSize()
+                                .timestamp("ts")
+                                .returns("""
+                                        ts\tx
+                                        2023-01-01T09:05:00.000000Z\t1
+                                        """);
+                        // 09:15 is exactly at a bucket start and must land in the 0915 file
+                        assertQuery("select * from read_parquet('" + dir + "2023-01-01T0915.parquet')")
+                                .noLeakCheck()
+                                .expectSize()
+                                .timestamp("ts")
+                                .returns("""
+                                        ts\tx
+                                        2023-01-01T09:15:00.000000Z\t2
+                                        2023-01-01T09:20:00.000000Z\t3
+                                        """);
+                        assertQuery("select * from read_parquet('" + dir + "2023-01-01T0930.parquet')")
+                                .noLeakCheck()
+                                .expectSize()
+                                .timestamp("ts")
+                                .returns("""
+                                        ts\tx
+                                        2023-01-01T09:40:00.000000Z\t4
+                                        """);
+                        assertQuery("select * from read_parquet('" + dir + "2023-01-01T1000.parquet')")
+                                .noLeakCheck()
+                                .expectSize()
+                                .timestamp("ts")
+                                .returns("""
+                                        ts\tx
+                                        2023-01-01T10:10:00.000000Z\t5
+                                        """);
+                        Assert.assertFalse("empty bucket should not be exported",
+                                exportFileExists("output_minutes" + File.separator + "2023-01-01T0945"));
+                        Assert.assertFalse("hourly file name should not be used",
+                                exportFileExists("output_minutes" + File.separator + "2023-01-01T09"));
+                    });
+
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
     public void testCopyWithPartitionByTable() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test_table (ts timestamp, x int) timestamp(ts) partition by DAY");
