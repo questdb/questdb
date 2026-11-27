@@ -27,12 +27,11 @@ package io.questdb.griffin.engine.functions.groupby;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
-import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
-public class MinDateGroupByFunctionFactory implements FunctionFactory {
+public class MinDateGroupByFunctionFactory implements MinAggregate {
     @Override
     public int getResultType(IntList argTypes) {
         return ColumnType.DATE;

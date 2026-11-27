@@ -502,40 +502,6 @@ public final class ExpiryPolicyBinder implements Mutable {
     }
 
     /**
-     * Whether this constant evaluates to NULL, across every type a {@code ts < T} threshold can bind to.
-     * The timestamp family, DATE, LONG and INT each carry an in-band sentinel; DOUBLE and FLOAT spell
-     * NULL as NaN (the way {@code 0.0/0.0} folds); a bare NULL literal binds to {@link ColumnType#NULL};
-     * a string threshold is NULL by reference.
-     * <p>
-     * NaN is the whole of the DOUBLE/FLOAT case. {@code TIMESTAMP < DOUBLE} resolves to the {@code <(DD)}
-     * overload, which widens the timestamp instead of casting the threshold, so a double outside long
-     * range compares as the extreme bound it is and never lands on the sentinel: {@code ts < -9.3e18} is
-     * an always-false bound in double space, the same kind of legal-but-inert policy as a threshold set
-     * before the epoch, not a NULL. A double literal that would need converting does not get this far -
-     * the constant fold reports "Invalid date" during the whole-predicate bind.
-     * <p>
-     * SHORT, BYTE, CHAR and BOOLEAN have no arm because none of them has a null sentinel to test:
-     * {@code cast(null as short)} is the value 0, which is an ordinary threshold.
-     */
-    private static boolean isNullConstant(Function t) {
-        final int type = t.getType();
-        if (ColumnType.isTimestamp(type)) {
-            return t.getTimestamp(null) == Numbers.LONG_NULL;
-        }
-        return switch (ColumnType.tagOf(type)) {
-            case ColumnType.NULL -> true;
-            case ColumnType.DATE -> t.getDate(null) == Numbers.LONG_NULL;
-            case ColumnType.LONG -> t.getLong(null) == Numbers.LONG_NULL;
-            case ColumnType.INT -> t.getInt(null) == Numbers.INT_NULL;
-            case ColumnType.DOUBLE -> Numbers.isNull(t.getDouble(null));
-            case ColumnType.FLOAT -> Numbers.isNull(t.getFloat(null));
-            case ColumnType.STRING -> t.getStrA(null) == null;
-            case ColumnType.VARCHAR -> t.getVarcharA(null) == null;
-            default -> false;
-        };
-    }
-
-    /**
      * True when {@code node} is structurally proven to be a non-decreasing function of wall-clock
      * time, so a {@code ts < node} threshold only ever moves forward and physical cleanup under it is
      * safe. Three shapes carry a proof:
@@ -912,7 +878,7 @@ public final class ExpiryPolicyBinder implements Mutable {
                 return;
             }
             t.init(null, executionContext);
-            isNullThreshold = isNullConstant(t);
+            isNullThreshold = t.isNullConstant();
         } catch (SqlException | CairoException | ImplicitCastException e) {
             // The whole-predicate bind already reported anything that matters; a failure here only
             // means the threshold could not be evaluated, which is not itself a reason to reject.

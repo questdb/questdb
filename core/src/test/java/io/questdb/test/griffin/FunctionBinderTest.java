@@ -26,6 +26,7 @@ package io.questdb.test.griffin;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.Function;
@@ -34,6 +35,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.FunctionFactoryDescriptor;
+import io.questdb.griffin.FunctionInstantiator;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.FunctionResolver;
 import io.questdb.griffin.SqlCompilerImpl;
@@ -69,10 +71,13 @@ import io.questdb.griffin.plan.logical.ProjectPlan;
 import io.questdb.griffin.plan.logical.RequirementFact;
 import io.questdb.griffin.plan.logical.ScanPlan;
 import io.questdb.griffin.plan.logical.TypeExpression;
+import io.questdb.std.Decimals;
 import io.questdb.std.IntIntHashMap;
 import io.questdb.std.IntList;
+import io.questdb.std.Long256Impl;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -727,6 +732,74 @@ public class FunctionBinderTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    @Test
+    public void testConstantNullAgreesWithItsConstantFunction() {
+        final Long256Impl long256 = new Long256Impl();
+        long256.setAll(1, 2, 3, 4);
+        assertConstantNull(true, newConstant().ofNull(0));
+        assertConstantNull(true, newConstant().ofBinaryNull(0));
+        assertConstantNull(false, newConstant().ofBoolean(false, 0));
+        assertConstantNull(false, newConstant().ofByte((byte) 0, 0));
+        assertConstantNull(false, newConstant().ofShort((short) 0, 0));
+        assertConstantNull(false, newConstant().ofChar((char) 0, 0));
+        assertConstantNull(true, newConstant().ofInt(Numbers.INT_NULL, 0));
+        assertConstantNull(false, newConstant().ofInt(Numbers.INT_NULL + 1, 0));
+        assertConstantNull(true, newConstant().ofIPv4(Numbers.IPv4_NULL, 0));
+        assertConstantNull(false, newConstant().ofIPv4(1, 0));
+        assertConstantNull(true, newConstant().ofLong(Numbers.LONG_NULL, 0));
+        assertConstantNull(false, newConstant().ofLong(0, 0));
+        assertConstantNull(true, newConstant().ofDate(Numbers.LONG_NULL, 0));
+        assertConstantNull(false, newConstant().ofDate(-1, 0));
+        assertConstantNull(true, newConstant().ofTimestamp(Numbers.LONG_NULL, ColumnType.TIMESTAMP_MICRO, 0));
+        assertConstantNull(false, newConstant().ofTimestamp(0, ColumnType.TIMESTAMP_NANO, 0));
+        assertConstantNull(true, newConstant().ofDouble(Double.NaN, 0));
+        assertConstantNull(true, newConstant().ofDouble(Double.POSITIVE_INFINITY, 0));
+        assertConstantNull(true, newConstant().ofDouble(Double.NEGATIVE_INFINITY, 0));
+        assertConstantNull(false, newConstant().ofDouble(-0.0, 0));
+        assertConstantNull(false, newConstant().ofDouble(Double.MIN_VALUE, 0));
+        assertConstantNull(true, newConstant().ofFloat(Float.NaN, 0));
+        assertConstantNull(true, newConstant().ofFloat(Float.POSITIVE_INFINITY, 0));
+        assertConstantNull(false, newConstant().ofFloat(1.5f, 0));
+        assertConstantNull(true, newConstant().ofString(null, 0));
+        assertConstantNull(false, newConstant().ofString("", 0));
+        assertConstantNull(true, newConstant().ofSymbol(null, 0));
+        assertConstantNull(false, newConstant().ofSymbol("s", 0));
+        assertConstantNull(true, newConstant().ofVarchar(null, 0));
+        assertConstantNull(false, newConstant().ofVarchar(new Utf8String(""), 0));
+        assertConstantNull(true, newConstant().ofUuid(Numbers.LONG_NULL, Numbers.LONG_NULL, 0));
+        assertConstantNull(false, newConstant().ofUuid(Numbers.LONG_NULL, 1, 0));
+        assertConstantNull(false, newConstant().ofUuid(1, Numbers.LONG_NULL, 0));
+        assertConstantNull(true, newConstant().ofLong128(Numbers.LONG_NULL, Numbers.LONG_NULL, 0));
+        assertConstantNull(false, newConstant().ofLong128(0, 0, 0));
+        assertConstantNull(true, newConstant().ofLong256(Long256Impl.NULL_LONG256, 0));
+        assertConstantNull(false, newConstant().ofLong256(long256, 0));
+        assertConstantNull(true, newConstant().ofGeoHash(GeoHashes.BYTE_NULL, ColumnType.getGeoHashTypeWithBits(5), 0));
+        assertConstantNull(false, newConstant().ofGeoHash(1, ColumnType.getGeoHashTypeWithBits(5), 0));
+        assertConstantNull(true, newConstant().ofGeoHash(GeoHashes.SHORT_NULL, ColumnType.getGeoHashTypeWithBits(10), 0));
+        assertConstantNull(false, newConstant().ofGeoHash(0, ColumnType.getGeoHashTypeWithBits(10), 0));
+        assertConstantNull(true, newConstant().ofGeoHash(GeoHashes.INT_NULL, ColumnType.getGeoHashTypeWithBits(20), 0));
+        assertConstantNull(false, newConstant().ofGeoHash(0, ColumnType.getGeoHashTypeWithBits(20), 0));
+        assertConstantNull(true, newConstant().ofGeoHash(GeoHashes.NULL, ColumnType.getGeoHashTypeWithBits(40), 0));
+        assertConstantNull(false, newConstant().ofGeoHash(0, ColumnType.getGeoHashTypeWithBits(40), 0));
+        assertConstantNull(true, newConstant().ofDecimal(ColumnType.getDecimalType(2, 1), 0, 0, 0, Decimals.DECIMAL8_NULL, 0));
+        assertConstantNull(false, newConstant().ofDecimal(ColumnType.getDecimalType(2, 1), 0, 0, 0, 1, 0));
+        assertConstantNull(true, newConstant().ofDecimal(ColumnType.getDecimalType(4, 1), 0, 0, 0, Decimals.DECIMAL16_NULL, 0));
+        assertConstantNull(false, newConstant().ofDecimal(ColumnType.getDecimalType(4, 1), 0, 0, 0, -1, 0));
+        assertConstantNull(true, newConstant().ofDecimal(ColumnType.getDecimalType(9, 1), 0, 0, 0, Decimals.DECIMAL32_NULL, 0));
+        assertConstantNull(false, newConstant().ofDecimal(ColumnType.getDecimalType(9, 1), 0, 0, 0, Decimals.DECIMAL32_NULL + 1, 0));
+        assertConstantNull(true, newConstant().ofDecimal(ColumnType.getDecimalType(18, 1), 0, 0, 0, Decimals.DECIMAL64_NULL, 0));
+        assertConstantNull(false, newConstant().ofDecimal(ColumnType.getDecimalType(18, 1), 0, 0, 0, 0, 0));
+        assertConstantNull(true, newConstant().ofDecimal(ColumnType.getDecimalType(38, 1), 0, 0,
+                Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL, 0));
+        assertConstantNull(false, newConstant().ofDecimal(ColumnType.getDecimalType(38, 1), 0, 0, 0, Decimals.DECIMAL128_LO_NULL, 0));
+        assertConstantNull(true, newConstant().ofDecimal(ColumnType.getDecimalType(76, 1), Decimals.DECIMAL256_HH_NULL,
+                Decimals.DECIMAL256_HL_NULL, Decimals.DECIMAL256_LH_NULL, Decimals.DECIMAL256_LL_NULL, 0));
+        assertConstantNull(false, newConstant().ofDecimal(ColumnType.getDecimalType(76, 1), 0, 0, 0, 0, 0));
+        assertConstantNull(true, newConstant().ofInterval(Numbers.LONG_NULL, Numbers.LONG_NULL, ColumnType.INTERVAL_TIMESTAMP_MICRO, 0));
+        assertConstantNull(false, newConstant().ofInterval(0, 1, ColumnType.INTERVAL_TIMESTAMP_MICRO, 0));
+        assertConstantNull(false, newConstant().ofInterval(Numbers.LONG_NULL, 1, ColumnType.INTERVAL_TIMESTAMP_MICRO, 0));
     }
 
     @Test
@@ -2372,6 +2445,13 @@ public class FunctionBinderTest extends AbstractCairoTest {
         }
     }
 
+    private static void assertConstantNull(boolean isNull, ConstantExpression constant) {
+        Assert.assertEquals(isNull, constant.isNull());
+        try (Function function = FunctionInstantiator.constantFunction(constant)) {
+            Assert.assertEquals(isNull, function.isNullConstant());
+        }
+    }
+
     private static ExpressionNode binary(String token, int position, ExpressionNode lhs, ExpressionNode rhs) {
         final ExpressionNode expression = ExpressionNode.FACTORY.newInstance().of(
                 "cast".equals(token) ? ExpressionNode.FUNCTION : ExpressionNode.OPERATION, token, 0, position);
@@ -2410,6 +2490,10 @@ public class FunctionBinderTest extends AbstractCairoTest {
                 return value;
             }
         };
+    }
+
+    private static ConstantExpression newConstant() {
+        return ConstantExpression.FACTORY.newInstance();
     }
 
     private static Record numericRecord(int type, int index, double value) {

@@ -4251,6 +4251,9 @@ public class PivotTest extends AbstractSqlParserTest {
                             """);
             assertExceptionNoLeakCheck("SELECT * FROM t WINDOW JOIN q ON (t.s = q.sym) RANGE BETWEEN 1 SECOND PRECEDING AND CURRENT ROW PIVOT (avg(px) * 2 FOR s IN ('a', 'b'))", 103, "PIVOT over WINDOW JOIN supports avg, first and last only as direct measures");
             assertExceptionNoLeakCheck("SELECT * FROM t WINDOW JOIN q ON (t.s = q.sym) RANGE BETWEEN 1 SECOND PRECEDING AND CURRENT ROW PIVOT (count_distinct(px) FOR s IN ('a', 'b'))", 103, "PIVOT over WINDOW JOIN supports only sum, count, min, max, avg, first and last aggregates");
+            assertExceptionNoLeakCheck("SELECT * FROM t WINDOW JOIN q ON (t.s = q.sym) RANGE BETWEEN 1 SECOND PRECEDING AND CURRENT ROW PIVOT (max(px, px) FOR s IN ('a', 'b'))", 103, "PIVOT over WINDOW JOIN supports only sum, count, min, max, avg, first and last aggregates");
+            assertExceptionNoLeakCheck("SELECT * FROM t WINDOW JOIN q ON (t.s = q.sym) RANGE BETWEEN 1 SECOND PRECEDING AND CURRENT ROW PIVOT (last(px, px) FOR s IN ('a', 'b'))", 103, "PIVOT over WINDOW JOIN supports only sum, count, min, max, avg, first and last aggregates");
+            assertExceptionNoLeakCheck("SELECT * FROM t WINDOW JOIN q ON (t.s = q.sym) RANGE BETWEEN 1 SECOND PRECEDING AND CURRENT ROW PIVOT (first_not_null(px) FOR s IN ('a', 'b'))", 103, "PIVOT over WINDOW JOIN supports only sum, count, min, max, avg, first and last aggregates");
         });
     }
 
@@ -5123,6 +5126,32 @@ public class PivotTest extends AbstractSqlParserTest {
                 }
             }
             Assert.assertEquals(functionNames, comparedFunctionNames);
+        });
+    }
+
+    @Test
+    public void testPivotAbsentCellReadsNullMeasureOfEveryTypeWithoutPresenceTest() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t (
+                        k SYMBOL, u UUID, ip IPv4, l256 LONG256, g GEOHASH(4c), d8 DECIMAL(2, 1), d64 DECIMAL(18, 2),
+                        d128 DECIMAL(38, 2), d256 DECIMAL(76, 2), dbl DOUBLE, ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY""");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('a', '11111111-1111-1111-1111-111111111111', '1.2.3.4', '0x01', #sp05, 1.5m, 2.25m, 3.25m, 4.25m, 1.5, 1_000_000)
+                    """);
+            for (String column : new String[]{"u", "ip", "l256", "g", "d8", "d64", "d128", "d256", "dbl"}) {
+                final String measure = "CASE WHEN count() > 0 THEN first(" + column + ") END";
+                assertSqlCursors(
+                        "SELECT x.v a, y.v z FROM (SELECT " + measure + " v FROM t WHERE k = 'a') x "
+                                + "CROSS JOIN (SELECT " + measure + " v FROM t WHERE k = 'z') y",
+                        "SELECT * FROM t PIVOT (" + measure + " FOR k IN ('a', 'z'))"
+                );
+                try (RecordCursorFactory factory = select("SELECT * FROM t PIVOT (" + measure + " FOR k IN ('a', 'z'))")) {
+                    Assert.assertFalse(column, planText(factory).contains("pivot_cell_present"));
+                }
+            }
         });
     }
 
