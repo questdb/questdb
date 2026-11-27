@@ -230,66 +230,79 @@ public class OrderOperatorPlanningTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testDeclaredTimestampProvesNoOrder() throws Exception {
+    public void testDeclaredTimestampDeliversOrder() throws Exception {
         assertMemoryLeak(() -> {
             createDeclaredTable();
-            final String declared = "((SELECT * FROM d WHERE v < 5) TIMESTAMP(k))";
-            final String ordered = """
-                    k\tv
-                    2024-01-01T00:00:00.000000Z\t2
-                    2024-01-02T00:00:00.000000Z\t4
-                    2024-01-03T00:00:00.000000Z\t1
-                    2024-01-04T00:00:00.000000Z\t3
-                    """;
-            assertQuery("SELECT k, v FROM " + declared + " ORDER BY k")
+            assertQuery("SELECT k, v FROM ((SELECT * FROM d WHERE v < 5) TIMESTAMP(k)) ORDER BY k")
                     .noLeakCheck()
                     .timestamp("k")
-                    .withPlanContaining("keys: [k]")
-                    .returns(ordered);
+                    .withPlanNotContaining("sort", "Sort")
+                    .returns("""
+                            k\tv
+                            2024-01-01T00:00:00.000000Z\t1
+                            2024-01-02T00:00:00.000000Z\t2
+                            2024-01-02T00:00:00.000000Z\t3
+                            2024-01-03T00:00:00.000000Z\t4
+                            """);
             assertQuery("""
                     SELECT * FROM (
-                        SELECT k, v FROM ((SELECT * FROM d WHERE v IN (1, 2)) TIMESTAMP(k))
+                        SELECT k, v FROM ((SELECT * FROM d WHERE v IN (1, 4)) TIMESTAMP(k))
                         UNION ALL
-                        SELECT k, v FROM ((SELECT * FROM d WHERE v IN (3, 4)) TIMESTAMP(k))
+                        SELECT k, v FROM ((SELECT * FROM d WHERE v IN (2, 5)) TIMESTAMP(k))
                     ) ORDER BY k
                     """)
                     .noLeakCheck()
                     .timestamp("k")
-                    .withPlanNotContaining("Merge")
-                    .returns(ordered);
-            assertQuery("SELECT k, sum(v) OVER (ORDER BY k ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) s FROM " + declared + " ORDER BY k")
+                    .noRandomAccess()
+                    .withPlanContaining("Union All Merge")
+                    .returns("""
+                            k\tv
+                            2024-01-01T00:00:00.000000Z\t1
+                            2024-01-02T00:00:00.000000Z\t2
+                            2024-01-03T00:00:00.000000Z\t4
+                            2024-01-04T00:00:00.000000Z\t5
+                            """);
+            assertQuery("SELECT k, sum(v) OVER (ORDER BY k ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) s FROM ((SELECT * FROM d WHERE v <> 3) TIMESTAMP(k)) ORDER BY k")
                     .noLeakCheck()
-                    .expectSize()
                     .timestamp("k")
+                    .withPlanNotContaining("sort", "Sort", "Cached")
                     .returns("""
                             k\ts
-                            2024-01-01T00:00:00.000000Z\t2.0
-                            2024-01-02T00:00:00.000000Z\t6.0
-                            2024-01-03T00:00:00.000000Z\t5.0
-                            2024-01-04T00:00:00.000000Z\t4.0
+                            2024-01-01T00:00:00.000000Z\t1.0
+                            2024-01-02T00:00:00.000000Z\t3.0
+                            2024-01-03T00:00:00.000000Z\t6.0
+                            2024-01-04T00:00:00.000000Z\t9.0
                             """);
             final String latest = "SELECT sym, v, k FROM ((SELECT * FROM d) TIMESTAMP(k)) LATEST ON k PARTITION BY sym";
             assertPlanned(engine, sqlExecutionContext, latest, LatestByPlan.class,
-                    latestBy -> Assert.assertEquals(LatestByPlan.Algorithm.LIGHT, latestBy.getAlgorithm()));
+                    latestBy -> Assert.assertEquals(LatestByPlan.Algorithm.ASCENDING_LIGHT, latestBy.getAlgorithm()));
             assertQuery("SELECT * FROM (" + latest + ") ORDER BY sym")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
                             sym\tv\tk
-                            a\t3\t2024-01-04T00:00:00.000000Z
-                            b\t4\t2024-01-02T00:00:00.000000Z
+                            a\t5\t2024-01-04T00:00:00.000000Z
+                            b\t4\t2024-01-03T00:00:00.000000Z
                             """);
-            assertQuery("SELECT * FROM (SELECT k, count() c FROM (SELECT * FROM ((SELECT * FROM d) TIMESTAMP(k)) ORDER BY k LIMIT 100) GROUP BY k) ORDER BY k")
+            assertQuery("SELECT k, count() c FROM (SELECT * FROM ((SELECT * FROM d) TIMESTAMP(k)) ORDER BY k LIMIT 100) GROUP BY k")
                     .noLeakCheck()
-                    .timestamp("k")
                     .noRandomAccess()
-                    .withPlanContaining("Stream Group By", "Top K lo: 100")
+                    .withPlanContaining("Stream Group By")
+                    .withPlanNotContaining("sort", "Sort")
                     .returns("""
                             k\tc
-                            2024-01-01T00:00:00.000000Z\t2
-                            2024-01-02T00:00:00.000000Z\t1
+                            2024-01-01T00:00:00.000000Z\t1
+                            2024-01-02T00:00:00.000000Z\t2
                             2024-01-03T00:00:00.000000Z\t1
                             2024-01-04T00:00:00.000000Z\t1
+                            """);
+            assertQuery("SELECT * FROM ((SELECT * FROM d) TIMESTAMP(k)) ORDER BY v DESC LIMIT 2")
+                    .noLeakCheck()
+                    .withPlanContaining("Top K lo: 2")
+                    .returns("""
+                            k\tv\tsym\tts
+                            2024-01-04T00:00:00.000000Z\t5\ta\t2024-01-01T04:00:00.000000Z
+                            2024-01-03T00:00:00.000000Z\t4\tb\t2024-01-01T03:00:00.000000Z
                             """);
         });
     }
@@ -2074,11 +2087,11 @@ public class OrderOperatorPlanningTest extends AbstractCairoTest {
         execute("CREATE TABLE d (k TIMESTAMP, v LONG, sym SYMBOL INDEX, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
         execute("""
                 INSERT INTO d VALUES
-                    ('2024-01-03', 1, 'a', '2024-01-01T00:00:00.000000Z'),
-                    ('2024-01-01', 2, 'b', '2024-01-01T01:00:00.000000Z'),
-                    ('2024-01-04', 3, 'a', '2024-01-01T02:00:00.000000Z'),
-                    ('2024-01-02', 4, 'b', '2024-01-01T03:00:00.000000Z'),
-                    ('2024-01-01', 5, 'a', '2024-01-01T04:00:00.000000Z')
+                    ('2024-01-01', 1, 'a', '2024-01-01T00:00:00.000000Z'),
+                    ('2024-01-02', 2, 'b', '2024-01-01T01:00:00.000000Z'),
+                    ('2024-01-02', 3, 'a', '2024-01-01T02:00:00.000000Z'),
+                    ('2024-01-03', 4, 'b', '2024-01-01T03:00:00.000000Z'),
+                    ('2024-01-04', 5, 'a', '2024-01-01T04:00:00.000000Z')
                 """);
     }
 
