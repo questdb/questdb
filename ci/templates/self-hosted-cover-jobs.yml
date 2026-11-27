@@ -72,9 +72,11 @@ jobs:
           includeTests: "**/pgwire/**/*.java"
           javadoc_step: ""
           javadoc_profile: ""
-        # The one leg that runs the whole reactor: its exclude-only pattern is where every
-        # client, compat and utils test lands. The other legs match none of those tests, so
-        # they build core and what it needs, and skip the other modules.
+        # The one leg that runs the whole reactor: its exclude-only pattern is where the compat
+        # and utils tests land, and most client tests. The other legs narrow the reactor to core
+        # and what it needs (-pl core -am). That still includes the client when it is built from
+        # the submodule, so the client tests their patterns match run there: its cairo tests in
+        # linux-cairo-root, which this leg excludes, and its fuzz tests in linux-fuzz2 as well.
         linux-other:
           poolName: "hetzner-incus"
           os: Linux
