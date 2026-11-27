@@ -38,14 +38,18 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestMatchFunctionFactory;
 import io.questdb.griffin.engine.join.MaterializedRecordCursorFactory;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.MemoryTrackerWorkload;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.griffin.CustomisableRunnable;
@@ -60,6 +64,10 @@ import org.junit.runners.Parameterized;
 
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Parents that rewind their input, nested loop joins and negative LIMIT, read a stream GROUP BY through a copy,
@@ -71,6 +79,10 @@ import java.util.Collection;
  */
 @RunWith(Parameterized.class)
 public class MaterializedRecordCursorFactoryTest extends AbstractCairoTest {
+    // A base whose rows the tests can count with test_latched_counter(), x = 1 to 1000 and y = 2x, and a limit that a
+    // copy of it fits well within.
+    private static final String LAX_COPY_BASE = "SELECT x, x * 2 y FROM long_sequence(1000) WHERE test_latched_counter()";
+    private static final long LAX_COPY_LIMIT = 1_048_576;
     private static final String CROSS_JOIN = "SELECT m.x, s.* FROM m CROSS JOIN ($sub) s ORDER BY x, $keys";
     private static final String FULL_JOIN = "SELECT m.x, s.* FROM m FULL JOIN ($sub) s ON s.s < m.x * 30 ORDER BY x, $keys";
     private static final String HORIZON_JOIN = "SELECT h.offset, count() n, sum(s.s) total, sum(q.x) qx "
@@ -287,10 +299,8 @@ public class MaterializedRecordCursorFactoryTest extends AbstractCairoTest {
         // Under the query memory limit, the copy under LIMIT -100 gives up and streams its base, so each rewind runs
         // the stream GROUP BY again. The join keeps its own copy of the limit's rows, so the stream runs as often
         // under one outer row as under five, and every outer row joins the same 100 rows. Small pages let the
-        // copy of 100 rows fit the limit that the copy of 10,000 rows breaches.
-        // The copy gives up only when its own allocation reaches the limit. Workers allocate frame results against
-        // the same limit meanwhile, and the one that reaches it first fails the query, so only the owner reduces here.
-        Assume.assumeTrue(!isParallel || workerCount == 0);
+        // copy of 100 rows fit the limit that the copy of 10,000 rows breaches. Workers allocate frame results against
+        // the same limit meanwhile, and one that reaches it frees the copy rather than fail the query.
         setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 65_536);
         setProperty(PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_PAGE_SIZE, 4096);
         run((engine, compiler, context) -> {
@@ -327,6 +337,255 @@ public class MaterializedRecordCursorFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLaxCopyCountsRowsInEveryState() throws Exception {
+        // calculateSize() and skipRows() copy the base rows they pass, replay the copied ones, and stream once the copy
+        // is gone.
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_MEMORY_LIMIT_BYTES, LAX_COPY_LIMIT);
+        run((engine, compiler, context) -> withLaxCopy(engine, compiler, context, LAX_COPY_BASE, (tracker, cursor) -> {
+            final RecordCursor.Counter counter = new RecordCursor.Counter();
+            cursor.calculateSize(null, counter);
+            Assert.assertEquals(1000, counter.get());
+            Assert.assertEquals(1000, TestLatchedCounterFunctionFactory.getCount());
+            // Replays the copy, which holds every row.
+            cursor.toTop();
+            counter.clear();
+            cursor.calculateSize(null, counter);
+            Assert.assertEquals(1000, counter.get());
+            Assert.assertEquals(1000, TestLatchedCounterFunctionFactory.getCount());
+            cursor.toTop();
+            counter.set(10);
+            cursor.skipRows(counter, Long.MAX_VALUE);
+            Assert.assertEquals(0, counter.get());
+            assertLaxRows(cursor, 990, 11);
+            Assert.assertEquals(1000, TestLatchedCounterFunctionFactory.getCount());
+        }));
+        run((engine, compiler, context) -> withLaxCopy(engine, compiler, context, LAX_COPY_BASE, (tracker, cursor) -> {
+            // A rewind in the middle of the first pass, then a count that replays 100 rows and copies the rest.
+            assertLaxRows(cursor, 100, 1);
+            cursor.toTop();
+            final RecordCursor.Counter counter = new RecordCursor.Counter();
+            cursor.calculateSize(null, counter);
+            Assert.assertEquals(1000, counter.get());
+            Assert.assertEquals(1000, TestLatchedCounterFunctionFactory.getCount());
+            // A count that copies until an allocation frees the copy, then streams.
+            cursor.toTop();
+            counter.clear();
+            counter.set(500);
+            cursor.skipRows(counter, Long.MAX_VALUE);
+            Assert.assertEquals(0, counter.get());
+            Assert.assertEquals(1000, TestLatchedCounterFunctionFactory.getCount());
+        }));
+        run((engine, compiler, context) -> withLaxCopy(engine, compiler, context, LAX_COPY_BASE, (tracker, cursor) -> {
+            assertLaxRows(cursor, 100, 1);
+            final long size = LAX_COPY_LIMIT - tracker.getUsed() + 1;
+            final long ptr = allocate(tracker, size, false);
+            try {
+                final RecordCursor.Counter counter = new RecordCursor.Counter();
+                cursor.calculateSize(null, counter);
+                Assert.assertEquals(900, counter.get());
+                cursor.toTop();
+                counter.set(990);
+                cursor.skipRows(counter, Long.MAX_VALUE);
+                Assert.assertEquals(0, counter.get());
+                assertLaxRows(cursor, 10, 991);
+                Assert.assertFalse(cursor.hasNext());
+                Assert.assertEquals(size, tracker.getUsed());
+            } finally {
+                Unsafe.free(ptr, size, MemoryTag.NATIVE_DEFAULT, tracker);
+            }
+        }));
+        run((engine, compiler, context) -> withLaxCopy(engine, compiler, context, LAX_COPY_BASE, (tracker, cursor) -> {
+            // Skipping past the end, on the first pass and on a replay, leaves the rows it could not skip.
+            final RecordCursor.Counter counter = new RecordCursor.Counter();
+            counter.set(1500);
+            cursor.skipRows(counter, Long.MAX_VALUE);
+            Assert.assertEquals(500, counter.get());
+            cursor.toTop();
+            counter.set(1200);
+            cursor.skipRows(counter, Long.MAX_VALUE);
+            Assert.assertEquals(200, counter.get());
+            Assert.assertEquals(1000, TestLatchedCounterFunctionFactory.getCount());
+        }));
+    }
+
+    @Test
+    public void testLaxCopyFreedByAllocationOnAnotherThread() throws Exception {
+        assertLaxCopyFreedByAllocation(true);
+    }
+
+    @Test
+    public void testLaxCopyFreedByAllocationOnOwnerThread() throws Exception {
+        assertLaxCopyFreedByAllocation(false);
+    }
+
+    @Test
+    public void testLaxCopyFreedOnceRowIsCopied() throws Exception {
+        // A thread that frees the copy while the owner copies a row waits for the row, then frees the copy. The probe
+        // reclaimer, which the tracker asks before the copy, tells the owner that the thread is about to wait.
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_MEMORY_LIMIT_BYTES, LAX_COPY_LIMIT);
+        run((engine, compiler, context) -> {
+            final CountDownLatch isAsked = new CountDownLatch(1);
+            final MemoryTracker.Reclaimer probe = isAsked::countDown;
+            final AtomicLong size = new AtomicLong();
+            final AtomicReference<Thread> allocator = new AtomicReference<>();
+            final AtomicLong ptr = new AtomicLong();
+            final AtomicReference<Throwable> failure = new AtomicReference<>();
+            final AtomicReference<MemoryTracker> trackerRef = new AtomicReference<>();
+            // The copy reads the flag column as it copies row 50, under its lock.
+            TestLatchedCounterFunctionFactory.reset(new TestLatchedCounterFunctionFactory.Callback() {
+                @Override
+                public boolean onGet(Record rec, int count) {
+                    if (rec.getLong(0) == 50 && allocator.get() == null) {
+                        final MemoryTracker tracker = trackerRef.get();
+                        size.set(LAX_COPY_LIMIT - tracker.getUsed() + 1);
+                        final Thread thread = new Thread(() -> {
+                            try {
+                                ptr.set(Unsafe.malloc(size.get(), MemoryTag.NATIVE_DEFAULT, tracker));
+                            } catch (Throwable th) {
+                                failure.set(th);
+                            }
+                        });
+                        allocator.set(thread);
+                        thread.start();
+                        try {
+                            Assert.assertTrue(isAsked.await(30, TimeUnit.SECONDS));
+                        } catch (InterruptedException e) {
+                            throw new AssertionError(e);
+                        }
+                    }
+                    return true;
+                }
+            });
+            try (
+                    MemoryTracker tracker = engine.getMemoryTrackerProvider().acquire(context.getSecurityContext(), 42, MemoryTrackerWorkload.MAT_VIEW_REFRESH);
+                    RecordCursorFactory copy = copy(compiler, context, "SELECT x, test_latched_counter() flag FROM long_sequence(1000)", false, false)
+            ) {
+                trackerRef.set(tracker);
+                context.setMemoryTracker(tracker);
+                Assert.assertTrue(tracker.addReclaimer(probe));
+                try (RecordCursor cursor = copy.getCursor(context)) {
+                    final Record record = cursor.getRecord();
+                    for (int x = 1; x <= 1000; x++) {
+                        Assert.assertTrue(cursor.hasNext());
+                        Assert.assertEquals(x, record.getLong(0));
+                    }
+                    Assert.assertFalse(cursor.hasNext());
+                    allocator.get().join();
+                    Assert.assertNull(failure.get());
+                    // The thread freed the copy, so the cursor streamed the rest of the base.
+                    Assert.assertEquals(size.get(), tracker.getUsed());
+                    Assert.assertEquals(1, tracker.getReclaimerCount());
+                } finally {
+                    tracker.removeReclaimer(probe);
+                    context.setMemoryTracker(null);
+                    TestLatchedCounterFunctionFactory.reset(null);
+                    if (ptr.get() != 0) {
+                        Unsafe.free(ptr.get(), size.get(), MemoryTag.NATIVE_DEFAULT, tracker);
+                    }
+                }
+                Assert.assertEquals(0, tracker.getReclaimerCount());
+                Assert.assertEquals(0, tracker.getUsed());
+            }
+        });
+    }
+
+    @Test
+    public void testLaxCopyReplayedOnceComplete() throws Exception {
+        // Once the copy holds every base row, a rewind replays it, and no allocation frees it.
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_MEMORY_LIMIT_BYTES, LAX_COPY_LIMIT);
+        run((engine, compiler, context) -> withLaxCopy(engine, compiler, context, LAX_COPY_BASE, (tracker, cursor) -> {
+            assertLaxRows(cursor, 1000, 1);
+            Assert.assertFalse(cursor.hasNext());
+            Assert.assertEquals(0, tracker.getReclaimerCount());
+            final long copyBytes = tracker.getUsed();
+            try {
+                allocate(tracker, LAX_COPY_LIMIT - copyBytes + 1, true);
+                Assert.fail("expected the copy to keep its memory");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+            }
+            cursor.toTop();
+            assertLaxRows(cursor, 1000, 1);
+            Assert.assertFalse(cursor.hasNext());
+            Assert.assertEquals(1000, TestLatchedCounterFunctionFactory.getCount());
+            Assert.assertEquals(copyBytes, tracker.getUsed());
+        }));
+    }
+
+    @Test
+    public void testLaxCopyHasNoRandomAccess() throws Exception {
+        // A lax copy may stream its base, so it gives no random access. Its state size is the copy's while it copies,
+        // and the base's once it streams.
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_MEMORY_LIMIT_BYTES, LAX_COPY_LIMIT);
+        run((engine, compiler, context) -> withLaxCopy(engine, compiler, context, LAX_COPY_BASE, (tracker, cursor) -> {
+            Assert.assertThrows(UnsupportedOperationException.class, cursor::getRecordB);
+            Assert.assertThrows(UnsupportedOperationException.class, () -> cursor.recordAt(cursor.getRecord(), 0));
+            assertLaxRows(cursor, 100, 1);
+            Assert.assertEquals(100, cursor.preComputedStateSize());
+            final long size = LAX_COPY_LIMIT - tracker.getUsed() + 1;
+            final long ptr = allocate(tracker, size, false);
+            try {
+                Assert.assertEquals(0, cursor.preComputedStateSize());
+                // Another allocation past the limit finds the copy gone, and fails.
+                try {
+                    allocate(tracker, LAX_COPY_LIMIT - size + 1, true);
+                    Assert.fail("expected the per-query limit to reject the allocation");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                }
+                assertLaxRows(cursor, 900, 101);
+                Assert.assertFalse(cursor.hasNext());
+            } finally {
+                Unsafe.free(ptr, size, MemoryTag.NATIVE_DEFAULT, tracker);
+            }
+        }));
+    }
+
+    @Test
+    public void testLaxCopyKeepsCopyWhenTrackerHoldsNoMoreReclaimers() throws Exception {
+        // A tracker that holds as many reclaimers as it can takes no more: the copy then counts as any memory, and an
+        // allocation past the limit fails rather than free it.
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_MEMORY_LIMIT_BYTES, LAX_COPY_LIMIT);
+        run((engine, compiler, context) -> {
+            TestLatchedCounterFunctionFactory.reset(null);
+            final ObjList<MemoryTracker.Reclaimer> probes = new ObjList<>();
+            try (
+                    MemoryTracker tracker = engine.getMemoryTrackerProvider().acquire(context.getSecurityContext(), 42, MemoryTrackerWorkload.MAT_VIEW_REFRESH);
+                    RecordCursorFactory copy = copy(compiler, context, LAX_COPY_BASE, false, false)
+            ) {
+                for (int i = 0; i < MemoryTracker.MAX_RECLAIMER_COUNT; i++) {
+                    final MemoryTracker.Reclaimer probe = () -> {
+                    };
+                    probes.add(probe);
+                    Assert.assertTrue(tracker.addReclaimer(probe));
+                }
+                context.setMemoryTracker(tracker);
+                try (RecordCursor cursor = copy.getCursor(context)) {
+                    assertLaxRows(cursor, 100, 1);
+                    Assert.assertEquals(MemoryTracker.MAX_RECLAIMER_COUNT, tracker.getReclaimerCount());
+                    try {
+                        allocate(tracker, LAX_COPY_LIMIT - tracker.getUsed() + 1, true);
+                        Assert.fail("expected the copy to keep its memory");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                    }
+                    assertLaxRows(cursor, 900, 101);
+                    cursor.toTop();
+                    assertLaxRows(cursor, 1000, 1);
+                    Assert.assertEquals(1000, TestLatchedCounterFunctionFactory.getCount());
+                } finally {
+                    context.setMemoryTracker(null);
+                    TestLatchedCounterFunctionFactory.reset(null);
+                    for (int i = 0, n = probes.size(); i < n; i++) {
+                        tracker.removeReclaimer(probes.getQuick(i));
+                    }
+                }
+                Assert.assertEquals(0, tracker.getUsed());
+            }
+        });
+    }
+
+    @Test
     public void testLaxCopyRerunsRecomputingBase() throws Exception {
         // A lax copy streams its base once it gives up, so a rewind reruns a stream GROUP BY under it, but not a table.
         run((engine, compiler, context) -> {
@@ -340,6 +599,67 @@ public class MaterializedRecordCursorFactoryTest extends AbstractCairoTest {
                     Assert.assertFalse(copy.getBaseFactory().isRewindRecomputing());
                     Assert.assertFalse(copy.isRewindRecomputing());
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testLaxCopyRewoundMidwayReplaysThenCopiesOn() throws Exception {
+        // A rewind in the middle of the first pass replays the rows copied so far, which no allocation frees meanwhile,
+        // and then copies the base from where it stopped. An allocation then frees the copy, and the next rewind runs
+        // the base again.
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_MEMORY_LIMIT_BYTES, LAX_COPY_LIMIT);
+        run((engine, compiler, context) -> withLaxCopy(engine, compiler, context, LAX_COPY_BASE, (tracker, cursor) -> {
+            assertLaxRows(cursor, 100, 1);
+            cursor.toTop();
+            Assert.assertEquals(0, tracker.getReclaimerCount());
+            assertLaxRows(cursor, 100, 1);
+            Assert.assertEquals(100, TestLatchedCounterFunctionFactory.getCount());
+            assertLaxRows(cursor, 100, 101);
+            Assert.assertEquals(200, TestLatchedCounterFunctionFactory.getCount());
+            Assert.assertEquals(1, tracker.getReclaimerCount());
+            final long size = LAX_COPY_LIMIT - tracker.getUsed() + 1;
+            final long ptr = allocate(tracker, size, true);
+            try {
+                assertLaxRows(cursor, 800, 201);
+                Assert.assertFalse(cursor.hasNext());
+                cursor.toTop();
+                assertLaxRows(cursor, 1000, 1);
+                Assert.assertEquals(2000, TestLatchedCounterFunctionFactory.getCount());
+                Assert.assertEquals(size, tracker.getUsed());
+            } finally {
+                Unsafe.free(ptr, size, MemoryTag.NATIVE_DEFAULT, tracker);
+            }
+        }));
+    }
+
+    @Test
+    public void testLaxCopyWithoutTrackerReplays() throws Exception {
+        // In a context without a memory tracker, as SqlExecutionContext has by default, nothing can free the copy, and
+        // a rewind replays it.
+        run((engine, compiler, context) -> {
+            TestLatchedCounterFunctionFactory.reset(null);
+            try (
+                    SqlExecutionContextImpl untracked = new SqlExecutionContextImpl(engine, 1) {
+                        @Override
+                        public MemoryTracker getMemoryTracker() {
+                            return null;
+                        }
+
+                        @Override
+                        public void setMemoryTracker(MemoryTracker tracker) {
+                        }
+                    }.with(context.getSecurityContext());
+                    RecordCursorFactory copy = copy(compiler, untracked, LAX_COPY_BASE, false, false);
+                    RecordCursor cursor = copy.getCursor(untracked)
+            ) {
+                assertLaxRows(cursor, 1000, 1);
+                Assert.assertFalse(cursor.hasNext());
+                cursor.toTop();
+                assertLaxRows(cursor, 1000, 1);
+                Assert.assertEquals(1000, TestLatchedCounterFunctionFactory.getCount());
+            } finally {
+                TestLatchedCounterFunctionFactory.reset(null);
             }
         });
     }
@@ -738,6 +1058,31 @@ public class MaterializedRecordCursorFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testStrictCopySkipsRows() throws Exception {
+        // A strict copy copies the rows it skips, replays them after a rewind, and leaves the rows it could not skip.
+        run((engine, compiler, context) -> {
+            TestLatchedCounterFunctionFactory.reset(null);
+            try (
+                    RecordCursorFactory copy = copy(compiler, context, LAX_COPY_BASE, true, false);
+                    RecordCursor cursor = copy.getCursor(context)
+            ) {
+                final RecordCursor.Counter counter = new RecordCursor.Counter();
+                counter.set(10);
+                cursor.skipRows(counter, Long.MAX_VALUE);
+                Assert.assertEquals(0, counter.get());
+                assertLaxRows(cursor, 990, 11);
+                cursor.toTop();
+                counter.set(1500);
+                cursor.skipRows(counter, Long.MAX_VALUE);
+                Assert.assertEquals(500, counter.get());
+                Assert.assertEquals(1000, TestLatchedCounterFunctionFactory.getCount());
+            } finally {
+                TestLatchedCounterFunctionFactory.reset(null);
+            }
+        });
+    }
+
+    @Test
     public void testSpliceJoin() throws Exception {
         run((engine, compiler, context) -> {
             createTables(engine, context);
@@ -771,6 +1116,35 @@ public class MaterializedRecordCursorFactoryTest extends AbstractCairoTest {
     /**
      * Returns the number of rewinds that reached the stream GROUP BY.
      */
+    // An allocation of the query that would pass the memory limit frees the copy first, from any thread, and the cursor
+    // streams the base from then on, so a rewind runs the base again.
+    private void assertLaxCopyFreedByAllocation(boolean isOtherThread) throws Exception {
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_MEMORY_LIMIT_BYTES, LAX_COPY_LIMIT);
+        run((engine, compiler, context) -> withLaxCopy(engine, compiler, context, LAX_COPY_BASE, (tracker, cursor) -> {
+            assertLaxRows(cursor, 100, 1);
+            Assert.assertEquals(1, tracker.getReclaimerCount());
+            final long copyBytes = tracker.getUsed();
+            Assert.assertTrue(copyBytes > 0);
+            // Fits only once the copy is gone.
+            final long size = LAX_COPY_LIMIT - copyBytes + 1;
+            final long ptr = allocate(tracker, size, isOtherThread);
+            try {
+                Assert.assertEquals(size, tracker.getUsed());
+                assertLaxRows(cursor, 900, 101);
+                Assert.assertFalse(cursor.hasNext());
+                Assert.assertEquals(0, tracker.getReclaimerCount());
+                Assert.assertEquals(1000, TestLatchedCounterFunctionFactory.getCount());
+                cursor.toTop();
+                assertLaxRows(cursor, 1000, 1);
+                Assert.assertEquals(2000, TestLatchedCounterFunctionFactory.getCount());
+                // Nothing is copied while the cursor streams.
+                Assert.assertEquals(size, tracker.getUsed());
+            } finally {
+                Unsafe.free(ptr, size, MemoryTag.NATIVE_DEFAULT, tracker);
+            }
+        }));
+    }
+
     private int assertMaterialized(
             CairoEngine engine,
             SqlExecutionContext context,
@@ -829,6 +1203,41 @@ public class MaterializedRecordCursorFactoryTest extends AbstractCairoTest {
         final String sql = query.replace("$sub", input).replace("$keys", keys);
         assertQuery(sql).withEngine(engine).withContext(context).noLeakCheck().assertsPlanContaining(operator);
         Assert.assertEquals(sql, countRewinds(compiler, context, input), countRewinds(compiler, context, sql));
+    }
+
+    // Allocates against the tracker on the calling thread or on another one, and returns the address.
+    private static long allocate(MemoryTracker tracker, long size, boolean isOtherThread) throws Exception {
+        if (!isOtherThread) {
+            return Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT, tracker);
+        }
+        final AtomicLong ptr = new AtomicLong();
+        final AtomicReference<Throwable> failure = new AtomicReference<>();
+        final Thread thread = new Thread(() -> {
+            try {
+                ptr.set(Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT, tracker));
+            } catch (Throwable th) {
+                failure.set(th);
+            }
+        });
+        thread.start();
+        thread.join();
+        if (failure.get() != null) {
+            if (failure.get() instanceof CairoException e) {
+                throw e;
+            }
+            throw new AssertionError(failure.get());
+        }
+        return ptr.get();
+    }
+
+    // Reads rowCount rows of LAX_COPY_BASE, the first with x = firstX.
+    private static void assertLaxRows(RecordCursor cursor, int rowCount, long firstX) {
+        final Record record = cursor.getRecord();
+        for (int i = 0; i < rowCount; i++) {
+            Assert.assertTrue(cursor.hasNext());
+            Assert.assertEquals(firstX + i, record.getLong(0));
+            Assert.assertEquals(2 * (firstX + i), record.getLong(1));
+        }
     }
 
     private static int countRewinds(SqlCompiler compiler, SqlExecutionContext context, String sql) throws SqlException {
@@ -893,11 +1302,37 @@ public class MaterializedRecordCursorFactoryTest extends AbstractCairoTest {
         return new MaterializedRecordCursorFactory(configuration, base, recordSink, isStrict, false, isCopiedInBatches);
     }
 
+    // Opens a lax copy of base under a memory tracker; test_latched_counter() counts the base rows read. The tracker is
+    // a materialized view refresh's, which the query registration of the base keeps, where it would replace one of a
+    // query with its own.
+    private static void withLaxCopy(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext context, String base, LaxCopyTest test) throws Exception {
+        TestLatchedCounterFunctionFactory.reset(null);
+        try (
+                MemoryTracker tracker = engine.getMemoryTrackerProvider().acquire(context.getSecurityContext(), 42, MemoryTrackerWorkload.MAT_VIEW_REFRESH);
+                RecordCursorFactory copy = copy(compiler, context, base, false, false)
+        ) {
+            context.setMemoryTracker(tracker);
+            try (RecordCursor cursor = copy.getCursor(context)) {
+                test.run(tracker, cursor);
+            } finally {
+                context.setMemoryTracker(null);
+                TestLatchedCounterFunctionFactory.reset(null);
+            }
+            Assert.assertEquals(0, tracker.getReclaimerCount());
+            Assert.assertEquals(0, tracker.getUsed());
+        }
+    }
+
     private static String[] withNegativeLimit(String[] subquery) {
         return new String[]{"SELECT * FROM (" + subquery[0] + ") LIMIT -6", "SELECT * FROM (" + subquery[1] + ") LIMIT -6", subquery[2]};
     }
 
     private void run(CustomisableRunnable runnable) throws Exception {
         assertMemoryLeak(() -> TestUtils.execute(workerCount == 0 ? null : new TestWorkerPool(workerCount), runnable, configuration, LOG));
+    }
+
+    @FunctionalInterface
+    private interface LaxCopyTest {
+        void run(MemoryTracker tracker, RecordCursor cursor) throws Exception;
     }
 }

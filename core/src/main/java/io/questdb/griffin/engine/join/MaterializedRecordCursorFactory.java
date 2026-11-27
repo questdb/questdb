@@ -44,21 +44,26 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
+import io.questdb.std.Os;
 import org.jetbrains.annotations.Nullable;
+
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Copies the rows of its base into a record array as a cursor first reads them and replays the copy after every
- * rewind, so a parent that rewinds its input computes the base rows once per execution. If the copy reaches its
- * page budget or the query memory limit, it releases the copy and streams the base. A strict factory fails with a
- * limit error instead, and gives random access to the copied rows to a parent that relies on their row ids. A strict
- * factory can also copy rows in batches ahead of the reads, for a parent that reads every row.
+ * rewind, so a parent that rewinds its input computes the base rows once per execution. A strict factory gives random
+ * access to the copied rows to a parent that relies on their row ids, fails with a limit error when the copy does not
+ * fit, and can copy rows in batches ahead of the reads, for a parent that reads every row. A lax factory only saves
+ * work: when the copy does not fit, or another allocation of the query needs its memory, it frees the copy and streams
+ * the base, see {@link LaxRecordCursor}.
  */
 public class MaterializedRecordCursorFactory extends AbstractRecordCursorFactory {
     private final boolean isStrict;
     private RecordCursorFactory base;
-    private MaterializedRecordCursor cursor;
+    private DelegatingRecordCursor cursor;
 
     /**
      * Consumes the base on entry, including on failure. A copy with the join budget holds what a full-fat join's
@@ -88,7 +93,7 @@ public class MaterializedRecordCursorFactory extends AbstractRecordCursorFactory
                     maxBytes,
                     isStrict
             );
-            cursor = new MaterializedRecordCursor(rows, maxBytes, isStrict, isCopiedInBatches);
+            cursor = isStrict ? new MaterializedRecordCursor(rows, maxBytes, isCopiedInBatches) : new LaxRecordCursor(rows);
         } catch (Throwable th) {
             Misc.free(rows, th);
             Misc.free(this, th);
@@ -123,8 +128,8 @@ public class MaterializedRecordCursorFactory extends AbstractRecordCursorFactory
         return base.isNonDeterministic();
     }
 
-    // A strict copy replays its rows on every rewind. A lax one gives up under the memory limit and streams its base,
-    // so a rewind then runs the base again.
+    // A strict copy replays its rows on every rewind. A lax one streams its base once it frees its copy, so a rewind
+    // then runs the base again.
     @Override
     public boolean isRewindRecomputing() {
         return !isStrict && base.isRewindRecomputing();
@@ -155,7 +160,7 @@ public class MaterializedRecordCursorFactory extends AbstractRecordCursorFactory
     protected void _close() {
         final RecordCursorFactory base = this.base;
         this.base = null;
-        final MaterializedRecordCursor cursor = this.cursor;
+        final DelegatingRecordCursor cursor = this.cursor;
         this.cursor = null;
         Throwable failure = Misc.freeBestEffort(null, base);
         failure = Misc.freeBestEffort(failure, cursor);
@@ -216,47 +221,60 @@ public class MaterializedRecordCursorFactory extends AbstractRecordCursorFactory
     }
 
     /**
-     * Joins bind {@link #getRecord()} once per cursor; the record delegates to the copy or, after the fallback,
-     * to the base record, so the parent needs no rebinding.
+     * Streams its base on the first pass, copying each row as a side effect, and replays the copy after a rewind, so a
+     * parent that reads its input twice, such as a negative LIMIT or a keyed FILL, computes the base once. The parent
+     * reads the base's record on the first pass and never the copy, so any thread may free the copy then: while the
+     * cursor copies, it is a {@link MemoryTracker.Reclaimer} of the query's tracker, and an allocation that would pass a
+     * memory limit frees the copy before it fails. Once the copy is freed or reaches its page budget, the cursor streams
+     * the base, and a rewind runs the base again.
      */
-    private static class MaterializedRecordCursor implements DelegatingRecordCursor {
-        private static final int COPY_BATCH_ROWS = 256;
-        private final boolean isCopiedInBatches;
-        private final boolean isStrict;
-        private final long maxBytes;
+    private static class LaxRecordCursor implements DelegatingRecordCursor, MemoryTracker.Reclaimer {
+        // The cursor reads the base and copies its rows; a thread that runs out of memory may free the copy.
+        private static final int STATE_COPYING = 0;
+        // The cursor reads the copy, which no thread may free meanwhile, and then the base again, unless the copy holds
+        // every row of the base.
+        private static final int STATE_REPLAYING = 1;
+        // The cursor reads the base and holds no copy.
+        private static final int STATE_STREAMING = 2;
+        // The thread that copies a row or frees the copy, or null. A spin lock, since either holds it only briefly and
+        // the owner must not hold a monitor in a fiber.
+        private final AtomicReference<Thread> copyHolder = new AtomicReference<>();
         private final DelegatingRecord record = new DelegatingRecord();
         private final RecordArray rows;
         private RecordCursor baseCursor;
         private Record baseRecord;
         private boolean isBaseExhausted;
-        private boolean isStreaming;
+        // Whether the cursor is a reclaimer of memoryTracker.
+        private boolean isReclaimable;
+        private @Nullable MemoryTracker memoryTracker;
+        // A thread that frees the copy writes it under copyHolder, as the owner does while the cursor is a reclaimer.
+        // The owner reads it without the lock to choose its path, and again under the lock before it touches the copy.
+        private volatile int state;
 
-        private MaterializedRecordCursor(RecordArray rows, long maxBytes, boolean isStrict, boolean isCopiedInBatches) {
-            assert isStrict || !isCopiedInBatches;
+        private LaxRecordCursor(RecordArray rows) {
             this.rows = rows;
-            this.maxBytes = maxBytes;
-            this.isStrict = isStrict;
-            this.isCopiedInBatches = isCopiedInBatches;
         }
 
         @Override
         public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
-            if (isStreaming) {
-                baseCursor.calculateSize(circuitBreaker, counter);
-                return;
+            if (state == STATE_REPLAYING) {
+                rows.calculateSize(circuitBreaker, counter);
+                if (isBaseExhausted) {
+                    return;
+                }
+                copyAgain();
             }
-            rows.calculateSize(circuitBreaker, counter);
-            while (copyNext()) {
+            while (state == STATE_COPYING) {
+                if (!copyNext()) {
+                    return;
+                }
                 if (circuitBreaker != null) {
                     circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 }
                 counter.inc();
-                if (isStreaming) {
-                    baseCursor.calculateSize(circuitBreaker, counter);
-                    return;
-                }
-                rows.hasNext();
             }
+            stopReclaims();
+            baseCursor.calculateSize(circuitBreaker, counter);
         }
 
         @Override
@@ -265,6 +283,8 @@ public class MaterializedRecordCursorFactory extends AbstractRecordCursorFactory
             this.baseCursor = null;
             baseRecord = null;
             record.of(null);
+            stopReclaims();
+            memoryTracker = null;
             Throwable failure = Misc.freeBestEffort(null, baseCursor);
             failure = Misc.freeBestEffort(failure, rows);
             CairoException.rethrowCleanupFailure(failure);
@@ -277,9 +297,220 @@ public class MaterializedRecordCursorFactory extends AbstractRecordCursorFactory
 
         @Override
         public Record getRecordB() {
-            if (!isStrict) {
-                throw new UnsupportedOperationException();
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public SymbolTable getSymbolTable(int columnIndex) {
+            return baseCursor.getSymbolTable(columnIndex);
+        }
+
+        @Override
+        public boolean hasNext() {
+            if (state == STATE_REPLAYING) {
+                if (rows.hasNext()) {
+                    return true;
+                }
+                if (isBaseExhausted) {
+                    return false;
+                }
+                copyAgain();
             }
+            if (state == STATE_COPYING) {
+                return copyNext();
+            }
+            // A thread may have freed the copy since the last row.
+            stopReclaims();
+            return baseCursor.hasNext();
+        }
+
+        @Override
+        public SymbolTable newSymbolTable(int columnIndex) {
+            return baseCursor.newSymbolTable(columnIndex);
+        }
+
+        @Override
+        public void of(RecordCursor baseCursor, SqlExecutionContext executionContext) {
+            memoryTracker = executionContext.getMemoryTracker();
+            rows.clear();
+            rows.setMemoryTracker(memoryTracker);
+            rows.setSymbolTableResolver(baseCursor);
+            this.baseCursor = baseCursor;
+            baseRecord = baseCursor.getRecord();
+            record.of(baseRecord);
+            isBaseExhausted = false;
+            state = STATE_COPYING;
+            startReclaims();
+        }
+
+        @Override
+        public long preComputedStateSize() {
+            return state == STATE_STREAMING ? baseCursor.preComputedStateSize() : rows.size();
+        }
+
+        // Frees the copy for a thread whose allocation would pass a memory limit. The owner that copies a row frees the
+        // copy itself when the row passes the limit, see copyNext(), so it skips the copy here.
+        @Override
+        public void reclaim() {
+            final Thread thread = Thread.currentThread();
+            if (copyHolder.get() == thread) {
+                return;
+            }
+            lockCopy(thread);
+            try {
+                if (state == STATE_COPYING) {
+                    freeCopy();
+                }
+            } finally {
+                copyHolder.set(null);
+            }
+        }
+
+        @Override
+        public void recordAt(Record record, long atRowId) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public long size() {
+            return baseCursor.size();
+        }
+
+        @Override
+        public void skipRows(Counter rowCount, long maxRowsAfterSkip) {
+            while (state != STATE_STREAMING && rowCount.get() > 0 && hasNext()) {
+                rowCount.dec();
+            }
+            if (state == STATE_STREAMING) {
+                stopReclaims();
+                baseCursor.skipRows(rowCount, maxRowsAfterSkip);
+            }
+        }
+
+        @Override
+        public void toTop() {
+            stopReclaims();
+            if (state == STATE_STREAMING) {
+                baseCursor.toTop();
+                isBaseExhausted = false;
+            } else {
+                // The copied rows first, then the base from where it stopped, see hasNext().
+                state = STATE_REPLAYING;
+                rows.toTop();
+                record.of(rows.getRecord());
+            }
+        }
+
+        // Goes on copying the base after a replay of the rows copied so far.
+        private void copyAgain() {
+            state = STATE_COPYING;
+            record.of(baseRecord);
+            startReclaims();
+        }
+
+        // Reads the next base row and copies it, unless a thread freed the copy or the row does not fit, when the cursor
+        // streams from then on.
+        private boolean copyNext() {
+            if (!baseCursor.hasNext()) {
+                isBaseExhausted = true;
+                stopReclaims();
+                return false;
+            }
+            final Thread thread = Thread.currentThread();
+            lockCopy(thread);
+            try {
+                if (state == STATE_COPYING) {
+                    rows.put(baseRecord);
+                }
+            } catch (CacheLimitException e) {
+                freeCopy();
+            } finally {
+                copyHolder.set(null);
+            }
+            if (state == STATE_STREAMING) {
+                stopReclaims();
+            }
+            return true;
+        }
+
+        // Frees the copy under copyHolder. A thread that waits for the lock to free the copy itself then tries its
+        // allocation again, so the free counts before the lock goes: a Resource Group tracker sees it once published.
+        private void freeCopy() {
+            rows.clear();
+            MemoryTracker.publishResourceMemoryCurrentThread();
+            state = STATE_STREAMING;
+        }
+
+        private void lockCopy(Thread thread) {
+            while (!copyHolder.compareAndSet(null, thread)) {
+                Os.pause();
+            }
+        }
+
+        private void startReclaims() {
+            assert !isReclaimable;
+            isReclaimable = memoryTracker != null && memoryTracker.addReclaimer(this);
+        }
+
+        // No thread frees the copy once this returns: one that is freeing it finishes first.
+        private void stopReclaims() {
+            if (isReclaimable) {
+                isReclaimable = false;
+                memoryTracker.removeReclaimer(this);
+                lockCopy(Thread.currentThread());
+                copyHolder.set(null);
+            }
+        }
+    }
+
+    /**
+     * Copies each base row as the parent first reads it, the parent reading the copy, and replays the copy after every
+     * rewind. A copy past its page budget fails the query, as one past the memory limit does.
+     */
+    private static class MaterializedRecordCursor implements DelegatingRecordCursor {
+        private static final int COPY_BATCH_ROWS = 256;
+        private final boolean isCopiedInBatches;
+        private final long maxBytes;
+        private final RecordArray rows;
+        private RecordCursor baseCursor;
+        private Record baseRecord;
+        private boolean isBaseExhausted;
+
+        private MaterializedRecordCursor(RecordArray rows, long maxBytes, boolean isCopiedInBatches) {
+            this.rows = rows;
+            this.maxBytes = maxBytes;
+            this.isCopiedInBatches = isCopiedInBatches;
+        }
+
+        @Override
+        public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
+            rows.calculateSize(circuitBreaker, counter);
+            while (copyNext()) {
+                if (circuitBreaker != null) {
+                    circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
+                }
+                counter.inc();
+                rows.hasNext();
+            }
+        }
+
+        @Override
+        public void close() {
+            final RecordCursor baseCursor = this.baseCursor;
+            this.baseCursor = null;
+            baseRecord = null;
+            Throwable failure = Misc.freeBestEffort(null, baseCursor);
+            failure = Misc.freeBestEffort(failure, rows);
+            CairoException.rethrowCleanupFailure(failure);
+        }
+
+        @Override
+        public Record getRecord() {
+            return rows.getRecord();
+        }
+
+        @Override
+        public Record getRecordB() {
             return rows.getRecordB();
         }
 
@@ -304,23 +535,18 @@ public class MaterializedRecordCursorFactory extends AbstractRecordCursorFactory
             rows.setMemoryTracker(executionContext.getMemoryTracker());
             rows.setSymbolTableResolver(baseCursor);
             baseRecord = baseCursor.getRecord();
-            record.of(rows.getRecord());
             isBaseExhausted = false;
-            isStreaming = false;
             this.baseCursor = baseCursor;
         }
 
         @Override
         public long preComputedStateSize() {
-            return isStreaming ? baseCursor.preComputedStateSize() : rows.size();
+            return rows.size();
         }
 
         @Override
         public void recordAt(Record record, long atRowId) {
-            if (!isStrict) {
-                throw new UnsupportedOperationException();
-            }
-            rows.recordAt(record == this.record ? rows.getRecord() : record, atRowId);
+            rows.recordAt(record, atRowId);
         }
 
         @Override
@@ -330,21 +556,14 @@ public class MaterializedRecordCursorFactory extends AbstractRecordCursorFactory
 
         @Override
         public void skipRows(Counter rowCount, long maxRowsAfterSkip) {
-            while (!isStreaming && rowCount.get() > 0 && hasNext()) {
+            while (rowCount.get() > 0 && hasNext()) {
                 rowCount.dec();
-            }
-            if (isStreaming) {
-                baseCursor.skipRows(rowCount, maxRowsAfterSkip);
             }
         }
 
         @Override
         public void toTop() {
-            if (isStreaming) {
-                baseCursor.toTop();
-            } else {
-                rows.toTop();
-            }
+            rows.toTop();
         }
 
         private boolean copyNext() {
@@ -355,29 +574,27 @@ public class MaterializedRecordCursorFactory extends AbstractRecordCursorFactory
             try {
                 rows.put(baseRecord);
             } catch (CacheLimitException e) {
-                if (isStrict) {
-                    throw LimitOverflowException.instance()
-                            .put("materialized rows exceed the memory limit [maxBytes=").put(maxBytes)
-                            .put("] (raise ").put(PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_MAX_PAGES.getPropertyPath()).put(')');
-                }
-                rows.clear();
-                record.of(baseRecord);
-                isStreaming = true;
+                throw LimitOverflowException.instance()
+                        .put("materialized rows exceed the memory limit [maxBytes=").put(maxBytes)
+                        .put("] (raise ").put(PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_MAX_PAGES.getPropertyPath()).put(')');
             }
             return true;
         }
 
         private boolean hasNextFromBase() {
-            if (isStreaming) {
-                return baseCursor.hasNext();
-            }
             if (isCopiedInBatches) {
                 //noinspection StatementWithEmptyBody
                 for (int i = 0; i < COPY_BATCH_ROWS && copyNext(); i++) {
                 }
                 return rows.hasNext();
             }
-            return copyNext() && (isStreaming || rows.hasNext());
+            if (!copyNext()) {
+                return false;
+            }
+            // Positions the record at the row that copyNext() appended.
+            final boolean hasRow = rows.hasNext();
+            assert hasRow;
+            return true;
         }
     }
 }
