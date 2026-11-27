@@ -30,9 +30,10 @@ import io.questdb.std.str.Path;
 
 /**
  * Deletes the sealed generations of one posting index that its live head superseded - the files a build started from.
- * On an index readers can open that is the purge job's, once no reader can still pin them. A build no reader can see
- * yet removes them straight away instead of publishing purges nobody needs: a compaction staging directory, an index
- * ADD INDEX has not committed, and one REINDEX removed before it rebuilt it. Not thread-safe.
+ * On an index readers can open that is the purge job's, once no reader can still pin them. A build removes them
+ * straight away where it owns the index outright: in a compaction staging directory nobody reads yet, in an index
+ * ADD INDEX has not committed, and in one IndexBuilder rebuilds in place for REINDEX, UPDATE or ATTACH after removing
+ * the files of the index it replaces. Not thread-safe.
  */
 final class PostingSupersededFileRemover implements PostingIndexUtils.SealedFileVisitor {
     private CharSequence columnName;

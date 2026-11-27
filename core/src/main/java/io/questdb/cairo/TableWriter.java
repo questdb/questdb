@@ -12546,7 +12546,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, PostingSeal
                     }
                 }
                 indexer.seal();
-                removeSupersededPostingFiles(columnName, columnNameTxn, indexType, plen);
             } finally {
                 indexer.releaseIndexWriter();
             }
@@ -12572,7 +12571,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, PostingSeal
         // find no sidecar data. Future writes create new sparse generations
         // that the next seal merges.
         indexer.seal();
-        removeSupersededPostingFiles(columnName, columnNameTxn, indexType, plen);
 
         if (isLastPartitionComposite()) {
             // rowHwm came off the partition's PHYSICAL extent, so the index built above already covers
@@ -12601,7 +12599,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, PostingSeal
                     metadata.getCoveringColumnIndices(columnIndex), columnVersionWriter, timestamp
             )) {
                 LOG.info().$("skipping already-indexed partition [path=").$substr(pathRootSize, path).I$();
-                removeSupersededPostingFiles(columnName, columnNameTxn, indexType, plen);
                 return;
             }
             // An interrupted ADD INDEX can leave a chain that covers part of the partition, torn by a power loss, and
@@ -12626,7 +12623,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, PostingSeal
                 indexer.getWriter().setNextTxnAtSeal(txWriter.getTxn() + 1);
                 indexer.index(ff, columnDataFd, columnTop, partitionSize);
                 indexer.seal();
-                removeSupersededPostingFiles(columnName, columnNameTxn, indexType, plen);
             } finally {
                 ff.close(columnDataFd);
             }
@@ -12797,9 +12793,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, PostingSeal
                 if (hasCovering) {
                     coveredColumnAccumulator.releaseScratchFiles(indexer, ff, path, plen);
                 }
-            }
-            if (allowDestructiveRecovery) {
-                removeSupersededPostingFiles(columnName, columnNameTxn, indexType, plen);
             }
         }
     }
@@ -13190,10 +13183,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, PostingSeal
      * {@code .pk}/{@code .pv.<colTxn>.<sealTxn>} plus the {@code .pci} sidecar
      * and per-column {@code .pc<N>.{colTxn}.{sealTxn}} files for the live
      * generation. {@code sealTxn} is resolved from the live chain head in
-     * {@code .pk}; the pre-seal empty-chain case falls back to {@code 0L}
-     * because live data sits in {@code .pv.<colTxn>.0} then. Throws
-     * {@link CairoException} if either the key or value file is missing in
-     * the source.
+     * {@code .pk}. A chain with no visible head names no value file:
+     * {@link #linkPostingIndexAuxFiles} links the pre-seal {@code .pv.<colTxn>.0}
+     * when there is one, as a RENAME does. Throws {@link CairoException} if the
+     * key file, or the value file the head names, is missing in the source.
      */
     private void linkColumnIndexFiles(
             int srcDirLen,
@@ -13206,18 +13199,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, PostingSeal
     ) {
         long linkSealTxn = columnNameTxn;
         long liveSealTxn = -1L;
+        boolean isValueFileNamed = true;
         if (IndexType.isPosting(indexType)) {
             liveSealTxn = dropFuturePostingIndexChainEntriesBeforeLink(srcDirLen, columnName, columnNameTxn, partitionTimestamp, partitionNameTxn);
-            linkSealTxn = liveSealTxn >= 0 ? liveSealTxn : 0L;
+            linkSealTxn = liveSealTxn;
+            isValueFileNamed = liveSealTxn >= 0;
         }
         if (
                 !linkFile(ff,
                         keyFileName(indexType, path.trimTo(srcDirLen), columnName, columnNameTxn),
                         keyFileName(indexType, other.trimTo(dstDirLen), columnName, columnNameTxn)
-                ) || !linkFile(ff,
+                ) || (isValueFileNamed && !linkFile(ff,
                         valueFileName(indexType, path.trimTo(srcDirLen), columnName, columnNameTxn, linkSealTxn),
                         valueFileName(indexType, other.trimTo(dstDirLen), columnName, columnNameTxn, linkSealTxn)
-                )) {
+                ))) {
             throw CairoException.critical(0)
                     .put("index files do not exist [path=")
                     .put(path.trimTo(srcDirLen))
@@ -20137,9 +20132,26 @@ public class TableWriter implements TableWriterAPI, MetadataService, PostingSeal
         }
     }
 
-    private void removeSupersededPostingFiles(CharSequence columnName, long columnNameTxn, byte indexType, int plen) {
-        if (IndexType.isPosting(indexType)) {
-            postingSupersededFileRemover.remove(ff, path, plen, columnName, columnNameTxn);
+    private void removeSupersededPostingFiles(CharSequence columnName, int columnIndex, byte indexType) {
+        if (!IndexType.isPosting(indexType)) {
+            return;
+        }
+        if (!PartitionBy.isPartitioned(partitionBy)) {
+            final long timestamp = txWriter.getLastPartitionTimestamp();
+            removeSupersededPostingFilesInPartition(columnName, columnIndex, timestamp, txWriter.getPartitionNameTxnByPartitionTimestamp(timestamp));
+            return;
+        }
+        for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
+            removeSupersededPostingFilesInPartition(columnName, columnIndex, txWriter.getPartitionTimestampByIndex(i), txWriter.getPartitionNameTxn(i));
+        }
+    }
+
+    private void removeSupersededPostingFilesInPartition(CharSequence columnName, int columnIndex, long partitionTimestamp, long partitionNameTxn) {
+        try {
+            setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+            postingSupersededFileRemover.remove(ff, path, path.size(), columnName, columnVersionWriter.getColumnNameTxn(partitionTimestamp, columnIndex));
+        } finally {
+            path.trimTo(pathSize);
         }
     }
 
@@ -23711,6 +23723,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, PostingSeal
                     // create index in last partition
                     indexLastPartition(indexer, columnName, columnNameTxn, columnIndex, indexValueBlockSize, indexType);
                 }
+                removeSupersededPostingFiles(columnName, columnIndex, indexType);
             } finally {
                 path.trimTo(pathSize);
             }
