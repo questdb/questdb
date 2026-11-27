@@ -300,19 +300,6 @@ public final class AggregateFactoryGenerator {
                 executionContext.getSharedQueryWorkerCount(), executionContext);
     }
 
-    /**
-     * Puts the copy the plan records between the stream GROUP BY and its consumer, see {@link AggregatePlan.OutputCopy}.
-     * The copy stands in for the map of a hash GROUP BY, which only the query memory limit bounds. Consumes the factory
-     * on entry, including on failure.
-     */
-    private RecordCursorFactory copyRows(AggregatePlan plan, RecordCursorFactory factory) {
-        return switch (plan.getOutputCopy()) {
-            case NONE -> factory;
-            case RANDOM_ACCESS -> RowCopies.copy(configuration, asm, entityColumnFilter, factory, true, false, false);
-            case RANDOM_ACCESS_IN_BATCHES -> RowCopies.copy(configuration, asm, entityColumnFilter, factory, true, false, true);
-        };
-    }
-
     private RecordCursorFactory generateFunctions(
             GenerationFrame frame,
             AggregatePlan plan,
@@ -371,9 +358,9 @@ public final class AggregateFactoryGenerator {
                         keyFunctions, workerKeys, recordFunctions, filterResources, isParallel, executionContext);
             }
             if (streamKeyIndex >= 0) {
-                return copyRows(plan, generateStreamGroupBy(base, metadata, columnFilter, keyTypes, valueTypes, streamKeyIndex,
+                return generateStreamGroupBy(base, metadata, columnFilter, keyTypes, valueTypes, streamKeyIndex,
                         aggregates, workerAggregates, keyFunctions, workerKeys, recordFunctions, filterResources, isParallel,
-                        plan.isStreamBackward(), executionContext));
+                        plan.isStreamBackward(), executionContext);
             }
             return generateGroupBy(
                     base, metadata, columnFilter, keyTypes, valueTypes, aggregates, workerAggregates,

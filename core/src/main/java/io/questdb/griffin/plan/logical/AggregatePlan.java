@@ -38,12 +38,8 @@ public final class AggregatePlan extends GroupingPlan {
     private final IntList sharedSourceIds = new IntList();
     private Algorithm algorithm;
     private HashJoinAggregation hashJoin;
-    private boolean isRandomAccessRequired;
-    private boolean isRewound;
     private boolean isStreamBackward;
-    private OutputCopy outputCopy = OutputCopy.NONE;
     private int readerCount;
-    private OutputCopy requestedCopy = OutputCopy.NONE;
     private SortDirection requestedDirection;
     private int requestedOrderColumnId = -1;
     private LimitPlan requestedTopK;
@@ -63,12 +59,8 @@ public final class AggregatePlan extends GroupingPlan {
         sharedSourceIds.clear();
         algorithm = null;
         hashJoin = null;
-        isRandomAccessRequired = false;
-        isRewound = false;
         isStreamBackward = false;
-        outputCopy = OutputCopy.NONE;
         readerCount = 0;
-        requestedCopy = OutputCopy.NONE;
         requestedDirection = null;
         requestedOrderColumnId = -1;
         requestedTopK = null;
@@ -119,15 +111,6 @@ public final class AggregatePlan extends GroupingPlan {
      * The number of domain reads of the decorrelation domain, see {@link DomainReadPlan}, which decorrelation and the
      * plan copier count. Filter placement pushes no filter into a domain other consumers read.
      */
-    /**
-     * How the generator copies the rows of a stream GROUP BY for a consumer that reads them again or by row id, see
-     * {@link OutputCopy}; {@link OutputCopy#NONE} for a GROUP BY that does not stream.
-     */
-    public OutputCopy getOutputCopy() {
-        checkPhysicalRead("AggregatePlan.outputCopy");
-        return outputCopy;
-    }
-
     public int getReaderCount() {
         return readerCount;
     }
@@ -141,18 +124,6 @@ public final class AggregatePlan extends GroupingPlan {
     public int getSharedConsumerCount() {
         checkPhysicalRead("AggregatePlan.sharedConsumerCount");
         return sharedConsumerCount;
-    }
-
-    /**
-     * The leading branch of the input's set operation, under column projections, that the generator reads from the head
-     * of {@link #getSharedOperation()} when the aggregate reads its input that way, see {@link SharedRead#SET_OPERATION_HEAD}.
-     */
-    /**
-     * The copy a consumer that copies rows without row ids itself requests should the GROUP BY stream, see
-     * {@link OutputCopy}.
-     */
-    public OutputCopy getRequestedCopy() {
-        return requestedCopy;
     }
 
     /**
@@ -184,6 +155,10 @@ public final class AggregatePlan extends GroupingPlan {
         return requestedTopKColumnId;
     }
 
+    /**
+     * The leading branch of the input's set operation, under column projections, that the generator reads from the head
+     * of {@link #getSharedOperation()} when the aggregate reads its input that way, see {@link SharedRead#SET_OPERATION_HEAD}.
+     */
     public LogicalPlan getSharedHead() {
         checkPhysicalRead("AggregatePlan.sharedHead");
         return sharedHead;
@@ -243,21 +218,6 @@ public final class AggregatePlan extends GroupingPlan {
     }
 
     /**
-     * Whether the consumer reads the rows by row id.
-     */
-    public boolean isRandomAccessRequired() {
-        return isRandomAccessRequired;
-    }
-
-    /**
-     * Whether the consumer reads the rows again from the first: the inner side of a nested loop, or a LATEST BY that
-     * reads its input a second time in the same order.
-     */
-    public boolean isRewound() {
-        return isRewound;
-    }
-
-    /**
      * True when the aggregate groups its whole input into the one row it returns. Grouping sets return a row per set,
      * even when no set has a key.
      */
@@ -305,21 +265,11 @@ public final class AggregatePlan extends GroupingPlan {
     }
 
     /**
-     * Records what the consumer requires of the rows, see {@link #getRequestedOrderColumnId()},
-     * {@link #isRandomAccessRequired()}, {@link #isRewound()} and {@link #getRequestedCopy()}.
+     * Records the order the consumer requests the rows in, see {@link #getRequestedOrderColumnId()}.
      */
-    public void setConsumerRequirement(
-            int requestedOrderColumnId,
-            SortDirection requestedDirection,
-            boolean isRandomAccessRequired,
-            boolean isRewound,
-            OutputCopy requestedCopy
-    ) {
+    public void setRequestedOrder(int requestedOrderColumnId, SortDirection requestedDirection) {
         this.requestedOrderColumnId = requestedOrderColumnId;
         this.requestedDirection = requestedDirection;
-        this.isRandomAccessRequired = isRandomAccessRequired;
-        this.isRewound = isRewound;
-        this.requestedCopy = requestedCopy;
     }
 
     public void setRequestedTopK(int requestedTopKColumnId, LimitPlan requestedTopK) {
@@ -354,13 +304,12 @@ public final class AggregatePlan extends GroupingPlan {
     /**
      * Records how the GROUP BY groups its rows: by hash for a negative {@code streamKeyIndex}, else as a stream by the
      * grouping expression at that index, scanning backward when {@code isStreamBackward}, see
-     * {@link #getStreamKeyIndex()}, with the copy {@code outputCopy} its consumer reads.
+     * {@link #getStreamKeyIndex()}.
      */
-    public void setStreaming(int streamKeyIndex, boolean isStreamBackward, OutputCopy outputCopy) {
-        assert streamKeyIndex >= 0 || (!isStreamBackward && outputCopy == OutputCopy.NONE);
+    public void setStreaming(int streamKeyIndex, boolean isStreamBackward) {
+        assert streamKeyIndex >= 0 || !isStreamBackward;
         this.streamKeyIndex = streamKeyIndex;
         this.isStreamBackward = isStreamBackward;
-        this.outputCopy = outputCopy;
     }
 
     @Override
@@ -371,12 +320,8 @@ public final class AggregatePlan extends GroupingPlan {
         visitor.columnIds("sharedSourceIds", sharedSourceIds);
         visitor.fact("algorithm", algorithm);
         visitor.reference("hashJoin", hashJoin);
-        visitor.fact("isRandomAccessRequired", isRandomAccessRequired);
-        visitor.fact("isRewound", isRewound);
         visitor.fact("isStreamBackward", isStreamBackward);
-        visitor.fact("outputCopy", outputCopy);
         visitor.fact("readerCount", readerCount);
-        visitor.fact("requestedCopy", requestedCopy);
         visitor.fact("requestedDirection", requestedDirection);
         visitor.fact("requestedOrderColumnId", requestedOrderColumnId);
         visitor.reference("requestedTopK", requestedTopK);
@@ -397,27 +342,6 @@ public final class AggregatePlan extends GroupingPlan {
      */
     public enum Algorithm {
         HASH_JOIN, PARALLEL, PARALLEL_STOLEN_FILTER, SERIAL, VECTORISED
-    }
-
-    /**
-     * How the generator copies the rows of a stream GROUP BY, which computes its groups again when its consumer reads
-     * them again and offers no row ids.
-     */
-    public enum OutputCopy {
-        /**
-         * The consumer reads the rows once, in order.
-         */
-        NONE,
-        /**
-         * The consumer reads the rows by row id or again, which a copy serves; the copy fails the query past the query
-         * memory limit.
-         */
-        RANDOM_ACCESS,
-        /**
-         * As {@link #RANDOM_ACCESS}, for a hash join that reads every row of its slave, which the copy takes in batches
-         * ahead of the reads.
-         */
-        RANDOM_ACCESS_IN_BATCHES
     }
 
     /**

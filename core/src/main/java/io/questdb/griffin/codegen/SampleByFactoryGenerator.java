@@ -786,8 +786,7 @@ final class SampleByFactoryGenerator {
             return factory;
         }
         final RecordCursorFactory base = codeGenerator.generate(frame, PlanToFactoryRules.sampleByBase(sample), executionContext);
-        return generateSampleBy(frame, sample, sample.isBaseCopied()
-                ? RowCopies.copy(configuration, asm, entityColumnFilter, base, false, false, false) : base, null, executionContext);
+        return generateSampleBy(frame, sample, base, null, executionContext);
     }
 
     /**

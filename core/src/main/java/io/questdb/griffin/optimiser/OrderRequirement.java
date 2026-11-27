@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.optimiser;
 
-import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.LimitPlan;
@@ -55,12 +54,9 @@ final class OrderRequirement implements Mutable {
     private LogicalPlan frameReader;
     private boolean isJoinSlaveInput;
     private boolean isRandomAccessRequired;
-    private boolean isRandomAccessSorted;
-    private boolean isReread;
     private boolean isRewound;
     private boolean isRowOrderRequired = true;
     private boolean isSingleGroupInput;
-    private AggregatePlan.OutputCopy streamCopy = AggregatePlan.OutputCopy.NONE;
     private LimitPlan limit;
     private int orderColumnId = -1;
     private LogicalPlan orderedPlan;
@@ -74,12 +70,9 @@ final class OrderRequirement implements Mutable {
         frameReader = null;
         isJoinSlaveInput = false;
         isRandomAccessRequired = false;
-        isRandomAccessSorted = false;
-        isReread = false;
         isRewound = false;
         isRowOrderRequired = true;
         isSingleGroupInput = false;
-        streamCopy = AggregatePlan.OutputCopy.NONE;
         limit = null;
         orderColumnId = -1;
         orderedPlan = null;
@@ -133,16 +126,6 @@ final class OrderRequirement implements Mutable {
     }
 
     /**
-     * The copy a stream GROUP BY that yields the rows gives a consumer that copies rows without row ids itself, into
-     * memory a budget bounds or into a form that changes their values, see {@link AggregatePlan.OutputCopy}.
-     * Projections, filters, LIMITs without a sort, the left input of EXCEPT and INTERSECT and a sort by one key pass it
-     * on; the sort runs, and copies the rows itself, unless the GROUP BY delivers its order.
-     */
-    AggregatePlan.OutputCopy getStreamCopy() {
-        return streamCopy;
-    }
-
-    /**
      * The LIMIT of a sort that orders the rows by {@link #getTopKColumnId()} alone and keeps its first rows, as the
      * projections between them pass the column on; null for none.
      */
@@ -164,8 +147,6 @@ final class OrderRequirement implements Mutable {
         frameReader = consumer.frameReader;
         isJoinSlaveInput = consumer.isJoinSlaveInput;
         isRandomAccessRequired = consumer.isRandomAccessRequired;
-        isRandomAccessSorted = consumer.isRandomAccessSorted;
-        isReread = consumer.isReread;
         isRewound = consumer.isRewound;
         isSingleGroupInput = consumer.isSingleGroupInput;
         return this;
@@ -209,22 +190,6 @@ final class OrderRequirement implements Mutable {
     }
 
     /**
-     * True when the consumer that reads the plan by row id reads it through a sort, which copies the rows itself unless
-     * the plan delivers the sort's order, see {@link #getStreamCopy()}.
-     */
-    boolean isRandomAccessSorted() {
-        return isRandomAccessSorted;
-    }
-
-    /**
-     * Whether a consumer reads the rows a second time and expects them in the same order, as a LATEST BY that finds
-     * the latest row of each key and then reads the rows at their positions does.
-     */
-    boolean isReread() {
-        return isReread;
-    }
-
-    /**
      * True when a nested loop reads the rows of the plan again for each row of its other input.
      */
     boolean isRewound() {
@@ -249,7 +214,6 @@ final class OrderRequirement implements Mutable {
     OrderRequirement joinSlave(boolean isRandomAccessRequired) {
         this.isJoinSlaveInput = true;
         this.isRandomAccessRequired = isRandomAccessRequired;
-        this.isRandomAccessSorted = false;
         this.frameReader = null;
         return this;
     }
@@ -261,13 +225,7 @@ final class OrderRequirement implements Mutable {
      */
     OrderRequirement randomAccessRequired(boolean isRandomAccessRequired, LogicalPlan frameReader) {
         this.isRandomAccessRequired = isRandomAccessRequired;
-        this.isRandomAccessSorted = false;
         this.frameReader = isRandomAccessRequired ? frameReader : null;
-        return this;
-    }
-
-    OrderRequirement streamCopy(AggregatePlan.OutputCopy streamCopy) {
-        this.streamCopy = streamCopy;
         return this;
     }
 
@@ -353,24 +311,7 @@ final class OrderRequirement implements Mutable {
             case SortPlan _ -> frameReader;
             default -> null;
         };
-        isRandomAccessSorted &= isRandomAccessRequired;
         isSingleGroupInput &= plan instanceof ProjectPlan || plan instanceof FilterPlan || plan instanceof ScanPlan;
-    }
-
-    /**
-     * Marks the plan as read by row id through a sort, see {@link #isRandomAccessSorted()}.
-     */
-    OrderRequirement randomAccessSorted() {
-        this.isRandomAccessSorted = isRandomAccessRequired;
-        return this;
-    }
-
-    /**
-     * Marks the rows as read a second time in the same order when {@code isReread}, see {@link #isReread()}.
-     */
-    OrderRequirement reread(boolean isReread) {
-        this.isReread |= isReread;
-        return this;
     }
 
     /**
@@ -379,7 +320,6 @@ final class OrderRequirement implements Mutable {
      */
     OrderRequirement readOnce() {
         this.isRewound = false;
-        this.isReread = false;
         return this;
     }
 

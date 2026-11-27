@@ -38,7 +38,8 @@ import org.jetbrains.annotations.Nullable;
  * whether its cursor supports random access, page frames, time frames, shared cursors and long top-K, whether it
  * applies a LIMIT itself, follows the order advice of its scans or reads long_sequence(), and the order it emits its
  * rows in, and the table it reports. It reads the access paths and the operator decisions operator planning records on
- * the plan. A property is {@link Capability#UNKNOWN} where codegen decides it from facts the plan does not carry. It
+ * the plan. A property is {@link Capability#UNKNOWN} where codegen decides it from facts the plan does not carry. A node
+ * whose consumer reads a copy of its rows, see {@link LogicalPlan#getOutputCopy()}, has the properties of the copy. It
  * also finds the table and the LIMITs that bound the rows the factory returns, see {@link #rowBoundScan}.
  */
 public final class PhysicalProperties {
@@ -129,12 +130,31 @@ public final class PhysicalProperties {
     }
 
     /**
-     * Whether the rows of the plan are the rows of a stream GROUP BY without a copy that gives them row ids, see
-     * {@link #streamRowCopy}. A copy of such rows, such as a sort's, stands in for the map of a hash GROUP BY, which
-     * only the query memory limit bounds.
+     * Whether the rows of the plan are the rows of a stream GROUP BY, read through projections, filters, LIMITs, sorts
+     * that keep the input order, the left input of EXCEPT and INTERSECT and copies that only replay them, without a
+     * copy that gives them row ids, see {@link LogicalPlan#getOutputCopy()}. A copy of such rows, such as a sort's,
+     * stands in for the map of a hash GROUP BY, which only the query memory limit bounds.
      */
     public static boolean readsStreamRows(LogicalPlan plan) {
-        return streamRowCopy(plan) == AggregatePlan.OutputCopy.NONE;
+        while (plan.getOutputCopy() == null || !plan.getOutputCopy().isRandomAccess()) {
+            switch (plan) {
+                case AggregatePlan aggregate -> {
+                    return isStream(aggregate);
+                }
+                case ProjectPlan project when PlanToFactoryRules.projectionFactory(project) != PlanToFactoryRules.ProjectionFactory.WINDOW
+                        && PlanToFactoryRules.projectionFactory(project) != PlanToFactoryRules.ProjectionFactory.WINDOW_JOIN ->
+                        plan = project.getChild();
+                case FilterPlan filter -> plan = filter.getChild();
+                case LimitPlan limit -> plan = limit.getChild();
+                case SortPlan sort when sort.getAlgorithm() == SortPlan.Algorithm.INPUT_ORDER
+                        || sort.getAlgorithm() == SortPlan.Algorithm.TIMESTAMP_DECLARATION -> plan = sort.getChild();
+                case SetOperationPlan operation when !operation.getOperation().isUnion() -> plan = operation.getLeft();
+                default -> {
+                    return false;
+                }
+            }
+        }
+        return false;
     }
 
     /**
@@ -204,32 +224,6 @@ public final class PhysicalProperties {
     }
 
     /**
-     * The copy the stream GROUP BY the rows of the plan come from puts before its consumer, read through projections,
-     * filters, LIMITs, sorts that keep the input order and the left input of EXCEPT and INTERSECT; null when the rows
-     * do not come from a stream GROUP BY.
-     */
-    public static AggregatePlan.OutputCopy streamRowCopy(LogicalPlan plan) {
-        while (true) {
-            switch (plan) {
-                case AggregatePlan aggregate -> {
-                    return isStream(aggregate) ? aggregate.getOutputCopy() : null;
-                }
-                case ProjectPlan project when PlanToFactoryRules.projectionFactory(project) != PlanToFactoryRules.ProjectionFactory.WINDOW
-                        && PlanToFactoryRules.projectionFactory(project) != PlanToFactoryRules.ProjectionFactory.WINDOW_JOIN ->
-                        plan = project.getChild();
-                case FilterPlan filter -> plan = filter.getChild();
-                case LimitPlan limit -> plan = limit.getChild();
-                case SortPlan sort when sort.getAlgorithm() == SortPlan.Algorithm.INPUT_ORDER
-                        || sort.getAlgorithm() == SortPlan.Algorithm.TIMESTAMP_DECLARATION -> plan = sort.getChild();
-                case SetOperationPlan operation when !operation.getOperation().isUnion() -> plan = operation.getLeft();
-                default -> {
-                    return null;
-                }
-            }
-        }
-    }
-
-    /**
      * Whether the factory a parallel HORIZON JOIN matches the rows of its slave in serves the concurrent time frames it
      * reads, see {@link #supportsConcurrentTimeFrameCursor}: the factory under the filter the join steals from the
      * slave, see {@link PlanToFactoryRules#horizonStolenFilter}, else the slave's.
@@ -295,44 +289,38 @@ public final class PhysicalProperties {
 
     /**
      * Whether rewinding the cursor of the factory reruns a stream GROUP BY: its rows reach the cursor without a copy,
-     * through operators without random access, as the master of a join or a slave the join neither hashes nor copies,
-     * or as an input of a set operation, other than the right input that EXCEPT and INTERSECT hash.
+     * see {@link LogicalPlan#getOutputCopy()}, through operators without random access, as the master of a join or a
+     * slave the join does not hash, or as an input of a set operation, other than the right input that EXCEPT and
+     * INTERSECT hash.
      */
     public static Capability rewindRecomputes(LogicalPlan plan) {
-        final Capability isRandomAccess = supportsRandomAccess(plan);
-        if (isRandomAccess != Capability.NO) {
-            return isRandomAccess == Capability.YES ? Capability.NO : Capability.UNKNOWN;
-        }
-        return switch (plan) {
-            case AggregatePlan aggregate when isStream(aggregate) -> Capability.of(aggregate.getOutputCopy() == AggregatePlan.OutputCopy.NONE);
-            case SampleByPlan sample when sample.isBaseCopied() -> Capability.NO;
-            case DomainReadPlan read -> switch (read.getAlgorithm()) {
-                case SHARED -> Capability.NO;
-                case REGENERATED -> rewindRecomputes(read.getProducer());
-                case null -> Capability.UNKNOWN;
-            };
-            case JoinPlan join -> {
-                final ObjList<JoinInput> ordered = join.getOrderedInputs();
-                Capability recomputes = rewindRecomputes(ordered.getQuick(0).getInput());
-                for (int i = 1, n = ordered.size(); i < n; i++) {
-                    final JoinInput step = ordered.getQuick(i);
-                    if (step.getJoinType() != JoinKind.UNNEST && step.getAlgorithm() != JoinInput.Algorithm.HASH && !step.isSlaveCopied()) {
-                        recomputes = or(recomputes, rewindRecomputes(step.getInput()));
-                    }
-                }
-                yield recomputes;
-            }
-            case SetOperationPlan operation -> operation.getOperation().isUnion()
-                    ? or(rewindRecomputes(operation.getLeft()), rewindRecomputes(operation.getRight()))
-                    : rewindRecomputes(operation.getLeft());
-            default -> {
-                Capability recomputes = Capability.NO;
-                for (int i = 0, n = plan.inputCount(); i < n; i++) {
-                    recomputes = or(recomputes, rewindRecomputes(plan.inputAt(i)));
-                }
-                yield recomputes;
-            }
-        };
+        return streamInput(plan, false);
+    }
+
+    /**
+     * Whether rewinding the cursor of the factory of the plan's own operator, without the copy its consumer may read,
+     * see {@link LogicalPlan#getOutputCopy()}, reruns a stream GROUP BY, see {@link #rewindRecomputes}.
+     */
+    public static Capability rewindRecomputesWithoutCopy(LogicalPlan plan) {
+        return streamRead(plan, false);
+    }
+
+    /**
+     * Whether the cursor of the factory lacks random access because a stream GROUP BY under it does, which a hash
+     * GROUP BY would give: the rows of the stream reach the cursor as they do for {@link #rewindRecomputes}, through
+     * copies that only replay them as well.
+     */
+    public static Capability isRandomAccessLostToStream(LogicalPlan plan) {
+        return streamInput(plan, true);
+    }
+
+    /**
+     * Whether the cursor of the factory of the plan's own operator, without the copy its consumer may read, see
+     * {@link LogicalPlan#getOutputCopy()}, lacks random access because a stream GROUP BY under it does, see
+     * {@link #isRandomAccessLostToStream}.
+     */
+    public static Capability isRandomAccessLostToStreamWithoutCopy(LogicalPlan plan) {
+        return streamRead(plan, true);
     }
 
     /**
@@ -340,6 +328,14 @@ public final class PhysicalProperties {
      */
     public static Capability supportsRandomAccess(LogicalPlan plan) {
         return capability(derive(plan, null), RANDOM_ACCESS);
+    }
+
+    /**
+     * Whether the cursor of the factory of the plan's own operator, without the copy its consumer may read, see
+     * {@link LogicalPlan#getOutputCopy()}, supports random access.
+     */
+    public static Capability supportsRandomAccessWithoutCopy(LogicalPlan plan) {
+        return capability(operator(plan, null), RANDOM_ACCESS);
     }
 
     /**
@@ -369,9 +365,13 @@ public final class PhysicalProperties {
     /**
      * The table the factory reports, see {@link RecordCursorFactory#getTableToken()}: the table of a scan whose
      * factory reads the table's page frames, which the operators that keep the scan's cursor, or read its page
-     * frames, report on; null for any other factory. Every access path and operator choice it reads is planned.
+     * frames, report on; null for any other factory, a copy among them. Every access path and operator choice it reads
+     * is planned.
      */
     public static TableToken tableToken(LogicalPlan plan) {
+        if (plan.getOutputCopy() != null) {
+            return null;
+        }
         return switch (plan) {
             case ScanPlan scan -> scanTableToken(scan);
             case FilterPlan filter -> {
@@ -442,9 +442,7 @@ public final class PhysicalProperties {
             return computed(Capability.YES, ScanDirection.FORWARD, isLongSequence);
         }
         if (isStream(aggregate)) {
-            final AggregatePlan.OutputCopy copy = aggregate.getOutputCopy();
-            final boolean isRandomAccess = copy == AggregatePlan.OutputCopy.RANDOM_ACCESS || copy == AggregatePlan.OutputCopy.RANDOM_ACCESS_IN_BATCHES;
-            return computed(Capability.of(isRandomAccess), aggregate.isStreamBackward() ? ScanDirection.BACKWARD : ScanDirection.FORWARD, isLongSequence);
+            return computed(Capability.NO, aggregate.isStreamBackward() ? ScanDirection.BACKWARD : ScanDirection.FORWARD, isLongSequence);
         }
         final ScanDirection direction = switch (aggregate.getAlgorithm()) {
             case PARALLEL -> direction(input);
@@ -566,6 +564,14 @@ public final class PhysicalProperties {
     }
 
     /**
+     * A copy of rows with the properties {@code input}: random access as its kind gives, in the order and with the
+     * designated timestamp of its input, and nothing else a factory may offer.
+     */
+    private static int copied(RowCopy copy, int input) {
+        return computed(Capability.of(copy.isRandomAccess()), direction(input), capability(input, LONG_SEQUENCE));
+    }
+
+    /**
      * A covering index scan, whose backup index scan, when a key may be NULL, emits rows in {@code backupDirection}.
      */
     private static int covering(ScanPlan scan, ScanDirection backupDirection) {
@@ -581,31 +587,8 @@ public final class PhysicalProperties {
     }
 
     private static int derive(LogicalPlan plan, @Nullable LimitPlan sortedLimit) {
-        return switch (plan) {
-            case ScanPlan scan -> scan(scan);
-            case FunctionSourcePlan source -> source.getRecordName() != null
-                    ? computed(Capability.of(source.isRandomAccess()), ScanDirection.FORWARD, Capability.NO)
-                    : properties(Capability.of(source.isRandomAccess()), Capability.of(source.isPageFrameSupported()), Capability.NO,
-                    Capability.NO, source.getScanDirection(), Capability.of(source.isLongSequence()));
-            case FilterPlan filter -> filter(filter);
-            case ProjectPlan project -> project(project, sortedLimit);
-            case SortPlan sort -> sortedLimit == null ? sort(sort) : sortedLimit(sort, sortedLimit);
-            case LimitPlan limit -> LogicalPlans.hasSortUnderStableProjects(limit.getChild())
-                    ? derive(limit.getChild(), limit) : limited(derive(limit.getChild(), null));
-            case DistinctPlan distinct -> distinct(distinct, derive(distinct.getChild(), null));
-            case AggregatePlan aggregate -> aggregate(aggregate);
-            case DomainReadPlan read -> domainRead(read);
-            case SampleByPlan sample -> computed(sampleByRandomAccess(sample), ScanDirection.FORWARD,
-                    capability(derive(sample.getChild(), null), LONG_SEQUENCE));
-            case FillPlan fill ->
-                    computed(Capability.NO, ScanDirection.FORWARD, capability(derive(fill.getChild(), null), LONG_SEQUENCE));
-            case LatestByPlan latest -> latestBy(latest);
-            case WindowPlan window -> window(window);
-            case JoinPlan join -> join(join, join.getOrderedInputs().size());
-            case WindowJoinPlan windowJoin -> windowJoin(windowJoin);
-            case SetOperationPlan operation -> setOperation(operation);
-            case HorizonJoinPlan horizon -> computed(Capability.NO, scanDirection(horizon.getMaster()), Capability.NO);
-        };
+        final RowCopy copy = plan.getOutputCopy();
+        return copy != null ? copied(copy, operator(plan, sortedLimit)) : operator(plan, sortedLimit);
     }
 
     private static ScanDirection direction(int properties) {
@@ -965,6 +948,34 @@ public final class PhysicalProperties {
         return aggregate.getAlgorithm() != null && aggregate.getStreamKeyIndex() >= 0;
     }
 
+    private static int operator(LogicalPlan plan, @Nullable LimitPlan sortedLimit) {
+        return switch (plan) {
+            case ScanPlan scan -> scan(scan);
+            case FunctionSourcePlan source -> source.getRecordName() != null
+                    ? computed(Capability.of(source.isRandomAccess()), ScanDirection.FORWARD, Capability.NO)
+                    : properties(Capability.of(source.isRandomAccess()), Capability.of(source.isPageFrameSupported()), Capability.NO,
+                    Capability.NO, source.getScanDirection(), Capability.of(source.isLongSequence()));
+            case FilterPlan filter -> filter(filter);
+            case ProjectPlan project -> project(project, sortedLimit);
+            case SortPlan sort -> sortedLimit == null ? sort(sort) : sortedLimit(sort, sortedLimit);
+            case LimitPlan limit -> LogicalPlans.hasSortUnderStableProjects(limit.getChild())
+                    ? derive(limit.getChild(), limit) : limited(derive(limit.getChild(), null));
+            case DistinctPlan distinct -> distinct(distinct, derive(distinct.getChild(), null));
+            case AggregatePlan aggregate -> aggregate(aggregate);
+            case DomainReadPlan read -> domainRead(read);
+            case SampleByPlan sample -> computed(sampleByRandomAccess(sample), ScanDirection.FORWARD,
+                    capability(derive(sample.getChild(), null), LONG_SEQUENCE));
+            case FillPlan fill ->
+                    computed(Capability.NO, ScanDirection.FORWARD, capability(derive(fill.getChild(), null), LONG_SEQUENCE));
+            case LatestByPlan latest -> latestBy(latest);
+            case WindowPlan window -> window(window);
+            case JoinPlan join -> join(join, join.getOrderedInputs().size());
+            case WindowJoinPlan windowJoin -> windowJoin(windowJoin);
+            case SetOperationPlan operation -> setOperation(operation);
+            case HorizonJoinPlan horizon -> computed(Capability.NO, scanDirection(horizon.getMaster()), Capability.NO);
+        };
+    }
+
     private static Capability or(Capability left, Capability right) {
         if (left == Capability.YES || right == Capability.YES) {
             return Capability.YES;
@@ -1095,7 +1106,7 @@ public final class PhysicalProperties {
         final boolean isInputOrder = sort.getAlgorithm() == SortPlan.Algorithm.INPUT_ORDER;
         return switch (limit.getApplication()) {
             case INPUT -> isInputOrder ? input : sorted(sort, input, Capability.NO);
-            case OPERATOR, COPIED_INPUT, MASTER_SUFFIX -> isInputOrder ? limited(input) : sorted(sort, input, Capability.YES);
+            case OPERATOR, MASTER_SUFFIX -> isInputOrder ? limited(input) : sorted(sort, input, Capability.YES);
             case SORT -> sorted(sort, input, Capability.YES);
             case null -> unknown(ScanDirection.UNKNOWN, capability(input, LONG_SEQUENCE));
         };
@@ -1167,6 +1178,55 @@ public final class PhysicalProperties {
     }
 
     /**
+     * Whether the rows of the plan, as its consumer reads them, come from a stream GROUP BY, see {@link #streamRead}:
+     * a copy holds them instead, unless it only replays them and {@code isReplayRead}.
+     */
+    private static Capability streamInput(LogicalPlan plan, boolean isReplayRead) {
+        final RowCopy copy = plan.getOutputCopy();
+        return copy != null && (copy.isRandomAccess() || !isReplayRead) ? Capability.NO : streamRead(plan, isReplayRead);
+    }
+
+    /**
+     * Whether the rows of the plan's own operator come from a stream GROUP BY through operators without random access,
+     * see {@link #rewindRecomputes}, reading them through copies that only replay them when {@code isReplayRead}.
+     */
+    private static Capability streamRead(LogicalPlan plan, boolean isReplayRead) {
+        final Capability isRandomAccess = supportsRandomAccessWithoutCopy(plan);
+        if (isRandomAccess != Capability.NO) {
+            return isRandomAccess == Capability.YES ? Capability.NO : Capability.UNKNOWN;
+        }
+        return switch (plan) {
+            case AggregatePlan aggregate when isStream(aggregate) -> Capability.YES;
+            case DomainReadPlan read -> switch (read.getAlgorithm()) {
+                case SHARED -> Capability.NO;
+                case REGENERATED -> streamInput(read.getProducer(), isReplayRead);
+                case null -> Capability.UNKNOWN;
+            };
+            case JoinPlan join -> {
+                final ObjList<JoinInput> ordered = join.getOrderedInputs();
+                Capability isStreamRead = streamInput(ordered.getQuick(0).getInput(), isReplayRead);
+                for (int i = 1, n = ordered.size(); i < n; i++) {
+                    final JoinInput step = ordered.getQuick(i);
+                    if (step.getJoinType() != JoinKind.UNNEST && step.getAlgorithm() != JoinInput.Algorithm.HASH) {
+                        isStreamRead = or(isStreamRead, streamInput(step.getInput(), isReplayRead));
+                    }
+                }
+                yield isStreamRead;
+            }
+            case SetOperationPlan operation -> operation.getOperation().isUnion()
+                    ? or(streamInput(operation.getLeft(), isReplayRead), streamInput(operation.getRight(), isReplayRead))
+                    : streamInput(operation.getLeft(), isReplayRead);
+            default -> {
+                Capability isStreamRead = Capability.NO;
+                for (int i = 0, n = plan.inputCount(); i < n; i++) {
+                    isStreamRead = or(isStreamRead, streamInput(plan.inputAt(i), isReplayRead));
+                }
+                yield isStreamRead;
+            }
+        };
+    }
+
+    /**
      * The TIMESTAMP key of the stream GROUP BY as its designated timestamp where it is the SAMPLE BY bucket, whose rows
      * a SAMPLE BY emits in bucket order, or where the consumer requests the rows ordered by it in the direction the
      * GROUP BY emits them; -1 otherwise. Whether a GROUP BY designates a timestamp then depends on the order its
@@ -1187,6 +1247,9 @@ public final class PhysicalProperties {
     private static Capability supportsLongTopK(LogicalPlan plan, @Nullable LimitPlan sortedLimit, int columnIndex) {
         if (columnIndex < 0 || columnIndex >= plan.getOutput().getColumnCount()) {
             return Capability.UNKNOWN;
+        }
+        if (plan.getOutputCopy() != null) {
+            return Capability.NO;
         }
         return switch (plan) {
             case DomainReadPlan read -> switch (read.getAlgorithm()) {
@@ -1246,6 +1309,9 @@ public final class PhysicalProperties {
     }
 
     private static Capability supportsSharedCursors(LogicalPlan plan, @Nullable LimitPlan sortedLimit) {
+        if (plan.getOutputCopy() != null) {
+            return Capability.NO;
+        }
         return switch (plan) {
             case AggregatePlan aggregate -> aggregateSharedCursors(aggregate);
             case DomainReadPlan read -> switch (read.getAlgorithm()) {
@@ -1276,6 +1342,9 @@ public final class PhysicalProperties {
     }
 
     private static Capability supportsTimeFrameCursor(LogicalPlan plan, @Nullable LimitPlan sortedLimit, boolean isConcurrent) {
+        if (plan.getOutputCopy() != null) {
+            return Capability.NO;
+        }
         return switch (plan) {
             case ScanPlan scan -> scanTimeFrame(scan);
             case FilterPlan filter ->

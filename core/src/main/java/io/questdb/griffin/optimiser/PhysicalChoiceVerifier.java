@@ -50,6 +50,7 @@ import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.PhysicalProperties;
 import io.questdb.griffin.plan.logical.PlanToFactoryRules;
 import io.questdb.griffin.plan.logical.PlanVisitor;
+import io.questdb.griffin.plan.logical.RowCopy;
 import io.questdb.griffin.plan.logical.SampleByPlan;
 import io.questdb.griffin.plan.logical.ScanPlan;
 import io.questdb.griffin.plan.logical.SetOperationKind;
@@ -66,9 +67,11 @@ import org.jetbrains.annotations.Nullable;
 
 /**
  * Checks the physical choices operator planning records on plan nodes against the rules the planner and the generator
- * decide them by, including that every input a choice reads back by row id derives random access. Each check returns
- * the {@link PlanVerifier} invariant the node violates, or null; under access path planning's output,
- * {@code isPlanned}, every choice the generator builds the node by is recorded.
+ * decide them by, including that every input a choice reads back by row id derives random access, that every input a
+ * choice reads again does not compute its rows again where a copy could hold them, and that every copy of the rows of
+ * a node gives what the node lacks, see {@link LogicalPlan#getOutputCopy()}. Each check returns the
+ * {@link PlanVerifier} invariant the node violates, or null; under access path planning's output, {@code isPlanned},
+ * every choice the generator builds the node by is recorded.
  */
 final class PhysicalChoiceVerifier {
     /**
@@ -296,14 +299,38 @@ final class PhysicalChoiceVerifier {
     }
 
     /**
+     * Whether the input, which a consumer reads again, computes its rows again although a copy could hold them, see
+     * {@link LogicalPlan#getOutputCopy()}: operator planning copies such rows unless they have a value no copy holds,
+     * see {@link PlanToFactoryRules#copyRejectedColumn}.
+     */
+    private static boolean isRecomputedOnRewind(LogicalPlan input) {
+        return PhysicalProperties.rewindRecomputes(input) == PhysicalProperties.Capability.YES
+                && PlanToFactoryRules.copyRejectedColumn(input.getOutput()) < 0;
+    }
+
+    /**
+     * Whether the join reads the input of the step at ordered position {@code position} again: the master of a step
+     * that reads its master again reads every input before it again, and a nested loop reads its slave again.
+     */
+    private static boolean isRewound(JoinPlan join, int position, JoinInput step) {
+        final ObjList<JoinInput> ordered = join.getOrderedInputs();
+        for (int i = position + 1, n = ordered.size(); i < n; i++) {
+            if (ordered.getQuick(i).isMasterRewound()) {
+                return true;
+            }
+        }
+        return position > 0 && step.isSlaveRewound();
+    }
+
+    /**
      * Whether the stream choice of the aggregate holds: a GROUP BY that streams is a serial or parallel GROUP BY without
-     * grouping sets that streams by one of its TIMESTAMP, LONG or INT keys, scans backward only in parallel and copies
-     * its rows as its consumer requires; any other aggregate neither scans backward nor copies.
+     * grouping sets that streams by one of its TIMESTAMP, LONG or INT keys and scans backward only in parallel; any
+     * other aggregate never scans backward.
      */
     private static boolean isStreamConsistent(AggregatePlan aggregate, AggregatePlan.Algorithm algorithm, PlanToFactoryRules.AggregateFactory factory) {
         final int keyIndex = aggregate.getStreamKeyIndex();
         if (keyIndex < 0) {
-            return !aggregate.isStreamBackward() && aggregate.getOutputCopy() == AggregatePlan.OutputCopy.NONE;
+            return !aggregate.isStreamBackward();
         }
         final boolean isParallel = algorithm == AggregatePlan.Algorithm.PARALLEL || algorithm == AggregatePlan.Algorithm.PARALLEL_STOLEN_FILTER;
         if (factory != PlanToFactoryRules.AggregateFactory.GROUP_BY || aggregate.hasGroupingSets() || !isParallel && algorithm != AggregatePlan.Algorithm.SERIAL
@@ -311,8 +338,7 @@ final class PhysicalChoiceVerifier {
             return false;
         }
         final int keyType = aggregate.getGroupingExpressions().getQuick(keyIndex).getDataType();
-        return (ColumnType.isTimestamp(keyType) || keyType == ColumnType.LONG || keyType == ColumnType.INT)
-                && aggregate.getOutputCopy() == OperatorPlanning.streamOutputCopy(aggregate, keyIndex, aggregate.isStreamBackward());
+        return ColumnType.isTimestamp(keyType) || keyType == ColumnType.LONG || keyType == ColumnType.INT;
     }
 
     /**
@@ -462,6 +488,30 @@ final class PhysicalChoiceVerifier {
         return null;
     }
 
+    /**
+     * Checks the copy of the node's rows its consumer reads, see {@link LogicalPlan#getOutputCopy()}: the copy holds
+     * every column of the node and gives what the node lacks. A copy outside the join budget stands in for the map of a
+     * hash GROUP BY: it gives row ids to a node that lacks random access because a stream GROUP BY under it does, or
+     * replays the rows of a node whose rewind computes them again; one within it caches the rows of a slave join a
+     * nested loop reads again, or gives row ids to a node without random access.
+     */
+    private static String outputCopy(LogicalPlan plan) {
+        final RowCopy copy = plan.getOutputCopy();
+        if (copy == null) {
+            return null;
+        }
+        final boolean isNeeded;
+        if (!plan.isOutputCopyJoinBudgeted()) {
+            isNeeded = (copy.isRandomAccess() ? PhysicalProperties.isRandomAccessLostToStreamWithoutCopy(plan)
+                    : PhysicalProperties.rewindRecomputesWithoutCopy(plan)) == PhysicalProperties.Capability.YES;
+        } else if (copy.isRandomAccess()) {
+            isNeeded = PhysicalProperties.supportsRandomAccessWithoutCopy(plan) == PhysicalProperties.Capability.NO;
+        } else {
+            isNeeded = plan instanceof JoinPlan;
+        }
+        return isNeeded && PlanToFactoryRules.copyRejectedColumn(plan.getOutput()) < 0 ? null : PlanVerifier.OUTPUT_COPY;
+    }
+
     private static String serialHorizon(HorizonJoinPlan horizon, boolean isPlanned) {
         return isUnsatisfied(PhysicalProperties.supportsRandomAccess(horizon.getMaster()), isPlanned) ? PlanVerifier.INPUT_RANDOM_ACCESS : null;
     }
@@ -522,6 +572,10 @@ final class PhysicalChoiceVerifier {
      * and of the parts it owns, and the timestamps and the order they read from its inputs.
      */
     static String check(LogicalPlan plan, boolean isPlanned) {
+        final String copy = outputCopy(plan);
+        if (copy != null) {
+            return copy;
+        }
         final String violation = switch (plan) {
             case AggregatePlan aggregate -> aggregate(aggregate, isPlanned);
             case DistinctPlan distinct -> distinct(distinct, isPlanned);
@@ -591,10 +645,12 @@ final class PhysicalChoiceVerifier {
             return isPlanned ? PlanVerifier.CHOICE_UNPLANNED : null;
         }
         final int inputTimestampIndex = PhysicalProperties.timestampIndex(fill.getChild());
-        if ((algorithm == FillPlan.Algorithm.SAMPLE_BY_ROWS) != OperatorPlanning.isSampleByRowsFill(fill)
-                || algorithm == FillPlan.Algorithm.SAMPLE_BY_ROWS
-                && ((SampleByPlan) fill.getChild()).isBaseCopied() != OperatorPlanning.isSampleByBaseCopied(fill)) {
+        if ((algorithm == FillPlan.Algorithm.SAMPLE_BY_ROWS) != OperatorPlanning.isSampleByRowsFill(fill)) {
             return PlanVerifier.FILL_ALGORITHM;
+        }
+        if (algorithm == FillPlan.Algorithm.SAMPLE_BY_ROWS && OperatorPlanning.isKeyedSampleBy((SampleByPlan) fill.getChild())
+                && isRecomputedOnRewind(PlanToFactoryRules.sampleByBase((SampleByPlan) fill.getChild()))) {
+            return PlanVerifier.INPUT_RECOMPUTED;
         }
         if (inputTimestampIndex == PhysicalProperties.UNKNOWN_TIMESTAMP) {
             return null;
@@ -666,6 +722,9 @@ final class PhysicalChoiceVerifier {
         if (isPlanned && position > 0 && !step.isAlgorithmDecided()) {
             return PlanVerifier.CHOICE_UNPLANNED;
         }
+        if (position == 0) {
+            return isRewound(join, 0, step) && isRecomputedOnRewind(step.getInput()) ? PlanVerifier.INPUT_RECOMPUTED : null;
+        }
         final JoinInput.Algorithm algorithm = step.getAlgorithm();
         if (algorithm == null) {
             return null;
@@ -685,7 +744,6 @@ final class PhysicalChoiceVerifier {
             case MARKOUT -> joinType.isRelational() && step.getMarkoutTimestampColumnId() >= 0 && position > 0
                     && PhysicalProperties.masterScanDirection(join, position) == PhysicalProperties.ScanDirection.FORWARD;
             case NESTED_LOOP -> step.isNestedLoop();
-            case MATERIALIZED_NESTED_LOOP -> PlanToFactoryRules.isSlaveMaterializable(join, step);
             case HASH, LIGHT_HASH -> joinType.isRelational() && step.isKeyed();
         };
         if (!isValid) {
@@ -705,10 +763,12 @@ final class PhysicalChoiceVerifier {
         if (algorithm == JoinInput.Algorithm.FULL_FAT_TEMPORAL && PlanToFactoryRules.fullFatTemporalRejectedColumn(step) >= 0) {
             return PlanVerifier.JOIN_SLAVE_VALUE_TYPE;
         }
-        if (step.isSlaveCopied() && (algorithm != JoinInput.Algorithm.TEMPORAL || PlanToFactoryRules.fullFatTemporalRejectedColumn(step) < 0
-                || PlanToFactoryRules.copyRejectedColumn(step.getInput().getOutput()) >= 0
-                || PhysicalProperties.supportsRandomAccess(step.getInput()) == PhysicalProperties.Capability.YES)) {
+        if (algorithm == JoinInput.Algorithm.TEMPORAL_STOLEN_FILTER && step.getInput().getOutputCopy() != null) {
             return PlanVerifier.JOIN_ALGORITHM;
+        }
+        if (position > 0 && step.getInput() != null && step.getInput().getOutputCopy() == RowCopy.REPLAY
+                && step.getInput().isOutputCopyJoinBudgeted() && !PlanToFactoryRules.isSlaveMaterializable(join, step)) {
+            return PlanVerifier.OUTPUT_COPY;
         }
         final JoinInput.TimeFrameScan scan = step.getTimeFrameScan();
         final boolean hasScanChoice = algorithm == JoinInput.Algorithm.TEMPORAL_TIME_FRAME && joinType == JoinKind.ASOF && position > 0
@@ -723,11 +783,14 @@ final class PhysicalChoiceVerifier {
         if (!isBuildSideSettled(join, position, step)) {
             return PlanVerifier.JOIN_BUILD_SIDE;
         }
-        return isSlaveReadByRowId(algorithm) && !PlanToFactoryRules.isSlaveEmptied(step) && !step.isSlaveCopied()
+        if (isSlaveReadByRowId(algorithm) && !PlanToFactoryRules.isSlaveEmptied(step)
                 && isUnsatisfied(PhysicalProperties.supportsRandomAccess(step.getInput()), isPlanned)
                 || isMasterReadByRowId(step) && position > 0
-                && isUnsatisfied(PhysicalProperties.masterSupportsRandomAccess(join, position), isPlanned)
-                ? PlanVerifier.INPUT_RANDOM_ACCESS : null;
+                && isUnsatisfied(PhysicalProperties.masterSupportsRandomAccess(join, position), isPlanned)) {
+            return PlanVerifier.INPUT_RANDOM_ACCESS;
+        }
+        return position > 0 && joinType != JoinKind.UNNEST && isRewound(join, position, step)
+                && isRecomputedOnRewind(step.getInput()) ? PlanVerifier.INPUT_RECOMPUTED : null;
     }
 
     static String latestBy(LatestByPlan latest, boolean isPlanned) {
@@ -740,11 +803,10 @@ final class PhysicalChoiceVerifier {
             return isPlanned && !isScanned ? PlanVerifier.CHOICE_UNPLANNED : null;
         }
         final LogicalPlan base = PlanToFactoryRules.latestByBase(latest);
-        if (algorithm != LatestByPlan.Algorithm.MATERIALIZED && PhysicalProperties.streamRowCopy(base) != null) {
-            return PlanVerifier.LATEST_BY_ALGORITHM;
+        if (algorithm == LatestByPlan.Algorithm.MATERIALIZED) {
+            return isRecomputedOnRewind(base) ? PlanVerifier.INPUT_RECOMPUTED : null;
         }
-        return algorithm != LatestByPlan.Algorithm.MATERIALIZED && isUnsatisfied(PhysicalProperties.supportsRandomAccess(base), isPlanned)
-                ? PlanVerifier.INPUT_RANDOM_ACCESS : null;
+        return isUnsatisfied(PhysicalProperties.supportsRandomAccess(base), isPlanned) ? PlanVerifier.INPUT_RANDOM_ACCESS : null;
     }
 
     static String limit(LimitPlan limit, boolean isPlanned) {
@@ -755,9 +817,7 @@ final class PhysicalChoiceVerifier {
         final LogicalPlan limited = limit.getChild();
         final SortPlan sort = LogicalPlans.hasSortUnderStableProjects(limited) ? (SortPlan) LogicalPlans.skipProjects(limited) : null;
         final boolean isInput = OperatorPlanning.isInputLimit(sort != null ? sort.getChild() : limited);
-        final boolean isCopied = OperatorPlanning.isInputCopied(limit);
         if ((application == LimitPlan.Application.INPUT) != isInput || isInput && !isScanLimited(sort != null ? sort.getChild() : limited, limit)
-                || application == LimitPlan.Application.COPIED_INPUT && !isCopied || application == LimitPlan.Application.OPERATOR && isCopied
                 || (application == LimitPlan.Application.MASTER_SUFFIX) != (PlanToFactoryRules.masterSuffixScan(limit) != null)
                 || application == LimitPlan.Application.MASTER_SUFFIX && isMasterSuffixDrivenBySmaller(PlanToFactoryRules.masterSuffixJoin(limit))) {
             return PlanVerifier.LIMIT_APPLICATION;
@@ -765,6 +825,12 @@ final class PhysicalChoiceVerifier {
         final SortPlan.Algorithm algorithm = sort != null ? sort.getAlgorithm() : null;
         if ((application == LimitPlan.Application.SORT) != isBounded(algorithm)) {
             return PlanVerifier.LIMIT_APPLICATION;
+        }
+        if (application == LimitPlan.Application.OPERATOR
+                && (LogicalPlans.mayBeNegativeLimit(limit.getLo()) || limit.getHi() != null && LogicalPlans.mayBeNegativeLimit(limit.getHi()))
+                && PhysicalProperties.rewindRecomputes(limited) == PhysicalProperties.Capability.YES
+                && isRecomputedOnRewind(sort != null ? sort.getChild() : limited)) {
+            return PlanVerifier.INPUT_RECOMPUTED;
         }
         if (sort == null || application != LimitPlan.Application.SORT) {
             return null;
@@ -784,7 +850,6 @@ final class PhysicalChoiceVerifier {
             return isPlanned ? PlanVerifier.CHOICE_UNPLANNED : null;
         }
         final boolean isValid = (algorithm == SampleByPlan.Algorithm.INTERPOLATE) == OperatorPlanning.isLinearFill(sample)
-                && (!sample.isBaseCopied() || algorithm == SampleByPlan.Algorithm.FILL_NONE)
                 && (sample.getPreAggregation() == null || algorithm == SampleByPlan.Algorithm.INTERPOLATE && isPreAggregationValid(sample, isPlanned))
                 && switch (algorithm) {
             case INTERPOLATE -> true;

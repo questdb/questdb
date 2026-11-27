@@ -914,6 +914,35 @@ public class StreamGroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCopiesHoldFilteredRows() throws Exception {
+        run((engine, compiler, context) -> {
+            engine.execute("""
+                    CREATE TABLE src AS (
+                        SELECT timestamp_sequence('2024-01-01', 600_000_000L) ts, (CASE WHEN x % 2 = 0 THEN 'A' ELSE 'B' END)::SYMBOL sym, x v
+                        FROM long_sequence(6)
+                    ) TIMESTAMP(ts) PARTITION BY DAY""", context);
+            final String filtered = "(SELECT * FROM (SELECT ts, sym, sum(v) s, sym::STRING name FROM src SAMPLE BY 20m) WHERE s > 2)";
+            for (String sql : new String[]{
+                    "SELECT m.ts, m.v, b.sym FROM src m JOIN " + filtered + " b ON m.v = b.s",
+                    "SELECT m.ts, m.v, b.name FROM src m ASOF JOIN " + filtered + " b ON (sym)",
+                    "SELECT m.ts, m.v, b.s FROM src m CROSS JOIN " + filtered + " b ORDER BY m.ts, b.s",
+                    "SELECT * FROM (" + filtered + " LATEST ON ts PARTITION BY sym) ORDER BY sym"
+            }) {
+                context.setStreamGroupByEnabled(false);
+                final String expected = compileAndRead(compiler, context, sql);
+                context.setStreamGroupByEnabled(true);
+                final String plan = compileAndRead(compiler, context, "EXPLAIN " + sql);
+                try (RecordCursorFactory factory = compiler.compile(sql, context).getRecordCursorFactory()) {
+                    Assert.assertTrue(plan, plan.matches("(?s).*\n( *)Materialize\n(\\1 +SelectedRecord\n)*\\1 +Filter filter: 2<s\n\\1 +(Async )?Stream Group By.*"));
+                    for (int pass = 0; pass < 2; pass++) {
+                        Assert.assertEquals(sql, expected, read(factory, context));
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testLatestOnCopiesOnlyStreamInputs() throws Exception {
         run((engine, compiler, context) -> {
             engine.execute("CREATE TABLE trades AS (SELECT timestamp_sequence('2024-01-01', 7_000_000) ts, ('S' || (x % 5))::SYMBOL sym, x % 97 price "

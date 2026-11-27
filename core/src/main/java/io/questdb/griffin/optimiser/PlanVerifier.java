@@ -92,7 +92,7 @@ public final class PlanVerifier {
     public static final String AGGREGATE_ALGORITHM = "aggregate algorithm contradicts its kind, keys or input";
     public static final String AGGREGATE_CALL = "aggregate value is not an aggregate call";
     public static final String AGGREGATE_SHAPE = "aggregate output is not its keys followed by its aggregates";
-    public static final String AGGREGATE_STREAM = "stream GROUP BY contradicts its key, its algorithm or what its consumer requires";
+    public static final String AGGREGATE_STREAM = "stream GROUP BY contradicts its key or its algorithm";
     public static final String AGGREGATE_TYPE = "aggregate output type differs from its expression";
     public static final String CHOICE_UNPLANNED = "physical choice is not recorded after access path planning";
     public static final String COLUMN_TYPE = "column expression type differs from the column it reads";
@@ -121,6 +121,7 @@ public final class PlanVerifier {
     public static final String HORIZON_SLAVE_TIME_FRAME = "horizon join slave serves no time-frame cursors";
     public static final String INPUT_NULL = "input is null";
     public static final String INPUT_RANDOM_ACCESS = "physical choice reads an input by row id that lacks random access";
+    public static final String INPUT_RECOMPUTED = "physical choice reads an input again that computes its rows again although a copy could hold them";
     public static final String JOIN_ALGORITHM = "join step algorithm contradicts its kind, keys or hints";
     public static final String JOIN_BUILD_SIDE = "join step build side contradicts its algorithm, its master side or the row bounds of its inputs";
     public static final String JOIN_FILTER_ORIGIN = "join filter conjunct origin is neither WHERE nor an input of the join";
@@ -145,6 +146,7 @@ public final class PlanVerifier {
     public static final String ORDER_REQUEST = "requested order names a column the node does not output";
     public static final String OUTER_COLUMN_SCOPE = "outer column outside a dependent join step";
     public static final String OUTER_COLUMN_UNRESOLVED = "outer column is not a column of a preceding join input";
+    public static final String OUTPUT_COPY = "row copy holds a column no copy holds or gives what the node it copies already offers";
     public static final String OUTPUT_FORWARDING = "output does not forward the input columns";
     public static final String OUTPUT_TIMESTAMP = "designated timestamp differs from the input's";
     public static final String PREDICATE_CONSTANT = "constant predicate is not folded to a literal";

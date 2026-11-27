@@ -30,12 +30,13 @@ import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.join.MaterializedRecordCursorFactory;
+import io.questdb.griffin.plan.logical.RowCopy;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Misc;
 
 /**
  * Builds the copy of the rows of a factory that the generator puts between the factory and a consumer that reads its
- * rows again or by row id, see {@link MaterializedRecordCursorFactory}.
+ * rows again or by row id, see {@link RowCopy} and {@link MaterializedRecordCursorFactory}.
  */
 final class RowCopies {
 
@@ -43,16 +44,16 @@ final class RowCopies {
     }
 
     /**
-     * Copies every column of the rows of {@code base}. Consumes the base on entry, including on failure.
+     * Copies every column of the rows of {@code base} as {@code copy} does, within the join budget when
+     * {@code isJoinBudgeted}. Consumes the base on entry, including on failure.
      */
     static RecordCursorFactory copy(
             CairoConfiguration configuration,
             BytecodeAssembler asm,
             EntityColumnFilter columnFilter,
             RecordCursorFactory base,
-            boolean isStrict,
-            boolean hasJoinBudget,
-            boolean isCopiedInBatches
+            RowCopy copy,
+            boolean isJoinBudgeted
     ) {
         final RecordSink sink;
         try {
@@ -62,6 +63,7 @@ final class RowCopies {
             Misc.free(base, th);
             throw th;
         }
-        return new MaterializedRecordCursorFactory(configuration, base, sink, isStrict, hasJoinBudget, isCopiedInBatches);
+        return new MaterializedRecordCursorFactory(configuration, base, sink, copy.isRandomAccess(), isJoinBudgeted,
+                copy == RowCopy.RANDOM_ACCESS_IN_BATCHES);
     }
 }
