@@ -1,17 +1,17 @@
 # Master CI: every two hours, tests master on everything a PR build leaves out. A PR build
 # (test-pipeline.yml) tests linux-x86-64 on OpenJDK only; this pipeline runs the arm64, ZFS
-# and GraalVM legs, the macOS and Windows legs, the binary smoke test, and starts the full
-# Enterprise run against master's head. A break on those platforms therefore reaches master
-# and shows here, up to two hours after the merge.
+# and GraalVM legs, the macOS and Windows legs, and the binary smoke test. A break on those
+# platforms therefore reaches master and shows here, up to two hours after the merge.
+# Enterprise tests itself against OSS master on a schedule of its own (questdb-enterprise
+# ci/build-and-test.yaml).
 #
 # always: false starts a run only when master moved since the last green scheduled run, so
 # a red master reruns, and alerts again, every slot until someone fixes it.
 #
 # ADO setup: the definition is named Master CI and its default branch is master. It needs
-# the variables AZURE_DEVOPS_ENT_PAT, SCCACHE_AZURE_BLOB_CONTAINER and
-# SCCACHE_AZURE_CONNECTION_STRING, as on the New pull request and macwin definitions,
-# access to the github-public-read variable group, and BUILDS_SLACK_HOOK_URL for the alert
-# (stage NotifyOnFailure).
+# the variables SCCACHE_AZURE_BLOB_CONTAINER and SCCACHE_AZURE_CONNECTION_STRING, as on the
+# macwin definition, access to the github-public-read variable group, and
+# BUILDS_SLACK_HOOK_URL for the alert (stage NotifyOnFailure).
 trigger: none
 
 pr: none
@@ -180,18 +180,6 @@ stages:
     jobs:
       - template: templates/binary-smoke-test-jobs.yml
 
-  # The full Enterprise run against master's head: every platform and replication store.
-  # The stage only queues it; the Enterprise run alerts the builds Slack channel itself
-  # when it fails (ReportToOssPr in questdb-enterprise ci/build-and-test.yaml).
-  - stage: TriggerEnterpriseCI
-    displayName: "Trigger Enterprise CI"
-    dependsOn:
-      - CheckChanges
-    jobs:
-      - template: templates/trigger-enterprise-job.yml
-        parameters:
-          isMasterRun: true
-
   # Alerts the builds Slack channel when a scheduled run goes red; a run queued by hand
   # never alerts. The webhook is the BUILDS_SLACK_HOOK_URL secret variable, set in the
   # pipeline settings UI; until it is set, the job skips cleanly.
@@ -207,7 +195,6 @@ stages:
       - SelfHostedRunOtherB
       - HostedRunTestsBranches
       - BinarySmokeTest
-      - TriggerEnterpriseCI
     # not(succeeded()) rather than failed(): a timed-out job reports canceled, not failed.
     condition: and(not(succeeded()), eq(variables['Build.Reason'], 'Schedule'))
     jobs:

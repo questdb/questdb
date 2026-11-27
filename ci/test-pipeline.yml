@@ -2,8 +2,9 @@
 # (linux-x86-64, OpenJDK) run every test, the lint stage runs the linters,
 # BuildRustLibrary checks that the Rust library compiles on both Linux architectures,
 # and TriggerEnterpriseCompile checks that Enterprise still compiles. Everything else --
-# the arm64, ZFS and GraalVM legs, macOS, Windows, the binary smoke test and the full
-# Enterprise run -- runs on master every two hours, in test-master-pipeline.yml.
+# the arm64, ZFS and GraalVM legs, macOS, Windows and the binary smoke test -- runs on
+# master every two hours, in test-master-pipeline.yml. Enterprise runs its tests against
+# OSS master on a two-hourly schedule of its own.
 #
 # Also run in the GitHub merge queue: CI trigger on the ephemeral merge-queue branches.
 trigger:
@@ -110,7 +111,8 @@ stages:
       - template: templates/aux-job.yml
 
   # Checks that Enterprise compiles against this PR; the run reports enterprise-ci-compile.
-  # The full Enterprise run is on test-master-pipeline.yml and, on request, test-hosted-pipeline.yml.
+  # The Enterprise tests run on Enterprise's own schedule against OSS master and, on
+  # request for a PR, from test-hosted-pipeline.yml.
   - stage: TriggerEnterpriseCompile
     displayName: "Trigger Enterprise compile"
     condition: and(succeeded(), eq(variables['Build.Reason'], 'PullRequest'), ne(variables['System.PullRequest.IsFork'], 'true'))

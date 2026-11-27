@@ -13,11 +13,6 @@
 # Enterprise PR comes from that same-named branch, the run skips its work and reports
 # success: that Enterprise PR tests the pair itself (see the tandem step in
 # questdb-enterprise ci/templates/check-changes-job.yml).
-#
-# With isMasterRun (test-master-pipeline.yml), the job starts the full run against the
-# built commit, master's head, on Enterprise main, with no PR number: the Enterprise run
-# then reports its status on that commit, posts no PR comment, and alerts Slack itself when
-# it fails.
 parameters:
   - name: flavour
     type: string
@@ -25,9 +20,6 @@ parameters:
     values:
       - full
       - compile
-  - name: isMasterRun
-    type: boolean
-    default: false
 
 jobs:
   - job: TriggerEnterprise
@@ -73,12 +65,6 @@ jobs:
             OSS_COMMIT="$BUILD_SOURCEVERSION"
             OSS_BRANCH=$(gh_pr_field "$OSS_PR_NUMBER" '.head.ref')
             echo "Merge-queue build for PR #$OSS_PR_NUMBER; merge commit $OSS_COMMIT; source branch $OSS_BRANCH"
-          elif [ "$IS_MASTER_RUN" = "true" ]; then
-            # Master CI: test the built commit against Enterprise main.
-            OSS_PR_NUMBER=""
-            OSS_COMMIT="$BUILD_SOURCEVERSION"
-            OSS_BRANCH=""
-            echo "Master run; commit $OSS_COMMIT"
           else
             # Manual or scheduled run: there is no PR to test enterprise against.
             echo "Neither a PR nor a merge-queue build ($BUILD_SOURCEBRANCH); skipping enterprise CI"
@@ -136,5 +122,4 @@ jobs:
           OSS_BRANCH: $(System.PullRequest.SourceBranch)
           BUILD_SOURCEBRANCH: $(Build.SourceBranch)
           BUILD_SOURCEVERSION: $(Build.SourceVersion)
-          IS_MASTER_RUN: ${{ lower(parameters.isMasterRun) }}
           FLAVOUR: ${{ parameters.flavour }}
