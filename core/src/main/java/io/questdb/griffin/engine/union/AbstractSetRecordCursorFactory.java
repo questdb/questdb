@@ -73,6 +73,11 @@ public abstract class AbstractSetRecordCursorFactory extends AbstractRecordCurso
     }
 
     @Override
+    public boolean isStableWithinExecution() {
+        return factoryA.isStableWithinExecution() && factoryB.isStableWithinExecution();
+    }
+
+    @Override
     public boolean isRewindRecomputing() {
         return factoryA.isRewindRecomputing() || (!isSecondFactoryHashed() && factoryB.isRewindRecomputing());
     }

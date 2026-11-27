@@ -455,6 +455,78 @@ public class LegacyPlannerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testStreamGroupByOverExecutionStableInterval() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE si (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO si VALUES
+                        ('2024-01-01T11:30', 1), ('2024-01-01T12:00', 2), ('2024-01-01T12:10', 4),
+                        ('2024-01-01T12:50', 8), ('2024-01-02T03:20', 16)
+                    """);
+            setCurrentMicros(1_704_196_800_000_000L);
+            setProperty(PropertyKey.CAIRO_SQL_LEGACY_PLANNER_ENABLED, "true");
+            // now() and bind variables vary between executions but not within one, so the interval scan can stream
+            assertQuery("SELECT ts, sum(v) FROM si WHERE ts > dateadd('d', -1, now()) SAMPLE BY 1h")
+                    .withPlan("""
+                            Async Stream Group By workers: 1
+                              keys: [ts]
+                              keyFunctions: [timestamp_floor_utc('1h',ts)]
+                              values: [sum(v)]
+                                PageFrame
+                                    Row forward scan
+                                    Interval forward scan on: si
+                                      intervals: [("2024-01-01T12:00:00.000001Z","MAX")]
+                            """)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tsum
+                            2024-01-01T12:00:00.000000Z\t12
+                            2024-01-02T03:00:00.000000Z\t16
+                            """);
+            bindVariableService.clear();
+            bindVariableService.setTimestamp(0, 1_704_110_400_000_000L);
+            assertQuery("SELECT ts, sum(v) FROM si WHERE ts > $1 SAMPLE BY 1h")
+                    .withPlan("""
+                            Async Stream Group By workers: 1
+                              keys: [ts]
+                              keyFunctions: [timestamp_floor_utc('1h',ts)]
+                              values: [sum(v)]
+                                PageFrame
+                                    Row forward scan
+                                    Interval forward scan on: si
+                                      intervals: [("2024-01-01T12:00:00.000001Z","MAX")]
+                            """)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tsum
+                            2024-01-01T12:00:00.000000Z\t12
+                            2024-01-02T03:00:00.000000Z\t16
+                            """);
+            assertQuery("SELECT ts, sum(v) FROM si WHERE ts > dateadd('d', -1, now()) AND v > 4 SAMPLE BY 1h")
+                    .withPlan("""
+                            Async JIT Stream Group By workers: 1
+                              keys: [ts]
+                              keyFunctions: [timestamp_floor_utc('1h',ts)]
+                              values: [sum(v)]
+                              filter: 4<v
+                                PageFrame
+                                    Row forward scan
+                                    Interval forward scan on: si
+                                      intervals: [("2024-01-01T12:00:00.000001Z","MAX")]
+                            """)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tsum
+                            2024-01-01T12:00:00.000000Z\t8
+                            2024-01-02T03:00:00.000000Z\t16
+                            """);
+        });
+    }
+
+    @Test
     public void testSubsampleKeepFlagFusion() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE lp_keep (id INT, flag BOOLEAN, ts TIMESTAMP) TIMESTAMP(ts)");

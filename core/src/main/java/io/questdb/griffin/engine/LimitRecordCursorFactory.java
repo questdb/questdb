@@ -112,6 +112,19 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
+    public boolean isStableWithinExecution() {
+        final Function leftFunc = bounds.getLoFunction();
+        if (leftFunc != null && !leftFunc.isStableWithinExecution()) {
+            return false;
+        }
+        final Function rightFunc = bounds.getHiFunction();
+        if (rightFunc != null && !rightFunc.isStableWithinExecution()) {
+            return false;
+        }
+        return base.isStableWithinExecution();
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return base.recordCursorSupportsRandomAccess();
     }

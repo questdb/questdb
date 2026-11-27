@@ -66,6 +66,11 @@ public class PageFrameRowCursorFactory implements RowCursorFactory {
     }
 
     @Override
+    public boolean isStableWithinExecution() {
+        return true;
+    }
+
+    @Override
     public void toPlan(PlanSink sink) {
         int order = sink.getOrder();
         if (order == PartitionFrameCursorFactory.ORDER_ANY || order < 0) {

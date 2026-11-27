@@ -295,6 +295,14 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     }
 
     /**
+     * Returns true if every cursor open within one execution yields the same rows, as the legacy planner's code
+     * generator asks the factory; the new planner derives the same fact from the bound plan instead.
+     */
+    default boolean isStableWithinExecution() {
+        return !isNonDeterministic();
+    }
+
+    /**
      * Returns true if this factory reads data from outside the database, i.e. from a source whose
      * contents QuestDB neither owns nor tracks transactionally (currently {@code read_parquet()}).
      * <p>

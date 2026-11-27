@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.sql.DelegatingRecordCursor;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -92,6 +93,19 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
     @Override
     public boolean isNonDeterministic() {
         return bounds.isNonDeterministic() || base.isNonDeterministic();
+    }
+
+    @Override
+    public boolean isStableWithinExecution() {
+        final Function loFunction = bounds.getLoFunction();
+        if (loFunction != null && !loFunction.isStableWithinExecution()) {
+            return false;
+        }
+        final Function hiFunction = bounds.getHiFunction();
+        if (hiFunction != null && !hiFunction.isStableWithinExecution()) {
+            return false;
+        }
+        return base.isStableWithinExecution();
     }
 
     @Override
