@@ -23,7 +23,7 @@
  ******************************************************************************/
 
 /**
- * The query planner as it was at commit {@code 1257f1568e6d364866e2a3fc3cb816070732c7da}, kept as a fallback
+ * The query planner as it was at commit {@code f165366dc05a77cd4d4cbfc13df8e8e092ae7840}, kept as a fallback
  * for the logical-plan planner. The reloadable {@code cairo.sql.legacy.planner.enabled} property selects it.
  * <p>
  * The legacy planner takes no fixes, and goes once the new planner has run stably for several releases.
