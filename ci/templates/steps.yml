@@ -428,6 +428,17 @@ steps:
             eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true')
         )
       )
+  # qdbr-coverage builds the Rust library in debug mode with coverage instrumentation, which
+  # slows every test that works in Rust. Only a PR that changes Rust reads that coverage, so
+  # every other PR keeps the release library the pre-build compiled.
+  - bash: |
+      if [ "$(RUST_SOURCE_CODE_CHANGED)" = "true" ]; then
+        echo "##vso[task.setvariable variable=COVERAGE_PROFILES]jacoco,qdbr-coverage,build-web-console"
+      else
+        echo "##vso[task.setvariable variable=COVERAGE_PROFILES]jacoco,build-web-console"
+      fi
+    displayName: "Select coverage profiles"
+    condition: startsWith(variables['testset'], 'coverage')
   - task: Maven@3
     displayName: "Run tests with Coverage (jemalloc)"
     inputs:
@@ -446,7 +457,7 @@ steps:
         -Dout=$(Build.SourcesDirectory)/ci/qlog.conf
         -DfailIfNoTests=false
         -Dsurefire.failIfNoSpecifiedTests=false
-        -P jacoco,qdbr-coverage,build-web-console
+        -P $(COVERAGE_PROFILES)
         $(CLIENT_PROFILE) $(MAVEN_RUN_OPTS) $(TEST_COMMIT_MODE_OPT)"
       jdkVersionOption: $(jdk)
     env:
