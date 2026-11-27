@@ -235,9 +235,9 @@ public final class PhysicalProperties {
 
     /**
      * The input whose rows the plan emits in their order: the only input of a filter, a projection, a DISTINCT, a
-     * window, a LIMIT and a sort that keeps its input's order, the master of a window join and of a join that keeps
-     * the order of its master, see {@link #masterOrder}, and the left input of EXCEPT and INTERSECT; null for any other
-     * plan.
+     * window, a LIMIT and a sort that keeps its input's order, the master of a window join, of a HORIZON JOIN and of a
+     * join that keeps the order of its master, see {@link #masterOrder}, and the left input of EXCEPT and INTERSECT;
+     * null for any other plan.
      */
     public static @Nullable LogicalPlan orderedInput(LogicalPlan plan) {
         return switch (plan) {
@@ -248,6 +248,7 @@ public final class PhysicalProperties {
             case LimitPlan limit -> limit.getChild();
             case SortPlan sort -> sort.getAlgorithm() != null && sort.getAlgorithm().isInputOrder() ? sort.getChild() : null;
             case WindowJoinPlan windowJoin -> windowJoin.getMaster();
+            case HorizonJoinPlan horizon -> horizon.getMaster();
             case JoinPlan join -> masterOrder(join, join.getOrderedInputs().size()) == Capability.YES ? join.getOrderedInputs().getQuick(0).getInput() : null;
             case SetOperationPlan operation -> operation.getOperation().isUnion() ? null : operation.getLeft();
             default -> null;

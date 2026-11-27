@@ -5103,6 +5103,7 @@ public class LateralCorrelationTest extends AbstractCairoTest {
                     ) t2 ORDER BY 1
                     """)
                     .noLeakCheck()
+                    .noRandomAccess()
                     .returns("""
                             v\tv1
                             1\t1
@@ -5117,6 +5118,7 @@ public class LateralCorrelationTest extends AbstractCairoTest {
                     ) t2 ORDER BY 1
                     """)
                     .noLeakCheck()
+                    .noRandomAccess()
                     .returns("""
                             v\tv1
                             1\t1
@@ -5131,6 +5133,7 @@ public class LateralCorrelationTest extends AbstractCairoTest {
                     ) t2 ORDER BY 1
                     """)
                     .noLeakCheck()
+                    .noRandomAccess()
                     .returns("""
                             v\tv1\tw
                             1\t1\t10
@@ -5145,6 +5148,7 @@ public class LateralCorrelationTest extends AbstractCairoTest {
                     ) t2 ON true ORDER BY 1
                     """)
                     .noLeakCheck()
+                    .noRandomAccess()
                     .returns("""
                             v\tv1
                             1\t1
