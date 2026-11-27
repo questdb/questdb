@@ -967,9 +967,10 @@ public class WriterPoolTest extends AbstractCairoTest {
 
     @Test
     public void testFailedOpensUnderConcurrentReaper() throws Exception {
-        // Writer opens fail at random while three threads take the writer, append a row and return it, and a fourth
-        // thread runs the reaper, which now and then releases every writer as well. Every open that fails must be one
-        // the facade failed, and no writer may be left outside the pool.
+        // The first writer open fails, and later ones fail at random, while three threads take the writer, append a row
+        // and return it, and a fourth thread runs the reaper. The writer threads and every 16th reaper pass release all
+        // idle writers, so that writers keep opening. Every open that fails must be one the facade failed, and no writer
+        // may be left outside the pool.
         final Rnd rnd = TestUtils.generateRandom(LOG);
         final WriterOpenFailingFacade ff = new WriterOpenFailingFacade(zTableToken);
         ff.rnd = rnd;
@@ -999,6 +1000,12 @@ public class WriterPoolTest extends AbstractCairoTest {
                                 }
                                 failedOpens.incrementAndGet();
                             }
+                            if (i % 16 == 15) {
+                                // releaseAll() closes the writer unless a sibling holds it, so the next get() opens
+                                // one: opens, and the random failures among them, happen however rarely the reaper
+                                // finds the writer idle
+                                pool.releaseAll();
+                            }
                         }
                     } catch (Throwable th) {
                         error.compareAndSet(null, th);
@@ -1024,6 +1031,9 @@ public class WriterPoolTest extends AbstractCairoTest {
                     Path.clearThreadLocals();
                 }
             }));
+            // the pool starts empty, so the first get() opens a writer: that open fails in every run, however few
+            // opens the timing allows
+            ff.isLockOpenFailureArmed = true;
             for (int i = 0, n = threads.size(); i < n; i++) {
                 threads.getQuick(i).start();
             }
