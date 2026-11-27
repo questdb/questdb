@@ -29,6 +29,7 @@ import io.questdb.griffin.engine.functions.str.TrimType;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.ObjList;
+import io.questdb.std.Rnd;
 import io.questdb.std.str.FileNameExtractorUtf8Sequence;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -375,38 +376,7 @@ public class CharsTest {
 
     @Test
     public void testEqualsIgnoreCaseMatchesCharacterToLowerCase() {
-        // pairs that differ in case, and pairs that do not, for every char
-        final char[] others = new char[6];
-        for (int i = 0; i <= Character.MAX_VALUE; i++) {
-            final char c = (char) i;
-            others[0] = c;
-            others[1] = Character.toLowerCase(c);
-            others[2] = Character.toUpperCase(c);
-            others[3] = Character.toTitleCase(c);
-            others[4] = (char) (c ^ 0x20);
-            others[5] = (char) (c + 1);
-            for (char other : others) {
-                assertEqualsIgnoreCase(String.valueOf(c), String.valueOf(other));
-            }
-        }
-
-        // strings mixing ASCII, Latin-1 and other chars, some spelled in another case; U+0130, U+0131 and U+212A
-        // are the dotted capital I, the dotless small i and the Kelvin sign
-        final Random rnd = new Random(42);
-        final char[] alphabet = {'a', 'B', 'z', 'Z', '_', '0', '@', '[', '`', '{', 'é', 'É', 'ß', '\u0130', '\u0131', 'Ω', 'ω', '\u212A'};
-        final StringBuilder l = new StringBuilder();
-        final StringBuilder r = new StringBuilder();
-        for (int i = 0; i < 10_000; i++) {
-            l.setLength(0);
-            r.setLength(0);
-            for (int j = 0, n = rnd.nextInt(12); j < n; j++) {
-                final char c = alphabet[rnd.nextInt(alphabet.length)];
-                l.append(c);
-                final int spelling = rnd.nextInt(4);
-                r.append(spelling == 0 ? Character.toUpperCase(c) : spelling == 1 ? Character.toLowerCase(c) : spelling == 2 ? alphabet[rnd.nextInt(alphabet.length)] : c);
-            }
-            assertEqualsIgnoreCase(l.toString(), r.toString());
-        }
+        TestUtils.forEachCaseVariantPair(new Rnd(42, 7), CharsTest::assertEqualsIgnoreCase);
     }
 
     @Test
@@ -805,12 +775,8 @@ public class CharsTest {
         );
     }
 
-    // Checks the case-insensitive comparisons against Character.toLowerCase(), char by char.
-    private static void assertEqualsIgnoreCase(String l, String r) {
-        boolean isEqual = l.length() == r.length();
-        for (int i = 0; isEqual && i < l.length(); i++) {
-            isEqual = Character.toLowerCase(l.charAt(i)) == Character.toLowerCase(r.charAt(i));
-        }
+    // Checks the case-insensitive comparisons against isEqual, which compares the chars through Character.toLowerCase().
+    private static void assertEqualsIgnoreCase(String l, String r, boolean isEqual) {
         final String message = "l=" + l + ", r=" + r;
         Assert.assertEquals(message, isEqual, Chars.equalsIgnoreCase(l, r));
         // and through CharSequences that are not Strings

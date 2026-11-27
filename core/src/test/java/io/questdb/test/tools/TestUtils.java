@@ -1883,6 +1883,55 @@ public final class TestUtils {
         return locks;
     }
 
+    /**
+     * Passes pairs of strings to the consumer, with whether the two are equal once each of their chars goes through
+     * {@link Character#toLowerCase(char)}: every char against itself, its lower, upper and title case, the char that
+     * differs from it in bit 0x20 and the next char; strings of different length; and random strings that mix ASCII,
+     * Latin-1 and other chars, some spelled in another case.
+     */
+    public static void forEachCaseVariantPair(Rnd rnd, CaseVariantPairConsumer consumer) {
+        // pairs that differ in case, and pairs that do not, for every char
+        final char[] others = new char[6];
+        for (int i = 0; i <= Character.MAX_VALUE; i++) {
+            final char c = (char) i;
+            others[0] = c;
+            others[1] = Character.toLowerCase(c);
+            others[2] = Character.toUpperCase(c);
+            others[3] = Character.toTitleCase(c);
+            others[4] = (char) (c ^ 0x20);
+            others[5] = (char) (c + 1);
+            final String l = String.valueOf(c);
+            for (char other : others) {
+                final String r = String.valueOf(other);
+                consumer.accept(l, r, isEqualIgnoringCase(l, r));
+            }
+        }
+
+        // empty strings, and strings of different length
+        for (String[] pair : new String[][]{{"", ""}, {"", "k"}, {"Trades", "trade"}, {"Trades", "TRADES_1"}}) {
+            consumer.accept(pair[0], pair[1], isEqualIgnoringCase(pair[0], pair[1]));
+        }
+
+        // strings mixing ASCII, Latin-1 and other chars, some spelled in another case; U+0130, U+0131 and U+212A
+        // are the dotted capital I, the dotless small i and the Kelvin sign
+        final char[] alphabet = {'a', 'B', 'z', 'Z', '_', '0', '@', '[', '`', '{', 'é', 'É', 'ß', '\u0130', '\u0131', 'Ω', 'ω', '\u212A'};
+        final StringBuilder l = new StringBuilder();
+        final StringBuilder r = new StringBuilder();
+        for (int i = 0; i < 10_000; i++) {
+            l.setLength(0);
+            r.setLength(0);
+            for (int j = 0, n = rnd.nextInt(12); j < n; j++) {
+                final char c = alphabet[rnd.nextInt(alphabet.length)];
+                l.append(c);
+                final int spelling = rnd.nextInt(4);
+                r.append(spelling == 0 ? Character.toUpperCase(c) : spelling == 1 ? Character.toLowerCase(c) : spelling == 2 ? alphabet[rnd.nextInt(alphabet.length)] : c);
+            }
+            final String ls = l.toString();
+            final String rs = r.toString();
+            consumer.accept(ls, rs, isEqualIgnoringCase(ls, rs));
+        }
+    }
+
     @NotNull
     public static Rnd generateRandom(Log log) {
         return generateRandom(log, seedOf("fuzz.s0", System.nanoTime()), seedOf("fuzz.s1", System.currentTimeMillis()));
@@ -3234,6 +3283,20 @@ public final class TestUtils {
         return ss;
     }
 
+    // The expected result of forEachCaseVariantPair(): equal length, and equal chars once each goes through
+    // Character.toLowerCase().
+    private static boolean isEqualIgnoringCase(String l, String r) {
+        if (l.length() != r.length()) {
+            return false;
+        }
+        for (int i = 0, n = l.length(); i < n; i++) {
+            if (Character.toLowerCase(l.charAt(i)) != Character.toLowerCase(r.charAt(i))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     private static long partitionIncrement(TimestampDriver driver, int partitionBy, long fromTimestamp, int totalRows, int partitionCount) {
         long increment = 0;
         if (PartitionBy.isPartitioned(partitionBy)) {
@@ -3375,6 +3438,11 @@ public final class TestUtils {
         properties.setProperty("user", username);
         properties.setProperty("password", password);
         return DriverManager.getConnection(getPgConnectionUri(pgPort), properties);
+    }
+
+    @FunctionalInterface
+    public interface CaseVariantPairConsumer {
+        void accept(String l, String r, boolean isEqualIgnoringCase);
     }
 
     public interface CheckedIntFunction {

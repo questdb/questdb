@@ -29,6 +29,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.std.Chars;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Rnd;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -67,44 +68,10 @@ public class LowerCaseCharSequenceObjHashMapTest {
     @Test
     public void testKeyIndexWithLowerCaseHashCodeMatchesCharacterToLowerCase() {
         final LowerCaseCharSequenceObjHashMap<Integer> map = new LowerCaseCharSequenceObjHashMap<>();
-        // pairs that differ in case, and pairs that do not, for every char
-        final char[] others = new char[6];
-        for (int i = 0; i <= Character.MAX_VALUE; i++) {
-            final char c = (char) i;
-            others[0] = c;
-            others[1] = Character.toLowerCase(c);
-            others[2] = Character.toUpperCase(c);
-            others[3] = Character.toTitleCase(c);
-            others[4] = (char) (c ^ 0x20);
-            others[5] = (char) (c + 1);
-            for (char other : others) {
-                assertKeyIndexWithLowerCaseHashCode(map, "k" + c, "k" + other);
-            }
-        }
-
-        // keys of different length
-        assertKeyIndexWithLowerCaseHashCode(map, "", "");
-        assertKeyIndexWithLowerCaseHashCode(map, "", "k");
-        assertKeyIndexWithLowerCaseHashCode(map, "Trades", "trade");
-        assertKeyIndexWithLowerCaseHashCode(map, "Trades", "TRADES_1");
-
-        // keys mixing ASCII, Latin-1 and other chars, some spelled in another case; U+0130, U+0131 and U+212A
-        // are the dotted capital I, the dotless small i and the Kelvin sign
-        final Rnd rnd = new Rnd(42, 7);
-        final char[] alphabet = {'a', 'B', 'z', 'Z', '_', '0', '@', '[', '`', '{', 'é', 'É', 'ß', '\u0130', '\u0131', 'Ω', 'ω', '\u212A'};
-        final StringBuilder mapKey = new StringBuilder();
-        final StringBuilder key = new StringBuilder();
-        for (int i = 0; i < 10_000; i++) {
-            mapKey.setLength(0);
-            key.setLength(0);
-            for (int j = 0, n = rnd.nextInt(12); j < n; j++) {
-                final char c = alphabet[rnd.nextInt(alphabet.length)];
-                mapKey.append(c);
-                final int spelling = rnd.nextInt(4);
-                key.append(spelling == 0 ? Character.toUpperCase(c) : spelling == 1 ? Character.toLowerCase(c) : spelling == 2 ? alphabet[rnd.nextInt(alphabet.length)] : c);
-            }
-            assertKeyIndexWithLowerCaseHashCode(map, mapKey.toString(), key.toString());
-        }
+        TestUtils.forEachCaseVariantPair(
+                new Rnd(42, 7),
+                (mapKey, key, isEqual) -> assertKeyIndexWithLowerCaseHashCode(map, mapKey, key, isEqual)
+        );
     }
 
     @Test
@@ -345,13 +312,10 @@ public class LowerCaseCharSequenceObjHashMapTest {
     }
 
     // Looks key up in a map that holds only mapKey, from the slot of mapKey, so that the lookup compares the two keys
-    // whether they are equal or not, and checks the result against Character.toLowerCase(), char by char. Two Strings
-    // take the loop of keyIndex(CharSequence, int), any other pair takes Chars.equalsIgnoreCase().
-    private static void assertKeyIndexWithLowerCaseHashCode(LowerCaseCharSequenceObjHashMap<Integer> map, String mapKey, String key) {
-        boolean isEqual = mapKey.length() == key.length();
-        for (int i = 0; isEqual && i < key.length(); i++) {
-            isEqual = Character.toLowerCase(mapKey.charAt(i)) == Character.toLowerCase(key.charAt(i));
-        }
+    // whether they are equal or not, and checks the result against isEqual, which compares the chars through
+    // Character.toLowerCase(). Two Strings take the loop of keyIndex(CharSequence, int), any other pair takes
+    // Chars.equalsIgnoreCase().
+    private static void assertKeyIndexWithLowerCaseHashCode(LowerCaseCharSequenceObjHashMap<Integer> map, String mapKey, String key, boolean isEqual) {
         final int hashCode = Chars.lowerCaseHashCode(mapKey);
         final int mask = map.getKeyCount() - 1;
         final int slot = hashCode & mask;
