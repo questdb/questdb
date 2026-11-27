@@ -92,6 +92,24 @@ public final class PhysicalProperties {
     }
 
     /**
+     * Whether the plan proves the order of a column of the factory of the first {@code inputCount} ordered inputs of
+     * the join, see {@link #orderOf}: they emit their rows in the order of the join's master, see {@link #masterOrder},
+     * and the master proves the order of one of its columns.
+     */
+    public static boolean isMasterOrderProven(JoinPlan join, int inputCount) {
+        if (masterOrder(join, inputCount) != Capability.YES) {
+            return false;
+        }
+        final LogicalPlan master = join.getOrderedInputs().getQuick(0).getInput();
+        for (int i = 0, n = master.getOutput().getColumnCount(); i < n; i++) {
+            if (orderOf(master, i) != ScanDirection.OTHER) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
      * Whether the plan passes on the rows of its ordered input themselves, see {@link #orderedInput}, which a copy of
      * either holds alike: a filter, a LIMIT the sort under it does not apply, a sort that keeps its input's order and a
      * projection the window factories do not build.
@@ -106,6 +124,16 @@ public final class PhysicalProperties {
                             || PlanToFactoryRules.projectionFactory(project) == PlanToFactoryRules.ProjectionFactory.SELECTION;
             default -> false;
         };
+    }
+
+    /**
+     * The order the plan emits the values of the expression over its columns in, as it proves it, see {@link #orderOf}:
+     * the order of the column the expression reads, of its own type or through calls that keep its order, see
+     * {@link LogicalPlans#orderSourceIndex}; {@link ScanDirection#OTHER} for any other expression.
+     */
+    public static ScanDirection keyOrder(LogicalPlan plan, BoundExpression key) {
+        final int index = LogicalPlans.orderSourceIndex(plan.getOutput(), key);
+        return index < 0 ? ScanDirection.OTHER : orderOf(plan, index);
     }
 
     /**
@@ -149,13 +177,15 @@ public final class PhysicalProperties {
     /**
      * The order the factory emits the values of the column at {@code columnIndex} in, as the plan proves it:
      * {@link ScanDirection#FORWARD} when they never decrease, {@link ScanDirection#BACKWARD} when they never increase and
-     * {@link ScanDirection#OTHER} otherwise. A table's own designated timestamp, in the direction the scan reports for
-     * it, a column a source function declares ordered, the key of a stream GROUP BY, the first key of a sort that sorts
-     * and the column a UNION ALL merges by start an order. A LATEST BY that reads a table keeps the order of the table's
-     * timestamp, one that reads its input again the input's order, and one that reads it by row id, in map order, none. A
-     * SAMPLE BY bucket and a fill that does not sort keep the order of their timestamp, a projection the order of the column its calls keep the order of, see
-     * {@link LogicalPlans#orderSourceColumnId}, and any other plan the order of its ordered input, see
-     * {@link #orderedInput}. A TIMESTAMP clause starts none: it only designates the column.
+     * {@link ScanDirection#OTHER} otherwise. {@link #scanDirection} is the direction the factory reports for its
+     * designated timestamp instead, which only a consumer that requires a designated timestamp trusts.
+     * <p>
+     * A table's own designated timestamp, in the direction the scan reports for it, a column a source function declares
+     * ordered, the key of a stream GROUP BY, the first key of a sort that sorts and the column a UNION ALL merges by
+     * start an order. A LATEST BY that scans a table keeps the order of the table's timestamp, and a SAMPLE BY bucket
+     * and a fill that does not sort the order of their timestamp. A projection column keeps the order of the input
+     * column its calls keep the order of, see {@link LogicalPlans#orderSourceColumnId}, and any other plan the order of
+     * its ordered input, see {@link #orderedInput}. A TIMESTAMP clause starts none: it only designates the column.
      */
     public static ScanDirection orderOf(LogicalPlan plan, int columnIndex) {
         while (columnIndex >= 0) {
@@ -166,7 +196,8 @@ public final class PhysicalProperties {
                             ? ordered(scanDirection(scan)) : ScanDirection.OTHER;
                 }
                 case FunctionSourcePlan source -> {
-                    return source.getRecordName() == null && source.getSourceColumnIndexes().getQuick(columnIndex) == source.getOrderedColumnIndex()
+                    return source.getRecordName() == null && source.getOrderedColumnIndex() >= 0
+                            && source.getSourceColumnIndexes().getQuick(columnIndex) == source.getOrderedColumnIndex()
                             ? ordered(source.getScanDirection()) : ScanDirection.OTHER;
                 }
                 case AggregatePlan aggregate -> {
@@ -184,18 +215,11 @@ public final class PhysicalProperties {
                     return operation.isMerged() && columnIndex == operation.getOutput().getColumnIndexById(operation.getRequestedOrderColumnId())
                             ? ScanDirection.of(operation.getRequestedOrderDirection()) : ScanDirection.OTHER;
                 }
-                case LatestByPlan latest -> {
+                case LatestByPlan latest when PlanToFactoryRules.latestByScan(latest) != null -> {
                     final ScanPlan scan = PlanToFactoryRules.latestByScan(latest);
-                    input = scan != null ? scan : latest.getChild();
-                    final int inputIndex = input.getOutput().getColumnIndexById(latest.getOutput().getColumnId(columnIndex));
-                    if (scan != null) {
-                        return inputIndex == scanTimestampIndex(scan) && scan.getOutput().getTimestampColumnId() == scan.getNativeTimestampColumnId()
-                                ? ordered(scanDirection(latest)) : ScanDirection.OTHER;
-                    }
-                    if (latest.getAlgorithm() != LatestByPlan.Algorithm.MATERIALIZED) {
-                        return ScanDirection.OTHER;
-                    }
-                    columnIndex = inputIndex;
+                    return scan.getOutput().getColumnIndexById(latest.getOutput().getColumnId(columnIndex)) == scanTimestampIndex(scan)
+                            && scan.getOutput().getTimestampColumnId() == scan.getNativeTimestampColumnId()
+                            ? ordered(scanDirection(latest)) : ScanDirection.OTHER;
                 }
                 case SampleByPlan sample -> {
                     if (columnIndex != sample.getOutput().getTimestampIndex()) {
@@ -236,9 +260,10 @@ public final class PhysicalProperties {
 
     /**
      * The input whose rows the plan emits in their order: the only input of a filter, a projection, a DISTINCT, a
-     * window, a LIMIT and a sort that keeps its input's order, the master of a window join, of a HORIZON JOIN and of a
-     * join that keeps the order of its master, see {@link #masterOrder}, and the left input of EXCEPT and INTERSECT;
-     * null for any other plan.
+     * window, a LIMIT and a sort that keeps its input's order, the input a LATEST BY that does not scan a table copies
+     * the latest rows of and reads again, see {@link LatestByPlan.Algorithm#MATERIALIZED}, the master of a window join,
+     * of a HORIZON JOIN and of a join that keeps the order of its master, see {@link #masterOrder}, and the left input
+     * of EXCEPT and INTERSECT; null for any other plan.
      */
     public static @Nullable LogicalPlan orderedInput(LogicalPlan plan) {
         return switch (plan) {
@@ -251,6 +276,8 @@ public final class PhysicalProperties {
                     sort.getAlgorithm() != null && sort.getAlgorithm().isInputOrder() ? sort.getChild() : null;
             case WindowJoinPlan windowJoin -> windowJoin.getMaster();
             case HorizonJoinPlan horizon -> horizon.getMaster();
+            case LatestByPlan latest -> PlanToFactoryRules.latestByScan(latest) == null
+                    && latest.getAlgorithm() == LatestByPlan.Algorithm.MATERIALIZED ? latest.getChild() : null;
             case JoinPlan join ->
                     masterOrder(join, join.getOrderedInputs().size()) == Capability.YES ? join.getOrderedInputs().getQuick(0).getInput() : null;
             case SetOperationPlan operation -> operation.getOperation().isUnion() ? null : operation.getLeft();
@@ -334,7 +361,9 @@ public final class PhysicalProperties {
     }
 
     /**
-     * The order the factory emits its rows in, by designated timestamp.
+     * The order the factory reports it emits its rows in, by designated timestamp, see
+     * {@link RecordCursorFactory#getScanDirection}, which a consumer that requires a designated timestamp trusts. The
+     * order the plan proves for a column is {@link #orderOf}.
      */
     public static ScanDirection scanDirection(LogicalPlan plan) {
         return direction(derive(plan, null));

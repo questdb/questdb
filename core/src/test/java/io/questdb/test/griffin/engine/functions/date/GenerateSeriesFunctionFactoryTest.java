@@ -583,6 +583,161 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
     }
 
     @Test
+    public void testOrderBySeriesAgainstStepOrderWithLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            assertQuery("generate_series('2025-01-01', '2025-01-05', '-1d') ORDER BY generate_series LIMIT 2")
+                    .noLeakCheck()
+                    .timestamp("generate_series")
+                    .expectSize()
+                    .withPlan("""
+                            Encode sort lo: 2 partiallySorted: true
+                              keys: [generate_series]
+                                generate_series start: 2025-01-01T00:00:00.000000Z end: 2025-01-05T00:00:00.000000Z step: '-1d'
+                            """)
+                    .returns("""
+                            generate_series
+                            2025-01-01T00:00:00.000000Z
+                            2025-01-02T00:00:00.000000Z
+                            """);
+            assertQuery("SELECT generate_series ts, 0 x FROM generate_series('2025-01-01', '2025-01-05', '1d') ORDER BY ts, x LIMIT 2")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .withPlan("""
+                            Encode sort lo: 2 partiallySorted: true
+                              keys: [ts, x]
+                                VirtualRecord
+                                  functions: [generate_series,0]
+                                    generate_series start: 2025-01-01T00:00:00.000000Z end: 2025-01-05T00:00:00.000000Z step: '1d'
+                            """)
+                    .returns("""
+                            ts\tx
+                            2025-01-01T00:00:00.000000Z\t0
+                            2025-01-02T00:00:00.000000Z\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testOrderBySeriesInStepOrderSkipsSort() throws Exception {
+        assertMemoryLeak(() -> {
+            assertQuery("generate_series(1, 5, 2) ORDER BY generate_series")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan("generate_series start: 1 end: 5 step: 2\n")
+                    .returns("""
+                            generate_series
+                            1
+                            3
+                            5
+                            """);
+            assertQuery("generate_series(1, 5, -2) ORDER BY generate_series DESC")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan("generate_series start: 1 end: 5 step: -2\n")
+                    .returns("""
+                            generate_series
+                            5
+                            3
+                            1
+                            """);
+            assertQuery("generate_series(1, 5, -2) ORDER BY generate_series")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan("""
+                            Encode sort light
+                              keys: [generate_series]
+                                generate_series start: 1 end: 5 step: -2
+                            """)
+                    .returns("""
+                            generate_series
+                            1
+                            3
+                            5
+                            """);
+            assertQuery("generate_series(1.0, 2.0, 0.5) ORDER BY generate_series")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("generate_series start: 1.0 end: 2.0 step: 0.5\n")
+                    .returns("""
+                            generate_series
+                            1.0
+                            1.5
+                            2.0
+                            """);
+            assertQuery("generate_series(1.0, 2.0, -0.5) ORDER BY generate_series DESC")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("generate_series start: 1.0 end: 2.0 step: -0.5\n")
+                    .returns("""
+                            generate_series
+                            2.0
+                            1.5
+                            1.0
+                            """);
+            assertQuery("generate_series('2025-01-01'::timestamp, '2025-01-03'::timestamp, 86_400_000_000) ORDER BY generate_series")
+                    .noLeakCheck()
+                    .timestamp("generate_series")
+                    .expectSize()
+                    .withPlan("generate_series start: 2025-01-01T00:00:00.000000Z end: 2025-01-03T00:00:00.000000Z step: 86400000000L\n")
+                    .returns("""
+                            generate_series
+                            2025-01-01T00:00:00.000000Z
+                            2025-01-02T00:00:00.000000Z
+                            2025-01-03T00:00:00.000000Z
+                            """);
+            assertQuery("generate_series('2025-01-01'::timestamp, '2025-01-03'::timestamp, -86_400_000_000) ORDER BY generate_series DESC")
+                    .noLeakCheck()
+                    .timestampDesc("generate_series")
+                    .expectSize()
+                    .withPlan("generate_series start: 2025-01-01T00:00:00.000000Z end: 2025-01-03T00:00:00.000000Z step: -86400000000L\n")
+                    .returns("""
+                            generate_series
+                            2025-01-03T00:00:00.000000Z
+                            2025-01-02T00:00:00.000000Z
+                            2025-01-01T00:00:00.000000Z
+                            """);
+            assertQuery("generate_series('2025-01-01', '2025-01-03', '1d') ORDER BY generate_series")
+                    .noLeakCheck()
+                    .timestamp("generate_series")
+                    .expectSize()
+                    .withPlan("generate_series start: 2025-01-01T00:00:00.000000Z end: 2025-01-03T00:00:00.000000Z step: '1d'\n")
+                    .returns("""
+                            generate_series
+                            2025-01-01T00:00:00.000000Z
+                            2025-01-02T00:00:00.000000Z
+                            2025-01-03T00:00:00.000000Z
+                            """);
+            assertQuery("generate_series('2025-01-01', '2025-01-03', '-1d') ORDER BY generate_series DESC")
+                    .noLeakCheck()
+                    .timestampDesc("generate_series")
+                    .expectSize()
+                    .withPlan("generate_series start: 2025-01-01T00:00:00.000000Z end: 2025-01-03T00:00:00.000000Z step: '-1d'\n")
+                    .returns("""
+                            generate_series
+                            2025-01-03T00:00:00.000000Z
+                            2025-01-02T00:00:00.000000Z
+                            2025-01-01T00:00:00.000000Z
+                            """);
+            bindVariableService.setLong("step", 2);
+            assertQuery("generate_series(1, 5, :step) ORDER BY generate_series")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan("""
+                            Encode sort light
+                              keys: [generate_series]
+                                generate_series start: 1 end: 5 step: :step::long
+                            """)
+                    .returns("""
+                            generate_series
+                            1
+                            3
+                            5
+                            """);
+        });
+    }
+
+    @Test
     public void testPeriodErrorPosition() throws Exception {
         assertQuery("generate_series(1, 100, '11');")
                 .fails(24, "invalid period [period=11]");
@@ -627,6 +782,12 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
                     "generate_series('2025-01-01'::timestamp, '2025-02-01'::timestamp, 86_400_000_000)");
             assertScanDirection(RecordCursorFactory.SCAN_DIRECTION_BACKWARD,
                     "generate_series('2025-01-01'::timestamp, '2025-02-01'::timestamp, -86_400_000_000)");
+            assertScanDirection(RecordCursorFactory.SCAN_DIRECTION_FORWARD, "generate_series(1, 5, 2)");
+            assertScanDirection(RecordCursorFactory.SCAN_DIRECTION_BACKWARD, "generate_series(1, 5, -2)");
+            assertScanDirection(RecordCursorFactory.SCAN_DIRECTION_FORWARD, "generate_series(1, 5)");
+            assertScanDirection(RecordCursorFactory.SCAN_DIRECTION_FORWARD, "generate_series(1.0, 2.0, 0.5)");
+            assertScanDirection(RecordCursorFactory.SCAN_DIRECTION_BACKWARD, "generate_series(1.0, 2.0, -0.5)");
+            assertScanDirection(RecordCursorFactory.SCAN_DIRECTION_FORWARD, "generate_series(1.0, 2.0)");
 
             // A bind-variable step is only known at runtime, so the scan order cannot be
             // guaranteed at plan time: the factory must report SCAN_DIRECTION_OTHER instead of
@@ -638,6 +799,10 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
             bindVariableService.setLong("stepLong", 86_400_000_000L);
             assertScanDirection(RecordCursorFactory.SCAN_DIRECTION_OTHER,
                     "generate_series('2025-01-01'::timestamp, '2025-02-01'::timestamp, :stepLong)");
+            assertScanDirection(RecordCursorFactory.SCAN_DIRECTION_OTHER, "generate_series(1, 5, :stepLong)");
+
+            bindVariableService.setDouble("stepDouble", 0.5);
+            assertScanDirection(RecordCursorFactory.SCAN_DIRECTION_OTHER, "generate_series(1.0, 2.0, :stepDouble)");
         });
     }
 

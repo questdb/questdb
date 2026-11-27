@@ -846,14 +846,15 @@ public final class FunctionInstantiator implements Mutable {
     /**
      * Whether the timestamp order a monotonic timestamp factory declares for the call holds for the function built for
      * it over {@code arguments}: the order the binder recorded is the declared one, see
-     * {@link FunctionExpression#getOrderArgumentIndex}, a declared identity is the built timestamp argument itself, see
+     * {@link FunctionExpression#getOrderArgumentIndex} and {@link FunctionExpression#isOrderIdentity}, a declared
+     * identity is the built timestamp argument itself, see
      * {@link MonotonicTimestampFunctionFactory#isIdentity}, a declared order holds for the built function, see
      * {@link MonotonicTimestampFunctionFactory#preservesTimestampOrder}, and when every argument but the timestamp
      * argument is a constant, the declaration answers as the built function does.
      */
     private boolean isDeclaredTimestampOrder(FunctionExpression call, Function function, ObjList<Function> arguments) throws SqlException {
-        final int orderIndex = call.getOrderArgumentIndex();
-        if (orderIndex >= 0 && orderIndex != MonotonicTimestampFunctionFactory.orderArgumentIndex(call, constantArguments)) {
+        if (call.getOrderArgumentIndex() != MonotonicTimestampFunctionFactory.orderArgumentIndex(call, constantArguments)
+                || call.isOrderIdentity() != MonotonicTimestampFunctionFactory.isIdentityCall(call, constantArguments)) {
             return false;
         }
         final MonotonicTimestampFunctionFactory factory = MonotonicTimestampFunctionFactory.of(call);

@@ -40,6 +40,7 @@ import io.questdb.griffin.plan.logical.BoundExpressionRewriter;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.CursorExpression;
 import io.questdb.griffin.plan.logical.FunctionExpression;
+import io.questdb.griffin.plan.logical.LogicalPlans;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.ScanPlan;
 import io.questdb.std.Interval;
@@ -184,11 +185,11 @@ public final class IntervalAnalysis {
         @Override
         public int invertMonotonic(BoundExpression operand, Function head, Interval io) throws SqlException {
             int soundness = MonotonicTimestampFunction.EXACT;
-            BoundExpression layer = MonotonicTimestampFunctionFactory.skipIdentities(operand, arguments);
+            BoundExpression layer = LogicalPlans.skipIdentities(operand);
             int index;
             while ((index = timestampArgumentIndex(layer)) >= 0) {
                 final FunctionExpression call = (FunctionExpression) layer;
-                final BoundExpression argument = MonotonicTimestampFunctionFactory.skipIdentities(call.argumentAt(index), arguments);
+                final BoundExpression argument = LogicalPlans.skipIdentities(call.argumentAt(index));
                 final int grade = MonotonicTimestampFunctionFactory.of(call).invertTimestampInterval(call, io, timestampArgumentIndex(argument) >= 0, arguments);
                 if (grade == MonotonicTimestampFunction.NONE) {
                     return grade;

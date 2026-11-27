@@ -24,13 +24,10 @@
 
 package io.questdb.griffin.optimiser;
 
-import io.questdb.cairo.ColumnType;
-import io.questdb.griffin.model.WindowExpression;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.BuildSide;
-import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.DistinctPlan;
 import io.questdb.griffin.plan.logical.DomainReadPlan;
 import io.questdb.griffin.plan.logical.FillPlan;
@@ -137,7 +134,11 @@ final class PhysicalChoiceVerifier {
 
     private static boolean isBounded(SortPlan.Algorithm algorithm) {
         return algorithm == SortPlan.Algorithm.LIMITED || algorithm == SortPlan.Algorithm.PRESORTED_LIMITED
-                || algorithm == SortPlan.Algorithm.COPIED_LIMITED || isTopK(algorithm);
+                || isCopiedLimited(algorithm) || isTopK(algorithm);
+    }
+
+    private static boolean isCopiedLimited(SortPlan.Algorithm algorithm) {
+        return algorithm == SortPlan.Algorithm.COPIED_LIMITED || algorithm == SortPlan.Algorithm.PRESORTED_COPIED_LIMITED;
     }
 
     /**
@@ -323,9 +324,9 @@ final class PhysicalChoiceVerifier {
 
     /**
      * Whether the stream choice of the aggregate holds: a GROUP BY that streams is a serial or parallel GROUP BY without
-     * grouping sets that streams by one of its TIMESTAMP, LONG or INT keys, which reads, of its own type or through calls
-     * that keep its order, a column its input emits forward, or backward in parallel, see
-     * {@link PhysicalProperties#orderOf}, and scans backward only in parallel; any other aggregate never scans backward.
+     * grouping sets that streams by one of its keys that never decreases along its input rows, see
+     * {@link OperatorPlanning#isAscendingKey}, and scans backward only in parallel; any other aggregate never scans
+     * backward.
      */
     private static boolean isStreamConsistent(AggregatePlan aggregate, AggregatePlan.Algorithm algorithm, PlanToFactoryRules.AggregateFactory factory) {
         final int keyIndex = aggregate.getStreamKeyIndex();
@@ -337,15 +338,15 @@ final class PhysicalChoiceVerifier {
                 || keyIndex >= aggregate.getGroupingExpressions().size() || aggregate.isStreamBackward() && !isParallel) {
             return false;
         }
-        final BoundExpression key = aggregate.getGroupingExpressions().getQuick(keyIndex);
-        final int keyType = key.getDataType();
-        final ColumnExpression source = LogicalPlans.orderSource(key);
-        final OutputSchema input = aggregate.getChild().getOutput();
-        final int sourceIndex = source == null ? -1 : input.getColumnIndexById(source.getColumnId());
-        final PhysicalProperties.ScanDirection order = sourceIndex < 0 || source.getDataType() != input.getColumnType(sourceIndex)
-                ? PhysicalProperties.ScanDirection.OTHER : PhysicalProperties.orderOf(aggregate.getChild(), sourceIndex);
-        return (ColumnType.isTimestamp(keyType) || keyType == ColumnType.LONG || keyType == ColumnType.INT)
-                && (order == PhysicalProperties.ScanDirection.FORWARD || isParallel && order == PhysicalProperties.ScanDirection.BACKWARD);
+        return OperatorPlanning.isAscendingKey(aggregate, aggregate.getGroupingExpressions().getQuick(keyIndex), isParallel);
+    }
+
+    /**
+     * Whether the input of the markout horizon sort follows the order advice it gave its scans, which deliver the
+     * horizon's order.
+     */
+    private static boolean isMarkoutHorizonDelivered(SortPlan sort) {
+        return sort.isMarkoutHorizon() && PhysicalProperties.followsOrderAdvice(sort.getChild()) == PhysicalProperties.Capability.YES;
     }
 
     /**
@@ -683,11 +684,9 @@ final class PhysicalChoiceVerifier {
         if (inputTimestampIndex == PhysicalProperties.UNKNOWN_TIMESTAMP) {
             return null;
         }
-        final boolean isValid = switch (algorithm) {
-            case SAMPLE_BY_ROWS -> inputTimestampIndex == fill.derivedTimestampIndex();
-            case INPUT_ORDER -> OperatorPlanning.isFillInputOrdered(fill);
-            case SORTED -> !OperatorPlanning.isFillInputOrdered(fill) || PlanToFactoryRules.isPrevRowRead(fill);
-        };
+        final boolean isValid = algorithm == FillPlan.Algorithm.SAMPLE_BY_ROWS
+                ? inputTimestampIndex == fill.derivedTimestampIndex()
+                : algorithm != FillPlan.Algorithm.INPUT_ORDER || OperatorPlanning.isFillBucketOrdered(fill);
         return isValid ? null : PlanVerifier.FILL_ALGORITHM;
     }
 
@@ -839,12 +838,13 @@ final class PhysicalChoiceVerifier {
         if (sort == null || application != LimitPlan.Application.SORT) {
             return null;
         }
-        final boolean isTimestampOrdered = OperatorPlanning.isTimestampOrdered(sort);
-        if (algorithm == SortPlan.Algorithm.COPIED_LIMITED) {
-            return PhysicalProperties.supportsRandomAccess(sort.getChild()) == PhysicalProperties.Capability.YES ? PlanVerifier.LIMIT_APPLICATION : null;
+        if (isCopiedLimited(algorithm)) {
+            return PhysicalProperties.supportsRandomAccess(sort.getChild()) == PhysicalProperties.Capability.YES
+                    || algorithm == SortPlan.Algorithm.PRESORTED_COPIED_LIMITED && !OperatorPlanning.isCopiedPresorted(sort)
+                    ? PlanVerifier.LIMIT_APPLICATION : null;
         }
-        return (algorithm == SortPlan.Algorithm.PRESORTED_LIMITED) != isTimestampOrdered
-                || isTopK(algorithm) && !OperatorPlanning.isTopKLimit(limit, isTimestampOrdered)
+        return algorithm == SortPlan.Algorithm.PRESORTED_LIMITED && !OperatorPlanning.isTimestampOrdered(sort)
+                || isTopK(algorithm) && !OperatorPlanning.isTopKCount(limit.getLo(), limit.getHi())
                 ? PlanVerifier.LIMIT_APPLICATION : null;
     }
 
@@ -929,7 +929,7 @@ final class PhysicalChoiceVerifier {
         if (algorithm == null) {
             return isPlanned ? PlanVerifier.CHOICE_UNPLANNED : null;
         }
-        if (algorithm.isInputOrder() && !sort.isMarkoutHorizon() && !isOrderDelivered(sort)
+        if (algorithm.isInputOrder() && !isMarkoutHorizonDelivered(sort) && !isOrderDelivered(sort)
                 || isBounded(algorithm) && !sort.isLimited()
                 || algorithm == SortPlan.Algorithm.PARALLEL_FILTERED_TOP_K && PlanToFactoryRules.stolenFilter(PlanToFactoryRules.parallelTopKSource(sort)) == null) {
             return PlanVerifier.SORT_ALGORITHM;
@@ -1005,16 +1005,10 @@ final class PhysicalChoiceVerifier {
         final LogicalPlan input = window.getChild();
         final boolean isAdviceFollowed = PhysicalProperties.followsOrderAdvice(input) == PhysicalProperties.Capability.YES
                 && PlanToFactoryRules.hasAdvisedInput(input);
-        final int timestampIndex = PhysicalProperties.timestampIndex(input);
-        final PhysicalProperties.ScanDirection direction = PhysicalProperties.scanDirection(input);
-        final PhysicalProperties.ScanDirection timestampOrder = PhysicalProperties.orderOf(input, timestampIndex);
         for (int i = 0, n = window.getSpecs().size(); i < n; i++) {
             final WindowSpec spec = window.getSpecs().getQuick(i);
-            final IntList order = spec.getOrderByColumnIds();
             if (spec.isOrderDelivered() && !(isAdviceFollowed && spec.isOrderedByQueryOrder(window.getQueryOrder())
-                    || order.size() == 1 && timestampIndex > -1 && input.getOutput().getColumnIndexById(order.getQuick(0)) == timestampIndex
-                    && (spec.getFramingMode() == WindowExpression.FRAMING_RANGE ? direction : timestampOrder)
-                    == PhysicalProperties.ScanDirection.of(spec.getOrderByDirections().getQuick(0)))) {
+                    || OperatorPlanning.isTimestampKeyOrdered(input, spec))) {
                 return PlanVerifier.WINDOW_ORDER;
             }
         }

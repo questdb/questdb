@@ -51,21 +51,6 @@ public class GenerateSeriesTimestampRecordCursorFactory extends AbstractGenerate
         return cursor;
     }
 
-    @Override
-    public int getScanDirection() {
-        // A bind-variable step is only known at runtime, so the order cannot be guaranteed
-        // at plan time. Reading getLong() off an unbound function would yield a misleading
-        // direction, so report the order only for a constant step.
-        if (!stepFunc.isConstant()) {
-            return SCAN_DIRECTION_OTHER;
-        }
-        if (stepFunc.getLong(null) > 0) {
-            return SCAN_DIRECTION_FORWARD;
-        } else {
-            return SCAN_DIRECTION_BACKWARD;
-        }
-    }
-
     private static class GenerateSeriesTimestampRecordCursor extends AbstractGenerateSeriesRecordCursor {
         private final GenerateSeriesTimestampRecord recordA = new GenerateSeriesTimestampRecord();
         private final GenerateSeriesTimestampRecord recordB = new GenerateSeriesTimestampRecord();

@@ -33,7 +33,6 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.engine.functions.MonotonicTimestampFunction;
-import io.questdb.griffin.engine.functions.MonotonicTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.RuntimeConstFunction.TimestampTextRuntimeConstFunction;
 import io.questdb.griffin.engine.functions.RuntimeConstFunction;
 import io.questdb.griffin.model.DateExpressionEvaluator;
@@ -47,6 +46,7 @@ import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.CursorExpression;
 import io.questdb.griffin.plan.logical.FunctionExpression;
+import io.questdb.griffin.plan.logical.LogicalPlans;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.ScanPlan;
 import io.questdb.std.Interval;
@@ -63,7 +63,6 @@ import io.questdb.std.str.StringSink;
  */
 public final class IntervalExtractor implements Mutable {
     private static final int MAX_SPECULATIVE_SCALAR_BOUND_DEPTH = 4;
-    private final MonotonicTimestampFunctionFactory.ConstantArguments arguments;
     private final CairoConfiguration configuration;
     private final ColumnExpression identityColumn = new ColumnExpression();
     private final Interval interval;
@@ -85,12 +84,11 @@ public final class IntervalExtractor implements Mutable {
     private int timestampType;
 
     public IntervalExtractor(CairoConfiguration configuration, StringSink intervalText, LongList parsedIntervals) {
-        this(configuration, intervalText, parsedIntervals, new Interval(), new MonotonicTimestampFunctionFactory.ConstantArguments(), false);
+        this(configuration, intervalText, parsedIntervals, new Interval(), false);
     }
 
     private IntervalExtractor(CairoConfiguration configuration, StringSink intervalText, LongList parsedIntervals, Interval interval,
-                              MonotonicTimestampFunctionFactory.ConstantArguments arguments, boolean isNestedOffset) {
-        this.arguments = arguments;
+                              boolean isNestedOffset) {
         this.configuration = configuration;
         this.intervalText = intervalText;
         this.parsedIntervals = parsedIntervals;
@@ -989,7 +987,7 @@ public final class IntervalExtractor implements Mutable {
             return predicate;
         }
         if (offsetIntervals == null) {
-            offsetIntervals = new IntervalExtractor(configuration, intervalText, parsedIntervals, interval, arguments, true);
+            offsetIntervals = new IntervalExtractor(configuration, intervalText, parsedIntervals, interval, true);
         }
         final IntervalExtractor source = offsetIntervals;
         final BoundExpression residual;
@@ -1148,13 +1146,13 @@ public final class IntervalExtractor implements Mutable {
     }
 
     /**
-     * The designated timestamp a call reads as itself, through calls whose factories declare they build their timestamp
-     * argument ({@link MonotonicTimestampFunctionFactory#isIdentity}): the column as a reference that is not direct, as
-     * the binder binds an identity cast. Null for any other operand.
+     * The designated timestamp a call reads as itself, through calls the binder records as their timestamp argument
+     * itself, see {@link FunctionExpression#isOrderIdentity}: the column as a reference that is not direct, as the binder
+     * binds an identity cast. Null for any other operand.
      */
-    private ColumnExpression timestampIdentity(BoundExpression operand, int timestampColumnId) throws SqlException {
+    private ColumnExpression timestampIdentity(BoundExpression operand, int timestampColumnId) {
         return operand instanceof FunctionExpression
-                && MonotonicTimestampFunctionFactory.skipIdentities(operand, arguments) instanceof ColumnExpression column
+                && LogicalPlans.skipIdentities(operand) instanceof ColumnExpression column
                 && column.getColumnId() == timestampColumnId
                 ? identityColumn.of(column.getColumnId(), column.getDataType(), operand.getPosition(), false, true) : null;
     }

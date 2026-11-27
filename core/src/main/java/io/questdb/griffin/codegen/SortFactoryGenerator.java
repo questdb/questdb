@@ -181,15 +181,13 @@ final class SortFactoryGenerator {
                             algorithm == SortPlan.Algorithm.PRESORTED_LIMITED ? Math.abs(firstKey) - 1 : -1,
                             configuration.isSqlOrderBySortEnabled(), false, valueMaxBytes);
                 }
-                case COPIED_LIMITED -> {
+                case COPIED_LIMITED, PRESORTED_COPIED_LIMITED -> {
                     assert bounds != null;
-                    final LogicalPlan child = sort.getChild();
-                    final int firstKeyIndex = Math.abs(firstKey) - 1;
-                    final boolean isPresorted = PhysicalProperties.timestampIndex(child) == firstKeyIndex
-                            && PhysicalProperties.orderOf(child, firstKeyIndex) != PhysicalProperties.ScanDirection.OTHER;
                     isInputTransferred = true;
                     isLimitTransferred = true;
-                    return generateSort(metadata, base, keys, bounds, isPresorted ? firstKeyIndex : -1, true, true, valueMaxBytes);
+                    return generateSort(metadata, base, keys, bounds,
+                            algorithm == SortPlan.Algorithm.PRESORTED_COPIED_LIMITED ? Math.abs(firstKey) - 1 : -1,
+                            true, true, valueMaxBytes);
                 }
                 default -> {
                     isInputTransferred = true;

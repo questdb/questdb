@@ -1182,7 +1182,8 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
                     final FunctionExpression conversion = ctx.planNodes.functions.next().of(overload, ctx.tmpArguments,
                             ctx.tmpPositions, function.getType(),
                             BoundExpression.functionFlags(function), position);
-                    conversion.setOrderArgumentIndex(MonotonicTimestampFunctionFactory.orderArgumentIndex(conversion, constantArguments));
+                    conversion.setOrderArgument(MonotonicTimestampFunctionFactory.orderArgumentIndex(conversion, constantArguments),
+                            MonotonicTimestampFunctionFactory.isIdentityCall(conversion, constantArguments));
                     if (!unconstructedIndex.excludes(arguments.getQuick(index))) {
                         addUnconstructed(conversion);
                     }
@@ -1485,7 +1486,8 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
      */
     private FunctionExpression describeCall(FunctionFactoryDescriptor overload, CharSequence name, int type, int flags, int position) throws SqlException {
         final FunctionExpression call = ctx.planNodes.functions.next().of(overload, arguments, argumentPositions, type, flags, position);
-        call.setOrderArgumentIndex(MonotonicTimestampFunctionFactory.orderArgumentIndex(call, constantArguments));
+        call.setOrderArgument(MonotonicTimestampFunctionFactory.orderArgumentIndex(call, constantArguments),
+                MonotonicTimestampFunctionFactory.isIdentityCall(call, constantArguments));
         if ((overload.getFactory().getExecutionRequirements() & SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT) != 0) {
             call.setAdministrativeFact(RequirementFact.administrative(name, resolver.getRequirementPosition(position), false));
         }
