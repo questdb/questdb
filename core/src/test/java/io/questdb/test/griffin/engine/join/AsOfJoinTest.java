@@ -2378,6 +2378,37 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsOfJoinOverUnionAllTiedByLaterJoinOnTextColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE u2 (c STRING, v VARCHAR, s STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE u1 (s SYMBOL, v SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO u2 VALUES
+                    ('b', 'b', 'b', '1970-01-01T00:00:00Z'),
+                    ('a', NULL, NULL, '1970-01-01T00:00:01Z'),
+                    (NULL, 'a', 'a', '1970-01-01T00:00:02Z')
+                    """);
+            execute("INSERT INTO u1 VALUES ('a', NULL, '1970-01-01T00:00:00Z')");
+            final String union = "((SELECT * FROM u2 UNION ALL SELECT * FROM u2 WHERE 1 = 0) TIMESTAMP(ts))";
+            for (String join : new String[]{"ASOF", "LT"}) {
+                final String query = """
+                        SELECT a1.c, a1.v FROM u2 a0
+                        %s JOIN %s a1 ON a1.v = a0.c AND a1.c = a0.v
+                        JOIN u1 a2 ON a2.s = a0.c AND a2.v = a1.c AND a2.v = a1.s
+                        """;
+                assertQuery(query.formatted(join, union))
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("""
+                                c\tv
+                                \t
+                                """);
+                assertSqlCursors(query.formatted(join, "u2"), query.formatted(join, union));
+            }
+        });
+    }
+
+    @Test
     public void testAsOfJoinOverTimestampOrderedUnionAllVarSizeColumns() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE m (ts TIMESTAMP, k INT) TIMESTAMP(ts) PARTITION BY DAY");

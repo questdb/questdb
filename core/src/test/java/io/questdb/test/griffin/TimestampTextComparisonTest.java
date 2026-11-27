@@ -409,7 +409,7 @@ public class TimestampTextComparisonTest extends AbstractCairoTest {
                         final String query = "SELECT v FROM t WHERE " + predicate.replace("?", column);
                         final ObjList<BindVarTuple> cases = new ObjList<>();
                         cases.add(BindVarTuple.ok("valid text", "v\n", texts(textType, "2024-01-02", null)));
-                        cases.add(BindVarTuple.fails("invalid text", isDate ? 0 : query.indexOf(":s"), "inconvertible value: `abc` [" + textType + " -> " + targetType + "]",
+                        cases.add(BindVarTuple.fails("invalid text", query.indexOf(":s"), "inconvertible value: `abc` [" + textType + " -> " + targetType + "]",
                                 texts(textType, "abc", null)));
                         assertQuery(query).noLeakCheck().assertBinds(cases);
                     }
@@ -463,7 +463,7 @@ public class TimestampTextComparisonTest extends AbstractCairoTest {
                     cases.add(BindVarTuple.ok("text at boundary", atBoundary, texts(textType, "2024-01-02", "2024-01-03")));
                     cases.add(BindVarTuple.ok("text rebound below all rows", belowAll, texts(textType, "2024-01-01", "2024-01-02")));
                     cases.add(BindVarTuple.ok("null text", nullText, texts(textType, null, "2024-01-03")));
-                    cases.add(BindVarTuple.fails("invalid text", isDate ? 0 : query.indexOf(":s"), "inconvertible value: `abc` [" + textType + " -> " + targetType + "]",
+                    cases.add(BindVarTuple.fails("invalid text", query.indexOf(":s"), "inconvertible value: `abc` [" + textType + " -> " + targetType + "]",
                             texts(textType, "abc", "2024-01-03")));
                     assertQuery(query).noLeakCheck().expectSize().assertBinds(cases);
                 }

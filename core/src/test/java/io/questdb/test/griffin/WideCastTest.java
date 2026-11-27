@@ -428,10 +428,10 @@ public class WideCastTest extends AbstractCairoTest {
                     """);
             assertCasts("null::LONG256", LONG256_TARGETS, "INT,BOOLEAN,BYTE,CHAR,SHORT,INT,LONG,DOUBLE,DOUBLE,DATE,TIMESTAMP,TIMESTAMP_NS,STRING,VARCHAR,SYMBOL", """
                     id	v0	v1	v2	v3	v4	v5	v6	v7	v8	v9	v10	v11	v12	v13
-                    1	false	0		0	null	null	null	null						null
-                    2	false	0		0	null	null	null	null						null
-                    3	false	0		0	null	null	null	null						null
-                    4	false	0		0	null	null	null	null						null
+                    1	false	0		0	null	null	null	null					\t
+                    2	false	0		0	null	null	null	null					\t
+                    3	false	0		0	null	null	null	null					\t
+                    4	false	0		0	null	null	null	null					\t
                     """);
             assertRowsOnly(
                     "SELECT id,h::LONG256 same,(s::VARCHAR)::LONG256 text FROM lp_wide_cast ORDER BY id",
