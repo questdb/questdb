@@ -1700,7 +1700,7 @@ public class MicrosTimestampDriver implements TimestampDriver {
 
     @Override
     public long toSeconds(long timestamp) {
-        return timestamp == Numbers.LONG_NULL ? Numbers.LONG_NULL : timestamp / Micros.SECOND_MICROS;
+        return timestamp == Numbers.LONG_NULL ? Numbers.LONG_NULL : Math.floorDiv(timestamp, Micros.SECOND_MICROS);
     }
 
     @Override

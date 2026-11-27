@@ -1672,7 +1672,7 @@ public class NanosTimestampDriver implements TimestampDriver {
 
     @Override
     public long toSeconds(long timestamp) {
-        return timestamp == Numbers.LONG_NULL ? Numbers.LONG_NULL : timestamp / Nanos.SECOND_NANOS;
+        return timestamp == Numbers.LONG_NULL ? Numbers.LONG_NULL : Math.floorDiv(timestamp, Nanos.SECOND_NANOS);
     }
 
     @Override
