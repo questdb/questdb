@@ -32,6 +32,7 @@ import io.questdb.griffin.plan.logical.JoinInput;
 import io.questdb.griffin.plan.logical.JoinPlan;
 import io.questdb.griffin.plan.logical.LatestByPlan;
 import io.questdb.griffin.plan.logical.LimitPlan;
+import io.questdb.griffin.plan.logical.PhysicalProperties;
 import io.questdb.griffin.plan.logical.SampleByPlan;
 import io.questdb.griffin.plan.logical.SetOperationPlan;
 import io.questdb.griffin.plan.logical.SortPlan;
@@ -225,6 +226,71 @@ public class OrderOperatorPlanningTest extends AbstractCairoTest {
                     .timestamp("ts")
                     .expectSize()
                     .returns(RESORTED_JOIN_ROWS);
+        });
+    }
+
+    @Test
+    public void testDeclaredTimestampProvesNoOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            createDeclaredTable();
+            final String declared = "((SELECT * FROM d WHERE v < 5) TIMESTAMP(k))";
+            final String ordered = """
+                    k\tv
+                    2024-01-01T00:00:00.000000Z\t2
+                    2024-01-02T00:00:00.000000Z\t4
+                    2024-01-03T00:00:00.000000Z\t1
+                    2024-01-04T00:00:00.000000Z\t3
+                    """;
+            assertQuery("SELECT k, v FROM " + declared + " ORDER BY k")
+                    .noLeakCheck()
+                    .timestamp("k")
+                    .withPlanContaining("keys: [k]")
+                    .returns(ordered);
+            assertQuery("""
+                    SELECT * FROM (
+                        SELECT k, v FROM ((SELECT * FROM d WHERE v IN (1, 2)) TIMESTAMP(k))
+                        UNION ALL
+                        SELECT k, v FROM ((SELECT * FROM d WHERE v IN (3, 4)) TIMESTAMP(k))
+                    ) ORDER BY k
+                    """)
+                    .noLeakCheck()
+                    .timestamp("k")
+                    .withPlanNotContaining("Merge")
+                    .returns(ordered);
+            assertQuery("SELECT k, sum(v) OVER (ORDER BY k ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) s FROM " + declared + " ORDER BY k")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("k")
+                    .returns("""
+                            k\ts
+                            2024-01-01T00:00:00.000000Z\t2.0
+                            2024-01-02T00:00:00.000000Z\t6.0
+                            2024-01-03T00:00:00.000000Z\t5.0
+                            2024-01-04T00:00:00.000000Z\t4.0
+                            """);
+            final String latest = "SELECT sym, v, k FROM ((SELECT * FROM d) TIMESTAMP(k)) LATEST ON k PARTITION BY sym";
+            assertPlanned(engine, sqlExecutionContext, latest, LatestByPlan.class,
+                    latestBy -> Assert.assertEquals(LatestByPlan.Algorithm.LIGHT, latestBy.getAlgorithm()));
+            assertQuery("SELECT * FROM (" + latest + ") ORDER BY sym")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            sym\tv\tk
+                            a\t3\t2024-01-04T00:00:00.000000Z
+                            b\t4\t2024-01-02T00:00:00.000000Z
+                            """);
+            assertQuery("SELECT * FROM (SELECT k, count() c FROM (SELECT * FROM ((SELECT * FROM d) TIMESTAMP(k)) ORDER BY k LIMIT 100) GROUP BY k) ORDER BY k")
+                    .noLeakCheck()
+                    .timestamp("k")
+                    .noRandomAccess()
+                    .withPlanContaining("Stream Group By", "Top K lo: 100")
+                    .returns("""
+                            k\tc
+                            2024-01-01T00:00:00.000000Z\t2
+                            2024-01-02T00:00:00.000000Z\t1
+                            2024-01-03T00:00:00.000000Z\t1
+                            2024-01-04T00:00:00.000000Z\t1
+                            """);
         });
     }
 
@@ -1314,8 +1380,11 @@ public class OrderOperatorPlanningTest extends AbstractCairoTest {
     public void testSwappableJoinDeclaresNoTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             createSwappableJoinTables();
-            assertPlanned(engine, sqlExecutionContext, SWAPPABLE_JOIN, JoinPlan.class,
-                    join -> Assert.assertTrue(join.getOrderedInputs().getQuick(1).isSmallerDriven()));
+            assertPlanned(engine, sqlExecutionContext, SWAPPABLE_JOIN, JoinPlan.class, join -> {
+                Assert.assertTrue(join.getOrderedInputs().getQuick(1).isSmallerDriven());
+                Assert.assertNull(PhysicalProperties.orderedInput(join));
+                Assert.assertEquals(PhysicalProperties.ScanDirection.OTHER, PhysicalProperties.orderOf(join, join.getOutput().getColumnIndexById(join.getOrderedInputs().getQuick(0).getInput().getOutput().getColumnId(0))));
+            });
             assertQuery(SWAPPABLE_JOIN)
                     .noRandomAccess()
                     .withPlan("""
@@ -1651,6 +1720,63 @@ public class OrderOperatorPlanningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUnorderedInputsKeepHashGroupBy() throws Exception {
+        assertMemoryLeak(() -> {
+            createDeclaredTable();
+            execute("CREATE TABLE m (sym SYMBOL, w LONG)");
+            execute("INSERT INTO m VALUES ('a', 10), ('b', 20), ('c', 30)");
+            final String once = """
+                    ts\tc
+                    2024-01-01T00:00:00.000000Z\t1
+                    2024-01-01T01:00:00.000000Z\t1
+                    2024-01-01T02:00:00.000000Z\t1
+                    2024-01-01T03:00:00.000000Z\t1
+                    2024-01-01T04:00:00.000000Z\t1
+                    """;
+            assertQuery("SELECT ts, count() c FROM (SELECT ts FROM d WHERE sym IN ('b', 'a')) GROUP BY ts")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Stream Group By", "Table-order scan")
+                    .returns(once);
+            assertQuery("SELECT * FROM (SELECT ts, count() c FROM (SELECT ts FROM d WHERE sym IN ('a', 'b') ORDER BY sym, ts LIMIT 10) GROUP BY ts) ORDER BY ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .withPlanNotContaining("Stream")
+                    .returns(once);
+            for (String join : new String[]{"RIGHT", "FULL"}) {
+                assertQuery("SELECT * FROM (SELECT ts, count() c FROM (SELECT d.ts FROM d " + join + " JOIN m ON d.sym = m.sym) GROUP BY ts) ORDER BY ts")
+                        .noLeakCheck()
+                        .expectSize()
+                        .timestamp("ts")
+                        .withPlanNotContaining("Stream")
+                        .returns("""
+                                ts\tc
+                                \t1
+                                2024-01-01T00:00:00.000000Z\t1
+                                2024-01-01T01:00:00.000000Z\t1
+                                2024-01-01T02:00:00.000000Z\t1
+                                2024-01-01T03:00:00.000000Z\t1
+                                2024-01-01T04:00:00.000000Z\t1
+                                """);
+            }
+            assertQuery("SELECT * FROM (SELECT ts, count() c FROM (SELECT ts FROM d UNION ALL SELECT ts FROM d) GROUP BY ts) ORDER BY ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .withPlanNotContaining("Stream", "Merge")
+                    .returns("""
+                            ts\tc
+                            2024-01-01T00:00:00.000000Z\t2
+                            2024-01-01T01:00:00.000000Z\t2
+                            2024-01-01T02:00:00.000000Z\t2
+                            2024-01-01T03:00:00.000000Z\t2
+                            2024-01-01T04:00:00.000000Z\t2
+                            """);
+        });
+    }
+
+    @Test
     public void testVectorisedAggregateOrder() throws Exception {
         assertMemoryLeak(() -> {
             createKeyedTable();
@@ -1942,6 +2068,18 @@ public class OrderOperatorPlanningTest extends AbstractCairoTest {
 
     private static void assertSortAlgorithm(SortPlan.Algorithm expected, String sql) throws Exception {
         assertPlanned(engine, sqlExecutionContext, sql, SortPlan.class, sort -> Assert.assertEquals(expected, sort.getAlgorithm()));
+    }
+
+    private static void createDeclaredTable() throws Exception {
+        execute("CREATE TABLE d (k TIMESTAMP, v LONG, sym SYMBOL INDEX, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("""
+                INSERT INTO d VALUES
+                    ('2024-01-03', 1, 'a', '2024-01-01T00:00:00.000000Z'),
+                    ('2024-01-01', 2, 'b', '2024-01-01T01:00:00.000000Z'),
+                    ('2024-01-04', 3, 'a', '2024-01-01T02:00:00.000000Z'),
+                    ('2024-01-02', 4, 'b', '2024-01-01T03:00:00.000000Z'),
+                    ('2024-01-01', 5, 'a', '2024-01-01T04:00:00.000000Z')
+                """);
     }
 
     private static void createKeyedTable() throws Exception {

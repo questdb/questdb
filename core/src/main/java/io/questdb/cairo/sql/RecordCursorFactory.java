@@ -199,6 +199,15 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     }
 
     /**
+     * Returns the index of the column whose values never decrease along the rows of a
+     * {@link #SCAN_DIRECTION_FORWARD} scan, and never increase along those of a
+     * {@link #SCAN_DIRECTION_BACKWARD} one, see {@link #getScanDirection()}; -1 when no column follows the scan.
+     */
+    default int getOrderedColumnIndex() {
+        return -1;
+    }
+
+    /**
      * Returns an independent cursor for the given consumer ID. Idempotent —
      * same sharedId always returns the same cursor instance. A consumer can
      * open before the primary cursor, as on the build side of a hash join: the

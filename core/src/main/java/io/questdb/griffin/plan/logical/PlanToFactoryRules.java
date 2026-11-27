@@ -946,7 +946,7 @@ public final class PlanToFactoryRules {
      * The designated timestamp a projection declares over an input whose factory designates
      * {@code inputTimestampIndex}: its own, else the column its requested order, or the first key of the order a sort
      * over it requests, reaches when that column is the input's timestamp, passed through or, for a TIMESTAMP column,
-     * computed by calls that keep its order, see {@link LogicalPlans#orderSourceColumnId}.
+     * computed by calls that keep its order, see {@link LogicalPlans#requestedSourceColumnId}.
      */
     private static int requestedTimestampIndex(ProjectPlan project, int inputTimestampIndex) {
         if (!project.getRequestedOrder().isEmpty() && inputTimestampIndex < 0 && hasNativeFilterInput(project)) {
@@ -955,11 +955,9 @@ public final class PlanToFactoryRules {
         final SortKeys requestedOrder = project.getRequestedOrder();
         final int orderColumnId = project.getRequestedOrderColumnId() >= 0 || requestedOrder.isEmpty()
                 ? project.getRequestedOrderColumnId() : requestedOrder.getColumnIds().getQuick(0);
-        int inputOrderId = LogicalPlans.projectedSourceColumnId(project, orderColumnId);
         final int orderIndex = project.getOutput().getColumnIndexById(orderColumnId);
-        if (inputOrderId < 0 && orderIndex >= 0 && ColumnType.isTimestamp(project.getOutput().getColumnType(orderIndex))) {
-            inputOrderId = LogicalPlans.orderSourceColumnId(project, orderColumnId);
-        }
+        final int inputOrderId = orderIndex >= 0 && ColumnType.isTimestamp(project.getOutput().getColumnType(orderIndex))
+                ? LogicalPlans.requestedSourceColumnId(project, orderColumnId) : LogicalPlans.projectedSourceColumnId(project, orderColumnId);
         return project.getOutput().getTimestampIndex() < 0 && inputOrderId >= 0
                 && inputTimestampIndex == project.getChild().getOutput().getColumnIndexById(inputOrderId)
                 ? project.getOutput().getColumnIndexById(orderColumnId) : project.getOutput().getTimestampIndex();

@@ -4865,8 +4865,7 @@ public class GroupByTest extends AbstractCairoTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort
-                              keys: [ref0]
+                            SelectedRecord
                                 Distinct
                                   keys: ref0
                                     VirtualRecord
@@ -4880,6 +4879,7 @@ public class GroupByTest extends AbstractCairoTest {
                             """);
 
             assertQuery(query)
+                    .noRandomAccess()
                     .timestamp("ref0")
                     .expectSize()
                     .noLeakCheck()

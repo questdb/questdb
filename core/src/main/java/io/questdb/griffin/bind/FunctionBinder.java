@@ -52,6 +52,7 @@ import io.questdb.griffin.SubsampleValidator;
 import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.functions.MonotonicTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.ScalarSubQueryTimestampFunction;
 import io.questdb.griffin.engine.functions.bool.BooleanSubQueryFunction;
 import io.questdb.griffin.engine.functions.bool.InTimestampTimestampFunctionFactory;
@@ -121,6 +122,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
      */
     private final ObjList<CanonicalTimestampConstant> canonicalTimestamps = new ObjList<>();
     private final SqlCompilerImpl compiler;
+    private final MonotonicTimestampFunctionFactory.ConstantArguments constantArguments = new MonotonicTimestampFunctionFactory.ConstantArguments();
     private final BindContext ctx;
     private final Decimal128 decimal128 = new Decimal128();
     private final Decimal256 decimal256 = new Decimal256();
@@ -1159,7 +1161,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
         }
     }
 
-    private Function captureImplicitConversion(int index, Function function, int position, Class<? extends FunctionFactory> factoryClass) {
+    private Function captureImplicitConversion(int index, Function function, int position, Class<? extends FunctionFactory> factoryClass) throws SqlException {
         if (function.isConstant()) {
             final Function folded = resolver.functionToConstant(function, position);
             final RequirementFact administrativeFact = RequirementFact.firstAdministrative(arguments.getQuick(index));
@@ -1180,6 +1182,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
                     final FunctionExpression conversion = ctx.planNodes.functions.next().of(overload, ctx.tmpArguments,
                             ctx.tmpPositions, function.getType(),
                             BoundExpression.functionFlags(function), position);
+                    conversion.setOrderArgumentIndex(MonotonicTimestampFunctionFactory.orderArgumentIndex(conversion, constantArguments));
                     if (!unconstructedIndex.excludes(arguments.getQuick(index))) {
                         addUnconstructed(conversion);
                     }
@@ -1194,7 +1197,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
         throw new IllegalStateException("implicit conversion factory is not registered as a cast");
     }
 
-    private void captureImplicitConversions(ObjList<Function> args, IntList positions) {
+    private void captureImplicitConversions(ObjList<Function> args, IntList positions) throws SqlException {
         for (int i = 0, n = args == null ? 0 : args.size(); i < n; i++) {
             final Class<? extends FunctionFactory> conversion = resolver.getImplicitConversion(i);
             if (conversion != null) {
@@ -1480,8 +1483,9 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
      * PIVOT IN subquery, see {@link #bindSubquery}, and code generation rejects it where it adopts or builds the
      * description while it generates that subquery, see {@link RequirementFact#firstAdministrative}.
      */
-    private FunctionExpression describeCall(FunctionFactoryDescriptor overload, CharSequence name, int type, int flags, int position) {
+    private FunctionExpression describeCall(FunctionFactoryDescriptor overload, CharSequence name, int type, int flags, int position) throws SqlException {
         final FunctionExpression call = ctx.planNodes.functions.next().of(overload, arguments, argumentPositions, type, flags, position);
+        call.setOrderArgumentIndex(MonotonicTimestampFunctionFactory.orderArgumentIndex(call, constantArguments));
         if ((overload.getFactory().getExecutionRequirements() & SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT) != 0) {
             call.setAdministrativeFact(RequirementFact.administrative(name, resolver.getRequirementPosition(position), false));
         }

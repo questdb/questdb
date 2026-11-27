@@ -1525,6 +1525,21 @@ public class PlanVerifierTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSortInputOrderWithoutProvenOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE unordered (k TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts)");
+            assertAlgorithmContradicts("SELECT * FROM unordered ORDER BY k", SortPlan.class, sort -> {
+                Assert.assertFalse(sort.getAlgorithm().isInputOrder());
+                sort.setAlgorithm(SortPlan.Algorithm.INPUT_ORDER);
+            }, PlanVerifier.SORT_ALGORITHM);
+            assertAlgorithmContradicts("SELECT * FROM ((SELECT * FROM unordered) TIMESTAMP(k)) ORDER BY k", SortPlan.class, sort -> {
+                Assert.assertFalse(sort.getAlgorithm().isInputOrder());
+                sort.setAlgorithm(SortPlan.Algorithm.INPUT_ORDER);
+            }, PlanVerifier.SORT_ALGORITHM);
+        });
+    }
+
+    @Test
     public void testSortKeys() {
         final FunctionSourcePlan source = source();
         final SortPlan sort = SortPlan.FACTORY.newInstance().of(source, 2);
@@ -1543,6 +1558,17 @@ public class PlanVerifierTest extends AbstractCairoTest {
         assertFails(sort, PlanVerifier.SORT_TIMESTAMP, "SortPlan");
         sort.deriveOutput();
         verifier.verify(sort, PlanStage.REWRITTEN, PASS);
+    }
+
+    @Test
+    public void testStreamKeyWithoutProvenOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE unordered (k TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts)");
+            assertAlgorithmContradicts("SELECT k, count() FROM unordered GROUP BY k", AggregatePlan.class, aggregate -> {
+                Assert.assertEquals(-1, aggregate.getStreamKeyIndex());
+                aggregate.setStreaming(0, false);
+            }, PlanVerifier.AGGREGATE_STREAM);
+        });
     }
 
     @Test

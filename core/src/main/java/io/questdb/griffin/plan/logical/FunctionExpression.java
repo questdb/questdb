@@ -42,6 +42,7 @@ public final class FunctionExpression extends BoundExpression {
     private boolean isPolicyPredicate;
     private boolean isProjectedOffset;
     private boolean isSetOperation;
+    private int orderArgumentIndex = -1;
     private FunctionFactoryDescriptor overload;
 
     public FunctionExpression() {
@@ -67,6 +68,7 @@ public final class FunctionExpression extends BoundExpression {
         isPolicyPredicate = false;
         isSetOperation = false;
         isProjectedOffset = false;
+        orderArgumentIndex = -1;
     }
 
     /**
@@ -111,6 +113,15 @@ public final class FunctionExpression extends BoundExpression {
         return overload.getName();
     }
 
+
+    /**
+     * The argument whose order the values of the call keep, -1 for none: they never decrease as it grows while every
+     * other argument stays the same, or the call is that argument itself, as the factory declares it, see
+     * {@link io.questdb.griffin.engine.functions.MonotonicTimestampFunctionFactory}.
+     */
+    public int getOrderArgumentIndex() {
+        return orderArgumentIndex;
+    }
 
     public FunctionFactoryDescriptor getOverload() {
         return overload;
@@ -235,10 +246,15 @@ public final class FunctionExpression extends BoundExpression {
         return this;
     }
 
+    public void setOrderArgumentIndex(int orderArgumentIndex) {
+        this.orderArgumentIndex = orderArgumentIndex;
+    }
+
     private void copyFacts(FunctionExpression expression) {
         administrativeFact = expression.administrativeFact;
         isPolicyPredicate = expression.isPolicyPredicate;
         isSetOperation = expression.isSetOperation;
         isProjectedOffset = expression.isProjectedOffset;
+        orderArgumentIndex = expression.orderArgumentIndex;
     }
 }

@@ -172,8 +172,8 @@ public final class SortPlan extends ForwardingPlan {
          */
         INPUT_ORDER,
         /**
-         * No sort: the input of a markout horizon delivers the order, and the generator declares the sort's
-         * designated timestamp over it.
+         * No sort: the input delivers the order, and the generator declares the sort's designated timestamp, which the
+         * input does not designate, over it.
          */
         TIMESTAMP_DECLARATION,
         /**
@@ -210,6 +210,13 @@ public final class SortPlan extends ForwardingPlan {
         /**
          * Keeps the top rows of the LIMIT across workers that read the page frames of the input.
          */
-        PARALLEL_TOP_K
+        PARALLEL_TOP_K;
+
+        /**
+         * Whether the algorithm builds no sort, as the input delivers the order.
+         */
+        public boolean isInputOrder() {
+            return this == INPUT_ORDER || this == TIMESTAMP_DECLARATION;
+        }
     }
 }
