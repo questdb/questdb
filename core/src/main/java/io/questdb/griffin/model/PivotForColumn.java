@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.model;
 
-import io.questdb.std.IntList;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectFactory;
@@ -33,8 +32,6 @@ public final class PivotForColumn implements Mutable {
     public final static ObjectFactory<PivotForColumn> FACTORY = PivotForColumn::new;
     private final ObjList<CharSequence> valueAliases = new ObjList<>();
     private final ObjList<ExpressionNode> valueList = new ObjList<>();
-    private final IntList valueLiteralPositions = new IntList();
-    private final ObjList<CharSequence> valueLiterals = new ObjList<>();
     private ExpressionNode inExpr;
     private boolean isValueList = true;
     private ExpressionNode selectSubqueryExpr;
@@ -44,21 +41,10 @@ public final class PivotForColumn implements Mutable {
         valueAliases.add(valueAlias);
     }
 
-    /**
-     * Adds an IN value that the IN sub-query at {@code position} returned, as the SQL literal that spells it.
-     */
-    public void addValueLiteral(CharSequence literal, CharSequence valueAlias, int position) {
-        valueLiterals.add(literal);
-        valueLiteralPositions.add(position);
-        valueAliases.add(valueAlias);
-    }
-
     @Override
     public void clear() {
         valueAliases.clear();
         valueList.clear();
-        valueLiteralPositions.clear();
-        valueLiterals.clear();
         inExpr = null;
         selectSubqueryExpr = null;
         isValueList = true;
@@ -76,29 +62,8 @@ public final class PivotForColumn implements Mutable {
         return valueAliases;
     }
 
-    /**
-     * The number of IN values: the expressions of the IN list, or the literals of the values the IN sub-query returned.
-     */
-    public int getValueCount() {
-        return valueAliases.size();
-    }
-
     public ObjList<ExpressionNode> getValueList() {
         return valueList;
-    }
-
-    /**
-     * The position of each value the IN sub-query returned, the position of the sub-query.
-     */
-    public IntList getValueLiteralPositions() {
-        return valueLiteralPositions;
-    }
-
-    /**
-     * The values the IN sub-query returned, as the SQL literals that spell them; empty for an IN list.
-     */
-    public ObjList<CharSequence> getValueLiterals() {
-        return valueLiterals;
     }
 
     public boolean isValueList() {

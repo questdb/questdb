@@ -266,6 +266,27 @@ public class ExpiryPolicyBinderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNullStatementExpressionBindsWithoutInstantiating() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable();
+            try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName("t")); SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
+                Assert.assertTrue(isNullStatementExpression(compiler, metadata, "cast(null AS TIMESTAMP)"));
+                Assert.assertTrue(isNullStatementExpression(compiler, metadata, "0.0 / 0.0"));
+                Assert.assertFalse(isNullStatementExpression(compiler, metadata, "86400 * 1000000"));
+                Assert.assertFalse(isNullStatementExpression(compiler, metadata, "l + 1"));
+                try {
+                    isNullStatementExpression(compiler, metadata, "nosuch + 1");
+                    Assert.fail();
+                } catch (SqlException e) {
+                    Assert.assertEquals(0, e.getPosition());
+                    TestUtils.assertEquals("Invalid column: nosuch", e.getFlyweightMessage());
+                }
+                Assert.assertTrue(isNullStatementExpression(compiler, metadata, "null::date"));
+            }
+        });
+    }
+
+    @Test
     public void testNullThresholdsAreRejected() throws Exception {
         assertMemoryLeak(() -> {
             createTable();
@@ -519,6 +540,10 @@ public class ExpiryPolicyBinderTest extends AbstractCairoTest {
 
     // Whether the two trees hold the same node types, tokens and argument counts in the same places, which
     // compareNodesExact does not compare.
+    private static boolean isNullStatementExpression(SqlCompilerImpl compiler, TableMetadata metadata, String expression) throws SqlException {
+        return compiler.isNullStatementExpression(compiler.testParseExpression(expression, (QueryModel) null), metadata, sqlExecutionContext);
+    }
+
     private static boolean isSameShape(ExpressionNode a, ExpressionNode b) {
         if (a == null || b == null) {
             return a == b;

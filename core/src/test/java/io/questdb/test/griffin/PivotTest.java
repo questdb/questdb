@@ -3437,6 +3437,15 @@ public class PivotTest extends AbstractSqlParserTest {
                             A	10	20
                             B	30	40
                             """);
+            execute("INSERT INTO data VALUES ('A', 0.1, 1), ('B', 0.1, 3)");
+            assertQuery("SELECT * FROM data PIVOT (SUM(val) FOR cat IN (SELECT DISTINCT cat FROM data WHERE cat < 1) GROUP BY grp) ORDER BY grp")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp	0.1
+                            A	1
+                            B	3
+                            """);
         });
     }
 
@@ -3463,6 +3472,37 @@ public class PivotTest extends AbstractSqlParserTest {
                     ) ORDER BY grp
                     """)
                     .fails(48, "there is no matching operator `IN` with the argument type: GEOHASH(4c)");
+            for (String type : new String[]{"GEOHASH(1c)", "GEOHASH(2c)", "GEOHASH(8c)"}) {
+                execute("CREATE TABLE data_g (grp SYMBOL, cat " + type + ", val INT)");
+                execute("CREATE TABLE cats_g (c " + type + ")");
+                execute("INSERT INTO cats_g VALUES (#u09tunqu), (#v09tunqu)");
+                assertExceptionNoLeakCheck("SELECT * FROM data_g PIVOT (SUM(val) FOR cat IN (SELECT c FROM cats_g) GROUP BY grp)", 41,
+                        "there is no matching operator `IN` with the argument type: " + type.replace(" ", ""));
+                execute("DROP TABLE data_g");
+                execute("DROP TABLE cats_g");
+            }
+        });
+    }
+
+    @Test
+    public void testPivotSubqueryWithUuidType() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (grp SYMBOL, cat UUID, val INT)");
+            execute("CREATE TABLE cats (c UUID)");
+            execute("INSERT INTO cats VALUES ('11111111-1111-1111-1111-111111111111'), ('22222222-2222-2222-2222-222222222222'), (null)");
+            execute("""
+                    INSERT INTO data VALUES
+                        ('A', '11111111-1111-1111-1111-111111111111', 10), ('A', '22222222-2222-2222-2222-222222222222', 20), ('A', null, 30),
+                        ('B', '11111111-1111-1111-1111-111111111111', 100), ('B', null, 300)
+                    """);
+            assertQuery("SELECT * FROM data PIVOT (SUM(val) FOR cat IN (SELECT c FROM cats) GROUP BY grp) ORDER BY grp")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp\t11111111-1111-1111-1111-111111111111\t22222222-2222-2222-2222-222222222222\tNULL
+                            A\t10\t20\t30
+                            B\t100\tnull\t300
+                            """);
         });
     }
 
@@ -4103,6 +4143,14 @@ public class PivotTest extends AbstractSqlParserTest {
                             a\tb
                             null\t80.0
                             """);
+            assertSqlCursors(
+                    """
+                            SELECT sum(CASE WHEN s = 'a' AND sym = 'a' THEN px END) a_a, sum(CASE WHEN s = 'a' AND sym = 'b' THEN px END) a_b,
+                                sum(CASE WHEN s = 'b' AND sym = 'a' THEN px END) b_a, sum(CASE WHEN s = 'b' AND sym = 'b' THEN px END) b_b
+                            FROM (SELECT * FROM t JOIN q ON t.s = q.sym WHERE s IN ('a', 'b') AND sym IN ('a', 'b') LATEST ON ts PARTITION BY g)
+                            """,
+                    "SELECT * FROM t JOIN q ON t.s = q.sym LATEST ON ts PARTITION BY g PIVOT (sum(px) FOR s IN ('a', 'b') sym IN ('a', 'b'))"
+            );
             assertQuery("SELECT * FROM t RIGHT JOIN q ON t.s = q.sym LATEST ON ts PARTITION BY g PIVOT (sum(px) FOR s IN ('a', 'b'))")
                     .noLeakCheck()
                     .noRandomAccess()
@@ -4150,7 +4198,7 @@ public class PivotTest extends AbstractSqlParserTest {
                             null\tnull
                             """);
             assertExceptionNoLeakCheck("SELECT * FROM t HORIZON JOIN q ON (t.s = q.sym) LIST (0s, 1s) AS h PIVOT (sum(px) FOR sym IN ('a', 'b'))",
-                    86, "WHERE clause of HORIZON JOIN can only reference left-hand side columns");
+                    86, "PIVOT FOR key of HORIZON JOIN can only reference left-hand side columns");
             assertExceptionNoLeakCheck("SELECT * FROM t HORIZON JOIN q ON (t.s = q.sym) LIST (0s, 1s) AS h PIVOT (sum(px) FOR nosuch IN ('a', 'b'))",
                     86, "Invalid column: nosuch");
         });
@@ -4441,10 +4489,13 @@ public class PivotTest extends AbstractSqlParserTest {
                             1\t65.0\tnull
                             """);
             assertExceptionNoLeakCheck("SELECT * FROM t WINDOW JOIN q ON (t.s = q.sym) RANGE BETWEEN 1 SECOND PRECEDING AND CURRENT ROW PIVOT (avg(px) * 2 FOR s IN ('a', 'b'))", 103, "PIVOT over WINDOW JOIN supports avg, first and last only as direct measures");
-            assertExceptionNoLeakCheck("SELECT * FROM t WINDOW JOIN q ON (t.s = q.sym) RANGE BETWEEN 1 SECOND PRECEDING AND CURRENT ROW PIVOT (count_distinct(px) FOR s IN ('a', 'b'))", 103, "PIVOT over WINDOW JOIN supports only sum, count, min, max, avg, first and last aggregates");
+            assertExceptionNoLeakCheck("SELECT * FROM t WINDOW JOIN q ON (t.s = q.sym) RANGE BETWEEN 1 SECOND PRECEDING AND CURRENT ROW PIVOT (count_distinct(sym) FOR s IN ('a', 'b'))", 103, "PIVOT over WINDOW JOIN supports only sum, count, min, max, avg, first and last aggregates");
+            assertExceptionNoLeakCheck("SELECT * FROM t WINDOW JOIN q ON (t.s = q.sym) RANGE BETWEEN 1 SECOND PRECEDING AND CURRENT ROW PIVOT (count_distinct(px) FOR s IN ('a', 'b'))", 103, "there is no matching function `count_distinct` with the argument types: (DOUBLE)");
             assertExceptionNoLeakCheck("SELECT * FROM t WINDOW JOIN q ON (t.s = q.sym) RANGE BETWEEN 1 SECOND PRECEDING AND CURRENT ROW PIVOT (max(px, px) FOR s IN ('a', 'b'))", 103, "PIVOT over WINDOW JOIN supports only sum, count, min, max, avg, first and last aggregates");
             assertExceptionNoLeakCheck("SELECT * FROM t WINDOW JOIN q ON (t.s = q.sym) RANGE BETWEEN 1 SECOND PRECEDING AND CURRENT ROW PIVOT (last(px, px) FOR s IN ('a', 'b'))", 103, "PIVOT over WINDOW JOIN supports only sum, count, min, max, avg, first and last aggregates");
             assertExceptionNoLeakCheck("SELECT * FROM t WINDOW JOIN q ON (t.s = q.sym) RANGE BETWEEN 1 SECOND PRECEDING AND CURRENT ROW PIVOT (first_not_null(px) FOR s IN ('a', 'b'))", 103, "PIVOT over WINDOW JOIN supports only sum, count, min, max, avg, first and last aggregates");
+            assertExceptionNoLeakCheck("SELECT * FROM t WINDOW JOIN q ON (t.s = q.sym) RANGE BETWEEN 1 SECOND PRECEDING AND CURRENT ROW PIVOT (count() FOR count IN (1))", 115, "Invalid column: count");
+            assertExceptionNoLeakCheck("SELECT * FROM t WINDOW JOIN q ON (t.s = q.sym) RANGE BETWEEN 1 SECOND PRECEDING AND CURRENT ROW PIVOT (avg(px) FOR sum IN (1))", 115, "Invalid column: sum");
         });
     }
 

@@ -42,6 +42,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SingleSymbolFilter;
+import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionInstantiator;
 import io.questdb.griffin.FunctionResolver;
 import io.questdb.griffin.SqlException;
@@ -88,7 +89,6 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cairo.ColumnType.*;
-import static io.questdb.griffin.SqlKeywords.*;
 
 /**
  * Builds SAMPLE BY factories and the FILL stage that completes their missing buckets.
@@ -889,7 +889,7 @@ final class SampleByFactoryGenerator {
                 if (isFirstLast) {
                     final ColumnExpression column = (ColumnExpression) call.argumentAt(0);
                     firstLastIndexes.add(input.getColumnIndexById(column.getColumnId()));
-                    firstLastKinds.add(isFirstKeyword(call.getName())
+                    firstLastKinds.add(call.getPartialMerge() == FunctionFactory.PartialMerge.FIRST
                             ? SampleByFirstLastRecordCursorFactory.FIRST : SampleByFirstLastRecordCursorFactory.LAST);
                     firstLastPositions.add(call.getPosition());
                 }

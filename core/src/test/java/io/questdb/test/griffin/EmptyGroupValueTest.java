@@ -142,20 +142,6 @@ public class EmptyGroupValueTest extends AbstractCairoTest {
         );
     }
 
-    @Test
-    public void testPartialMergeOfANameIsTheOneItsGroupByOverloadsDeclare() {
-        final FunctionFactoryCache cache = engine.getFunctionFactoryCache();
-        final TreeMap<String, PartialMerge> declared = declared(cache, FunctionFactory::getPartialMerge, PartialMerge.NONE);
-        cache.getFactories().forEach((name, descriptors) -> Assert.assertEquals(
-                name.toString(),
-                declared.getOrDefault(descriptors.getQuick(0).getName(), PartialMerge.NONE),
-                cache.getPartialMerge(name)
-        ));
-        Assert.assertEquals(PartialMerge.SUM, cache.getPartialMerge("COUNT"));
-        Assert.assertEquals(PartialMerge.NONE, cache.getPartialMerge("count_distinct"));
-        Assert.assertEquals(PartialMerge.NONE, cache.getPartialMerge("no_such_function"));
-    }
-
     /**
      * Reads the property each aggregate name declares, other than {@code none}, checking that every group by overload
      * of the name declares the same one and that no other factory declares any value but {@code none}.
