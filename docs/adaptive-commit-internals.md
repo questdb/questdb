@@ -947,9 +947,9 @@ field and body checksum. The save point removal deletes the first four when it f
    rename of its staging clone and the registry swap, and the table registry syncs the root between its compaction
    rename and the unlink of the old file.
 5. `_snapshot` in a checkpoint directory is the legacy checkpoint metadata file, unrelated to this feature.
-6. The test suite runs `adaptive` by default (`questdb.test.commit.mode`); CI splits each job group between `nosync`
-   and `adaptive` and swaps them every run. A mode seen in a test run says nothing about the shipped default, which
-   is `nosync`.
+6. The test suite runs `adaptive` by default (`questdb.test.commit.mode`). CI names the mode: a PR build runs
+   `nosync`, and on master each job group is split between `nosync` and `adaptive` and swapped every run. A mode
+   seen in a test run says nothing about the shipped default, which is `nosync`.
 7. `syncfs` reports a write-back error once per file system, and only from Linux 5.8 on: an error that another
    process's `syncfs` collected first, or any error on an older kernel, goes unseen. The save point's batched flush
    (for every file but the open partition's columns and the symbol maps, whose write-back its drain waits on and

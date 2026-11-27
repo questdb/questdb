@@ -210,8 +210,8 @@ public class PropServerConfigurationTest {
         Assert.assertTrue(configuration.getCairoConfiguration().getLogSqlQueryProgressExe());
 
         // The shipped default, which the whole product reads through CommitMode.DEFAULT. The test suite
-        // runs adaptive regardless, so this assertion is about what a user gets, not what the tests
-        // exercise.
+        // picks its own mode (adaptive unless a run names another), so this assertion is about what a
+        // user gets, not what the tests exercise.
         Assert.assertEquals(CommitMode.NOSYNC, configuration.getCairoConfiguration().getCommitMode());
         Assert.assertEquals(CommitMode.DEFAULT, configuration.getCairoConfiguration().getCommitMode());
         // Out of the box every table is locked against older releases; the way down is opt-in.
