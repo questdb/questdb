@@ -210,7 +210,8 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
             // causing log sequence leaks.
             long durationNanos =
                     executionContext.getCairoEngine().getConfiguration().getNanosecondClock().getTicks() - beginNanos;
-            log = LOG.errorW();
+            final boolean isInterruption = e instanceof CairoException ce && ce.isInterruption();
+            log = isInterruption && leakedReadersCount == 0 ? LOG.error() : LOG.errorW();
             if (leakedReadersCount > 0) {
                 log.$("brk");
                 executionContext.getCairoEngine().getMetrics().healthMetrics().incrementReaderLeakCounter(leakedReadersCount);
@@ -268,6 +269,13 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
                     .$(", jit=").$(jit)
                     .I$();
         }
+    }
+
+    @TestOnly
+    public static Log swapLogForTesting(Log log) {
+        final Log previous = LOG;
+        LOG = log;
+        return previous;
     }
 
     @Override
@@ -390,6 +398,11 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
     }
 
     @Override
+    public boolean hasTableScanTimestamp() {
+        return base.hasTableScanTimestamp();
+    }
+
+    @Override
     public boolean implementsLimit() {
         return base.implementsLimit();
     }
@@ -432,6 +445,11 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return base.recordCursorSupportsRandomAccess();
+    }
+
+    @Override
+    public boolean supportsConcurrentTimeFrameCursor() {
+        return base.supportsConcurrentTimeFrameCursor();
     }
 
     @Override
@@ -696,9 +714,18 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
         private RecordCursor base;
         private boolean isOpen = false;
 
+        // Like hasNext(), calculateSize(), size() and skipRows() can read the rows of
+        // the result, so a failure they raise is the query's failure: closing the
+        // cursor with it records the query as failed. Without that, the consumer's
+        // close() after the failure would record a successful query.
         @Override
         public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
-            base.calculateSize(circuitBreaker, counter);
+            try {
+                base.calculateSize(circuitBreaker, counter);
+            } catch (Throwable th) {
+                close0(th);
+                throw th;
+            }
         }
 
         @Override
@@ -782,7 +809,12 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
 
         @Override
         public long size() {
-            return base.size();
+            try {
+                return base.size();
+            } catch (Throwable th) {
+                close0(th);
+                throw th;
+            }
         }
 
         @Override
@@ -792,7 +824,12 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
 
         @Override
         public void skipRows(Counter rowCount, long maxRowsAfterSkip) {
-            base.skipRows(rowCount, maxRowsAfterSkip);
+            try {
+                base.skipRows(rowCount, maxRowsAfterSkip);
+            } catch (Throwable th) {
+                close0(th);
+                throw th;
+            }
         }
 
         @Override

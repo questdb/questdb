@@ -34,6 +34,7 @@ import io.questdb.griffin.engine.functions.constants.SymbolConstant;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.StringSink;
 
 public class CastCharToSymbolFunctionFactory implements FunctionFactory {
     @Override
@@ -70,18 +71,9 @@ public class CastCharToSymbolFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public CharSequence getSymbol(Record rec) {
-            final char value = arg.getChar(rec);
-            if (value == 0) {
-                return null;
-            }
-            return getSymbol0(value);
-        }
-
-        @Override
-        protected String symbolOf(int key) {
-            // The shortcut keys on the code point, so render the character it stands for.
-            return Chars.toString((char) key);
+        protected void symbolOf(int value, StringSink sink) {
+            // The value is the code point, so render the character it stands for.
+            sink.put((char) value);
         }
     }
 }

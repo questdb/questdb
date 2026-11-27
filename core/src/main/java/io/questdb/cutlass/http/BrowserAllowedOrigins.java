@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.qwp.server;
+package io.questdb.cutlass.http;
 
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Utf8Sequence;
@@ -33,7 +33,9 @@ import org.jetbrains.annotations.Nullable;
 import java.util.Locale;
 
 /**
- * An immutable, pre-encoded snapshot of the browser origins allowed on QWP WebSockets.
+ * An immutable, pre-encoded snapshot of the browser origins allowed on QWP WebSockets
+ * (qwp.browser.allowed.origins), or to send cross-site requests to the other HTTP
+ * endpoints (http.browser.allowed.origins).
  * <p>
  * Entries are compared byte for byte with the Origin header, so each entry must
  * be written exactly as a browser serializes an origin: a lowercase http or https
@@ -42,16 +44,27 @@ import java.util.Locale;
  * rejected rather than normalized, so the configured value always equals the
  * value on the wire.
  */
-public final class QwpBrowserAllowedOrigins {
-    public static final QwpBrowserAllowedOrigins EMPTY = new QwpBrowserAllowedOrigins(new ObjList<>());
+public final class BrowserAllowedOrigins {
+    public static final BrowserAllowedOrigins EMPTY = new BrowserAllowedOrigins(new ObjList<>());
 
     private final ObjList<Utf8String> origins;
 
-    private QwpBrowserAllowedOrigins(ObjList<Utf8String> origins) {
+    private BrowserAllowedOrigins(ObjList<Utf8String> origins) {
         this.origins = origins;
     }
 
-    public static QwpBrowserAllowedOrigins parse(String value) {
+    /**
+     * Returns true when the Origin header value has the lowercase http or https scheme
+     * of every entry, so that an entry could list it. A browser sends another value,
+     * such as null, from a file: page, a sandboxed frame or a request redirected across
+     * origins, and an extension or an app sends a scheme of its own: no entry admits
+     * those, and null must not be listed, because any page can send it.
+     */
+    public static boolean hasHttpScheme(Utf8Sequence origin) {
+        return Utf8s.startsWithAscii(origin, "http://") || Utf8s.startsWithAscii(origin, "https://");
+    }
+
+    public static BrowserAllowedOrigins parse(String value) {
         if (value == null || value.isBlank()) {
             return EMPTY;
         }
@@ -81,7 +94,7 @@ public final class QwpBrowserAllowedOrigins {
             }
             origins.add(new Utf8String(origin));
         }
-        return new QwpBrowserAllowedOrigins(origins);
+        return new BrowserAllowedOrigins(origins);
     }
 
     public boolean isAllowed(Utf8Sequence origin) {
@@ -135,34 +148,6 @@ public final class QwpBrowserAllowedOrigins {
             partLo = partHi + 1;
         }
         return parts == 4;
-    }
-
-    // WHATWG URL "ends in a number": a host whose last label parses as an IPv4
-    // number is an IPv4 address, which browsers serialize as dotted decimal.
-    private static boolean isIpv4Host(String value, int lo, int hi) {
-        if (hi > lo && value.charAt(hi - 1) == '.') {
-            hi--;
-        }
-        final int lastLo = value.lastIndexOf('.', hi - 1) + 1;
-        final int labelLo = Math.max(lastLo, lo);
-        if (labelLo == hi) {
-            return false;
-        }
-        if (hi - labelLo >= 2 && value.charAt(labelLo) == '0' && value.charAt(labelLo + 1) == 'x') {
-            for (int i = labelLo + 2; i < hi; i++) {
-                if (hexDigit(value.charAt(i)) < 0) {
-                    return false;
-                }
-            }
-            return true;
-        }
-        for (int i = labelLo; i < hi; i++) {
-            final char c = value.charAt(i);
-            if (c < '0' || c > '9') {
-                return false;
-            }
-        }
-        return true;
     }
 
     // Returns the WHATWG URL serialization of an IPv6 literal (without brackets),
@@ -315,7 +300,8 @@ public final class QwpBrowserAllowedOrigins {
             final String host = hasUppercase ? value.substring(hostLo, hostHi).toLowerCase(Locale.ROOT) : value;
             final int lo = hasUppercase ? 0 : hostLo;
             final int hi = hasUppercase ? host.length() : hostHi;
-            if (isIpv4Host(host, lo, hi) && !isCanonicalIpv4(host, lo, hi)) {
+            // a host that ends in a number is an IPv4 address, which browsers serialize as dotted decimal
+            if (HttpAllowedHosts.endsInNumber(new Utf8String(host), lo, hi) && !isCanonicalIpv4(host, lo, hi)) {
                 return "the IPv4 address is not in canonical dotted-decimal form";
             }
             if (hasUppercase) {

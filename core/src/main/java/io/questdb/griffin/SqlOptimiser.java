@@ -10776,7 +10776,8 @@ public class SqlOptimiser implements Mutable {
             try (TableReader reader = executionContext.getReader(tableToken)) {
                 enumerateColumns(model, reader.getMetadata());
             } catch (EntryLockedException e) {
-                throw SqlException.position(tableNamePosition).put("table is locked: ").put(tableToken.getTableName());
+                // Keep the SQL error contract while letting the view compiler identify a table lock.
+                throw SqlException.position(tableNamePosition).put("table is locked: ").put(tableToken.getTableName()).setTableLocked(true);
             } catch (CairoException e) {
                 if (e.isOutOfMemory() || e.isTableDoesNotExist()) {
                     throw e;
@@ -12023,6 +12024,24 @@ public class SqlOptimiser implements Mutable {
                 jm2.setAllowPropagationOfOrderByAdvice(false);
             }
         }
+        // time series joins require ascending timestamp order, external advice must not
+        // influence them, especially passing INVARIANT mnemonic is dangerous,
+        // because existing ordering might be omitted
+        if (hasTimeSeriesJoin(jm1.getJoinModels())) {
+            optimiseOrderBy(jm1, OrderByMnemonic.ORDER_BY_UNKNOWN);
+            return;
+        }
+        if (model.getSelectModelType() == IQueryModel.SELECT_MODEL_GROUP_BY) {
+            if (jm1.getAllowPropagationOfOrderByAdvice()) {
+                jm1.setOrderByAdviceMnemonic(orderByMnemonic);
+                jm1.getOrderByAdvice().clear();
+                jm1.getOrderByDirectionAdvice().clear();
+            } else {
+                orderByMnemonic = OrderByMnemonic.ORDER_BY_UNKNOWN;
+            }
+            optimiseOrderBy(jm1, orderByMnemonic);
+            return;
+        }
         // placeholder for prefix-stripped advice
         ObjList<ExpressionNode> advice;
         // Check if the orderByAdvice has names qualified by table names i.e 't1.ts' versus 'ts'
@@ -12049,24 +12068,7 @@ public class SqlOptimiser implements Mutable {
         }
         // order by advice is pushable, so now we copy it and strip the table prefix
         advice = duplicateAdviceAndTakeSuffix();
-        // if there's a join, we need to handle it differently.
-        if (jm2 != null) {
-            final int joinType = jm2.getJoinType();
-            switch (joinType) {
-                case IQueryModel.JOIN_ASOF:
-                case IQueryModel.JOIN_LT:
-                    // asof joins required ascending timestamp order, external advice must not
-                    // influence them, especially passing INVARIANT mnemonic is dangerous,
-                    // because existing ordering might be omitted
-                    orderByMnemonic = OrderByMnemonic.ORDER_BY_UNKNOWN;
-                    break;
-                default:
-                    orderByMnemonic = setAndCopyAdvice(jm1, advice, orderByMnemonic, orderByDirectionAdvice);
-            }
-        } else {
-            // fallback to copy the advice to primary
-            orderByMnemonic = setAndCopyAdvice(jm1, advice, orderByMnemonic, orderByDirectionAdvice);
-        }
+        orderByMnemonic = setAndCopyAdvice(jm1, advice, orderByMnemonic, orderByDirectionAdvice);
         // recursive call
         optimiseOrderBy(jm1, orderByMnemonic);
     }

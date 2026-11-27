@@ -48,6 +48,10 @@ public class MapSymbolColumn extends SymbolFunction {
         this.symbolTableStatic = symbolTableStatic;
     }
 
+    public MapSymbolColumn(MapSymbolColumn source, int cursorColumnIndex) {
+        this(source.mapColumnIndex, cursorColumnIndex, source.symbolTableStatic);
+    }
+
     @Override
     public void close() {
         if (ownSymbolTable) {
@@ -58,6 +62,14 @@ public class MapSymbolColumn extends SymbolFunction {
     @Override
     public int getInt(Record rec) {
         return rec.getInt(mapColumnIndex);
+    }
+
+    /**
+     * The symbol table that {@link #init} took from its source for the key column, which resolves the keys
+     * {@link #getInt} returns, or null before init().
+     */
+    public @Nullable SymbolTable getSourceSymbolTable() {
+        return symbolTable;
     }
 
     @Override

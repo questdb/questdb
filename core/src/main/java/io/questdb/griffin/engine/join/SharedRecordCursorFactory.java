@@ -67,6 +67,11 @@ public class SharedRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
+    public boolean isRewindRecomputing() {
+        return primary.getFactory().isRewindRecomputing();
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return primary.getFactory().recordCursorSupportsRandomAccess();
     }

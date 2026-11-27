@@ -99,6 +99,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private boolean clockUseNow = false;
     private boolean cloneSymbolTables;
     private boolean containsSecret;
+    private SqlExecutionResources executionResources;
     private CharSequence expiryMaterializingViewName;
     private TableToken expiryRawReadTable;
     private ExpiryReadPolicy expiryReadPolicy = ExpiryReadPolicy.FILTER;
@@ -130,6 +131,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private Rnd random;
     private ResourcePoolSupervisor<TableReader> readerPoolSupervisor;
     private long requestFd = -1;
+    private boolean streamGroupByEnabled;
     private TableFunctionView tableFunctionView;
     private boolean useSimpleCircuitBreaker;
     private boolean validationOnly = false;
@@ -156,6 +158,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         parallelWindowJoinEnabled = cairoConfiguration.isSqlParallelWindowJoinEnabled() && sharedQueryWorkerCount > 0;
         parallelReadParquetEnabled = cairoConfiguration.isSqlParallelReadParquetEnabled() && sharedQueryWorkerCount > 0;
         parquetRowGroupPruningEnabled = cairoConfiguration.isSqlParquetRowGroupPruningEnabled();
+        streamGroupByEnabled = cairoConfiguration.isSqlStreamGroupByEnabled();
         telemetry = cairoEngine.getTelemetry();
         telemetryFacade = telemetry.isEnabled() ? this::doStoreTelemetry : this::storeTelemetryNoOp;
         // default set to micro
@@ -329,6 +332,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
 
     public Decimal64 getDecimal64() {
         return decimal64;
+    }
+
+    @Override
+    public @Nullable SqlExecutionResources getExecutionResources() {
+        return executionResources;
     }
 
     @Override
@@ -549,6 +557,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public boolean isStreamGroupByEnabled() {
+        return streamGroupByEnabled;
+    }
+
+    @Override
     public boolean isTimestampRequired() {
         return timestampRequiredStack.notEmpty() && timestampRequiredStack.peek() == 1;
     }
@@ -746,6 +759,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public void setExecutionResources(@Nullable SqlExecutionResources resources) {
+        this.executionResources = resources;
+    }
+
+    @Override
     public void setMemoryTracker(@Nullable MemoryTracker tracker) {
         this.memoryTracker = tracker;
     }
@@ -821,6 +839,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public void setReaderPoolSupervisor(@Nullable ResourcePoolSupervisor<TableReader> supervisor) {
         this.readerPoolSupervisor = supervisor;
+    }
+
+    @Override
+    public void setStreamGroupByEnabled(boolean isEnabled) {
+        this.streamGroupByEnabled = isEnabled;
     }
 
     @Override
@@ -975,6 +998,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         isViewMetadataSubquery = false;
         // QueryRegistry owns the tracker lifecycle; null it defensively so an error
         // unwinding between register() and unregister() cannot leak it into reuse.
+        this.executionResources = null;
         this.memoryTracker = null;
         this.queryRegistryOwnerId = -1;
         // Defensive: a query reusing this per-connection context must never inherit a

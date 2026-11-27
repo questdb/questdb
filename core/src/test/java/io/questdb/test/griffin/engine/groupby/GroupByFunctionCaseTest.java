@@ -207,19 +207,18 @@ public class GroupByFunctionCaseTest extends AbstractCairoTest {
                       ALIGN TO CALENDAR TIME ZONE 'UTC'""")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort light
-                              keys: [candle_st]
-                                VirtualRecord
-                                  functions: [candle_st,venue,num_ticks,quote_volume,quote_volume/SUM]
-                                    Async Group By workers: 1
-                                      keys: [candle_st,venue]
-                                      keyFunctions: [timestamp_floor_utc('1h',trade_timestamp)]
-                                      values: [count(*),sum(qty*price),sum(qty)]
-                                      filter: (instrument_key ~ ETH.USD.S..*? [state-shared] and venue in [CBS,FUS,LMX,BTS])
-                                        PageFrame
-                                            Row forward scan
-                                            Interval forward scan on: spot_trades
-                                              intervals: [("2022-01-01T00:00:00.000000Z","MAX")]
+                            VirtualRecord
+                              functions: [candle_st,venue,num_ticks,quote_volume,quote_volume/SUM]
+                                Async Stream Group By workers: 1
+                                  segmentKey: timestamp_floor_utc('1h',trade_timestamp)
+                                  keys: [candle_st,venue]
+                                  keyFunctions: [timestamp_floor_utc('1h',trade_timestamp)]
+                                  values: [count(*),sum(qty*price),sum(qty)]
+                                  filter: (instrument_key ~ ETH.USD.S..*? [state-shared] and venue in [CBS,FUS,LMX,BTS])
+                                    PageFrame
+                                        Row forward scan
+                                        Interval forward scan on: spot_trades
+                                          intervals: [("2022-01-01T00:00:00.000000Z","MAX")]
                             """);
         });
     }

@@ -126,7 +126,18 @@ public final class QueryFuzzDriver {
                 logSchema(tables.getQuick(i).getShadow());
             }
         }
-        QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, config.isDiffJitEnabled(), config.isDiffShadowEnabled(), config.isDiffFusedEnabled(), config.isDiffMapPageEnabled() ? AbstractCairoTest.staticOverrides : null, config.isVerifyCursorEnabled(), tables, queryWorkerNamePrefix);
+        QueryRunner runner = new QueryRunner(
+                engine,
+                sqlExecutionContext,
+                config.isDiffJitEnabled(),
+                config.isDiffShadowEnabled(),
+                config.isDiffFusedEnabled(),
+                config.isDiffStreamEnabled(),
+                config.isDiffMapPageEnabled() ? AbstractCairoTest.staticOverrides : null,
+                config.isVerifyCursorEnabled(),
+                tables,
+                queryWorkerNamePrefix
+        );
         // Snapshot the parallel-execution flags so the per-query serial
         // override can restore them. Snapshotting once outside the loop also
         // preserves any global override the user passed via system properties.
@@ -144,6 +155,7 @@ public final class QueryFuzzDriver {
         int faultGen = 0;
         int skipped = 0;
         int serial = 0;
+        int spellingGen = 0;
         // Per-shape differential-query counts, so a generator that emits nothing the engine can
         // compile cannot hide behind the aggregate (see MIN_ACCEPTED_PCT_PER_SHAPE). Fault queries
         // run a different oracle and are left out of both counts.
@@ -206,6 +218,22 @@ public final class QueryFuzzDriver {
                     }
                 } else {
                     generatedByShape[query.shape().ordinal()]++;
+                    // Regenerate the same query in plain spelling for the spelling axis. The
+                    // rewind makes the second call draw the same rnd ops as the first, so the
+                    // trees match and rnd ends where the first call left it; the assertion
+                    // catches a generator that draws differently under a non-null BindContext.
+                    final long postGenS0 = rnd.getSeed0();
+                    final long postGenS1 = rnd.getSeed1();
+                    rnd.reset(preGenS0, preGenS1);
+                    final String spellingSql = QueryGenerator.generate(rnd, tables, BindContext.plainSpelling(), injectFaultFn, config.isWindowEnabled(), config.isLatestOnEnabled(), config.isHorizonJoinEnabled(), config.isWindowJoinEnabled(), config.isHashJoinEnabled(), config.isGroupingSetsEnabled(), config).sql();
+                    Assert.assertTrue(
+                            "plain spelling drew a different rnd stream for: " + query.sql(),
+                            rnd.getSeed0() == postGenS0 && rnd.getSeed1() == postGenS1
+                    );
+                    if (!spellingSql.equals(query.sql())) {
+                        query = query.withSpelling(spellingSql);
+                        spellingGen++;
+                    }
                     // With small probability, regenerate the same query with a
                     // BindContext threaded through so a fraction of bindable
                     // typed constants emit as ?::TYPE bind variables. The Rnd
@@ -282,6 +310,7 @@ public final class QueryFuzzDriver {
                 .$(serial).$(" serial, ")
                 .$(faultGen).$(" with fault injection (").$(runner.getFaultsFired()).$(" fired), ")
                 .$(bindGen).$(" with bind variant, ")
+                .$(spellingGen).$(" with plain spelling (").$(runner.getSpellingAxisRuns()).$(" compared), ")
                 .$(skipped).$(" skipped on expected errors, ")
                 .$(failures.size()).$(" failures")
                 .$();
@@ -305,6 +334,7 @@ public final class QueryFuzzDriver {
                 .$(runner.getBuildChoiceRuns()).$(" runs picked the build per execution")
                 .$();
         LOG.info().$("fuzz map page axis: ").$(runner.getMapPageAxisRuns()).$(" comparisons").$();
+        LOG.info().$("fuzz stream axis: ").$(runner.getStreamAxisRuns()).$(" comparisons against the hash GROUP BY").$();
         LOG.info().$("fuzz reference axis: ").$(runner.getReferenceAxisRuns(QueryShape.GROUPING_SETS)).$(" comparisons across ")
                 .$(generatedByShape[QueryShape.GROUPING_SETS.ordinal()]).$(" grouping sets queries, ")
                 .$(runner.getReferenceAxisRuns(QueryShape.HORIZON_JOIN)).$(" across ")
@@ -394,6 +424,14 @@ public final class QueryFuzzDriver {
                 );
             }
         }
+        // SAMPLE BY plans the stream GROUP BY by default, so the axis should run on a large enough sample.
+        final int sampleByGenerated = generatedByShape[QueryShape.SAMPLE_BY.ordinal()];
+        if (config.isDiffStreamEnabled() && sampleByGenerated >= MIN_SHAPE_QUERIES_FOR_ACCEPT_FLOOR) {
+            Assert.assertTrue(
+                    "no SAMPLE BY of " + sampleByGenerated + " used the stream GROUP BY; the stream on/off axis looks vacuous",
+                    runner.getStreamAxisRuns() > 0
+            );
+        }
         // Guard the reference axis against going vacuous. It compares only when a grouping sets
         // query and its UNION ALL rewrite both run, so a rewrite that stops compiling would leave
         // every grouping sets query unchecked against it while the shape still counts as accepted.
@@ -403,6 +441,15 @@ public final class QueryFuzzDriver {
                     "the reference axis compared none of the " + groupingSetsGenerated
                             + " grouping sets queries; the UNION ALL rewrite looks out of step with the engine",
                     runner.getReferenceAxisRuns(QueryShape.GROUPING_SETS) > 0
+            );
+        }
+        // Guard the spelling axis the same way: a plain spelling that stopped compiling would
+        // leave every CASE, extract() and cast() keyword form unchecked against it.
+        if (spellingGen >= MIN_SHAPE_QUERIES_FOR_ACCEPT_FLOOR) {
+            Assert.assertTrue(
+                    "the spelling axis compared none of the " + spellingGen
+                            + " queries with a plain spelling; the spellings look out of step with the engine",
+                    runner.getSpellingAxisRuns() > 0
             );
         }
         // Guard the fault injector against a silent disarm. It has several ways to stop biting while

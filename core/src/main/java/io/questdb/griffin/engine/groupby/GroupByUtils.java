@@ -27,11 +27,17 @@ package io.questdb.griffin.engine.groupby;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.ListColumnFilter;
+import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.map.Map;
+import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionParser;
@@ -40,6 +46,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.functions.MonotonicTimestampFunction;
 import io.questdb.griffin.engine.functions.PerWorkerFunctionList;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.cast.CastStrToSymbolFunctionFactory;
@@ -72,12 +79,20 @@ import io.questdb.griffin.engine.functions.constants.NullConstant;
 import io.questdb.griffin.engine.functions.groupby.GroupingFunction;
 import io.questdb.griffin.engine.functions.groupby.SparklineGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.TwapGroupByFunction;
+import io.questdb.griffin.engine.functions.rnd.LongSequenceFunctionFactory;
+import io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory;
+import io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory;
+import io.questdb.griffin.engine.table.FilteredRecordCursorFactory;
+import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
+import io.questdb.griffin.engine.table.SelectedRecordCursorFactory;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
+import io.questdb.std.LongList;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -92,6 +107,28 @@ public class GroupByUtils {
     public static final int PROJECTION_FUNCTION_FLAG_COLUMN = 0;
     public static final int PROJECTION_FUNCTION_FLAG_GROUP_BY = 2;
     public static final int PROJECTION_FUNCTION_FLAG_VIRTUAL = 1;
+
+    public static void aggregateKeyedBatch(
+            PageFrameMemoryRecord record,
+            Map map,
+            RecordSink sink,
+            ObjList<GroupByFunction> functions,
+            FlyweightPackedMapValue value,
+            long batchAddress,
+            long rowIdsAddress,
+            long lo,
+            long hi,
+            long baseRowId
+    ) {
+        // Entry offsets must remain valid until every function has updated the batch.
+        map.reserveCapacity(hi - lo);
+        final long baseAddress = rowIdsAddress == 0
+                ? map.probeBatch(record, sink, lo, hi, batchAddress)
+                : map.probeBatchFiltered(record, sink, rowIdsAddress, lo, hi, batchAddress);
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            functions.getQuick(i).computeKeyedBatch(record, value, baseAddress, batchAddress, hi - lo, baseRowId);
+        }
+    }
 
     public static void assembleGroupByFunctions(
             @NotNull FunctionParser functionParser,
@@ -202,6 +239,11 @@ public class GroupByUtils {
                                 baseMetadata.isSymbolTableStatic(index),
                                 baseMetadata.getMetadata(index)
                         );
+                        // A column key passes its column through, so it keeps the column's PARQUET(...) setting.
+                        // The sampler computes the bucket timestamp of the legacy SAMPLE BY, which keeps the default.
+                        if (index != timestampIndex || timestampUnimportant) {
+                            m.setParquetEncodingConfig(baseMetadata.getColumnMetadata(index).getParquetEncodingConfig());
+                        }
                     }
                 }
                 projectionMetadata.add(m);
@@ -419,6 +461,76 @@ public class GroupByUtils {
             }
             throw th;
         }
+    }
+
+    /**
+     * Computes the value each function reports over an empty group, for functions whose
+     * {@link GroupByFunction#hasNonNullEmptyValue()} is true. The result and
+     * {@code emptyValueTypes} are parallel to {@code functions}. For a function with a non-NULL
+     * empty value, entry i of {@code emptyValueTypes} holds the function's type tag (BOOLEAN,
+     * DOUBLE or LONG) and entry i of the result holds the value's raw bits: 1 or 0 for BOOLEAN,
+     * {@link Double#doubleToRawLongBits(double)} for DOUBLE, the value itself for LONG. For any
+     * other function, the type tag is {@link ColumnType#UNDEFINED}, which means the function
+     * reports NULL over an empty group, and the value is {@link Numbers#LONG_NULL}.
+     *
+     * @param functions       assembled group-by functions, with their value types already initialized
+     * @param valueCount      number of map value slots the functions' value types occupy
+     * @param emptyValueTypes receives the per-function type tags; cleared first, and left empty
+     *                        when the method returns null
+     * @return the per-function empty values, or null when every function reports NULL
+     */
+    @Nullable
+    public static LongList computeNonNullEmptyValues(ObjList<GroupByFunction> functions, int valueCount, IntList emptyValueTypes) {
+        emptyValueTypes.clear();
+        final int n = functions.size();
+        boolean hasNonNullEmptyValue = false;
+        for (int i = 0; i < n; i++) {
+            if (functions.getQuick(i).hasNonNullEmptyValue()) {
+                hasNonNullEmptyValue = true;
+                break;
+            }
+        }
+        if (!hasNonNullEmptyValue) {
+            return null;
+        }
+
+        final LongList values = new LongList(n);
+        values.setAll(n, Numbers.LONG_NULL);
+        emptyValueTypes.setAll(n, ColumnType.UNDEFINED);
+        try (SimpleMapValue value = new SimpleMapValue(valueCount)) {
+            // Zero the value so that every slot, including those of functions not flagged
+            // here, starts from a known state.
+            value.clear();
+            for (int i = 0; i < n; i++) {
+                final GroupByFunction function = functions.getQuick(i);
+                if (function.hasNonNullEmptyValue()) {
+                    final short typeTag = ColumnType.tagOf(function.getType());
+                    switch (typeTag) {
+                        case ColumnType.BOOLEAN -> {
+                            function.setEmpty(value);
+                            values.setQuick(i, function.getBool(value) ? 1 : 0);
+                            emptyValueTypes.setQuick(i, typeTag);
+                        }
+                        case ColumnType.DOUBLE -> {
+                            function.setEmpty(value);
+                            values.setQuick(i, Double.doubleToRawLongBits(function.getDouble(value)));
+                            emptyValueTypes.setQuick(i, typeTag);
+                        }
+                        case ColumnType.LONG -> {
+                            function.setEmpty(value);
+                            values.setQuick(i, function.getLong(value));
+                            emptyValueTypes.setQuick(i, typeTag);
+                        }
+                        // GroupByFunction.hasNonNullEmptyValue() admits no other type. Without
+                        // assertions the entry stays UNDEFINED, so the column reports NULL.
+                        default -> {
+                            assert false : "non-NULL empty value of unsupported type: " + ColumnType.nameOf(typeTag);
+                        }
+                    }
+                }
+            }
+        }
+        return values;
     }
 
     private static void setGroupingArgKeyPositions(GroupingFunction function, QueryColumn column) {
@@ -762,6 +874,61 @@ public class GroupByUtils {
         }
     }
 
+    public static Function getGroupByKeyFunction(RecordCursorFactory base, ColumnTypes keyTypes, ListColumnFilter columnFilter, ObjList<Function> keyFunctions, int index) {
+        return index < columnFilter.getColumnCount()
+                ? createColumnFunction(base.getMetadata(), columnFilter.getColumnIndex(index), keyTypes.getColumnType(index), 0)
+                : keyFunctions.getQuick(index - columnFilter.getColumnCount());
+    }
+
+    public static int getStreamGroupByKeyIndex(
+            RecordCursorFactory base,
+            ColumnTypes keyTypes,
+            ListColumnFilter columnFilter,
+            ObjList<Function> keyFunctions,
+            ObjList<GroupByFunction> groupByFunctions
+    ) {
+        if (base.getScanDirection() != RecordCursorFactory.SCAN_DIRECTION_FORWARD
+                || keyTypes.getColumnCount() == 0 || !base.isStableWithinExecution()) {
+            return -1;
+        }
+        for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
+            final GroupByFunction function = groupByFunctions.getQuick(i);
+            if (!function.isStateSelfContained() || !function.isStableWithinExecution()) {
+                return -1;
+            }
+        }
+        for (int i = 0, n = keyFunctions.size(); i < n; i++) {
+            if (!keyFunctions.getQuick(i).isStableWithinExecution()) {
+                return -1;
+            }
+        }
+        for (int i = 0, n = keyTypes.getColumnCount(); i < n; i++) {
+            final int keyType = keyTypes.getColumnType(i);
+            if (!ColumnType.isTimestamp(keyType) && keyType != ColumnType.LONG && keyType != ColumnType.INT) {
+                continue;
+            }
+            final Function key = getGroupByKeyFunction(base, keyTypes, columnFilter, keyFunctions, i);
+            final Function arg = key instanceof MonotonicTimestampFunction monotonic && monotonic.preservesTimestampOrder()
+                    ? monotonic.getTimestampArg() : key;
+            if (arg instanceof ColumnFunction column
+                    && arg.getType() == base.getMetadata().getColumnType(column.getColumnIndex())
+                    && isAscendingKey(base, column.getColumnIndex())) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    public static int getStreamGroupByTimestampIndex(RecordMetadata metadata, ObjList<Function> functions, int keyIndex) {
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            if (ColumnType.isTimestamp(metadata.getColumnType(i))
+                    && functions.getQuick(i) instanceof ColumnFunction column && column.getColumnIndex() == keyIndex) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
     /**
      * Binds the key and virtual functions of a shared consumer of a keyed GROUP BY to the symbol
      * tables of the owner's base cursor. A shared consumer reads the owner's map through its own
@@ -817,6 +984,14 @@ public class GroupByUtils {
             for (int i = 0, n = functions.size(); i < n; i++) {
                 functions.getQuick(i).setAllocator(allocator);
             }
+        }
+    }
+
+    public static void setStreamGroupByKey(MapValue value, int index, int type, long key) {
+        if (type == ColumnType.INT) {
+            value.putInt(index, key == Numbers.LONG_NULL ? Numbers.INT_NULL : (int) key);
+        } else {
+            value.putLong(index, key);
         }
     }
 
@@ -999,5 +1174,23 @@ public class GroupByUtils {
             return ((ColumnFunction) func).getColumnIndex();
         }
         return -1;
+    }
+
+    private static boolean isAscendingKey(RecordCursorFactory factory, int columnIndex) {
+        if (factory instanceof PageFrameRecordCursorFactory pageFrameFactory) {
+            return pageFrameFactory.isAscendingTimestamp(columnIndex);
+        }
+        if (LongSequenceFunctionFactory.isLongSequence(factory)) {
+            return columnIndex == 0;
+        }
+        if (factory instanceof SelectedRecordCursorFactory) {
+            return isAscendingKey(factory.getBaseFactory(), factory.getColumnCrossIndex().getQuick(columnIndex));
+        }
+        if (factory instanceof FilteredRecordCursorFactory
+                || factory instanceof AsyncFilteredRecordCursorFactory
+                || factory instanceof AsyncJitFilteredRecordCursorFactory) {
+            return isAscendingKey(factory.getBaseFactory(), columnIndex);
+        }
+        return false;
     }
 }

@@ -3499,7 +3499,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 );
 
                                 timerTimeZone = viewDefinition.getTimeZone();
-                                tzRulesMicros = viewDefinition.getTzRules();
+                                if (timerTimeZone != null) {
+                                    // The view definition holds the rules of the SAMPLE BY time zone in the base
+                                    // table's timestamp unit, nanoseconds for a TIMESTAMP_NS table, but the period
+                                    // timer counts in microseconds.
+                                    tzRulesMicros = MicrosTimestampDriver.INSTANCE.getTimezoneRules(DateLocaleFactory.EN_LOCALE, timerTimeZone);
+                                }
                                 if (viewDefinition.getTimeZoneOffset() != null) {
                                     final long val = Dates.parseOffset(viewDefinition.getTimeZoneOffset());
                                     if (val == Numbers.LONG_NULL) {
@@ -5474,7 +5479,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 lock.unlock();
                             }
                         } else {
-                            TableToken tableToken = writer.getTableToken();
+                            // TRUNCATE queues no compile of the views over the table: a compile over the
+                            // emptied table fails a view whose compile reads the rows, such as a PIVOT IN
+                            // sub-query. A view compile that meets the lock of the table's readers keeps
+                            // the view's state and compiles the view again later, see ViewCompilerJob.
+                            final TableToken tableToken = writer.getTableToken();
                             if (engine.lockReaders(tableToken)) {
                                 try {
                                     if (keepSymbolTables) {
