@@ -3349,6 +3349,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     parquetFileSize,
                     seqTxn
             );
+            partitionUpdater.setSourceParquetMeta(parquetMetaReader.getAddr(), parquetMetaReader.getResolvedFileSize());
             // compaction moves no row: the output keeps every column top, as the source has it
             partitionUpdater.setColumnTopRowLimit(Long.MAX_VALUE);
             if (isFullyMaterialized) {
@@ -6402,6 +6403,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 parquetFileSize, // existing parquet data-file size (gates first-time vs incremental)
                 seqTxn
         );
+        if (isRewrite) {
+            // the row groups the rewrite copies keep the ASCII flags of their chunks
+            partitionUpdater.setSourceParquetMeta(parquetMetaReader.getAddr(), parquetMetaReader.getResolvedFileSize());
+        }
         if (!hasIndexedSymbolColumn(tableWriter.getMetadata())) {
             // The index row map only serves symbol indexes, and an older binary rejects a footer that
             // carries one: a table without an index keeps the identity map.
