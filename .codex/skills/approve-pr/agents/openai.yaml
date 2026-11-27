@@ -1,0 +1,6 @@
+interface:
+  display_name: "Approve PR"
+  short_description: "Post a level-3 review-pr report as an approving review"
+  default_prompt: "Use $approve-pr to approve the PR the last review-pr report covered."
+policy:
+  allow_implicit_invocation: false
