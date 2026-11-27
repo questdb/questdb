@@ -304,6 +304,22 @@ public class IntervalAnalysisTest extends AbstractCairoTest {
             {"dateadd('h', -1, ts, 'Europe/London')", false, false},
             {"timestamp_ceil('h', ts)", true, false},
             {"timestamp_ceil('n', ts)", true, true},
+            // runtime-constant text reaches a TIMESTAMP parameter as a TIMESTAMP_NS
+            {"timestamp_floor('1h', :t)", true, true},
+            {"timestamp_floor('1w', :t)", false, false},
+            {"timestamp_floor('1h', :t, '2024-01-01T00:30:00.000000Z')", true, true},
+            {"timestamp_floor_utc('1h', :t, null, '00:00', null)", true, true},
+            {"timestamp_floor_utc('1h', :t, null, '00:00', '+01:00')", false, false},
+            {"to_utc(:t, '+01:00')", true, true},
+            {"to_timezone(:t, '+01:00')", false, false},
+            {"to_timezone(:t, '-01:00')", true, true},
+            {"date_trunc('hour', :t)", true, true},
+            {"date_trunc('week', :t)", false, false},
+            {"dateadd('h', 1, :t)", false, false},
+            {"dateadd('h', -1, :t)", true, true},
+            {"dateadd('h', -1, :t, '+01:00')", true, true},
+            {"timestamp_ceil('h', :t)", false, false},
+            {"timestamp_ceil('n', :t)", true, true},
     };
     private static final String[] TABLES = {"ia_micro_day", "ia_micro_none", "ia_nano_day", "ia_nano_none"};
 
@@ -319,7 +335,9 @@ public class IntervalAnalysisTest extends AbstractCairoTest {
                         final String sql = "SELECT " + row[0] + " e FROM " + table;
                         bindVariableService.clear();
                         final String call = (String) row[0];
-                        if (call.contains("ts + $1")) {
+                        if (call.contains(":t")) {
+                            bindVariableService.setStr("t", "2024-01-01T00:30:00.000000Z");
+                        } else if (call.contains("ts + $1")) {
                             bindVariableService.setLong(0, 1);
                         } else if (call.contains("dateadd")) {
                             bindVariableService.setInt(0, 1);

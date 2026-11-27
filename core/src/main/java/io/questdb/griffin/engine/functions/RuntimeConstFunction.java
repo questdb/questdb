@@ -168,20 +168,21 @@ public interface RuntimeConstFunction extends UnaryFunction {
      * text, not the value it parses to.
      */
     static Function wrapTemporalText(Function arg, int temporalType, int position) {
-        assert temporalTextType(arg.getType(), arg.isRuntimeConstant(), temporalType) != arg.getType();
+        assert wrappedArgumentType(temporalType, arg.getType(), arg.isRuntimeConstant()) != arg.getType();
         return temporalType == ColumnType.DATE ? new DateRuntimeConstFunction(arg, position) : new TimestampRuntimeConstFunction(arg, position);
     }
 
     /**
-     * The type of the argument {@link #wrapTemporalText} hands a parameter that reads {@code temporalType}, TIMESTAMP or
-     * DATE, for an argument of {@code type}: runtime-constant text reads as a DATE or as a TIMESTAMP of
-     * {@link ColumnType#getTimestampType}; any other argument keeps its type.
+     * The type a parameter of {@code parameterTypeTag} receives for an argument of {@code argumentType}: a TIMESTAMP or
+     * DATE parameter receives runtime-constant text as a TIMESTAMP of {@link ColumnType#getTimestampType} or as a DATE,
+     * which {@link #wrapTemporalText} parses; any other argument keeps its type.
      */
-    static int temporalTextType(int type, boolean isRuntimeConstant, int temporalType) {
-        if (!ColumnType.isVarcharOrString(type) || !isRuntimeConstant) {
-            return type;
+    static int wrappedArgumentType(int parameterTypeTag, int argumentType, boolean isRuntimeConstant) {
+        if (parameterTypeTag != ColumnType.TIMESTAMP && parameterTypeTag != ColumnType.DATE
+                || !ColumnType.isVarcharOrString(argumentType) || !isRuntimeConstant) {
+            return argumentType;
         }
-        return temporalType == ColumnType.DATE ? ColumnType.DATE : ColumnType.getTimestampType(type);
+        return parameterTypeTag == ColumnType.DATE ? ColumnType.DATE : ColumnType.getTimestampType(argumentType);
     }
 
     /**

@@ -61,17 +61,13 @@ public interface MonotonicTimestampFunctionFactory {
     }
 
     /**
-     * The type the built function of {@code call} reads its timestamp argument {@code index} as: the instantiator hands a
-     * TIMESTAMP or DATE parameter runtime-constant text as a value of that type, see
-     * {@link RuntimeConstFunction#temporalTextType}, which the bound argument does not record.
+     * The type the function built for {@code call} receives its argument {@code index} as, which the bound argument
+     * does not record for runtime-constant text, see {@link RuntimeConstFunction#wrappedArgumentType}.
      */
     static int timestampArgumentType(FunctionExpression call, int index) {
         final BoundExpression argument = call.argumentAt(index);
-        final short temporalType = FunctionFactoryDescriptor.toTypeTag(call.getOverload().getArgTypeWithFlags(index));
-        if (temporalType != ColumnType.TIMESTAMP && temporalType != ColumnType.DATE) {
-            return argument.getDataType();
-        }
-        return RuntimeConstFunction.temporalTextType(argument.getDataType(), (argument.getFunctionFlags() & BoundExpression.RUNTIME_CONSTANT) != 0, temporalType);
+        return RuntimeConstFunction.wrappedArgumentType(FunctionFactoryDescriptor.toTypeTag(call.getOverload().getArgTypeWithFlags(index)),
+                argument.getDataType(), (argument.getFunctionFlags() & BoundExpression.RUNTIME_CONSTANT) != 0);
     }
 
     /**

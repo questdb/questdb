@@ -1684,8 +1684,7 @@ public class FunctionResolver implements Mutable, SwitchFunctionFactory.Equality
         for (int i = 0, n = Math.min(args.size(), overload.getSigArgCount()); i < n; i++) {
             final short sigArgTypeTag = FunctionFactoryDescriptor.toTypeTag(overload.getArgTypeWithFlags(i));
             final Function arg = args.getQuick(i);
-            if ((sigArgTypeTag == ColumnType.TIMESTAMP || sigArgTypeTag == ColumnType.DATE)
-                    && ColumnType.isVarcharOrString(arg.getType()) && arg.isRuntimeConstant()) {
+            if (RuntimeConstFunction.wrappedArgumentType(sigArgTypeTag, arg.getType(), arg.isRuntimeConstant()) != arg.getType()) {
                 if (operandIndex > -1 && i != operandIndex && sigArgTypeTag == ColumnType.TIMESTAMP) {
                     final boolean isCeil = args.size() == 3 ? i == 1 : isRoundedUp(name, i);
                     args.setQuick(i, RuntimeConstFunction.wrapTimestampText(arg, args.getQuick(operandIndex).getType(),
