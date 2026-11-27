@@ -30,8 +30,8 @@ jobs:
           os: Linux
           jdk: "1.25"
           # plain-, not coverage-: the two fuzz legs run without coverage instrumentation.
-          # Fuzz tests run about 15 times slower under it, and they reach different lines on
-          # every run, which made the coverage report differ from build to build.
+          # Fuzz tests reach different lines on every run, so they must not count as coverage:
+          # the report would differ from build to build. They also run about twice as fast.
           testset: "plain-fuzz1"
           includeTests: "**/cairo/fuzz/**"
           javadoc_step: ""
