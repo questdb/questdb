@@ -46,6 +46,17 @@ public interface FunctionFactory {
         return EmptyGroupValue.NULL;
     }
 
+    /**
+     * The row of a group whose argument the group by function the factory builds reports, when the rows of the group
+     * ascend by its only argument and hold no NULL in it. The planner answers such a function from that row alone, e.g.
+     * min() or first() of the designated timestamp from the first row of a table scan, max() or last() from the last.
+     *
+     * @return the row the group by function reads its value from, or {@link EndpointRow#NONE}
+     */
+    default EndpointRow getEndpointRow() {
+        return EndpointRow.NONE;
+    }
+
     default int getExecutionRequirements() {
         return SqlExecutionRequirements.NONE;
     }
@@ -57,6 +68,16 @@ public interface FunctionFactory {
      */
     default OrderDependence getOrderDependence() {
         return OrderDependence.NONE;
+    }
+
+    /**
+     * How the values of the group by function the factory builds over consecutive parts of a group combine into its
+     * value over the whole group. A PIVOT over a WINDOW JOIN merges the window values of the rows of each cell by it.
+     *
+     * @return how the values over the parts of a group merge, or {@link PartialMerge#NONE} when they do not
+     */
+    default PartialMerge getPartialMerge() {
+        return PartialMerge.NONE;
     }
 
     /**
@@ -131,6 +152,17 @@ public interface FunctionFactory {
      */
     default TimestampPrecisionUse getTimestampPrecisionUse(BoundExpression firstArgument) {
         return TimestampPrecisionUse.DEPENDENT;
+    }
+
+    /**
+     * Whether the group by function the factory builds sums its only argument over the rows of a group that hold no
+     * NULL in it. The sum of {@code c * k}, {@code c + k} or {@code c - k} then follows from the sum and the count of
+     * {@code c}, so the planner computes several such sums from one.
+     *
+     * @return true when the group by function is the sum of its argument
+     */
+    default boolean isArgumentSum() {
+        return false;
     }
 
     /**
@@ -338,6 +370,24 @@ public interface FunctionFactory {
     }
 
     /**
+     * The row of a group whose argument a group by function reports, over rows that ascend by the argument.
+     */
+    enum EndpointRow {
+        /**
+         * The function reads more than one row.
+         */
+        NONE,
+        /**
+         * The first row, as min() and first() report.
+         */
+        FIRST,
+        /**
+         * The last row, as max() and last() report.
+         */
+        LAST
+    }
+
+    /**
      * How the value of a group by function depends on the order of its input rows.
      */
     enum OrderDependence {
@@ -356,5 +406,39 @@ public interface FunctionFactory {
          * and a scan delivers its rows in table order.
          */
         TABLE_ORDER
+    }
+
+    /**
+     * How the values of a group by function over consecutive parts of a group give its value over the group.
+     */
+    enum PartialMerge {
+        /**
+         * The values over the parts do not give the value over the group.
+         */
+        NONE,
+        /**
+         * The sum of the values over the parts, as for sum() and count().
+         */
+        SUM,
+        /**
+         * The least of the values over the parts, as for min().
+         */
+        MIN,
+        /**
+         * The greatest of the values over the parts, as for max().
+         */
+        MAX,
+        /**
+         * The sum of the sums of the argument over the parts divided by the sum of its counts, as for avg().
+         */
+        AVERAGE,
+        /**
+         * The value over the first part that has a row, as for first().
+         */
+        FIRST,
+        /**
+         * The value over the last part that has a row, as for last().
+         */
+        LAST
     }
 }

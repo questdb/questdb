@@ -26,14 +26,13 @@ package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
-import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
-public class LastArrayGroupByFunctionFactory implements FunctionFactory {
+public class LastArrayGroupByFunctionFactory implements LastAggregate {
     @Override
     public OrderDependence getOrderDependence() {
         return OrderDependence.TABLE_ORDER;

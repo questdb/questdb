@@ -30,6 +30,8 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactory.EmptyGroupValue;
+import io.questdb.griffin.FunctionFactory.EndpointRow;
+import io.questdb.griffin.FunctionFactory.PartialMerge;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.FunctionFactoryDescriptor;
 import io.questdb.griffin.FunctionParser;
@@ -103,6 +105,22 @@ public class EmptyGroupValueTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testEveryGroupByOverloadOfANameDeclaresOneEndpointRow() {
+        Assert.assertEquals(
+                "{first=FIRST, last=LAST, max=LAST, min=FIRST}",
+                declared(engine.getFunctionFactoryCache(), FunctionFactory::getEndpointRow, EndpointRow.NONE).toString()
+        );
+    }
+
+    @Test
+    public void testEveryGroupByOverloadOfANameDeclaresOnePartialMerge() {
+        Assert.assertEquals(
+                "{avg=AVERAGE, count=SUM, first=FIRST, last=LAST, max=MAX, min=MIN, sum=SUM}",
+                declared(engine.getFunctionFactoryCache(), FunctionFactory::getPartialMerge, PartialMerge.NONE).toString()
+        );
+    }
+
+    @Test
     public void testEveryGroupByOverloadOfANameDeclaresOneValue() {
         final TreeMap<String, EmptyGroupValue> nonNull = new TreeMap<>();
         declaredValues(engine.getFunctionFactoryCache()).forEach((name, value) -> {
@@ -114,6 +132,54 @@ public class EmptyGroupValueTest extends AbstractCairoTest {
                 "{approx_count_distinct=ZERO, count=ZERO, count_distinct=ZERO, haversine_dist_deg=ZERO, isOrdered=TRUE}",
                 nonNull.toString()
         );
+    }
+
+    @Test
+    public void testEveryGroupByOverloadOfANameDeclaresWhetherItSumsItsArgument() {
+        Assert.assertEquals(
+                "{sum=true}",
+                declared(engine.getFunctionFactoryCache(), FunctionFactory::isArgumentSum, false).toString()
+        );
+    }
+
+    @Test
+    public void testPartialMergeOfANameIsTheOneItsGroupByOverloadsDeclare() {
+        final FunctionFactoryCache cache = engine.getFunctionFactoryCache();
+        final TreeMap<String, PartialMerge> declared = declared(cache, FunctionFactory::getPartialMerge, PartialMerge.NONE);
+        cache.getFactories().forEach((name, descriptors) -> Assert.assertEquals(
+                name.toString(),
+                declared.getOrDefault(descriptors.getQuick(0).getName(), PartialMerge.NONE),
+                cache.getPartialMerge(name)
+        ));
+        Assert.assertEquals(PartialMerge.SUM, cache.getPartialMerge("COUNT"));
+        Assert.assertEquals(PartialMerge.NONE, cache.getPartialMerge("count_distinct"));
+        Assert.assertEquals(PartialMerge.NONE, cache.getPartialMerge("no_such_function"));
+    }
+
+    /**
+     * Reads the property each aggregate name declares, other than {@code none}, checking that every group by overload
+     * of the name declares the same one and that no other factory declares any value but {@code none}.
+     */
+    private static <T> TreeMap<String, T> declared(FunctionFactoryCache cache, java.util.function.Function<FunctionFactory, T> property, T none) {
+        final TreeMap<String, T> declared = new TreeMap<>();
+        final TreeMap<String, T> groupBy = new TreeMap<>();
+        cache.getFactories().forEach((name, descriptors) -> {
+            for (int i = 0, n = descriptors.size(); i < n; i++) {
+                final FunctionFactoryDescriptor descriptor = descriptors.getQuick(i);
+                final FunctionFactory factory = descriptor.getFactory();
+                final T value = property.apply(factory);
+                if (!factory.isGroupBy()) {
+                    Assert.assertEquals(factory.getSignature(), none, value);
+                    continue;
+                }
+                final T previous = groupBy.put(descriptor.getName(), value);
+                Assert.assertTrue(factory.getSignature(), previous == null || previous.equals(value));
+                if (!none.equals(value)) {
+                    declared.put(descriptor.getName(), value);
+                }
+            }
+        });
+        return declared;
     }
 
     /**

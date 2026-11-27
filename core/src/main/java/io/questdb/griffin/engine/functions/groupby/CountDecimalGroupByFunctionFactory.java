@@ -29,7 +29,6 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
@@ -40,12 +39,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 
-public class CountDecimalGroupByFunctionFactory implements FunctionFactory {
-
-    @Override
-    public EmptyGroupValue getEmptyGroupValue() {
-        return EmptyGroupValue.ZERO;
-    }
+public class CountDecimalGroupByFunctionFactory implements CountAggregate {
 
     @Override
     public int getResultType(IntList argTypes) {

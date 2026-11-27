@@ -292,7 +292,8 @@ public final class LogicalPlans {
 
     /**
      * The column whose value in one row of its input the keyless aggregate returns: the argument of its only call when
-     * that is a {@code min}, {@code max}, {@code first} or {@code last} of a direct column reference; null otherwise.
+     * that call reads an endpoint row of rows ascending by a direct column reference, see
+     * {@link FunctionFactory#getEndpointRow}; null otherwise.
      */
     public static ColumnExpression endpointColumn(AggregatePlan aggregate) {
         if (!aggregate.isSingleGroup() || aggregate.getAggregates().size() != 1) {
@@ -300,8 +301,7 @@ public final class LogicalPlans {
         }
         final FunctionExpression call = aggregate.getAggregates().getQuick(0);
         return call.getArgumentCount() == 1 && call.argumentAt(0) instanceof ColumnExpression column && column.isDirectReference()
-                && (isTimestampEndpointBackward(call) || Chars.equalsIgnoreCase(call.getName(), "min") || Chars.equalsIgnoreCase(call.getName(), "first"))
-                ? column : null;
+                && call.getEndpointRow() != FunctionFactory.EndpointRow.NONE ? column : null;
     }
 
     /**
@@ -893,8 +893,8 @@ public final class LogicalPlans {
     }
 
     /**
-     * Whether the aggregate is a keyless {@code min}, {@code max}, {@code first} or {@code last} of the designated
-     * timestamp of a table scan, optionally filtered: its value is the timestamp of the first row in
+     * Whether the aggregate is a keyless call that reads an endpoint row, see {@link FunctionFactory#getEndpointRow},
+     * of the designated timestamp of a table scan, optionally filtered: its value is the timestamp of the first row in
      * ascending ({@code min}, {@code first}) or descending ({@code max}, {@code last}) timestamp order.
      */
     public static boolean isTimestampEndpoint(AggregatePlan aggregate) {
@@ -912,7 +912,7 @@ public final class LogicalPlans {
      * Whether a {@link #isTimestampEndpoint(AggregatePlan) timestamp endpoint} reads the last row in timestamp order.
      */
     public static boolean isTimestampEndpointBackward(FunctionExpression call) {
-        return Chars.equalsIgnoreCase(call.getName(), "max") || Chars.equalsIgnoreCase(call.getName(), "last");
+        return call.getEndpointRow() == FunctionFactory.EndpointRow.LAST;
     }
 
     /**
@@ -1009,13 +1009,14 @@ public final class LogicalPlans {
     }
 
     /**
-     * The operation {@code c * k}, {@code c + k} or {@code c - k}, either operand order, of an aggregate
-     * {@code sum(c op k)} of the grouping, where {@code c} is an uncast BYTE, SHORT, INT or LONG column of the grouping's
-     * input and {@code k} an integer literal; a projection over the grouping can compute such a sum from {@code sum(c)}
-     * and {@code count(c)}, see {@link #sumNormalisingGrouping}. Null for any other aggregate.
+     * The operation {@code c * k}, {@code c + k} or {@code c - k}, either operand order, of an aggregate of the grouping
+     * that sums its argument, see {@link FunctionFactory#isArgumentSum}, where {@code c} is an uncast BYTE, SHORT, INT or
+     * LONG column of the grouping's input and {@code k} an integer literal; a projection over the grouping can compute
+     * such a sum from {@code sum(c)} and {@code count(c)}, see {@link #sumNormalisingGrouping}. Null for any other
+     * aggregate.
      */
     public static FunctionExpression normalisableSumOperation(GroupingPlan grouping, FunctionExpression aggregate) {
-        if (aggregate.getArgumentCount() != 1 || !Chars.equalsIgnoreCase(aggregate.getName(), "sum")
+        if (aggregate.getArgumentCount() != 1 || !aggregate.getOverload().getFactory().isArgumentSum()
                 || !(aggregate.argumentAt(0) instanceof FunctionExpression operation) || operation.getArgumentCount() != 2
                 || operation.getName().length() != 1 || "*+-".indexOf(operation.getName().charAt(0)) < 0) {
             return null;

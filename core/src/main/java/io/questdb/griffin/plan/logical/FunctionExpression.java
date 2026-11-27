@@ -99,12 +99,28 @@ public final class FunctionExpression extends BoundExpression {
         return overload.getFactory().getEmptyGroupValue();
     }
 
+    /**
+     * The row of a group whose argument the aggregate reports over rows ascending by the argument, as its factory
+     * declares it.
+     */
+    public FunctionFactory.EndpointRow getEndpointRow() {
+        return overload.getFactory().getEndpointRow();
+    }
+
     public String getName() {
         return overload.getName();
     }
 
+
     public FunctionFactoryDescriptor getOverload() {
         return overload;
+    }
+
+    /**
+     * How the values of the aggregate over consecutive parts of a group merge, as its factory declares it.
+     */
+    public FunctionFactory.PartialMerge getPartialMerge() {
+        return overload.getFactory().getPartialMerge();
     }
 
     public String getSignature() {

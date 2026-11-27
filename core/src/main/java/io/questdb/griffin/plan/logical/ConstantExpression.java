@@ -25,8 +25,12 @@
 package io.questdb.griffin.plan.logical;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GeoHashes;
 import io.questdb.griffin.model.IntervalSearch;
 import io.questdb.std.Chars;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
+import io.questdb.std.Decimals;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.Numbers;
@@ -233,6 +237,38 @@ public final class ConstantExpression extends BoundExpression {
      */
     public boolean isLiteral() {
         return isLiteral;
+    }
+
+    /**
+     * Whether the constant holds the NULL of its type, as {@link io.questdb.cairo.sql.Function#isNullConstant()} of the
+     * constant function the generator builds for it answers: BOOLEAN, BYTE, SHORT and CHAR have no NULL, and DOUBLE and
+     * FLOAT read NaN and the infinities as NULL.
+     */
+    public boolean isNull() {
+        final int type = getDataType();
+        return switch (ColumnType.tagOf(type)) {
+            case ColumnType.NULL, ColumnType.BINARY -> true;
+            case ColumnType.INT -> (int) longValue == Numbers.INT_NULL;
+            case ColumnType.IPv4 -> (int) longValue == Numbers.IPv4_NULL;
+            case ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP -> longValue == Numbers.LONG_NULL;
+            case ColumnType.DOUBLE -> Numbers.isNull(getDoubleValue());
+            case ColumnType.FLOAT -> Numbers.isNull(getFloatValue());
+            case ColumnType.STRING, ColumnType.SYMBOL, ColumnType.VARCHAR -> value == null;
+            case ColumnType.UUID, ColumnType.LONG128 -> longValue == Numbers.LONG_NULL && lh == Numbers.LONG_NULL;
+            case ColumnType.LONG256 -> Long256Impl.NULL_LONG256.equals(long256);
+            case ColumnType.GEOBYTE -> (byte) longValue == GeoHashes.BYTE_NULL;
+            case ColumnType.GEOSHORT -> (short) longValue == GeoHashes.SHORT_NULL;
+            case ColumnType.GEOINT -> (int) longValue == GeoHashes.INT_NULL;
+            case ColumnType.GEOLONG -> longValue == GeoHashes.NULL;
+            case ColumnType.DECIMAL8 -> (byte) longValue == Decimals.DECIMAL8_NULL;
+            case ColumnType.DECIMAL16 -> (short) longValue == Decimals.DECIMAL16_NULL;
+            case ColumnType.DECIMAL32 -> (int) longValue == Decimals.DECIMAL32_NULL;
+            case ColumnType.DECIMAL64 -> longValue == Decimals.DECIMAL64_NULL;
+            case ColumnType.DECIMAL128 -> Decimal128.isNull(lh, longValue);
+            case ColumnType.DECIMAL256 -> Decimal256.isNull(hh, hl, lh, longValue);
+            case ColumnType.INTERVAL -> longValue == Numbers.LONG_NULL && lh == Numbers.LONG_NULL;
+            default -> false;
+        };
     }
 
     /**

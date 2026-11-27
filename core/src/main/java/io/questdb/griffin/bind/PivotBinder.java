@@ -33,6 +33,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.CharacterStoreEntry;
 import io.questdb.griffin.CompilerTemporaries;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -57,11 +58,9 @@ import io.questdb.griffin.plan.logical.WindowJoinStep;
 import io.questdb.griffin.plan.logical.WindowPlan;
 import io.questdb.griffin.plan.logical.WindowSpec;
 import io.questdb.std.CharSequenceHashSet;
-import io.questdb.std.Chars;
 import io.questdb.std.GenericLexer;
 import io.questdb.std.IntList;
 import io.questdb.std.Mutable;
-import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.str.StringSink;
@@ -123,24 +122,21 @@ final class PivotBinder implements Mutable {
     }
 
     /**
+     * Whether a PIVOT over a WINDOW JOIN merges the window values of its rows by one aggregate of the same values: sums,
+     * least or greatest values, see {@link FunctionFactory.PartialMerge}.
+     */
+    private static boolean isDirectMerge(FunctionFactory.PartialMerge merge) {
+        return merge == FunctionFactory.PartialMerge.SUM || merge == FunctionFactory.PartialMerge.MIN || merge == FunctionFactory.PartialMerge.MAX;
+    }
+
+    /**
      * Whether the PIVOT merge of a cell reads {@code filler} where no row reaches the cell: a NULL, or false for a
      * BOOLEAN, which the merge reads as false. Answers false for a value it cannot classify, which costs a presence
      * test the cell does not need but never a wrong value.
      */
     private static boolean isNullOverNoRows(BoundExpression filler) {
-        if (!(filler instanceof ConstantExpression constant)) {
-            return false;
-        }
-        return switch (ColumnType.tagOf(constant.getDataType())) {
-            case ColumnType.NULL -> true;
-            case ColumnType.BOOLEAN -> constant.getLongValue() == 0;
-            case ColumnType.INT -> (int) constant.getLongValue() == Numbers.INT_NULL;
-            case ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP -> constant.getLongValue() == Numbers.LONG_NULL;
-            case ColumnType.DOUBLE -> Double.isNaN(constant.getDoubleValue());
-            case ColumnType.FLOAT -> Float.isNaN(constant.getFloatValue());
-            case ColumnType.STRING, ColumnType.SYMBOL, ColumnType.VARCHAR -> constant.getText() == null;
-            default -> false;
-        };
+        return filler instanceof ConstantExpression constant
+                && (constant.isNull() || ColumnType.isBoolean(constant.getDataType()) && constant.getLongValue() == 0);
     }
 
     /**
@@ -186,27 +182,6 @@ final class PivotBinder implements Mutable {
             }
         }
         throw new IllegalStateException("window join aggregate not found");
-    }
-
-    private static WindowJoinPivotKind windowJoinPivotKind(ExpressionNode call) throws SqlException {
-        if (call.paramCount <= 1) {
-            if (Chars.equalsIgnoreCase(call.token, "count") || Chars.equalsIgnoreCase(call.token, "sum")
-                    || Chars.equalsIgnoreCase(call.token, "min") || Chars.equalsIgnoreCase(call.token, "max")) {
-                return WindowJoinPivotKind.MERGE;
-            }
-            if (call.paramCount == 1) {
-                if (Chars.equalsIgnoreCase(call.token, "avg")) {
-                    return WindowJoinPivotKind.AVG;
-                }
-                if (Chars.equalsIgnoreCase(call.token, "first")) {
-                    return WindowJoinPivotKind.FIRST;
-                }
-                if (Chars.equalsIgnoreCase(call.token, "last")) {
-                    return WindowJoinPivotKind.LAST;
-                }
-            }
-        }
-        throw SqlException.$(call.position, "PIVOT over WINDOW JOIN supports only sum, count, min, max, avg, first and last aggregates");
     }
 
     private void addPivotKey(AggregatePlan grouped, ExpressionNode key, CharSequence alias, QueryModel input, SqlExecutionContext executionContext) throws SqlException {
@@ -319,7 +294,7 @@ final class PivotBinder implements Mutable {
         }
         for (int i = 0, n = scope.windowJoinPivotAggregates.size(); i < n; i++) {
             final WindowJoinPivotAggregate aggregate = scope.windowJoinPivotAggregates.getQuick(i);
-            if (aggregate.kind == WindowJoinPivotKind.MERGE) {
+            if (isDirectMerge(aggregate.merge)) {
                 continue;
             }
             if (!isDirect) {
@@ -487,10 +462,12 @@ final class PivotBinder implements Mutable {
         bindScope.windowJoinPivotAggregates.clear();
         for (int i = 0, n = bindScope.aggregateNodes.size(), next = 0; i < n; i++) {
             final ExpressionNode call = bindScope.aggregateNodes.getQuick(i);
-            final WindowJoinPivotKind kind = windowJoinPivotKind(call);
+            final FunctionFactory.PartialMerge merge = windowJoinPivotMerge(call);
             final ColumnExpression value = bindScope.substitutionColumns.getQuick(next++);
-            final ColumnExpression count = kind == WindowJoinPivotKind.MERGE ? null : bindScope.substitutionColumns.getQuick(next++);
-            if (kind == WindowJoinPivotKind.AVG) {
+            final ColumnExpression count = isDirectMerge(merge) ? null : bindScope.substitutionColumns.getQuick(next++);
+            assert !isDirectMerge(merge) || windowJoinAggregate(plan, value.getColumnId()).getPartialMerge() == merge
+                    : "the overload of a PIVOT measure merges as its name declares";
+            if (merge == FunctionFactory.PartialMerge.AVERAGE) {
                 final OutputSchema scope = windowJoinAggregateStep(plan, count.getColumnId()).getScope();
                 final int type = ColumnType.tagOf(ctx.functionBinder.bind(call.rhs, scope, null, executionContext).getDataType());
                 if (type != ColumnType.DOUBLE && type != ColumnType.FLOAT && type != ColumnType.INT
@@ -498,7 +475,7 @@ final class PivotBinder implements Mutable {
                     throw SqlException.$(call.position, "PIVOT over WINDOW JOIN supports avg only over DOUBLE, FLOAT, INT, LONG and SHORT values");
                 }
             }
-            bindScope.windowJoinPivotAggregates.add(windowJoinPivotAggregatePool.next().of(kind, value, count, call.position));
+            bindScope.windowJoinPivotAggregates.add(windowJoinPivotAggregatePool.next().of(merge, value, count, call.position));
         }
     }
 
@@ -507,18 +484,19 @@ final class PivotBinder implements Mutable {
         final int position = call.position;
         final BoundExpression argument;
         final CharSequence merge;
-        switch (aggregate.kind) {
-            case AVG -> {
+        switch (aggregate.merge) {
+            case AVERAGE -> {
                 merge = "sum";
                 argument = copyColumn(isHidden ? aggregate.count : aggregate.value, position);
             }
             case FIRST, LAST -> {
-                merge = aggregate.kind == WindowJoinPivotKind.FIRST ? "first_not_null" : "last_not_null";
+                merge = aggregate.merge == FunctionFactory.PartialMerge.FIRST ? "first_not_null" : "last_not_null";
                 argument = isHidden ? windowJoinPivotNullFlag(aggregate, position, input, executionContext)
                         : windowJoinPivotFirstLastValue(aggregate, position, input, executionContext);
             }
             default -> {
-                merge = Chars.equalsIgnoreCase(call.token, "count") ? "sum" : call.token;
+                assert isDirectMerge(aggregate.merge) : "windowJoinPivotMerge() admits only measures that merge";
+                merge = aggregate.merge == FunctionFactory.PartialMerge.SUM ? "sum" : aggregate.merge == FunctionFactory.PartialMerge.MIN ? "min" : "max";
                 argument = copyColumn(aggregate.value, position);
             }
         }
@@ -827,8 +805,8 @@ final class PivotBinder implements Mutable {
         for (int i = 0, n = scope.aggregateNodes.size(); i < n; i++) {
             final ExpressionNode call = scope.aggregateNodes.getQuick(i);
             final int position = call.position;
-            switch (windowJoinPivotKind(call)) {
-                case AVG -> {
+            switch (windowJoinPivotMerge(call)) {
+                case AVERAGE -> {
                     final ExpressionNode cast = ctx.binaryNode(ExpressionNode.FUNCTION, "cast", 0, call.rhs,
                             ctx.bindingExpressions.next().of(ExpressionNode.CONSTANT, "double", 0, position), position);
                     aggregates.args.add(windowJoinPivotCall("sum", cast, position));
@@ -851,6 +829,19 @@ final class PivotBinder implements Mutable {
                 input, executionContext);
     }
 
+    /**
+     * How the window values of the rows of a PIVOT cell merge for the aggregate {@code call} over a WINDOW JOIN, as its
+     * name declares it, see {@link FunctionFactoryCache#getPartialMerge}: the binder decides how it splits the measure
+     * into window aggregates before it resolves the measure's overload.
+     */
+    private FunctionFactory.PartialMerge windowJoinPivotMerge(ExpressionNode call) throws SqlException {
+        final FunctionFactory.PartialMerge merge = ctx.functionFactoryCache.getPartialMerge(call.token);
+        if (isDirectMerge(merge) ? call.paramCount <= 1 : merge != FunctionFactory.PartialMerge.NONE && call.paramCount == 1) {
+            return merge;
+        }
+        throw SqlException.$(call.position, "PIVOT over WINDOW JOIN supports only sum, count, min, max, avg, first and last aggregates");
+    }
+
     private BoundExpression windowJoinPivotNullFlag(WindowJoinPivotAggregate aggregate, int position, OutputSchema input,
                                                     SqlExecutionContext executionContext) throws SqlException {
         final BoundExpression isEmpty = windowJoinPivotIsEmpty(aggregate, position, input, executionContext);
@@ -869,8 +860,8 @@ final class PivotBinder implements Mutable {
     private BoundExpression windowJoinPivotValue(WindowJoinPivotAggregate aggregate, OutputSchema measured, int measureIndex, int position,
                                                  SqlExecutionContext executionContext) throws SqlException {
         final ColumnExpression value = pivotForKey(measured, measureIndex, position);
-        switch (aggregate.kind) {
-            case AVG -> {
+        switch (aggregate.merge) {
+            case AVERAGE -> {
                 return ctx.functionBinder.bindCall("/", position, value, copyColumn(aggregate.merged, position), measured, executionContext);
             }
             case FIRST, LAST -> {
@@ -1095,7 +1086,7 @@ final class PivotBinder implements Mutable {
          */
         private int carriedType;
         private ColumnExpression count;
-        private WindowJoinPivotKind kind;
+        private FunctionFactory.PartialMerge merge;
         private ColumnExpression merged;
         private int position;
         private ColumnExpression value;
@@ -1103,28 +1094,20 @@ final class PivotBinder implements Mutable {
         @Override
         public void clear() {
             count = null;
-            kind = null;
+            merge = null;
             merged = null;
             value = null;
         }
 
-        private WindowJoinPivotAggregate of(WindowJoinPivotKind kind, ColumnExpression value, ColumnExpression count, int position) {
-            this.kind = kind;
+        private WindowJoinPivotAggregate of(FunctionFactory.PartialMerge merge, ColumnExpression value, ColumnExpression count, int position) {
+            this.merge = merge;
             this.value = value;
             this.count = count;
             this.merged = null;
             this.position = position;
-            this.carriedType = (kind == WindowJoinPivotKind.FIRST || kind == WindowJoinPivotKind.LAST) && ColumnType.isBoolean(value.getDataType())
+            this.carriedType = (merge == FunctionFactory.PartialMerge.FIRST || merge == FunctionFactory.PartialMerge.LAST) && ColumnType.isBoolean(value.getDataType())
                     ? ColumnType.INT : value.getDataType();
             return this;
         }
-    }
-
-    /**
-     * How a PIVOT measure over a WINDOW JOIN merges the per-row window aggregates into its groups: as the same
-     * aggregate (count as a sum), or, for avg, first and last, through a hidden count of the window rows.
-     */
-    private enum WindowJoinPivotKind {
-        AVG, FIRST, LAST, MERGE
     }
 }
