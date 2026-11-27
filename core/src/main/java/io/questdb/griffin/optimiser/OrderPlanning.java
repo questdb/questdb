@@ -776,6 +776,9 @@ final class OrderPlanning implements OptimiserPass {
                     isInputRowOrderRequired = true;
                 }
                 inputOrderColumnId = LogicalPlans.projectedSourceColumnId(project, orderColumnId);
+                if (inputOrderColumnId < 0) {
+                    inputOrderColumnId = LogicalPlans.orderSourceColumnId(project, orderColumnId);
+                }
                 inputDirection = inputOrderColumnId < 0 ? null : direction;
                 input.topK(LogicalPlans.projectedSourceColumnId(project, requirement.getTopKColumnId()), requirement.getTopK());
                 final boolean isOrdered = !requirement.getOrder().isEmpty();

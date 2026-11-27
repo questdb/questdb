@@ -5776,6 +5776,7 @@ public class CastTest extends AbstractCairoTest {
         assertQuery("SELECT cast(timestamp as LONG) AS timestamp, symbol::SYMBOL AS \"ID\", round(avg(price))::LONG AS \"Evt1\" " +
                 "FROM 'trades'" +
                 "ORDER BY 1")
+                .noRandomAccess()
                 .ddl("create table trades (timestamp timestamp, symbol symbol, price double) timestamp(timestamp)")
                 .mutateWith("insert into trades select x::timestamp, x::string, x from long_sequence(10)")
                 .returns("timestamp\tID\tEvt1\n", """

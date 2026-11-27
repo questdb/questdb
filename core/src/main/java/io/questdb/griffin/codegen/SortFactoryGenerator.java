@@ -51,6 +51,7 @@ import io.questdb.griffin.engine.orderby.SortedLightRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.SortedRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncFilterResources;
 import io.questdb.griffin.engine.table.AsyncTopKRecordCursorFactory;
+import io.questdb.griffin.engine.table.SelectedRecordCursorFactory;
 import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.ConstantExpression;
@@ -95,6 +96,28 @@ final class SortFactoryGenerator {
         this.recordComparatorCompiler = recordComparatorCompiler;
     }
 
+    /**
+     * Declares the column at {@code timestampIndex} the designated timestamp of the rows of the input. Consumes the
+     * input on entry, including failure.
+     */
+    private static RecordCursorFactory declareTimestamp(RecordCursorFactory base, int timestampIndex) {
+        final GenericRecordMetadata metadata = new GenericRecordMetadata();
+        final IntList mapping;
+        try {
+            final RecordMetadata baseMetadata = base.getMetadata();
+            mapping = new IntList(baseMetadata.getColumnCount());
+            for (int i = 0, n = baseMetadata.getColumnCount(); i < n; i++) {
+                metadata.add(baseMetadata.getColumnMetadata(i));
+                mapping.add(i);
+            }
+            metadata.setTimestampIndex(timestampIndex);
+        } catch (Throwable th) {
+            Misc.free(base, th);
+            throw th;
+        }
+        return new SelectedRecordCursorFactory(metadata, mapping, base);
+    }
+
     // Consumes the input and limit bounds.
     private static RecordCursorFactory applyLimit(RecordCursorFactory base, @Nullable LimitBounds bounds) {
         return bounds == null ? base : new LimitRecordCursorFactory(base, bounds, null);
@@ -129,10 +152,12 @@ final class SortFactoryGenerator {
         boolean isLimitTransferred = false;
         try {
             final SortPlan.Algorithm algorithm = sort.getAlgorithm();
-            if (algorithm == SortPlan.Algorithm.INPUT_ORDER) {
+            if (algorithm == SortPlan.Algorithm.INPUT_ORDER || algorithm == SortPlan.Algorithm.TIMESTAMP_DECLARATION) {
                 isInputTransferred = true;
+                final RecordCursorFactory ordered = algorithm == SortPlan.Algorithm.INPUT_ORDER ? base
+                        : declareTimestamp(base, PhysicalProperties.timestampIndex(sort));
                 isLimitTransferred = true;
-                return applyLimit(base, bounds);
+                return applyLimit(ordered, bounds);
             }
             final OutputSchema input = sort.getChild().getOutput();
             final ListColumnFilter keys = frame.listColumnFilterB;

@@ -29,6 +29,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.SymbolKeyExtractor;
+import io.questdb.griffin.engine.functions.MonotonicTimestampFunctionFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntIntHashMap;
@@ -1038,6 +1039,21 @@ public final class LogicalPlans {
      */
     public static ObjList<JoinInput> orderedSteps(JoinPlan join) {
         return join.getOrderedInputs().size() > 0 ? join.getOrderedInputs() : join.getInputs();
+    }
+
+    /**
+     * The input column whose order the projection's output column {@code columnId} keeps, see
+     * {@link MonotonicTimestampFunctionFactory#orderSource}, read as that column's own type; -1 for none.
+     */
+    public static int orderSourceColumnId(ProjectPlan project, int columnId) {
+        final int index = project.getOutput().getColumnIndexById(columnId);
+        final ColumnExpression source = index < 0 ? null : MonotonicTimestampFunctionFactory.orderSource(project.getExpressions().getQuick(index));
+        if (source == null) {
+            return -1;
+        }
+        final OutputSchema input = project.getChild().getOutput();
+        final int inputIndex = input.getColumnIndexById(source.getColumnId());
+        return inputIndex >= 0 && source.getDataType() == input.getColumnType(inputIndex) ? source.getColumnId() : -1;
     }
 
     /**

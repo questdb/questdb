@@ -609,7 +609,7 @@ public class Mig1011Test extends AbstractCairoTest {
         assertQuery("SELECT ts, count(), avg(d), min(f), max(f) FROM x SAMPLE BY 1d")
                 .noLeakCheck()
                 .timestamp("ts")
-                .expectSize()
+                .noRandomAccess()
                 .returns("""
                         ts\tcount\tavg\tmin\tmax
                         2024-01-01T00:00:00.000000Z\t5000\t2500.5\t1.0\t5000.0

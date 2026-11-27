@@ -321,6 +321,7 @@ public class DistinctTest extends AbstractCairoTest {
                 " (278444 * t0.x) AS e4" +
                 " FROM long_sequence(2) t0" +
                 " ORDER BY e1")
+                .noRandomAccess()
                 .returns("""
                         e0\te1\te2\te3\te4
                         -614\t1\t786\t-716\t278444

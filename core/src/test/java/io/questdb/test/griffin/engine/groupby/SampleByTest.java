@@ -1493,7 +1493,7 @@ public class SampleByTest extends AbstractCairoTest {
                     "from (" +
                     "   select symbol, amount, price, timestamp_floor('5m', timestamp) as timestamp from trades" +
                     ")\n")
-                    .expectSize()
+                    .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
                             symbol\tcolumn\tcolumn1
