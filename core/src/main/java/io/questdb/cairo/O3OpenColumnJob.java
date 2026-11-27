@@ -1505,14 +1505,19 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             plen = pathToOldPartition.size();
 
             pathToNewPartition = Path.getThreadLocal2(pathToTable);
+            final long newPartitionNameTxn = partitionAppend ? srcNameTxn : txn;
             TableUtils.setPathForNativePartition(
                     pathToNewPartition,
                     tableWriter.getMetadata().getTimestampType(),
                     tableWriter.getPartitionBy(),
                     partitionTimestamp,
-                    partitionAppend ? srcNameTxn : txn
+                    newPartitionNameTxn
             );
             pplen = pathToNewPartition.size();
+            if (indexWriter != null) {
+                // O3CopyJob frees the writer before the commit lands, so its seal purges go to the table writer
+                indexWriter.setPartitionContext(partitionTimestamp, newPartitionNameTxn, tableWriter);
+            }
         } catch (Throwable e) {
             // Growing a thread-local path buffer can run out of native memory. No branch below owns the
             // column yet, so its count belongs to this method: without it the partition never completes.

@@ -3936,7 +3936,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                 for (int b = 0; b < batches && bgError.get() == null; b++) {
                     // O3-insert 'A' rows (price 1.0) into a random subset of the parquet
                     // days: one commit -> a partition task per touched day, run across the
-                    // pool, each calling deferParquetPostingSealPurges (covering: .pv + .pc).
+                    // pool, each calling deferPostingSealPurges (covering: .pv + .pc).
                     final StringBuilder sql = new StringBuilder("INSERT INTO t_cov VALUES ");
                     int added = 0;
                     for (int d = 1; d <= dayCount; d++) {
@@ -4480,7 +4480,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     }
 
     /**
-     * Exercises the concurrent deposit into deferParquetPostingSealPurges: a real
+     * Exercises the concurrent deposit into deferPostingSealPurges: a real
      * WorkerPool runs O3PartitionJob on multiple threads, and one O3 insert that
      * touches every parquet partition dispatches a partition task per day, so
      * several workers run updateParquetIndexes -> commitDense -> seal -> the
@@ -5868,7 +5868,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
 
     /**
      * Concurrent-read integration test for the parquet reseal value-file reclaim
-     * (deferParquetPostingSealPurges -> scoreboard-gated PostingSealPurgeJob).
+     * (deferPostingSealPurges -> scoreboard-gated PostingSealPurgeJob).
      * Background threads continuously query the posting index on a parquet
      * partition while the main thread repeatedly O3-rewrites it under a tiny
      * spill budget, so every rewrite drives commitDense -> seal -> a deferred

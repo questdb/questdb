@@ -29,6 +29,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
@@ -38,10 +39,12 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TxnScoreboard;
+import io.questdb.cairo.idx.IndexWriter;
 import io.questdb.cairo.idx.PostingIndexFwdReader;
 import io.questdb.cairo.idx.PostingIndexKeyFileView;
 import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.idx.PostingIndexWriter;
+import io.questdb.cairo.idx.PostingSealPurgeSink;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RowCursor;
@@ -52,6 +55,7 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.MPSequence;
 import io.questdb.mp.RingQueue;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -68,6 +72,8 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.io.File;
+import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
@@ -118,6 +124,62 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
 
                 runPurgeJob(job, 3);
                 assertFalse(".pv must be purged after the retry loop succeeds", ff.exists(pv));
+            }
+        });
+    }
+
+    @Test
+    public void testCommitDenseHandsPurgesToSink() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot());
+                 PostingIndexWriter writer = new PostingIndexWriter(configuration, path, "ps_purge_sink", COLUMN_NAME_TXN_NONE)) {
+                final RecordingPurgeSink sink = new RecordingPurgeSink();
+                writer.setPartitionContext(0, -1, sink);
+                writeAndCommit(writer, 0, 8);
+
+                writer.discardForRebuild();
+                for (int row = 0; row < 8; row++) {
+                    writer.add(row % BATCH_KEYS, row);
+                }
+                writer.setMaxValue(7);
+                writer.commitDense();
+                assertEquals("[0]", sink.handedSealTxns.toString());
+            }
+        });
+    }
+
+    @Test
+    public void testCommitHandsPurgesToSink() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot());
+                 PostingIndexWriter writer = new PostingIndexWriter(configuration, path, "ps_purge_sink", COLUMN_NAME_TXN_NONE)) {
+                final RecordingPurgeSink sink = new RecordingPurgeSink();
+                writer.setPartitionContext(0, -1, sink);
+                writeAndCommit(writer, 0, 8);
+                writeAndCommit(writer, 8, 16);
+                assertEquals("a commit without purges leaves the sink alone", 0, sink.callCount);
+
+                writer.seal();
+                assertEquals("a seal is no commit", 0, sink.callCount);
+                writer.commit();
+                assertEquals(1, sink.callCount);
+                assertEquals("[0]", sink.handedSealTxns.toString());
+            }
+        });
+    }
+
+    @Test
+    public void testCommitWithoutSinkKeepsPurges() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot());
+                 PostingIndexWriter writer = new PostingIndexWriter(configuration, path, "ps_purge_sink", COLUMN_NAME_TXN_NONE)) {
+                writer.setPartitionContext(0, -1, null);
+                writeAndCommit(writer, 0, 8);
+                writeAndCommit(writer, 8, 16);
+                writer.seal();
+                writer.commit();
+                assertEquals(1, writer.getPendingPurgesSizeForTesting());
+                assertEquals(0, writer.getPendingPurgeSealTxnForTesting(0));
             }
         });
     }
@@ -231,6 +293,47 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
                 // smoke test (a longer-running test would loop until the
                 // queue drains). The crucial invariant is that purge does
                 // NOT delete the live file.
+            }
+        });
+    }
+
+    @Test
+    public void testFailedCommitHandsPurgesToSink() throws Exception {
+        final AtomicBoolean isFailing = new AtomicBoolean();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public void msync(long addr, long len, boolean async) {
+                if (isFailing.get()) {
+                    throw CairoException.critical(0).put("injected msync failure");
+                }
+                super.msync(addr, len, async);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            try (Path path = new Path().of(configuration.getDbRoot());
+                 PostingIndexWriter writer = new PostingIndexWriter(configuration, path, "ps_purge_sink", COLUMN_NAME_TXN_NONE)) {
+                final RecordingPurgeSink sink = new RecordingPurgeSink();
+                writer.setPartitionContext(0, -1, sink);
+                writer.setCommitMode(CommitMode.SYNC);
+                writeAndCommit(writer, 0, 8);
+                writeAndCommit(writer, 8, 16);
+                writer.seal();
+
+                for (int row = 16; row < 20; row++) {
+                    writer.add(row % BATCH_KEYS, row);
+                }
+                writer.setMaxValue(19);
+                isFailing.set(true);
+                try {
+                    writer.commit();
+                    fail("the commit must fail to sync");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "injected msync failure");
+                } finally {
+                    isFailing.set(false);
+                }
+                assertEquals(1, sink.callCount);
+                assertEquals("[0]", sink.handedSealTxns.toString());
             }
         });
     }
@@ -486,6 +589,11 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testO3CopyKeepsBitmapIndex() throws Exception {
+        assertO3CopyKeepsIndex("BITMAP");
+    }
+
+    @Test
     public void testPublishPendingPurgesDropsLiveHeadEntry() throws Exception {
         // publishPendingPurges' head-guard must drop an outbox entry whose
         // sealTxn equals the current chain head (the live generation) rather than
@@ -505,7 +613,7 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
                 // real TableWriter-owned writer carries -- matching partitionPathFor
                 // (timestamp 0, nameTxn -1). Without this the planted entry is
                 // skipped and the head-guard is never exercised.
-                writer.setPartitionContext(0L, -1L);
+                writer.setPartitionContext(0L, -1L, null);
                 for (int i = 0; i < 8; i++) {
                     writer.add(i % BATCH_KEYS, i);
                 }
@@ -920,13 +1028,26 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPurgeRemovesFilesOfIndexReplacedByRecreation() throws Exception {
+        assertRecreationPurgesReplacedFiles("2024-01-01T21:00:00");
+    }
+
+    @Test
+    public void testPurgeRemovesFilesOfIndexReplacedByRecreationInMerge() throws Exception {
+        assertRecreationPurgesReplacedFiles("2024-01-01T00:00:00.5");
+    }
+
+    @Test
+    public void testPurgeRemovesValueFilesSupersededByO3CopySeal() throws Exception {
+        assertO3CopyKeepsIndex("POSTING");
+    }
+
+    @Test
     public void testPurgeSparesIndexRecreatedFromColumnTop() throws Exception {
-        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
-        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "8K");
         final AtomicBoolean isArmed = new AtomicBoolean();
         final AtomicBoolean isKeyFileRemoved = new AtomicBoolean();
         final PostingSealPurgeJob[] purgeJob = {null};
-        ff = new TestFilesFacadeImpl() {
+        final FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public long openRW(LPSZ name, int opts) {
                 final long fd = super.openRW(name, opts);
@@ -950,30 +1071,7 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
             }
             try (PostingSealPurgeJob job = new PostingSealPurgeJob(engine)) {
                 purgeJob[0] = job;
-                execute("CREATE TABLE t (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-                execute("INSERT INTO t SELECT timestamp_sequence('2024-01-01', 1_000_000L), x::INT FROM long_sequence(1000)");
-                execute("INSERT INTO t VALUES ('2024-01-02T00:00:00', 0)");
-                execute("ALTER TABLE t ADD COLUMN s SYMBOL INDEX TYPE POSTING");
-                drainWalQueue();
-                execute("INSERT INTO t SELECT timestamp_sequence('2024-01-01T21:00:00', 1_000_000L), 0, 'k' || (x % 3) FROM long_sequence(73)");
-                drainWalQueue();
-                assertPhysicalRows("2024-01-01", 1073);
-
-                final TableToken token = engine.verifyTableName("t");
-                try (WalWriter walWriter = engine.getWalWriter(token)) {
-                    walWriter.commitWithParams(
-                            MicrosTimestampDriver.floor("2024-01-01T20:00:00.000000Z"),
-                            MicrosTimestampDriver.floor("2024-01-01T23:59:59.999999Z"),
-                            WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE
-                    );
-                    walWriter.commit();
-                }
-                drainWalQueue();
-                releaseSavePointHolds("t");
-                execute("INSERT INTO t VALUES ('2024-01-02T00:00:01', 0, NULL)");
-                drainWalQueue();
-                assertPhysicalRows("2024-01-01", 1000);
-
+                final TableToken token = prepareIndexRecreationFromColumnTop();
                 isArmed.set(true);
                 execute("INSERT INTO t SELECT timestamp_sequence('2024-01-01T21:00:00', 1_000_000L), 0, 'k' || x FROM long_sequence(3)");
                 drainWalQueue();
@@ -1229,6 +1327,85 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
         }
     }
 
+    private void assertO3CopyKeepsIndex(String indexType) throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
+        node1.setProperty(PropertyKey.CAIRO_POSTING_SEAL_GEN_THRESHOLD, 1000);
+        final boolean isPosting = "POSTING".equals(indexType);
+        PostingIndexWriter.COVERING_AUTOSEAL_COUNT.set(0);
+        PostingIndexWriter.COVERING_COUNTERS_ENABLED = true;
+        try {
+            assertMemoryLeak(() -> {
+                if (configuration.disableColumnPurgeJob()) {
+                    return;
+                }
+                final int appendCount = 140;
+                final long[] keyCounts = new long[4];
+                try (PostingSealPurgeJob job = new PostingSealPurgeJob(engine)) {
+                    execute("CREATE TABLE t (ts TIMESTAMP, s SYMBOL INDEX TYPE " + indexType + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+                    execute("INSERT INTO t VALUES ('2024-01-01T00:00:00', 'k0'), ('2024-01-02T00:00:00', 'k0')");
+                    keyCounts[0] += 2;
+                    drainWalQueue();
+                    final long dayStart = MicrosTimestampDriver.floor("2024-01-01T00:00:00.000000Z");
+                    for (int i = 1; i <= appendCount; i++) {
+                        execute("INSERT INTO t VALUES (" + (dayStart + i * 1_000_000L) + "::TIMESTAMP, 'k" + (i % 4) + "')");
+                        keyCounts[i % 4]++;
+                        drainWalQueue();
+                    }
+                    if (isPosting) {
+                        assertTrue("fixture: the O3 copy must have sealed at the generation cap", PostingIndexWriter.COVERING_AUTOSEAL_COUNT.get() > 0);
+                        releaseSavePointHolds("t");
+                        runPurgeJob(job, 4);
+                        assertOnlyLiveValueFile("2024-01-01");
+                    }
+                    execute("INSERT INTO t VALUES (" + (dayStart + 500_000L) + "::TIMESTAMP, 'k1')");
+                    keyCounts[1]++;
+                    drainWalQueue();
+                }
+                assertQuery("SELECT s, count() c FROM t WHERE s IN ('k0', 'k1', 'k2', 'k3') ORDER BY s")
+                        .expectSize()
+                        .returns("s\tc\nk0\t" + keyCounts[0] + "\nk1\t" + keyCounts[1] + "\nk2\t" + keyCounts[2] + "\nk3\t" + keyCounts[3] + "\n");
+            });
+        } finally {
+            PostingIndexWriter.COVERING_COUNTERS_ENABLED = false;
+        }
+    }
+
+    private void assertOnlyLiveValueFile(String day) {
+        try (TableReader reader = engine.getReader(engine.verifyTableName("t")); Path path = new Path()) {
+            final long partitionTimestamp = MicrosTimestampDriver.floor(day + "T00:00:00.000000Z");
+            final int partitionIndex = reader.getTxFile().getPartitionIndex(partitionTimestamp);
+            final long postingColumnNameTxn = reader.getColumnVersionReader().getColumnNameTxn(
+                    partitionTimestamp,
+                    reader.getMetadata().getWriterIndex(reader.getMetadata().getColumnIndex("s"))
+            );
+            path.of(configuration.getDbRoot()).concat(reader.getTableToken().getDirName());
+            TableUtils.setPathForNativePartition(
+                    path,
+                    reader.getTxFile().getTimestampType(),
+                    reader.getPartitionedBy(),
+                    partitionTimestamp,
+                    reader.getTxFile().getPartitionNameTxn(partitionIndex)
+            );
+            final int plen = path.size();
+            final long headSealTxn = PostingIndexUtils.readSealTxnFromKeyFile(
+                    configuration.getFilesFacade(),
+                    PostingIndexUtils.keyFileName(path, "s", postingColumnNameTxn)
+            );
+            assertTrue("fixture: the index must have a head", headSealTxn > -1);
+            final String prefix = postingColumnNameTxn > COLUMN_NAME_TXN_NONE ? "s.pv." + postingColumnNameTxn + '.' : "s.pv.";
+            final String[] names = new File(path.trimTo(plen).toString()).list(
+                    (dir, name) -> name.startsWith(prefix) && name.indexOf('.', prefix.length()) < 0
+            );
+            assertNotNull(names);
+            final long[] sealTxns = new long[names.length];
+            for (int i = 0; i < names.length; i++) {
+                sealTxns[i] = Long.parseLong(names[i].substring(prefix.length()));
+            }
+            Arrays.sort(sealTxns);
+            assertEquals("value files of " + day, "[" + headSealTxn + "]", Arrays.toString(sealTxns));
+        }
+    }
+
     private void assertPhysicalRows(String day, long physicalRows) {
         try (TableReader reader = engine.getReader(engine.verifyTableName("t"))) {
             final int partitionIndex = reader.getTxFile().getPartitionIndex(MicrosTimestampDriver.floor(day + "T00:00:00.000000Z"));
@@ -1278,6 +1455,30 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
                         ff.exists(PostingIndexUtils.coverDataFileName(
                                 partitionPath.trimTo(pLen), col, 0, postingColumnNameTxn, COLUMN_NAME_TXN_NONE, liveSealTxn)));
             }
+        });
+    }
+
+    private void assertRecreationPurgesReplacedFiles(String rowsFrom) throws Exception {
+        assertMemoryLeak(() -> {
+            if (configuration.disableColumnPurgeJob()) {
+                return;
+            }
+            try (PostingSealPurgeJob job = new PostingSealPurgeJob(engine)) {
+                prepareIndexRecreationFromColumnTop();
+                execute("INSERT INTO t SELECT timestamp_sequence('" + rowsFrom + "', 1_000_000L), 0, 'k' || x FROM long_sequence(3)");
+                drainWalQueue();
+                releaseSavePointHolds("t");
+                runPurgeJob(job, 4);
+                assertOnlyLiveValueFile("2024-01-01");
+            }
+            assertQuery("SELECT s, count() c FROM t WHERE s IN ('k0', 'k1', 'k2', 'k3') ORDER BY s")
+                    .expectSize()
+                    .returns("""
+                            s\tc
+                            k1\t1
+                            k2\t1
+                            k3\t1
+                            """);
         });
     }
 
@@ -1336,6 +1537,35 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
                 p, ColumnType.TIMESTAMP_MICRO, PartitionBy.NONE, 0L, -1L);
         ff.mkdirs(p.slash(), configuration.getMkDirMode());
         return p;
+    }
+
+    private TableToken prepareIndexRecreationFromColumnTop() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "8K");
+        execute("CREATE TABLE t (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("INSERT INTO t SELECT timestamp_sequence('2024-01-01', 1_000_000L), x::INT FROM long_sequence(1000)");
+        execute("INSERT INTO t VALUES ('2024-01-02T00:00:00', 0)");
+        execute("ALTER TABLE t ADD COLUMN s SYMBOL INDEX TYPE POSTING");
+        drainWalQueue();
+        execute("INSERT INTO t SELECT timestamp_sequence('2024-01-01T21:00:00', 1_000_000L), 0, 'k' || (x % 3) FROM long_sequence(73)");
+        drainWalQueue();
+        assertPhysicalRows("2024-01-01", 1073);
+
+        final TableToken token = engine.verifyTableName("t");
+        try (WalWriter walWriter = engine.getWalWriter(token)) {
+            walWriter.commitWithParams(
+                    MicrosTimestampDriver.floor("2024-01-01T20:00:00.000000Z"),
+                    MicrosTimestampDriver.floor("2024-01-01T23:59:59.999999Z"),
+                    WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE
+            );
+            walWriter.commit();
+        }
+        drainWalQueue();
+        releaseSavePointHolds("t");
+        execute("INSERT INTO t VALUES ('2024-01-02T00:00:01', 0, NULL)");
+        drainWalQueue();
+        assertPhysicalRows("2024-01-01", 1000);
+        return token;
     }
 
     private void publishPurgeTask(
@@ -1815,10 +2045,32 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
         return supersededSealTxn;
     }
 
+    private static void writeAndCommit(PostingIndexWriter writer, int rowLo, int rowHi) {
+        for (int row = rowLo; row < rowHi; row++) {
+            writer.add(row % BATCH_KEYS, row);
+        }
+        writer.setMaxValue(rowHi - 1);
+        writer.commit();
+    }
+
     /**
      * Runs an action once, when the visibility check of {@link PostingSealPurgeOperator} opens or reads the .pk. The
      * first open of the .pk in purge() re-reads the head sealTxn; the second is the visibility check.
      */
+    private static final class RecordingPurgeSink implements PostingSealPurgeSink {
+        private final LongList handedSealTxns = new LongList();
+        private int callCount;
+
+        @Override
+        public void deferPostingSealPurges(IndexWriter writer) {
+            callCount++;
+            final PostingIndexWriter postingWriter = (PostingIndexWriter) writer;
+            for (int i = 0, n = postingWriter.getPendingPurgesSizeForTesting(); i < n; i++) {
+                handedSealTxns.add(postingWriter.getPendingPurgeSealTxnForTesting(i));
+            }
+        }
+    }
+
     private static final class VisibilityCheckFf extends TestFilesFacadeImpl {
         // at the first read past the header pages, by mapping or by pread
         static final int AT_ENTRY_READ = 1;

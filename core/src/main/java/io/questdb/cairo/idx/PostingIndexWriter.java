@@ -65,6 +65,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.tasks.PostingSealPurgeTask;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.util.Arrays;
@@ -220,8 +221,9 @@ public class PostingIndexWriter implements IndexWriter {
     // unlinks the .pv.{N} / .pc{i}.{N} files of the orphan sealTxns. Cleared
     // on every of() call to avoid leaking entries across reopens.
     private final LongList recoveryOrphanScratch = new LongList();
+    // The sealTxns of the files of the index that of() replaced. The first publish of the new chain queues their purge.
+    private final PostingIndexUtils.SealedFileTxns replacedSealTxns = new PostingIndexUtils.SealedFileTxns();
     private final byte rowIdEncoding;
-    private final SealTxnHighWater sealTxnHighWater = new SealTxnHighWater();
     private final MemoryMARW sealValueMem = Vm.getCMARWInstance();
     private final ObjList<MemoryMARW> sidecarMems = new ObjList<>();
     // Staging for switchToSealedValueFile: new .pv is mapped here first, then
@@ -312,6 +314,7 @@ public class PostingIndexWriter implements IndexWriter {
     private long pendingTxnAtSeal = -1;
     private long pendingValuesAddr;
     private long postingColumnNameTxn; // host column-instance txn
+    private PostingSealPurgeSink purgeSink;
     private long[] savedSidecarBufs;
     private long[] savedSidecarSizes;
     private PostingSidecarSource sealCoverSource;
@@ -688,6 +691,7 @@ public class PostingIndexWriter implements IndexWriter {
                 coverEndOffsetsCache.clear();
                 sealTarget = null;
                 releasePendingPurges();
+                replacedSealTxns.clear();
                 pendingDiscardOldSealTxn = -1L;
                 pendingTxnAtSeal = -1;
                 o3CtxUpcomingTxn = -1L;
@@ -769,15 +773,19 @@ public class PostingIndexWriter implements IndexWriter {
 
     @Override
     public void commit() {
-        checkNotPoisoned();
-        // flushAllPending() runs in every mode: it publishes buffered native-memory postings into the mapped
-        // .pk/.pv files, and without it readers see keyCount=0 until the writer closes. Only the flush below
-        // depends on the mode.
-        flushAllPending();
-        // SYNC and ASYNC only; see IndexWriter.setCommitMode.
-        final int commitMode = indexCommitMode;
-        if (CommitMode.appliesColumnSync(commitMode)) {
-            sync(commitMode == CommitMode.ASYNC);
+        try {
+            checkNotPoisoned();
+            // flushAllPending() runs in every mode: it publishes buffered native-memory postings into the mapped
+            // .pk/.pv files, and without it readers see keyCount=0 until the writer closes. Only the flush below
+            // depends on the mode.
+            flushAllPending();
+            // SYNC and ASYNC only; see IndexWriter.setCommitMode.
+            final int commitMode = indexCommitMode;
+            if (CommitMode.appliesColumnSync(commitMode)) {
+                sync(commitMode == CommitMode.ASYNC);
+            }
+        } finally {
+            handOffPurges();
         }
     }
 
@@ -797,42 +805,46 @@ public class PostingIndexWriter implements IndexWriter {
     // get overwritten by rebuildSidecars at a different sealTxn, leaving stale
     // bytes on disk in non-assert builds.
     public void commitDense() {
-        checkNotPoisoned();
-        assert coverCount == 0 : "commitDense does not write covered sidecars; use seal()/commit() for covering indexes";
-        if (genCount > 0) {
-            // flushAllPendingDense assumes it writes the first and only gen at
-            // offset 0. That precondition breaks when the caller's preceding
-            // add()-loop (a full index() rebuild over a large/squashed
-            // partition) tripped the spill budget: compactIfOverBudget then ran
-            // flushAllPending, persisting one or more sparse gens to this .pv.
-            // A standalone flushAllPendingDense would extendHead(newGenCount=1),
-            // overwriting gen-dir slot 0 to point at the freshly appended dense
-            // gen -- orphaning those sparse gens (silently dropping the rows
-            // they hold) and leaving the surviving gen-0 at a non-zero file
-            // offset. The covering rebuildSidecars by-copy path reads gen-0 from
-            // valueMem.addressOf(0) and SIGSEGVs on the layout mismatch; the
-            // non-covering path returns short counts. Consolidate every gen into
-            // a single dense gen-0 at offset 0 via the seal path instead: seal()
-            // first runs flushAllPending to drain the final pending batch, then
-            // re-encodes all gens into one dense gen-0 at offset 0 -- exactly the
-            // shape the by-copy rebuild and the fast path both expect. (Whether
-            // seal takes the full or incremental re-encode, gen-0 lands at offset
-            // 0.) coverCount == 0 keeps seal() sidecar-free, matching
-            // commitDense's contract; rebuildSidecars writes the sidecars after.
-            seal();
-        } else {
-            flushAllPendingDense();
-        }
-        // Same gate as commit(); see IndexWriter.setCommitMode.
-        final int commitMode = indexCommitMode;
-        if (CommitMode.appliesColumnSync(commitMode)) {
-            boolean async = commitMode == CommitMode.ASYNC;
-            if (valueMem.isOpen()) {
-                valueMem.sync(async);
+        try {
+            checkNotPoisoned();
+            assert coverCount == 0 : "commitDense does not write covered sidecars; use seal()/commit() for covering indexes";
+            if (genCount > 0) {
+                // flushAllPendingDense assumes it writes the first and only gen at
+                // offset 0. That precondition breaks when the caller's preceding
+                // add()-loop (a full index() rebuild over a large/squashed
+                // partition) tripped the spill budget: compactIfOverBudget then ran
+                // flushAllPending, persisting one or more sparse gens to this .pv.
+                // A standalone flushAllPendingDense would extendHead(newGenCount=1),
+                // overwriting gen-dir slot 0 to point at the freshly appended dense
+                // gen -- orphaning those sparse gens (silently dropping the rows
+                // they hold) and leaving the surviving gen-0 at a non-zero file
+                // offset. The covering rebuildSidecars by-copy path reads gen-0 from
+                // valueMem.addressOf(0) and SIGSEGVs on the layout mismatch; the
+                // non-covering path returns short counts. Consolidate every gen into
+                // a single dense gen-0 at offset 0 via the seal path instead: seal()
+                // first runs flushAllPending to drain the final pending batch, then
+                // re-encodes all gens into one dense gen-0 at offset 0 -- exactly the
+                // shape the by-copy rebuild and the fast path both expect. (Whether
+                // seal takes the full or incremental re-encode, gen-0 lands at offset
+                // 0.) coverCount == 0 keeps seal() sidecar-free, matching
+                // commitDense's contract; rebuildSidecars writes the sidecars after.
+                seal();
+            } else {
+                flushAllPendingDense();
             }
-            if (keyMem.isOpen()) {
-                keyMem.sync(async);
+            // Same gate as commit(); see IndexWriter.setCommitMode.
+            final int commitMode = indexCommitMode;
+            if (CommitMode.appliesColumnSync(commitMode)) {
+                boolean async = commitMode == CommitMode.ASYNC;
+                if (valueMem.isOpen()) {
+                    valueMem.sync(async);
+                }
+                if (keyMem.isOpen()) {
+                    keyMem.sync(async);
+                }
             }
+        } finally {
+            handOffPurges();
         }
     }
 
@@ -1021,10 +1033,7 @@ public class PostingIndexWriter implements IndexWriter {
         activeKeyCount = 0;
         if (chain.hasHead() && partitionPath.size() > 0) {
             long oldSealTxn = sealTxn;
-            // peekNextSealTxn(), not sealTxn+1: after a recovery drop the
-            // writer's sealTxn lags genCounter, and reusing a dropped
-            // sealTxn would race the still-pending .pv purge.
-            long newSealTxn = Math.max(1, chain.peekNextSealTxn());
+            long newSealTxn = nextSealTxn();
             // Drop sidecar mappings tied to oldSealTxn -- the next
             // configureCovering / rebuildSidecars reopens them at the new
             // sealTxn.
@@ -1127,6 +1136,18 @@ public class PostingIndexWriter implements IndexWriter {
                 : PostingIndexUtils.COVERING_FORMAT_LEGACY;
     }
 
+    // Past genCounter rather than sealTxn: after a recovery drop the writer's sealTxn lags genCounter, and reusing a
+    // dropped sealTxn would race its still-pending purge. Never 0, which PostingIndexUtils.newChainSealTxn() reserves
+    // for the first file of a new chain.
+    private long nextSealTxn() {
+        return Math.max(1, chain.peekNextSealTxn());
+    }
+
+    private void handOffPurges() {
+        if (purgeSink != null && pendingPurges.size() > 0) {
+            purgeSink.deferPostingSealPurges(this);
+        }
+    }
 
     // The head entry's OWN stored covering format. The head may pre-date the
     // writer's current coverCount (e.g. a coverCount=0 seal that predates
@@ -1293,6 +1314,14 @@ public class PostingIndexWriter implements IndexWriter {
     }
 
     @TestOnly
+    public long getPendingPurgeSealTxnForTesting(int idx) {
+        if (idx < 0 || idx >= pendingPurges.size()) {
+            return -1L;
+        }
+        return pendingPurges.getQuick(idx).sealTxn;
+    }
+
+    @TestOnly
     public long getPendingPurgeToTxnForTesting(int idx) {
         if (idx < 0 || idx >= pendingPurges.size()) {
             return -1L;
@@ -1445,15 +1474,7 @@ public class PostingIndexWriter implements IndexWriter {
 
         try {
             if (isInit) {
-                // Seal purges may still be queued for files of the index this replaces: start past its sealTxns and files.
-                // A file at sealTxn 0 does not count: a seal past it counts a later sealTxn or leaves a later file.
-                sealTxnHighWater.sealTxn = 0;
-                PostingIndexUtils.scanSealedFiles(ff, path, plen, name, columnNameTxn, sealTxnHighWater);
-                final long fileSealTxn = sealTxnHighWater.sealTxn;
-                this.sealTxn = Math.max(
-                        PostingIndexUtils.readKeyFileGenCounter(ff, path, plen, name, columnNameTxn) + 1,
-                        fileSealTxn > 0 ? fileSealTxn + 1 : 0
-                );
+                this.sealTxn = PostingIndexUtils.newChainSealTxn(ff, path, plen, name, columnNameTxn, replacedSealTxns);
             }
             LPSZ keyFile = PostingIndexUtils.keyFileName(path.trimTo(plen), name, columnNameTxn);
 
@@ -1735,11 +1756,8 @@ public class PostingIndexWriter implements IndexWriter {
         int gen0KeyCount = keyMem.getInt(gen0DirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
 
         if (gen0KeyCount >= 0 && genCount == 1 && partitionPath.size() > 0) {
-            // peekNextSealTxn(), not sealTxn+1: after a recovery drop the writer's
-            // sealTxn lags genCounter, and reusing a dropped sealTxn would race
-            // the still-pending .pv purge.
             final long oldSealTxn = sealTxn;
-            final long newSealTxn = Math.max(1, chain.peekNextSealTxn());
+            final long newSealTxn = nextSealTxn();
             rebuildSidecarsByCopy(newSealTxn);
             // Record purge only after the new chain head is durably published;
             // an exception mid-rebuild must not queue oldSealTxn for unlink.
@@ -1891,11 +1909,8 @@ public class PostingIndexWriter implements IndexWriter {
             return;
         }
 
-        // peekNextSealTxn(), not sealTxn+1: after a recovery drop the
-        // writer's sealTxn lags genCounter, and reusing a dropped
-        // sealTxn would race the still-pending .pv purge.
         final long oldSealTxn = sealTxn;
-        final long newSealTxn = Math.max(1, chain.peekNextSealTxn());
+        final long newSealTxn = nextSealTxn();
         // Captured for the pre-switch catch below: every encode path sets
         // valueMemSize to the staged compacted size before its failable sync/
         // switch, so a continuable pre-switch failure must restore it (else the
@@ -2218,14 +2233,10 @@ public class PostingIndexWriter implements IndexWriter {
     }
 
     @Override
-    public void setPartitionContext(long partitionTimestamp, long partitionNameTxn) {
-        // The path-based of(...) overloads used by the parquet rebuild do not
-        // carry the partition timestamp / name-txn, but a deferred seal-purge
-        // task needs them to reconstruct the .pv directory after this writer is
-        // freed. recordPostingSealPurge stamps each outbox entry with these, so
-        // the caller sets them before commitDense seals.
+    public void setPartitionContext(long partitionTimestamp, long partitionNameTxn, @Nullable PostingSealPurgeSink purgeSink) {
         this.partitionTimestamp = partitionTimestamp;
         this.partitionNameTxn = partitionNameTxn;
+        this.purgeSink = purgeSink;
     }
 
     @Override
@@ -2285,11 +2296,8 @@ public class PostingIndexWriter implements IndexWriter {
             // concurrent readers with active mmaps don't SIGBUS.
             // If the new file open fails, valueMem is left closed — the writer
             // is degraded but safe to close() without further I/O errors.
-            // peekNextSealTxn(), not sealTxn+1: after a recovery drop the
-            // writer's sealTxn lags genCounter, and reusing a dropped
-            // sealTxn would race the still-pending .pv purge.
             final long oldSealTxn = sealTxn;
-            final long newTxn = Math.max(1, chain.peekNextSealTxn());
+            final long newTxn = nextSealTxn();
             // Drop sidecar mappings tied to oldSealTxn — the next seal will
             // re-open them at the new sealTxn.
             closeSidecarMems();
@@ -5048,6 +5056,10 @@ public class PostingIndexWriter implements IndexWriter {
             chain.extendHead(keyMem, newGenCount, keyCount, valueMemSize, maxValue, coverEndOffsetsScratch, headStoredCoveringFormat());
         }
         assert assertGenDirPublished(entryBase, writeFormat, writeCoverCount, overrideGenIndex, newEntry);
+        for (int i = 0, n = replacedSealTxns.size(); i < n; i++) {
+            recordPostingSealPurge(replacedSealTxns.get(i));
+        }
+        replacedSealTxns.clear();
     }
 
     private void rebuildSidecarsByCopy(long newSealTxn) {
@@ -6094,11 +6106,8 @@ public class PostingIndexWriter implements IndexWriter {
         // with active mmaps on the old .pv don't SIGSEGV. Allocate the rollback
         // sealTxn the same way seal() does so the new .pv stays distinct from
         // any prior sealed generation on disk.
-        // peekNextSealTxn(), not sealTxn+1: after a recovery drop the
-        // writer's sealTxn lags genCounter, and reusing a dropped
-        // sealTxn would race the still-pending .pv purge.
         final long oldSealTxn = sealTxn;
-        final long newSealTxn = Math.max(1, chain.peekNextSealTxn());
+        final long newSealTxn = nextSealTxn();
         reencodeAllGenerations(newSealTxn, maxValue, maxValue);
         // Record the superseded oldSealTxn for purge -- but ONLY for the normal
         // reencode path. When every value was rolled back, reencodeAllGenerations
@@ -8333,20 +8342,6 @@ public class PostingIndexWriter implements IndexWriter {
             this.toTableTxn = toTableTxn;
             this.partitionTimestamp = partitionTimestamp;
             this.partitionNameTxn = partitionNameTxn;
-        }
-    }
-
-    private static final class SealTxnHighWater implements PostingIndexUtils.SealedFileVisitor {
-        long sealTxn;
-
-        @Override
-        public void onCoverDataFile(int includeIdx, long coveredColumnNameTxn, long sealTxn) {
-            this.sealTxn = Math.max(this.sealTxn, sealTxn);
-        }
-
-        @Override
-        public void onValueFile(long sealTxn) {
-            this.sealTxn = Math.max(this.sealTxn, sealTxn);
         }
     }
 

@@ -825,7 +825,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 indexWriter.of(partitionDir.trimTo(dirLen), colName, colNameTxn, isFresh);
                 // The covered sidecar a deferred purge has to find later lives under the partition
                 // directory, which the path-based of() above does not carry.
-                indexWriter.setPartitionContext(partitionTimestamp, srcNameTxn);
+                indexWriter.setPartitionContext(partitionTimestamp, srcNameTxn, tableWriter);
                 // A LEGACY (format-0) covering head must not be extended with covered values - that writes
                 // the aliased footer and re-exposes the out-of-bounds concurrent covered read. Index the
                 // rows without them and report the partition incomplete so the sweep's rebuild migrates it.
@@ -864,12 +864,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     ff.close(fd);
                 }
                 indexWriter.setMaxValue(toRow - 1);
-                try {
-                    indexWriter.commit();
-                } finally {
-                    // commit() seals inline at the generation cap and records a purge for the value file it supersedes.
-                    tableWriter.deferParquetPostingSealPurges(indexWriter, tableWriter.getTxn());
-                }
+                indexWriter.commit();
                 if (isCoveredPublishUnsafe) {
                     // One legacy column sends the whole partition through the sweep's rebuild; rebuilding
                     // a column this pass published is wasted work, never wrong.
@@ -995,6 +990,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     frameCache.fill(cacheEntry, target, source);
                 }
             }
+            target.setPostingSealPurgeSink(tableWriter, srcNameTxn);
             if (eMax > partitionE) {
                 target.reserve(
                         eMax,
@@ -1713,6 +1709,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // its piece in place of opening a frame at the piece's end.
                 target.setKeepColumnsOpen(true);
                 source.setKeepColumnsOpen(true);
+                target.setPostingSealPurgeSink(tableWriter, dstNameTxn);
                 final ObjList<O3CompositeMergeStrategy.Action> actions = plan.actions;
                 long eMax = 0;
                 ctx.o3Ranges.clear();
@@ -7582,8 +7579,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         // identity, but a deferred seal-purge needs it to find the
                         // .pv directory later. srcNameTxn is this rebuild's dir
                         // name-txn (the new txn dir in rewrite mode, srcNameTxn in
-                        // update-in-place mode).
-                        indexWriter.setPartitionContext(partitionTimestamp, srcNameTxn);
+                        // update-in-place mode). The pooled writer is freed below,
+                        // before the commit lands, so its seal purges go to the
+                        // table writer, which publishes them once no reader is
+                        // pinned in their txn window.
+                        indexWriter.setPartitionContext(partitionTimestamp, srcNameTxn, tableWriter);
 
                         // The column is present in the parquet file (looked up above). The decoder
                         // reads the rows of a column top the file keeps as NULL, so the index covers
@@ -7638,26 +7638,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         // O3CopyJob, which sets it.
                         indexWriter.setCommitMode(tableWriter.getEffectiveCommitMode());
                         if (IndexType.isPosting(indexType)) {
-                            // commitDense may seal (spill-driven reseal), rotating the
-                            // .pv and recording a purge for the superseded file. The
-                            // pooled writer is freed below without ever draining that
-                            // outbox through a TableWriter (the native reseal does, this
-                            // path didn't), so the superseded .pv would leak. Drain it in
-                            // a finally: an I/O fault inside commitDense's seal/sync can
-                            // throw AFTER the purge was recorded, and the defer must still
-                            // hand the entry off rather than drop it (idempotent no-op on
-                            // an empty outbox). The deferred entry is published after the
-                            // commit and the scoreboard-gated job deletes the .pv only
-                            // once no reader is pinned in its txn window -- safe for both
-                            // the rewrite (fresh dir) and update-in-place (new column name
-                            // txn in the live dir) cases. Tagged with getTxn() as the current (pre-commit)
-                            // txn so the seal's getTxn()+1 entry is treated as
-                            // finite-future.
-                            try {
-                                indexWriter.commitDense();
-                            } finally {
-                                tableWriter.deferParquetPostingSealPurges(indexWriter, tableWriter.getTxn());
-                            }
+                            indexWriter.commitDense();
                         } else {
                             indexWriter.commit();
                         }

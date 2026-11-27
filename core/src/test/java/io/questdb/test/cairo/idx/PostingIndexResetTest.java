@@ -26,7 +26,10 @@ package io.questdb.test.cairo.idx;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.idx.PostingIndexChainHeader;
+import io.questdb.cairo.idx.PostingIndexFwdReader;
 import io.questdb.cairo.idx.PostingIndexUtils;
+import io.questdb.cairo.idx.PostingIndexWriter;
+import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryCMR;
@@ -34,6 +37,7 @@ import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
@@ -48,9 +52,187 @@ import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 import static io.questdb.cairo.idx.PostingIndexUtils.*;
 
 public class PostingIndexResetTest extends AbstractCairoTest {
+    private static final int INDEX_KEY_COUNT = 4;
+    private static final String INDEX_NAME = "s";
+    private static final long NEW_CHAIN_TXN_AT_SEAL = 7;
+
+    @Test
+    public void testInitOfNewIndexStartsAtSealTxnZero() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
+                    writer.of(path, INDEX_NAME, COLUMN_NAME_TXN_NONE, true);
+                    write(writer, 0, 8);
+                }
+                Assert.assertEquals(0, headSealTxn(path, plen));
+                assertRows(path, plen, 0, 8);
+            }
+        });
+    }
+
+    @Test
+    public void testInitOverEmptyIndexStartsAtSealTxnZero() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
+                    writer.of(path, INDEX_NAME, COLUMN_NAME_TXN_NONE, true);
+                }
+                reinitAndWrite(path, plen);
+                Assert.assertEquals(0, headSealTxn(path, plen));
+                assertRows(path, plen, 100, 104);
+            }
+        });
+    }
+
+    @Test
+    public void testInitOverUnreadableKeyFileStartsPastSealedFiles() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                final long replacedSealTxn = createSealedIndex(path, plen);
+                final FilesFacade ff = configuration.getFilesFacade();
+                final long fd = ff.openRW(PostingIndexUtils.keyFileName(path.trimTo(plen), INDEX_NAME, COLUMN_NAME_TXN_NONE), configuration.getWriterFileOpenOpts());
+                try {
+                    Assert.assertTrue(ff.truncate(fd, 64));
+                } finally {
+                    ff.close(fd);
+                }
+
+                reinitAndWrite(path, plen);
+                Assert.assertEquals(replacedSealTxn + 1, headSealTxn(path, plen));
+                assertRows(path, plen, 100, 104);
+            }
+        });
+    }
+
+    @Test
+    public void testInitQueuesOnePurgePerReplacedSealTxn() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                final long replacedSealTxn = createSealedIndex(path, plen);
+                final long[] replacedValueFileSealTxns = valueFileSealTxns();
+                Assert.assertTrue(configuration.getFilesFacade().touch(
+                        PostingIndexUtils.coverDataFileName(path.trimTo(plen), INDEX_NAME, 0, COLUMN_NAME_TXN_NONE, COLUMN_NAME_TXN_NONE, replacedSealTxn)
+                ));
+
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
+                    writer.of(path.trimTo(plen), INDEX_NAME, COLUMN_NAME_TXN_NONE, true);
+                    writer.setNextTxnAtSeal(NEW_CHAIN_TXN_AT_SEAL);
+                    write(writer, 100, 104);
+                    Assert.assertEquals(replacedValueFileSealTxns.length, writer.getPendingPurgesSizeForTesting());
+                    for (int i = 0; i < replacedValueFileSealTxns.length; i++) {
+                        Assert.assertEquals(replacedValueFileSealTxns[i], writer.getPendingPurgeSealTxnForTesting(i));
+                    }
+                }
+                Assert.assertEquals(replacedSealTxn + 1, headSealTxn(path, plen));
+            }
+        });
+    }
+
+    @Test
+    public void testInitQueuesPurgeOfReplacedFilesAtFirstPublish() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                createSealedIndex(path, plen);
+                final long[] replacedSealTxns = valueFileSealTxns();
+                Assert.assertTrue("fixture: the replaced index must leave its head and an earlier file", replacedSealTxns.length > 1);
+
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
+                    writer.of(path.trimTo(plen), INDEX_NAME, COLUMN_NAME_TXN_NONE, true);
+                    writer.setNextTxnAtSeal(NEW_CHAIN_TXN_AT_SEAL);
+                    Assert.assertEquals(0, writer.getPendingPurgesSizeForTesting());
+
+                    write(writer, 100, 104);
+                    Assert.assertEquals(replacedSealTxns.length, writer.getPendingPurgesSizeForTesting());
+                    for (int i = 0; i < replacedSealTxns.length; i++) {
+                        Assert.assertEquals(replacedSealTxns[i], writer.getPendingPurgeSealTxnForTesting(i));
+                        Assert.assertEquals(COLUMN_NAME_TXN_NONE, writer.getPendingPurgeFromTxnForTesting(i));
+                        Assert.assertEquals(NEW_CHAIN_TXN_AT_SEAL, writer.getPendingPurgeToTxnForTesting(i));
+                    }
+
+                    Assert.assertEquals(-1, writer.getPendingPurgeSealTxnForTesting(-1));
+                    Assert.assertEquals(-1, writer.getPendingPurgeSealTxnForTesting(replacedSealTxns.length));
+
+                    write(writer, 104, 108);
+                    Assert.assertEquals(replacedSealTxns.length, writer.getPendingPurgesSizeForTesting());
+                }
+                assertRows(path, plen, 100, 108);
+            }
+        });
+    }
+
+    @Test
+    public void testInitRetriedAfterFailedKeyFileCreationStartsPastSealedFiles() throws Exception {
+        final AtomicBoolean isFailing = new AtomicBoolean();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                return Utf8s.endsWithAscii(name, Files.SEPARATOR + INDEX_NAME + ".pk") && isFailing.compareAndSet(true, false)
+                        ? -1
+                        : super.openRW(name, opts);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                final long replacedSealTxn = createSealedIndex(path, plen);
+
+                isFailing.set(true);
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
+                    writer.of(path.trimTo(plen), INDEX_NAME, COLUMN_NAME_TXN_NONE, true);
+                    Assert.fail("the key file creation must fail");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "could not open read-write");
+                }
+                Assert.assertFalse("the attempt must have reached the key file creation", isFailing.get());
+                Assert.assertFalse("the failed attempt must leave no key file", ff.exists(PostingIndexUtils.keyFileName(path.trimTo(plen), INDEX_NAME, COLUMN_NAME_TXN_NONE)));
+
+                reinitAndWrite(path, plen);
+                Assert.assertEquals(replacedSealTxn + 1, headSealTxn(path, plen));
+                assertRows(path, plen, 100, 104);
+            }
+        });
+    }
+
+    @Test
+    public void testInitStartsPastSealTxnsOfReplacedIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                final long replacedSealTxn = createSealedIndex(path, plen);
+
+                reinitAndWrite(path, plen);
+                Assert.assertEquals(replacedSealTxn + 1, headSealTxn(path, plen));
+                assertRows(path, plen, 100, 104);
+
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
+                    writer.of(path.trimTo(plen), INDEX_NAME, COLUMN_NAME_TXN_NONE, false);
+                    write(writer, 104, 108);
+                    writer.seal();
+                }
+                Assert.assertEquals(replacedSealTxn + 2, headSealTxn(path, plen));
+                assertRows(path, plen, 100, 108);
+            }
+        });
+    }
+
+    @Test
+    public void testInitStartsPastUnpublishedCoverFile() throws Exception {
+        assertInitStartsPastUnpublishedFile(true);
+    }
+
+    @Test
+    public void testInitStartsPastUnpublishedValueFile() throws Exception {
+        assertInitStartsPastUnpublishedFile(false);
+    }
 
     @Test
     public void testKeyFileOpenFailure() throws Exception {
@@ -210,11 +392,53 @@ public class PostingIndexResetTest extends AbstractCairoTest {
         }
     }
 
+    @Test
+    public void testWriterRecreatesUnreadableKeyFilePastSealedFiles() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (s SYMBOL INDEX TYPE POSTING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES ('a', '2024-01-01T00:00:00'), ('b', '2024-01-01T00:00:01')");
+            engine.releaseAllWriters();
+            final FilesFacade ff = configuration.getFilesFacade();
+            try (Path path = new Path().of(configuration.getDbRoot()).concat(engine.verifyTableName("x").getDirName()).concat("2024-01-01")) {
+                final int plen = path.size();
+                final long fd = ff.openRW(PostingIndexUtils.keyFileName(path, INDEX_NAME, COLUMN_NAME_TXN_NONE), configuration.getWriterFileOpenOpts());
+                try {
+                    Assert.assertTrue(ff.truncate(fd, 0));
+                } finally {
+                    ff.close(fd);
+                }
+                Assert.assertTrue(ff.touch(PostingIndexUtils.valueFileName(path.trimTo(plen), INDEX_NAME, COLUMN_NAME_TXN_NONE, 5)));
+
+                execute("INSERT INTO x VALUES ('c', '2024-01-01T00:00:02')");
+                engine.releaseAllWriters();
+                Assert.assertEquals(6, headSealTxn(path, plen));
+            }
+            assertQuery("SELECT count() c FROM x WHERE s = 'c'").noRandomAccess().expectSize().returns("c\n1\n");
+        });
+    }
+
     private static void assertFiles(String expected) {
         final String[] files = partitionDir().list((_, name) -> name.startsWith("s.p"));
         Assert.assertNotNull(files);
         Arrays.sort(files);
         Assert.assertEquals(expected, Arrays.toString(files));
+    }
+
+    private static void assertInitStartsPastUnpublishedFile(boolean isCoverFile) throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                final long replacedSealTxn = createSealedIndex(path, plen);
+                final LPSZ unpublishedFile = isCoverFile
+                        ? PostingIndexUtils.coverDataFileName(path.trimTo(plen), INDEX_NAME, 0, COLUMN_NAME_TXN_NONE, COLUMN_NAME_TXN_NONE, replacedSealTxn + 1)
+                        : PostingIndexUtils.valueFileName(path.trimTo(plen), INDEX_NAME, COLUMN_NAME_TXN_NONE, replacedSealTxn + 1);
+                Assert.assertTrue(configuration.getFilesFacade().touch(unpublishedFile));
+
+                reinitAndWrite(path, plen);
+                Assert.assertEquals(replacedSealTxn + 2, headSealTxn(path, plen));
+                assertRows(path, plen, 100, 104);
+            }
+        });
     }
 
     // The partition holds the key file of an empty chain and none of the instance's sealed files, and the chain
@@ -254,6 +478,27 @@ public class PostingIndexResetTest extends AbstractCairoTest {
         }
     }
 
+    private static void assertRows(Path path, int plen, int rowLo, int rowHi) {
+        try (PostingIndexFwdReader reader = new PostingIndexFwdReader(configuration, path.trimTo(plen), INDEX_NAME, COLUMN_NAME_TXN_NONE, -1, 0)) {
+            int rowCount = 0;
+            for (int key = 0; key < INDEX_KEY_COUNT; key++) {
+                final RowCursor cursor = reader.getCursor(key, 0, Long.MAX_VALUE);
+                try {
+                    long expectedRow = rowLo + Math.floorMod(key - rowLo, INDEX_KEY_COUNT);
+                    while (cursor.hasNext()) {
+                        Assert.assertEquals("key " + key, expectedRow, cursor.next());
+                        expectedRow += INDEX_KEY_COUNT;
+                        rowCount++;
+                    }
+                    Assert.assertTrue("key " + key + " ends at " + expectedRow, expectedRow >= rowHi);
+                } finally {
+                    Misc.free(cursor);
+                }
+            }
+            Assert.assertEquals(rowHi - rowLo, rowCount);
+        }
+    }
+
     // Builds a covering posting index over the non-partitioned table x, so its partition holds a key file, value
     // files and cover files, and returns the highest sealTxn those files carry.
     private static long createIndex() throws Exception {
@@ -272,12 +517,58 @@ public class PostingIndexResetTest extends AbstractCairoTest {
         return lastSealTxn;
     }
 
+    private static long createSealedIndex(Path path, int plen) {
+        try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path.trimTo(plen), INDEX_NAME, COLUMN_NAME_TXN_NONE)) {
+            write(writer, 0, 8);
+            writer.seal();
+            write(writer, 8, 16);
+            writer.seal();
+        }
+        final long sealTxn = headSealTxn(path, plen);
+        Assert.assertTrue("fixture: the replaced index must have sealed", sealTxn > 0);
+        return sealTxn;
+    }
+
+    private static long headSealTxn(Path path, int plen) {
+        return PostingIndexUtils.readSealTxnFromKeyFile(
+                configuration.getFilesFacade(),
+                PostingIndexUtils.keyFileName(path.trimTo(plen), INDEX_NAME, COLUMN_NAME_TXN_NONE)
+        );
+    }
+
     private static File partitionDir() {
         return new File(new File(configuration.getDbRoot(), engine.verifyTableName("x").getDirName()), "default");
     }
 
     private static Path partitionPath() {
         return new Path().of(configuration.getDbRoot()).concat(engine.verifyTableName("x")).concat("default");
+    }
+
+    private static void reinitAndWrite(Path path, int plen) {
+        try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
+            writer.of(path.trimTo(plen), INDEX_NAME, COLUMN_NAME_TXN_NONE, true);
+            write(writer, 100, 104);
+        }
+    }
+
+    private static long[] valueFileSealTxns() {
+        final String prefix = INDEX_NAME + ".pv.";
+        final String[] names = new File(configuration.getDbRoot().toString()).list((dir, name) -> name.startsWith(prefix));
+        Assert.assertNotNull(names);
+        final long[] sealTxns = new long[names.length];
+        for (int i = 0; i < names.length; i++) {
+            sealTxns[i] = Long.parseLong(names[i].substring(prefix.length()));
+        }
+        Arrays.sort(sealTxns);
+        return sealTxns;
+    }
+
+    private static void write(PostingIndexWriter writer, int rowLo, int rowHi) {
+        for (int row = rowLo; row < rowHi; row++) {
+            writer.add(row % INDEX_KEY_COUNT, row);
+        }
+        writer.setMaxValue(rowHi - 1);
+        writer.commit();
     }
 
     private static class FailingRemoveFacade extends TestFilesFacadeImpl {
