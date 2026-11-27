@@ -192,7 +192,7 @@ final class UpdateBinder implements Mutable {
         final OutputSchema output = sourcePlan.getOutput();
         scope.resetAliases();
         scope.projectionAliasIndexes.clear();
-        final LogicalPlan input = binder.bindWhere(where, sourcePlan, null, source, executionContext);
+        final LogicalPlan input = binder.bindWhere(where, null, sourcePlan, null, source, executionContext);
         windowBinder.validateWindowOrder(model, source);
         if (windowBinder.hasWindows(model, source)) {
             throw windowException(model);

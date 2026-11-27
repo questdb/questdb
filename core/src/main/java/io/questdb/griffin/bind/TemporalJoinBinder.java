@@ -800,7 +800,11 @@ final class TemporalJoinBinder {
         }
     }
 
-    LogicalPlan bindHorizonJoin(QueryModel model, QueryModel source, ExpressionNode where,
+    /**
+     * Binds the HORIZON JOIN of {@code source}, whose master {@code where} and the {@code conjuncts} the caller adds to
+     * it filter.
+     */
+    LogicalPlan bindHorizonJoin(QueryModel model, QueryModel source, ExpressionNode where, @Nullable WhereConjuncts conjuncts,
                                 SqlExecutionContext executionContext) throws SqlException {
         final ObjList<QueryModel> sources = source.getJoinModels();
         final QueryModel last = sources.getLast();
@@ -839,10 +843,18 @@ final class TemporalJoinBinder {
         // A clause that reads beyond the master fails once every input's columns are known.
         final int whereOutsidePosition = where == null ? Integer.MAX_VALUE : firstUnresolvableReference(where, master.getOutput(), masterAlias);
         if (whereOutsidePosition == Integer.MAX_VALUE) {
+            int conjunctsOutsidePosition = Integer.MAX_VALUE;
+            for (int i = 0, n = conjuncts == null ? 0 : conjuncts.getConjunctCount(); i < n; i++) {
+                conjunctsOutsidePosition = Math.min(conjunctsOutsidePosition,
+                        firstUnresolvableReference(conjuncts.getConjunctColumns(i), master.getOutput(), masterAlias));
+            }
+            final BoundExpression masterConjuncts = conjunctsOutsidePosition == Integer.MAX_VALUE
+                    ? binder.bindWhereConjuncts(conjuncts, master.getOutput(), masterAlias, executionContext) : null;
             if (binder.isLatestOverLeadingInput(source)) {
-                master = binder.bindLatestBy(master, where, source, executionContext);
-            } else if (where != null) {
-                final BoundExpression predicate = binder.bindPredicate(where, master, masterModel, executionContext);
+                master = binder.bindLatestBy(master, where, masterConjuncts, source, executionContext);
+            } else if (where != null || masterConjuncts != null) {
+                final BoundExpression predicate = ctx.expressionRewriter.combineConjunction(masterConjuncts,
+                        where == null ? null : binder.bindPredicate(where, master, masterModel, executionContext), where == null ? 0 : where.position);
                 master = ctx.planNodes.filters.next().of(master, predicate, predicate.getPosition());
             }
         }
@@ -957,12 +969,13 @@ final class TemporalJoinBinder {
     }
 
     /**
-     * Binds the WINDOW JOIN of {@code source} filtered by {@code where}, with the aggregates of {@code aggregateColumns},
-     * or with none when it is null: a PIVOT binds its own, see {@link #addWindowJoinAggregate}.
+     * Binds the WINDOW JOIN of {@code source}, whose master {@code where} and the {@code conjuncts} the caller adds to
+     * it filter, with the aggregates of {@code aggregateColumns}, or with none when it is null: a PIVOT binds its own,
+     * see {@link #addWindowJoinAggregate}.
      */
     WindowJoinPlan bindWindowJoin(
             QueryModel model, @Nullable ObjList<QueryColumn> aggregateColumns, QueryModel source, ExpressionNode where,
-            SqlExecutionContext executionContext
+            @Nullable WhereConjuncts conjuncts, SqlExecutionContext executionContext
     ) throws SqlException {
         final BindScope bindScope = ctx.scope();
         final ExpressionNode masterFilter = where;
@@ -976,14 +989,17 @@ final class TemporalJoinBinder {
         final CharSequence masterAlias = first > 1 ? null : sourceAlias(masterModel);
         LogicalPlan master;
         if (first > 1) {
-            master = joinBinder.bindJoins(source, where, first, executionContext);
+            master = joinBinder.bindJoins(source, where, conjuncts, first, executionContext);
             where = null;
+            conjuncts = null;
         } else {
             master = binder.bindSource(masterModel, executionContext);
             if (binder.isLatestOverLeadingInput(source)) {
                 validateWindowJoinWhere(where, sources, first, master.getOutput());
-                master = binder.bindLatestBy(master, where, source, executionContext);
+                master = binder.bindLatestBy(master, where, binder.bindWhereConjuncts(conjuncts, master.getOutput(), masterAlias, executionContext),
+                        source, executionContext);
                 where = null;
+                conjuncts = null;
             }
         }
         final WindowJoinPlan plan = ctx.planNodes.windowJoinPlans.next().of(master, source.getModelPosition());
@@ -1001,12 +1017,17 @@ final class TemporalJoinBinder {
             rejectWindowJoinReads(forColumns.getQuick(i).getInExpr(), plan);
         }
         boolean isEmpty = false;
-        if (where != null) {
-            validateWindowJoinWhere(where, sources, first, master.getOutput());
-            final BoundExpression predicate = binder.bindPredicate(where, master, masterModel, executionContext);
+        if (where != null || conjuncts != null) {
+            BoundExpression predicate = null;
+            if (where != null) {
+                validateWindowJoinWhere(where, sources, first, master.getOutput());
+                predicate = binder.bindPredicate(where, master, masterModel, executionContext);
+            }
             if (predicate instanceof ConstantExpression constant && constant.getLongValue() == 0) {
                 isEmpty = true;
             } else {
+                predicate = ctx.expressionRewriter.combineConjunction(binder.bindWhereConjuncts(conjuncts, master.getOutput(), masterAlias, executionContext),
+                        predicate, where == null ? 0 : where.position);
                 master = ctx.planNodes.filters.next().of(master, predicate, predicate.getPosition());
                 plan.replaceInput(0, master);
             }
@@ -1072,7 +1093,7 @@ final class TemporalJoinBinder {
         if (source.getSampleBy() == null && hasBlockGrouping(model, source)) {
             throw SqlException.$(groupBy.size() > 0 ? groupBy.getQuick(0).position : groupingBlock.getGroupByPosition(), "GROUP BY cannot be used with WINDOW JOIN");
         }
-        final WindowJoinPlan plan = bindWindowJoin(model, model.getColumns(), source, where, executionContext);
+        final WindowJoinPlan plan = bindWindowJoin(model, model.getColumns(), source, where, null, executionContext);
         final OutputSchema output = plan.getOutput();
         final CharSequence masterAlias = plan.getSteps().getQuick(0).getMasterAlias();
         final ObjList<ColumnExpression> aggregateColumns = scope.substitutionColumns;

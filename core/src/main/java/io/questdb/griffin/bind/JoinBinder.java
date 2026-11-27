@@ -57,6 +57,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.CommonUtils;
+import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.griffin.bind.BindContext.*;
 
@@ -520,7 +521,7 @@ final class JoinBinder implements Mutable {
             }
             return;
         }
-        bindJoinConditions(group, source, null, dependencyBase, modelBase, executionContext);
+        bindJoinConditions(group, source, null, null, dependencyBase, modelBase, executionContext);
         inputModels.setPos(modelBase);
         lateralDependencyInputs.setPos(dependencyBase);
         lateralDependencyParents.setPos(dependencyBase);
@@ -539,8 +540,8 @@ final class JoinBinder implements Mutable {
      * key types, the time series inputs and TOLERANCE, binds the outer ON residuals, and binds every other conjunct
      * into the graph for the optimiser to place.
      */
-    private void bindJoinConditions(JoinPlan join, QueryModel source, ExpressionNode where, int dependencyBase, int modelBase,
-                                    SqlExecutionContext executionContext) throws SqlException {
+    private void bindJoinConditions(JoinPlan join, QueryModel source, ExpressionNode where, @Nullable WhereConjuncts conjuncts,
+                                    int dependencyBase, int modelBase, SqlExecutionContext executionContext) throws SqlException {
         final BindScope scope = ctx.scope();
         final ObjList<JoinInput> inputs = join.getInputs();
         boolean hasBarriers = false;
@@ -554,7 +555,7 @@ final class JoinBinder implements Mutable {
             final ExpressionNode whereConstants = collectJoinGraph(join, graph, source, where, dependencyBase, modelBase, hasBarriers);
             scope.joinDerivedEqualities.addAll(joinGraphBuilder.getSourceFilters());
             joinGraphBuilder.clear();
-            demoteUnkeyableKeys(join, graph, source, executionContext);
+            demoteUnkeyableKeys(join, graph, executionContext);
             if (hasTemporalStep) {
                 validateProvidedTimestamp(inputs.getQuick(0).getInput());
             }
@@ -584,14 +585,16 @@ final class JoinBinder implements Mutable {
             join.getOutput().setTimestampColumnId(LogicalPlans.joinTimestampColumnId(join, inputs.size()));
 
             final int lastInput = inputs.size() - 1;
+            bindWhereConjuncts(join, graph, source, conjuncts, executionContext);
             bindJoinResiduals(join, graph, source, -1, executionContext);
             final ObjList<JoinEquality> derivedEqualities = scope.joinDerivedEqualities;
             for (int i = 0, n = derivedEqualities.size(); i < n; i++) {
                 final JoinEquality equality = derivedEqualities.getQuick(i);
-                final ExpressionNode comparison = comparison(equality.getLeftName(), equality.getLeftPosition(),
-                        equality.getRightName(), equality.getRightPosition());
+                final BoundExpression conjunct = bindJoinEquality(equality.getLeftColumnId(), equality.getLeftPosition(),
+                        equality.getRightColumnId(), equality.getRightPosition(), join, executionContext);
                 final IntList owners = equality.getOwners();
-                final BoundExpression conjunct = bindJoinConjunct(comparison, comparison, join, source, lastInput, statedOrigin(owners), executionContext);
+                join.getFilterConjuncts().add(conjunct);
+                join.getFilterConjunctOrigins().add(statedOrigin(owners));
                 assert LogicalPlans.constantTruth(conjunct) < 0;
                 graph.addResidual(conjunct, owners);
             }
@@ -641,6 +644,18 @@ final class JoinBinder implements Mutable {
         join.getFilterConjuncts().add(predicate);
         join.getFilterConjunctOrigins().add(originalOnSource);
         return predicate;
+    }
+
+    /**
+     * Binds the equality of two columns of the join's output, at the positions of their references.
+     */
+    private BoundExpression bindJoinEquality(int leftColumnId, int leftPosition, int rightColumnId, int rightPosition, JoinPlan join,
+                                             SqlExecutionContext executionContext) throws SqlException {
+        final OutputSchema output = join.getOutput();
+        return ctx.functionBinder.bindCall("=", leftPosition,
+                ctx.planNodes.columns.next().of(leftColumnId, output.getColumnType(output.getColumnIndexById(leftColumnId)), leftPosition),
+                ctx.planNodes.columns.next().of(rightColumnId, output.getColumnType(output.getColumnIndexById(rightColumnId)), rightPosition),
+                output, executionContext);
     }
 
     /**
@@ -810,7 +825,7 @@ final class JoinBinder implements Mutable {
         }
     }
 
-    private JoinPlan bindJoinSources(QueryModel source, ExpressionNode where, int hi,
+    private JoinPlan bindJoinSources(QueryModel source, ExpressionNode where, @Nullable WhereConjuncts conjuncts, int hi,
                                      SqlExecutionContext executionContext) throws SqlException {
         final ObjList<QueryModel> sources = source.getJoinModels();
         final int dependencyBase = lateralDependencyInputs.size();
@@ -820,9 +835,9 @@ final class JoinBinder implements Mutable {
         try {
             bindJoinInputs(join, source, 0, hi, hasTemporalJoin(sources, 0, hi), null, executionContext);
             if (binder.isLatestOverLeadingInput(source)) {
-                where = bindLatestInput(join, source, where, modelBase, executionContext);
+                where = bindLatestInput(join, source, where, conjuncts, modelBase, executionContext);
             }
-            bindJoinConditions(join, source, where, dependencyBase, modelBase, executionContext);
+            bindJoinConditions(join, source, where, conjuncts, dependencyBase, modelBase, executionContext);
             return join;
         } finally {
             inputModels.setPos(modelBase);
@@ -832,12 +847,13 @@ final class JoinBinder implements Mutable {
     }
 
     /**
-     * Binds LATEST ON over the first input, which owns its timestamp, before the join: the conjuncts of WHERE and of
-     * the INNER ON clauses that read only the first input and can filter it before the join run before LATEST ON.
-     * Returns the rest of WHERE.
+     * Binds LATEST ON over the first input, which owns its timestamp, before the join: the conjuncts of WHERE, the
+     * conjuncts the caller adds to it, and those of the INNER ON clauses that read only the first input and can filter
+     * it before the join run before LATEST ON. Returns the rest of WHERE; {@link #isLatestConjunct} tells the added
+     * conjuncts that run before LATEST ON.
      */
-    private ExpressionNode bindLatestInput(JoinPlan join, QueryModel source, ExpressionNode where, int modelBase,
-                                           SqlExecutionContext executionContext) throws SqlException {
+    private ExpressionNode bindLatestInput(JoinPlan join, QueryModel source, ExpressionNode where, @Nullable WhereConjuncts conjuncts,
+                                           int modelBase, SqlExecutionContext executionContext) throws SqlException {
         final ObjList<JoinInput> inputs = join.getInputs();
         final int lastInput = inputs.size() - 1;
         ExpressionNode latestFilter = null;
@@ -852,8 +868,15 @@ final class JoinBinder implements Mutable {
                 latestFilter = ctx.combinePredicates(latestFilter, selectedTerms);
             }
         }
+        BoundExpression latestConjuncts = null;
+        for (int i = 0, n = conjuncts == null ? 0 : conjuncts.getConjunctCount(); i < n; i++) {
+            if (isLatestConjunct(conjuncts, i, join, source)) {
+                final BoundExpression conjunct = conjuncts.bindConjunct(i, join.getOutput(), sourceAlias(source), executionContext);
+                latestConjuncts = ctx.expressionRewriter.combineConjunction(latestConjuncts, conjunct, conjunct.getPosition());
+            }
+        }
         final JoinInput first = inputs.getQuick(0);
-        first.setInput(binder.bindLatestBy(first.getInput(), latestFilter, source, executionContext));
+        first.setInput(binder.bindLatestBy(first.getInput(), latestFilter, latestConjuncts, source, executionContext));
         return where;
     }
 
@@ -935,6 +958,27 @@ final class JoinBinder implements Mutable {
             spec.getOutput().add(ctx.planNodes.nextColumnId(), ctx.createOutputName(name), ColumnType.LONG, true);
         }
         return spec;
+    }
+
+    /**
+     * Binds into the graph, as conjuncts of WHERE, the conjuncts the caller adds to WHERE that do not run before the
+     * LATEST ON of the first input, see {@link #isLatestConjunct}.
+     */
+    private void bindWhereConjuncts(JoinPlan join, JoinGraph graph, QueryModel source, @Nullable WhereConjuncts conjuncts,
+                                    SqlExecutionContext executionContext) throws SqlException {
+        for (int i = 0, n = conjuncts == null ? 0 : conjuncts.getConjunctCount(); i < n; i++) {
+            if (isLatestConjunct(conjuncts, i, join, source)) {
+                continue;
+            }
+            final BoundExpression conjunct = conjuncts.bindConjunct(i, join.getOutput(), sourceAlias(source), executionContext);
+            join.getFilterConjuncts().add(conjunct);
+            join.getFilterConjunctOrigins().add(-1);
+            if (LogicalPlans.constantTruth(conjunct) < 0) {
+                graph.addResidual(conjunct, -1);
+            } else {
+                graph.addConstantFilter(conjunct, -1);
+            }
+        }
     }
 
     private ExpressionNode collectJoinConditions(
@@ -1221,7 +1265,7 @@ final class JoinBinder implements Mutable {
      * RIGHT or FULL input evaluates the key as a conjunct of its ON residual, see {@link #routeJoinResidual}. Other such
      * keys stay, and {@link #validateJoinKeys} rejects them.
      */
-    private void demoteUnkeyableKeys(JoinPlan join, JoinGraph graph, QueryModel source, SqlExecutionContext executionContext) throws SqlException {
+    private void demoteUnkeyableKeys(JoinPlan join, JoinGraph graph, SqlExecutionContext executionContext) throws SqlException {
         final BindScope scope = ctx.scope();
         final ObjList<JoinInput> inputs = join.getInputs();
         for (int s = 1, n = inputs.size(); s < n; s++) {
@@ -1232,7 +1276,7 @@ final class JoinBinder implements Mutable {
             final JoinInput step = inputs.getQuick(s);
             final JoinKind type = step.getJoinType();
             final ObjList<JoinEquality> keys = dependency.getKeys();
-            ExpressionNode keyFilter = null;
+            BoundExpression keyFilter = null;
             for (int i = 0; i < keys.size(); ) {
                 final JoinEquality key = keys.getQuick(i);
                 if (JoinGraphBuilder.isKeyable(join, key)) {
@@ -1255,7 +1299,9 @@ final class JoinBinder implements Mutable {
                             ? equality.ofDerived(keyable, keyableSide, key, side)
                             : equality.ofDerived(key, side, keyable, keyableSide));
                 } else if (isSlaveFiltered) {
-                    keyFilter = ctx.combinePredicates(keyFilter, comparison(key.getName(s), key.getPosition(s), masterKey.getName(s), masterKey.getPosition(s)));
+                    final BoundExpression equality = bindJoinEquality(key.getColumnId(s), key.getPosition(s), masterKey.getColumnId(s),
+                            masterKey.getPosition(s), join, executionContext);
+                    keyFilter = ctx.expressionRewriter.combineConjunction(keyFilter, equality, equality.getPosition());
                 } else {
                     final int origin = statedOrigin(key.getOwners());
                     final ExpressionNode onConjunct = routeJoinResidual(
@@ -1267,7 +1313,7 @@ final class JoinBinder implements Mutable {
                 keys.remove(i);
             }
             if (keyFilter != null) {
-                step.setKeyFilter(ctx.functionBinder.bindPredicate(keyFilter, join.getOutput(), sourceAlias(source), executionContext));
+                step.setKeyFilter(keyFilter);
             }
         }
     }
@@ -1362,6 +1408,23 @@ final class JoinBinder implements Mutable {
     private boolean isLatestFilteredOn(JoinPlan join, QueryModel source, int modelBase, int input) {
         return binder.isLatestOverLeadingInput(source) && joinModel(source, modelBase, 0) == source
                 && join.getInputs().getQuick(input).getJoinType() == JoinKind.INNER && LogicalPlans.canPushJoinFilter(join.getInputs(), 0, input);
+    }
+
+    /**
+     * Whether conjunct {@code index} of the conjuncts the caller adds to WHERE runs before the LATEST ON of the first
+     * input, as a WHERE conjunct that reads only that input does, see {@link #bindLatestInput}.
+     */
+    private boolean isLatestConjunct(WhereConjuncts conjuncts, int index, JoinPlan join, QueryModel source) {
+        return binder.isLatestOverLeadingInput(source) && LogicalPlans.canPushJoinFilter(join.getInputs(), 0, join.getInputs().size() - 1)
+                && isLatestFilterTerm(conjuncts.getConjunctColumns(index), join);
+    }
+
+    /**
+     * Whether a conjunct that WHERE states, or one the caller adds to it, reads only the first input, so that it can
+     * run before the LATEST ON of that input.
+     */
+    private boolean isLatestFilterTerm(ExpressionNode expression, JoinPlan join) {
+        return joinExpressionSource(expression, join) == 0;
     }
 
     private boolean isOuterColumn(ExpressionNode literal, int index) {
@@ -1572,7 +1635,7 @@ final class JoinBinder implements Mutable {
             // A constant join term is classified by its spelling, not by Function.isConstant(): function calls and
             // parameters remain runtime predicates even when their selected implementation folds at binding.
             case CONSTANT -> isCompileTimeJoinConstant(expression);
-            case LATEST_FILTER -> joinExpressionSource(expression, join) == 0;
+            case LATEST_FILTER -> isLatestFilterTerm(expression, join);
             case POST_JOIN_FILTER -> isPostJoinFilterReference(expression, join, origin);
         };
         selectedTerms = isSelected ? expression : null;
@@ -1667,17 +1730,22 @@ final class JoinBinder implements Mutable {
         }
     }
 
-    LogicalPlan bindJoins(QueryModel source, ExpressionNode where, SqlExecutionContext executionContext) throws SqlException {
-        return bindJoins(source, where, source.getJoinModels().size(), executionContext);
+    LogicalPlan bindJoins(QueryModel source, ExpressionNode where, @Nullable WhereConjuncts conjuncts, SqlExecutionContext executionContext)
+            throws SqlException {
+        return bindJoins(source, where, conjuncts, source.getJoinModels().size(), executionContext);
     }
 
-    LogicalPlan bindJoins(QueryModel source, ExpressionNode where, int sourceCount,
+    /**
+     * Binds the first {@code sourceCount} sources of {@code source} as a join filtered by {@code where} and by the
+     * {@code conjuncts} the caller adds to it, which the join places as it places the conjuncts of WHERE.
+     */
+    LogicalPlan bindJoins(QueryModel source, ExpressionNode where, @Nullable WhereConjuncts conjuncts, int sourceCount,
                           SqlExecutionContext executionContext) throws SqlException {
         final BindScope scope = ctx.scope();
         final boolean previous = scope.isInsideJoin;
         scope.isInsideJoin = true;
         try {
-            return bindJoinSources(source, where, sourceCount, executionContext);
+            return bindJoinSources(source, where, conjuncts, sourceCount, executionContext);
         } finally {
             scope.isInsideJoin = previous;
         }
