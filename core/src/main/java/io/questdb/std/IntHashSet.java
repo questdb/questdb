@@ -27,6 +27,7 @@ package io.questdb.std;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
 
 import java.util.Arrays;
 
@@ -107,6 +108,14 @@ public class IntHashSet extends AbstractIntHashSet implements Sinkable {
 
     public int getLast() {
         return list.getLast();
+    }
+
+    /**
+     * @return the slots of the set's key table, which is what a clear sweeps, for a test
+     */
+    @TestOnly
+    public int getSlotCount() {
+        return keys.length;
     }
 
     @Override

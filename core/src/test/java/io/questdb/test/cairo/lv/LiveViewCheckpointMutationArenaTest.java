@@ -25,9 +25,9 @@
 package io.questdb.test.cairo.lv;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.lv.LiveViewCheckpointByteArrayPool;
 import io.questdb.cairo.lv.LiveViewCheckpointMutationArena;
 import io.questdb.cairo.lv.LiveViewCheckpointStatePageRef;
-import io.questdb.std.IntObjHashMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
@@ -39,9 +39,6 @@ import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Test;
 
-import java.lang.reflect.Constructor;
-import java.lang.reflect.Field;
-import java.lang.reflect.Method;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
 import java.util.HashSet;
@@ -189,73 +186,62 @@ public class LiveViewCheckpointMutationArenaTest {
     }
 
     @Test
-    public void testFrozenBytePoolReusesWarmedWidthsAcrossPermutations() throws Exception {
-        final Class<?> poolClass = Class.forName("io.questdb.cairo.lv.LiveViewCheckpointByteArrayPool");
-        final Constructor<?> constructor = poolClass.getDeclaredConstructor();
-        final Method next = poolClass.getDeclaredMethod("next", int.class);
-        final Method reset = poolClass.getDeclaredMethod("reset");
-        constructor.setAccessible(true);
-        next.setAccessible(true);
-        reset.setAccessible(true);
-        final Object pool = constructor.newInstance();
+    public void testFrozenBytePoolReusesWarmedWidthsAcrossPermutations() {
+        final LiveViewCheckpointByteArrayPool pool = LiveViewCheckpointByteArrayPool.newForTest();
 
-        final byte[] width1a = (byte[]) next.invoke(pool, 1);
-        final byte[] width2 = (byte[]) next.invoke(pool, 2);
-        final byte[] width1b = (byte[]) next.invoke(pool, 1);
-        reset.invoke(pool);
+        final byte[] width1a = pool.nextForTest(1);
+        final byte[] width2 = pool.nextForTest(2);
+        final byte[] width1b = pool.nextForTest(1);
+        pool.resetForTest();
 
-        Assert.assertSame(width2, next.invoke(pool, 2));
-        final byte[] permutedWidth1a = (byte[]) next.invoke(pool, 1);
-        final byte[] permutedWidth1b = (byte[]) next.invoke(pool, 1);
+        Assert.assertSame(width2, pool.nextForTest(2));
+        final byte[] permutedWidth1a = pool.nextForTest(1);
+        final byte[] permutedWidth1b = pool.nextForTest(1);
         Assert.assertTrue(permutedWidth1a == width1a || permutedWidth1a == width1b);
         Assert.assertTrue(permutedWidth1b == width1a || permutedWidth1b == width1b);
         Assert.assertNotSame(permutedWidth1a, permutedWidth1b);
 
-        reset.invoke(pool);
-        final byte[] nextWidth1a = (byte[]) next.invoke(pool, 1);
-        final byte[] nextWidth1b = (byte[]) next.invoke(pool, 1);
+        pool.resetForTest();
+        final byte[] nextWidth1a = pool.nextForTest(1);
+        final byte[] nextWidth1b = pool.nextForTest(1);
         Assert.assertTrue(nextWidth1a == width1a || nextWidth1a == width1b);
         Assert.assertTrue(nextWidth1b == width1a || nextWidth1b == width1b);
         Assert.assertNotSame(nextWidth1a, nextWidth1b);
-        Assert.assertSame(width2, next.invoke(pool, 2));
+        Assert.assertSame(width2, pool.nextForTest(2));
     }
 
     @Test
-    public void testFrozenBytePoolRetainsExactWidthsAcrossEpochRollover() throws Exception {
-        final Class<?> poolClass = Class.forName("io.questdb.cairo.lv.LiveViewCheckpointByteArrayPool");
-        final Constructor<?> constructor = poolClass.getDeclaredConstructor();
-        final Field epoch = poolClass.getDeclaredField("epoch");
-        final Field poolsByWidth = poolClass.getDeclaredField("poolsByWidth");
-        final Method next = poolClass.getDeclaredMethod("next", int.class);
-        final Method reset = poolClass.getDeclaredMethod("reset");
-        constructor.setAccessible(true);
-        epoch.setAccessible(true);
-        poolsByWidth.setAccessible(true);
-        next.setAccessible(true);
-        reset.setAccessible(true);
-        final Object pool = constructor.newInstance();
+    public void testFrozenBytePoolRetainsExactWidthsAcrossEpochRollover() {
+        final LiveViewCheckpointByteArrayPool pool = LiveViewCheckpointByteArrayPool.newForTest();
 
-        final byte[] width7a = (byte[]) next.invoke(pool, 7);
-        final byte[] width7b = (byte[]) next.invoke(pool, 7);
-        final byte[] width11 = (byte[]) next.invoke(pool, 11);
-        final IntObjHashMap<?> widths = (IntObjHashMap<?>) poolsByWidth.get(pool);
-        final Object width7Pool = widths.get(7);
-        final Object width11Pool = widths.get(11);
-        final Field arrays = width7Pool.getClass().getDeclaredField("arrays");
-        arrays.setAccessible(true);
-        final Object width7Arrays = arrays.get(width7Pool);
-        final Object width11Arrays = arrays.get(width11Pool);
+        final byte[] width7a = pool.nextForTest(7);
+        final byte[] width7b = pool.nextForTest(7);
+        final byte[] width11 = pool.nextForTest(11);
+        // One bucket and one array list per width.
+        final Object width7Pool = pool.getWidthPoolForTest(7);
+        final Object width11Pool = pool.getWidthPoolForTest(11);
+        final Object width7Arrays = pool.getWidthArraysForTest(7);
+        final Object width11Arrays = pool.getWidthArraysForTest(11);
+        Assert.assertNotNull(width7Pool);
+        Assert.assertNotNull(width11Pool);
+        Assert.assertNotNull(width7Arrays);
+        Assert.assertNotNull(width11Arrays);
+        Assert.assertNotSame(width7Pool, width11Pool);
+        Assert.assertNotSame(width7Arrays, width11Arrays);
 
-        epoch.setInt(pool, -1);
-        reset.invoke(pool);
+        pool.setEpochForTest(-1);
+        Assert.assertEquals(-1, pool.getEpochForTest());
+        pool.resetForTest();
+        // The reset wraps the epoch from -1 to 0, and the rollover moves it on to 1.
+        Assert.assertEquals(1, pool.getEpochForTest());
 
-        Assert.assertSame("rollover must retain the width-7 bucket", width7Pool, widths.get(7));
-        Assert.assertSame("rollover must retain the width-11 bucket", width11Pool, widths.get(11));
-        Assert.assertSame("rollover must retain the width-7 array list", width7Arrays, arrays.get(widths.get(7)));
-        Assert.assertSame("rollover must retain the width-11 array list", width11Arrays, arrays.get(widths.get(11)));
-        Assert.assertSame(width7a, next.invoke(pool, 7));
-        Assert.assertSame(width7b, next.invoke(pool, 7));
-        Assert.assertSame(width11, next.invoke(pool, 11));
+        Assert.assertSame("rollover must retain the width-7 bucket", width7Pool, pool.getWidthPoolForTest(7));
+        Assert.assertSame("rollover must retain the width-11 bucket", width11Pool, pool.getWidthPoolForTest(11));
+        Assert.assertSame("rollover must retain the width-7 array list", width7Arrays, pool.getWidthArraysForTest(7));
+        Assert.assertSame("rollover must retain the width-11 array list", width11Arrays, pool.getWidthArraysForTest(11));
+        Assert.assertSame(width7a, pool.nextForTest(7));
+        Assert.assertSame(width7b, pool.nextForTest(7));
+        Assert.assertSame(width11, pool.nextForTest(11));
     }
 
     @Test

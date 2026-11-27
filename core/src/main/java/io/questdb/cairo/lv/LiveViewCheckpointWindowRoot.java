@@ -96,6 +96,15 @@ public class LiveViewCheckpointWindowRoot implements Closeable {
     }
 
     /**
+     * Test-only {@link #encodeAnchorValue(long, long)}: it writes 8 bytes at the anchor's
+     * offset from {@code payloadAddress}, unchecked.
+     */
+    @TestOnly
+    public static void encodeAnchorValueForTest(long anchorValue, long payloadAddress) {
+        encodeAnchorValue(anchorValue, payloadAddress);
+    }
+
+    /**
      * Decodes the anchor value out of a fused scalar payload framed by {@code payload}. It
      * leads the payload at a fixed offset so a decoder can read it before it has looked at
      * the manifest. The reader reads in native byte order, which is the little-endian order
@@ -130,9 +139,27 @@ public class LiveViewCheckpointWindowRoot implements Closeable {
         }
     }
 
+    /**
+     * Test-only {@link #clearBorrowedCompiled()}: it nulls the arrays
+     * {@link #getWindowIdentity()}, {@link #getKeySchema()} and {@link #getManifest()} return.
+     */
+    @TestOnly
+    public void clearBorrowedCompiledForTest() {
+        clearBorrowedCompiled();
+    }
+
     @Override
     public void close() {
         Misc.free(reader);
+    }
+
+    /**
+     * @return the image bytes the root's decode pool holds, counted by walking the pool, for
+     * a test
+     */
+    @TestOnly
+    public long countRetainedDecodedBytesForTest() {
+        return decodedBytes.countRetainedBytesForTest();
     }
 
     /**
@@ -199,11 +226,34 @@ public class LiveViewCheckpointWindowRoot implements Closeable {
         return windowIdentity;
     }
 
+    @TestOnly
+    public boolean isBorrowingCompiledForTest(byte[] windowIdentity, byte[] keySchema, byte[] manifest) {
+        return this.windowIdentity == windowIdentity && this.keySchema == keySchema && this.manifest == manifest;
+    }
+
     public void of(@Transient @NotNull Path checkpointsDir, @NotNull LiveViewCheckpointPageRef rootRef) {
         if (!of0(checkpointsDir, rootRef)) {
             throw LiveViewCheckpointMetadata.invalid("window state root page kind unknown, kind=")
                     .put(reader.getPageKind());
         }
+    }
+
+    /**
+     * Test-only {@link #ofBuilder}: the root stores the caller's arrays and counts as they
+     * are, unvalidated.
+     */
+    @TestOnly
+    public void ofBuilderForTest(
+            byte[] windowIdentity,
+            int anchorValueType,
+            byte[] keySchema,
+            byte[] manifest,
+            int totalInlineStateBytes,
+            LiveViewCheckpointPageRef partitionMapRootRef,
+            LongList segmentUseCounts
+    ) {
+        ofBuilder(windowIdentity, anchorValueType, keySchema, manifest, totalInlineStateBytes, partitionMapRootRef,
+                segmentUseCounts);
     }
 
     /**
@@ -312,11 +362,6 @@ public class LiveViewCheckpointWindowRoot implements Closeable {
         windowIdentity = null;
         keySchema = null;
         manifest = null;
-    }
-
-    @TestOnly
-    boolean isBorrowingCompiledForTest(byte[] windowIdentity, byte[] keySchema, byte[] manifest) {
-        return this.windowIdentity == windowIdentity && this.keySchema == keySchema && this.manifest == manifest;
     }
 
     void ofBuilder(

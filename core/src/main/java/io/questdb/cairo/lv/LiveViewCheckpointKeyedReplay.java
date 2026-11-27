@@ -47,6 +47,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectString;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * Keyed repair domain and merge of unaffected stored rows. A range replacement must
@@ -494,6 +495,23 @@ public final class LiveViewCheckpointKeyedReplay implements BoundaryFreezingCurs
     }
 
     /**
+     * @return the stored-row cursor the merge holds, or null when it holds none, for a test
+     */
+    @TestOnly
+    public @Nullable RecordCursor getStoredRowCursorForTest() {
+        return storedRowCursor;
+    }
+
+    /**
+     * @return Q resolved against the view's own symbol map, or null from a clear() past the
+     * retention bounds until the next arm(), for a test
+     */
+    @TestOnly
+    public @Nullable IntHashSet getStoredSymbolKeysForTest() {
+        return storedSymbolKeys;
+    }
+
+    /**
      * @return stored rows in the repaired range whose key the replay recomputes. A
      * replacement deletes them; a sparse upsert replaces each with the block row carrying
      * its pair.
@@ -659,6 +677,15 @@ public final class LiveViewCheckpointKeyedReplay implements BoundaryFreezingCurs
         hasPendingRow = false;
         isPendingRowSuperseded = false;
         pendingRowTs = Numbers.LONG_NULL;
+    }
+
+    /**
+     * Stands {@code storedSymbolKeys} in for the set of Q resolved against the view's own
+     * symbol map, so a test can make the replay's clear() fail.
+     */
+    @TestOnly
+    public void setStoredSymbolKeysForTest(IntHashSet storedSymbolKeys) {
+        this.storedSymbolKeys = storedSymbolKeys;
     }
 
     private void addOutputKey(@Nullable CharSequence value) {

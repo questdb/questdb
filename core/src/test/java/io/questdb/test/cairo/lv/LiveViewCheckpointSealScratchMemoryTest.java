@@ -36,6 +36,7 @@ import io.questdb.cairo.lv.LiveViewCheckpointFunctionIdentity;
 import io.questdb.cairo.lv.LiveViewCheckpointKeyedReplay;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointOutputKeyDomain;
+import io.questdb.cairo.lv.LiveViewCheckpointRecordArena;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineEntry;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineStoreReader;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineStoreWriter;
@@ -69,7 +70,6 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-import java.lang.reflect.Field;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.Arrays;
@@ -842,7 +842,7 @@ public class LiveViewCheckpointSealScratchMemoryTest extends AbstractCairoTest {
                     replay.clear();
                     Assert.assertTrue(replay.arm(0, symbols, checkpointKeyTypes, secondKeys, false));
 
-                    final LiveViewCheckpointOutputKeyDomain captured = capturedOutputKeys(capture);
+                    final LiveViewCheckpointOutputKeyDomain captured = capture.getOutputKeysForTest();
                     Assert.assertEquals(2, captured.size());
                     Assert.assertTrue(LiveViewCheckpointTestKeys.contains(captured, stringKey("acct-1")));
                     Assert.assertTrue(LiveViewCheckpointTestKeys.contains(captured, stringKey("acct-2")));
@@ -976,7 +976,7 @@ public class LiveViewCheckpointSealScratchMemoryTest extends AbstractCairoTest {
                         copied = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM) - baseline;
                         Assert.assertTrue("the capture must copy Q into memory of its own", copied > 0);
                         Assert.assertEquals("the capture's copy of Q must stay off the view's tracker", 0, tracker.getUsed());
-                        Assert.assertEquals(WIDE_KEY_DOMAIN, capturedOutputKeys(capture).size());
+                        Assert.assertEquals(WIDE_KEY_DOMAIN, capture.getOutputKeysForTest().size());
 
                         final ObjList<LiveViewCheckpointTimelineEntry> boundaries = new ObjList<>();
                         capture.collectBoundaries(0, 1_500_000, boundaries);
@@ -1147,67 +1147,74 @@ public class LiveViewCheckpointSealScratchMemoryTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * Requires the frozen graph {@code capture} reads through its test-only hooks to be its
+     * own: both functions of its one boundary froze into the scratch it leased, the key and
+     * payload arenas are that scratch's two arenas, and every holder is one stable object.
+     */
+    private static void assertFrozenGraph(LiveViewCheckpointTimelineStoreWriter.RepairCapture capture) {
+        Assert.assertSame(capture.getScratchForTest(), capture.getFrozenScratchForTest(0, 0));
+        Assert.assertSame(capture.getScratchForTest(), capture.getFrozenScratchForTest(0, 1));
+        final LiveViewCheckpointRecordArena keyArena = capture.getFrozenKeyArenaForTest(0, 0);
+        final LiveViewCheckpointRecordArena payloadArena = capture.getFrozenPayloadArenaForTest(0, 0);
+        Assert.assertNotSame(keyArena, payloadArena);
+        // A key record is [int length][bytes] padded to four bytes, and a payload record
+        // [int length][int 0][bytes] padded to eight.
+        Assert.assertEquals(8, keyArena.recordBytesForTest(1));
+        Assert.assertEquals(16, payloadArena.recordBytesForTest(1));
+        // The capture froze key 11 of the partitioned stub and its inline eight-byte state.
+        Assert.assertTrue(keyArena.recordCountForTest() > 0);
+        Assert.assertTrue(payloadArena.recordCountForTest() > 0);
+        Assert.assertNotNull(capture.getFrozenBoundaryForTest(0));
+        Assert.assertSame(capture.getFrozenBoundaryForTest(0), capture.getFrozenBoundaryForTest(0));
+        Assert.assertNotNull(capture.getFrozenPartitionForTest(0, 0, 0));
+        Assert.assertSame(capture.getFrozenPartitionForTest(0, 0, 0), capture.getFrozenPartitionForTest(0, 0, 0));
+        Assert.assertNotNull(capture.getFrozenScalarStateRefForTest(0, 1));
+        Assert.assertSame(capture.getFrozenScalarStateRefForTest(0, 1), capture.getFrozenScalarStateRefForTest(0, 1));
+    }
+
     private static void assertFrozenGraphsDoNotAlias(
             LiveViewCheckpointTimelineStoreWriter.RepairCapture captureA,
             LiveViewCheckpointTimelineStoreWriter.RepairCapture captureB
-    ) throws Exception {
-        final Field boundariesField = captureA.getClass().getDeclaredField("boundaries");
-        boundariesField.setAccessible(true);
-        final Object boundaryA = ((ObjList<?>) boundariesField.get(captureA)).getQuick(0);
-        final Object boundaryB = ((ObjList<?>) boundariesField.get(captureB)).getQuick(0);
-        Assert.assertNotSame(boundaryA, boundaryB);
-
-        final Field functionsField = boundaryA.getClass().getDeclaredField("functions");
-        functionsField.setAccessible(true);
-        final ObjList<?> frozenFunctionsA = (ObjList<?>) functionsField.get(boundaryA);
-        final ObjList<?> frozenFunctionsB = (ObjList<?>) functionsField.get(boundaryB);
-        final Object partitionFunctionA = frozenFunctionsA.getQuick(0);
-        final Object partitionFunctionB = frozenFunctionsB.getQuick(0);
-        final Field partitionsField = partitionFunctionA.getClass().getDeclaredField("partitions");
-        partitionsField.setAccessible(true);
-        final Object partitionA = ((ObjList<?>) partitionsField.get(partitionFunctionA)).getQuick(0);
-        final Object partitionB = ((ObjList<?>) partitionsField.get(partitionFunctionB)).getQuick(0);
-        Assert.assertNotSame("live captures must not share frozen holders", partitionA, partitionB);
+    ) {
+        assertFrozenGraph(captureA);
+        assertFrozenGraph(captureB);
+        Assert.assertNotSame(captureA.getFrozenBoundaryForTest(0), captureB.getFrozenBoundaryForTest(0));
+        Assert.assertNotSame(
+                "live captures must not share frozen holders",
+                captureA.getFrozenPartitionForTest(0, 0, 0),
+                captureB.getFrozenPartitionForTest(0, 0, 0)
+        );
 
         // A frozen partition names its key and its scalar by handles into its function's
         // scratch arenas, so two captures share key or scalar bytes exactly when their
         // functions share a scratch.
-        final Field functionScratchField = partitionFunctionA.getClass().getDeclaredField("scratch");
-        functionScratchField.setAccessible(true);
-        final Object functionScratchA = functionScratchField.get(partitionFunctionA);
-        final Object functionScratchB = functionScratchField.get(partitionFunctionB);
-        Assert.assertNotSame("live captures must not share frozen keys", functionScratchA, functionScratchB);
-        final Field frozenKeysField = functionScratchA.getClass().getDeclaredField("frozenKeys");
-        frozenKeysField.setAccessible(true);
+        Assert.assertNotSame(
+                "live captures must not share frozen keys",
+                captureA.getFrozenScratchForTest(0, 0),
+                captureB.getFrozenScratchForTest(0, 0)
+        );
         Assert.assertNotSame(
                 "live captures must not share key arenas",
-                frozenKeysField.get(functionScratchA),
-                frozenKeysField.get(functionScratchB)
+                captureA.getFrozenKeyArenaForTest(0, 0),
+                captureB.getFrozenKeyArenaForTest(0, 0)
         );
-        final Field frozenPayloadsField = functionScratchA.getClass().getDeclaredField("frozenPayloads");
-        frozenPayloadsField.setAccessible(true);
         Assert.assertNotSame(
                 "live captures must not share payload arenas",
-                frozenPayloadsField.get(functionScratchA),
-                frozenPayloadsField.get(functionScratchB)
+                captureA.getFrozenPayloadArenaForTest(0, 0),
+                captureB.getFrozenPayloadArenaForTest(0, 0)
         );
 
-        final Object scalarFunctionA = frozenFunctionsA.getQuick(1);
-        final Object scalarFunctionB = frozenFunctionsB.getQuick(1);
-        final Field scalarStateRefField = scalarFunctionA.getClass().getDeclaredField("scalarStateRef");
-        scalarStateRefField.setAccessible(true);
         Assert.assertNotSame(
                 "live captures must not share state-reference holders",
-                scalarStateRefField.get(scalarFunctionA),
-                scalarStateRefField.get(scalarFunctionB)
+                captureA.getFrozenScalarStateRefForTest(0, 1),
+                captureB.getFrozenScalarStateRefForTest(0, 1)
         );
 
-        final Field scratchField = captureA.getClass().getDeclaredField("scratch");
-        scratchField.setAccessible(true);
         Assert.assertNotSame(
                 "each live capture must own a distinct scratch lease",
-                scratchField.get(captureA),
-                scratchField.get(captureB)
+                captureA.getScratchForTest(),
+                captureB.getScratchForTest()
         );
     }
 
@@ -1255,14 +1262,6 @@ public class LiveViewCheckpointSealScratchMemoryTest extends AbstractCairoTest {
             Assert.assertEquals(expectedPartitionState, partition.readState(11));
             Assert.assertArrayEquals(filled(64, expectedScalarByte), scalar.state);
         }
-    }
-
-    private static LiveViewCheckpointOutputKeyDomain capturedOutputKeys(
-            LiveViewCheckpointTimelineStoreWriter.RepairCapture capture
-    ) throws Exception {
-        final Field field = capture.getClass().getDeclaredField("outputKeys");
-        field.setAccessible(true);
-        return (LiveViewCheckpointOutputKeyDomain) field.get(capture);
     }
 
     private static Path checkpointsDir(Path path) {

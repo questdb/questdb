@@ -25,6 +25,8 @@
 package io.questdb.test.cairo.lv;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.lv.LiveViewCheckpointKeyIndex;
+import io.questdb.cairo.lv.LiveViewCheckpointRecordArena;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
@@ -32,10 +34,6 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.lang.reflect.Constructor;
-import java.lang.reflect.Field;
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
 import java.util.Arrays;
 import java.util.HashMap;
 
@@ -51,20 +49,6 @@ import java.util.HashMap;
  * that differ only in their leading zero bytes.
  */
 public class LiveViewCheckpointKeyIndexTest {
-    private static final Method ARENA_APPEND;
-    private static final Method ARENA_CLOSE;
-    private static final Method ARENA_FOR_KEYS;
-    private static final Method INDEX_CLEAR;
-    private static final Method INDEX_CLOSE;
-    private static final Constructor<?> INDEX_CONSTRUCTOR;
-    private static final Method INDEX_GET;
-    private static final Method INDEX_HIT_PROBES;
-    private static final Method INDEX_MISS_PROBES;
-    private static final Method INDEX_PUT;
-    private static final Method INDEX_RELEASE;
-    private static final Method INDEX_RESERVE;
-    private static final Method INDEX_SIZE;
-    private static final Field INDEX_SLOTS;
     private static final int KEY_COUNT = 50_000;
     private static final int KEY_LENGTH = 6;
     private static final int KEY_SHAPE_COUNT = 5;
@@ -84,33 +68,6 @@ public class LiveViewCheckpointKeyIndexTest {
     private static final double MAX_POOLED_HIT_PROBES = 2.25;
     private static final double MAX_POOLED_MISS_PROBES = 6.5;
     private static final int MIN_MEASURED_KEYS = 1_000;
-    private static final Method SLOTS_SLOT_COUNT;
-
-    static {
-        // The arena and the index are package-private to io.questdb.cairo.lv.
-        try {
-            final Class<?> arena = Class.forName("io.questdb.cairo.lv.LiveViewCheckpointRecordArena");
-            final Class<?> index = Class.forName("io.questdb.cairo.lv.LiveViewCheckpointKeyIndex");
-            final Class<?> slots = Class.forName("io.questdb.cairo.lv.LiveViewCheckpointSlotTable");
-            ARENA_FOR_KEYS = accessible(arena.getDeclaredMethod("forKeys"));
-            ARENA_APPEND = accessible(arena.getDeclaredMethod("append", long.class, int.class));
-            ARENA_CLOSE = accessible(arena.getDeclaredMethod("close"));
-            INDEX_CONSTRUCTOR = accessible(index.getDeclaredConstructor(arena));
-            INDEX_CLEAR = accessible(index.getDeclaredMethod("clear"));
-            INDEX_CLOSE = accessible(index.getDeclaredMethod("close"));
-            INDEX_GET = accessible(index.getDeclaredMethod("get", int.class, int.class, long.class, int.class));
-            INDEX_HIT_PROBES = accessible(index.getDeclaredMethod("getHitProbeAverageForTest"));
-            INDEX_MISS_PROBES = accessible(index.getDeclaredMethod("getMissProbeAverageForTest"));
-            INDEX_PUT = accessible(index.getDeclaredMethod("put", int.class, int.class, long.class, int.class));
-            INDEX_RELEASE = accessible(index.getDeclaredMethod("release"));
-            INDEX_RESERVE = accessible(index.getDeclaredMethod("reserve", long.class));
-            INDEX_SIZE = accessible(index.getDeclaredMethod("size"));
-            INDEX_SLOTS = accessible(index.getDeclaredField("slots"));
-            SLOTS_SLOT_COUNT = accessible(slots.getDeclaredMethod("slotCount"));
-        } catch (ReflectiveOperationException e) {
-            throw new ExceptionInInitializerError(e);
-        }
-    }
 
     @Test
     public void testAFullTableFindsOrMissesAKeyInAFewProbes() throws Exception {
@@ -129,21 +86,21 @@ public class LiveViewCheckpointKeyIndexTest {
             for (int shape = 0; shape < KEY_SHAPE_COUNT; shape++) {
                 for (int namespaceCount : new int[]{1, 3}) {
                     final int keyCount = maxEntries / namespaceCount;
-                    final Object arena = ARENA_FOR_KEYS.invoke(null);
+                    final LiveViewCheckpointRecordArena arena = LiveViewCheckpointRecordArena.forKeysForTest();
                     try (LiveViewCheckpointTestKeys probe = new LiveViewCheckpointTestKeys()) {
                         final long[] handles = new long[keyCount];
                         for (int i = 0; i < keyCount; i++) {
                             probe.of(shapedKey(shape, i));
-                            handles[i] = (long) ARENA_APPEND.invoke(arena, probe.address(), probe.length());
+                            handles[i] = arena.appendForTest(probe.address(), probe.length());
                         }
                         // The entry counts at which the table doubled; the fullest table is
                         // the one an entry fewer holds.
                         final IntList doublings = new IntList();
-                        final Object grown = INDEX_CONSTRUCTOR.newInstance(arena);
+                        final LiveViewCheckpointKeyIndex grown = LiveViewCheckpointKeyIndex.newForTest(arena);
                         try {
                             long bytes = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM);
                             for (int i = 0, n = keyCount * namespaceCount; i < n; i++) {
-                                INDEX_PUT.invoke(grown, i % namespaceCount, 0, handles[i / namespaceCount], i);
+                                grown.putForTest(i % namespaceCount, 0, handles[i / namespaceCount], i);
                                 final long nextBytes = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM);
                                 if (nextBytes > bytes && i + 1 > MIN_MEASURED_KEYS) {
                                     doublings.add(i + 1);
@@ -151,18 +108,18 @@ public class LiveViewCheckpointKeyIndexTest {
                                 bytes = nextBytes;
                             }
                         } finally {
-                            INDEX_CLOSE.invoke(grown);
+                            grown.close();
                         }
                         Assert.assertTrue(doublings.size() > 0);
                         for (int d = 0, m = doublings.size(); d < m; d++) {
                             final int entryCount = doublings.getQuick(d) - 1;
-                            final Object index = INDEX_CONSTRUCTOR.newInstance(arena);
+                            final LiveViewCheckpointKeyIndex index = LiveViewCheckpointKeyIndex.newForTest(arena);
                             try {
                                 for (int i = 0; i < entryCount; i++) {
-                                    INDEX_PUT.invoke(index, i % namespaceCount, 0, handles[i / namespaceCount], i);
+                                    index.putForTest(i % namespaceCount, 0, handles[i / namespaceCount], i);
                                 }
-                                final double hitProbes = (double) INDEX_HIT_PROBES.invoke(index);
-                                final double missProbes = (double) INDEX_MISS_PROBES.invoke(index);
+                                final double hitProbes = index.getHitProbeAverageForTest();
+                                final double missProbes = index.getMissProbeAverageForTest();
                                 final String table = " [shape=" + shape + ", namespaces=" + namespaceCount
                                         + ", entries=" + entryCount + ", hitProbes=" + hitProbes
                                         + ", missProbes=" + missProbes + ']';
@@ -172,11 +129,11 @@ public class LiveViewCheckpointKeyIndexTest {
                                 pooledMissProbes += missProbes * entryCount;
                                 pooledEntries += entryCount;
                             } finally {
-                                INDEX_CLOSE.invoke(index);
+                                index.close();
                             }
                         }
                     } finally {
-                        ARENA_CLOSE.invoke(arena);
+                        arena.close();
                     }
                 }
             }
@@ -204,22 +161,22 @@ public class LiveViewCheckpointKeyIndexTest {
         // third full or more at every size past the smallest.
         TestUtils.assertMemoryLeak(() -> {
             final int keyCount = 100_000;
-            final Object arena = ARENA_FOR_KEYS.invoke(null);
-            final Object index = INDEX_CONSTRUCTOR.newInstance(arena);
+            final LiveViewCheckpointRecordArena arena = LiveViewCheckpointRecordArena.forKeysForTest();
+            final LiveViewCheckpointKeyIndex index = LiveViewCheckpointKeyIndex.newForTest(arena);
             try (LiveViewCheckpointTestKeys probe = new LiveViewCheckpointTestKeys()) {
                 final long[] handles = appendKeys(arena, probe, keyCount);
                 final long baseline = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM);
                 for (int i = 0; i < keyCount; i++) {
-                    INDEX_PUT.invoke(index, i & 7, 0, handles[i], i);
+                    index.putForTest(i & 7, 0, handles[i], i);
                     final int size = i + 1;
                     if (size >= MIN_MEASURED_KEYS) {
                         assertBytesPerKey(Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM) - baseline, size);
                     }
                 }
-                Assert.assertEquals(keyCount, (int) INDEX_SIZE.invoke(index));
+                Assert.assertEquals(keyCount, index.sizeForTest());
             } finally {
-                INDEX_CLOSE.invoke(index);
-                ARENA_CLOSE.invoke(arena);
+                index.close();
+                arena.close();
             }
         });
     }
@@ -231,13 +188,13 @@ public class LiveViewCheckpointKeyIndexTest {
         // growth fails the put that triggered it at the allocation, before the old table
         // goes, so every entry already indexed still answers and the table keeps its bytes.
         TestUtils.assertMemoryLeak(() -> {
-            final Object arena = ARENA_FOR_KEYS.invoke(null);
-            final Object index = INDEX_CONSTRUCTOR.newInstance(arena);
+            final LiveViewCheckpointRecordArena arena = LiveViewCheckpointRecordArena.forKeysForTest();
+            final LiveViewCheckpointKeyIndex index = LiveViewCheckpointKeyIndex.newForTest(arena);
             try (LiveViewCheckpointTestKeys probe = new LiveViewCheckpointTestKeys()) {
                 final long[] handles = appendKeys(arena, probe, 1_000);
                 final long baseline = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM);
                 for (int i = 0; i < 100; i++) {
-                    INDEX_PUT.invoke(index, 0, 0, handles[i], i);
+                    index.putForTest(0, 0, handles[i], i);
                 }
                 final long held = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM) - baseline;
                 Assert.assertTrue(held > 0);
@@ -245,12 +202,11 @@ public class LiveViewCheckpointKeyIndexTest {
                 Unsafe.setRssMemLimit(Unsafe.getRssMemUsed());
                 try {
                     for (int i = 100; i < 1_000; i++) {
-                        INDEX_PUT.invoke(index, 0, 0, handles[i], i);
+                        index.putForTest(0, 0, handles[i], i);
                     }
                     Assert.fail("expected the RSS ceiling to refuse the index's growth");
-                } catch (InvocationTargetException e) {
-                    Assert.assertTrue(e.getCause() instanceof CairoException);
-                    Assert.assertTrue(((CairoException) e.getCause()).isOutOfMemory());
+                } catch (CairoException e) {
+                    Assert.assertTrue(e.isOutOfMemory());
                 } finally {
                     Unsafe.setRssMemLimit(0);
                 }
@@ -258,15 +214,15 @@ public class LiveViewCheckpointKeyIndexTest {
                 for (int i = 0; i < 100; i++) {
                     Assert.assertEquals(i, get(index, probe.of(key(i)), 0, 0));
                 }
-                INDEX_RELEASE.invoke(index);
+                index.releaseForTest();
                 Assert.assertEquals(
                         "a release must hand every byte back",
                         baseline,
                         Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM)
                 );
             } finally {
-                INDEX_CLOSE.invoke(index);
-                ARENA_CLOSE.invoke(arena);
+                index.close();
+                arena.close();
             }
         });
     }
@@ -274,17 +230,17 @@ public class LiveViewCheckpointKeyIndexTest {
     @Test
     public void testAReservedTableDoesNotRegrowAndARehashKeepsEveryEntry() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            final Object arena = ARENA_FOR_KEYS.invoke(null);
-            final Object index = INDEX_CONSTRUCTOR.newInstance(arena);
+            final LiveViewCheckpointRecordArena arena = LiveViewCheckpointRecordArena.forKeysForTest();
+            final LiveViewCheckpointKeyIndex index = LiveViewCheckpointKeyIndex.newForTest(arena);
             try (LiveViewCheckpointTestKeys probe = new LiveViewCheckpointTestKeys()) {
                 final long[] handles = appendKeys(arena, probe, 1_000);
                 final long before = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM);
-                INDEX_RESERVE.invoke(index, 1_000L);
-                INDEX_PUT.invoke(index, 0, 0, handles[0], 0);
+                index.reserveForTest(1_000L);
+                index.putForTest(0, 0, handles[0], 0);
                 final long reserved = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM) - before;
                 Assert.assertTrue("the reserved table must be allocated at the first put", reserved > 0);
                 for (int i = 1; i < 1_000; i++) {
-                    INDEX_PUT.invoke(index, 0, 0, handles[i], i);
+                    index.putForTest(0, 0, handles[i], i);
                 }
                 Assert.assertEquals(
                         "a table reserved for its keys must not regrow while they fill it",
@@ -292,18 +248,18 @@ public class LiveViewCheckpointKeyIndexTest {
                         Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM) - before
                 );
                 // A reserve over a non-empty table rehashes it and keeps what it holds.
-                INDEX_RESERVE.invoke(index, 4_000L);
-                Assert.assertEquals(1_000, (int) INDEX_SIZE.invoke(index));
+                index.reserveForTest(4_000L);
+                Assert.assertEquals(1_000, index.sizeForTest());
                 for (int i = 0; i < 1_000; i++) {
                     Assert.assertEquals(i, get(index, probe.of(key(i)), 0, 0));
                 }
                 // A reserve below what the table holds changes nothing.
                 final long grown = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM);
-                INDEX_RESERVE.invoke(index, 10L);
+                index.reserveForTest(10L);
                 Assert.assertEquals(grown, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM));
             } finally {
-                INDEX_CLOSE.invoke(index);
-                ARENA_CLOSE.invoke(arena);
+                index.close();
+                arena.close();
             }
         });
     }
@@ -323,40 +279,40 @@ public class LiveViewCheckpointKeyIndexTest {
             // holds one entry fewer than that without growing.
             final long halfCapDoublingEntryCount = 11_744_051;
             final long capDoublingEntryCount = 23_488_102;
-            final Object arena = ARENA_FOR_KEYS.invoke(null);
-            final Object index = INDEX_CONSTRUCTOR.newInstance(arena);
+            final LiveViewCheckpointRecordArena arena = LiveViewCheckpointRecordArena.forKeysForTest();
+            final LiveViewCheckpointKeyIndex index = LiveViewCheckpointKeyIndex.newForTest(arena);
             try {
                 final long baseline = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM);
                 // Below the cap the reserve sizes exactly: one entry fewer fits 2^24 slots, and
                 // the fewest that need 2^25 get them, as does the most 2^25 slots hold.
-                INDEX_RESERVE.invoke(index, halfCapDoublingEntryCount - 1);
-                Assert.assertEquals(cappedSlotCount / 2, slotCount(index));
-                INDEX_RELEASE.invoke(index);
-                INDEX_RESERVE.invoke(index, halfCapDoublingEntryCount);
-                Assert.assertEquals(cappedSlotCount, slotCount(index));
-                INDEX_RELEASE.invoke(index);
-                INDEX_RESERVE.invoke(index, capDoublingEntryCount - 1);
-                Assert.assertEquals(cappedSlotCount, slotCount(index));
-                INDEX_RELEASE.invoke(index);
+                index.reserveForTest(halfCapDoublingEntryCount - 1);
+                Assert.assertEquals(cappedSlotCount / 2, index.getSlotCountForTest());
+                index.releaseForTest();
+                index.reserveForTest(halfCapDoublingEntryCount);
+                Assert.assertEquals(cappedSlotCount, index.getSlotCountForTest());
+                index.releaseForTest();
+                index.reserveForTest(capDoublingEntryCount - 1);
+                Assert.assertEquals(cappedSlotCount, index.getSlotCountForTest());
+                index.releaseForTest();
                 // Uncapped, one more entry would take 2^26 slots.
-                INDEX_RESERVE.invoke(index, capDoublingEntryCount);
-                Assert.assertEquals("a reserve past the cap must presize the capped table", cappedSlotCount, slotCount(index));
-                INDEX_RELEASE.invoke(index);
-                INDEX_RESERVE.invoke(index, 100_000_000L);
-                Assert.assertEquals(cappedSlotCount, slotCount(index));
-                INDEX_RELEASE.invoke(index);
+                index.reserveForTest(capDoublingEntryCount);
+                Assert.assertEquals("a reserve past the cap must presize the capped table", cappedSlotCount, index.getSlotCountForTest());
+                index.releaseForTest();
+                index.reserveForTest(100_000_000L);
+                Assert.assertEquals(cappedSlotCount, index.getSlotCountForTest());
+                index.releaseForTest();
                 // A count no int slot count can reach stops at the cap as well.
-                INDEX_RESERVE.invoke(index, Long.MAX_VALUE);
-                Assert.assertEquals(cappedSlotCount, slotCount(index));
+                index.reserveForTest(Long.MAX_VALUE);
+                Assert.assertEquals(cappedSlotCount, index.getSlotCountForTest());
                 Assert.assertEquals(
                         "a reserve over an empty table must allocate nothing",
                         baseline,
                         Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM)
                 );
-                Assert.assertEquals(0, (int) INDEX_SIZE.invoke(index));
+                Assert.assertEquals(0, index.sizeForTest());
             } finally {
-                INDEX_CLOSE.invoke(index);
-                ARENA_CLOSE.invoke(arena);
+                index.close();
+                arena.close();
             }
         });
     }
@@ -375,18 +331,18 @@ public class LiveViewCheckpointKeyIndexTest {
                     1_000, 1_023, 1_024, 1_025, 1_432, 1_433, 2_047, 2_048, 2_866, 2_867,
                     45_874, 45_875, 65_535, 65_536, 91_749, 91_750
             };
-            final Object arena = ARENA_FOR_KEYS.invoke(null);
+            final LiveViewCheckpointRecordArena arena = LiveViewCheckpointRecordArena.forKeysForTest();
             try (LiveViewCheckpointTestKeys probe = new LiveViewCheckpointTestKeys()) {
                 final long[] handles = appendKeys(arena, probe, keyCounts[keyCounts.length - 1]);
                 for (int keyCount : keyCounts) {
-                    final Object index = INDEX_CONSTRUCTOR.newInstance(arena);
+                    final LiveViewCheckpointKeyIndex index = LiveViewCheckpointKeyIndex.newForTest(arena);
                     try {
                         final long baseline = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM);
-                        INDEX_RESERVE.invoke(index, (long) keyCount);
-                        INDEX_PUT.invoke(index, 0, 0, handles[0], 0);
+                        index.reserveForTest(keyCount);
+                        index.putForTest(0, 0, handles[0], 0);
                         final long reserved = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM) - baseline;
                         for (int i = 1; i < keyCount; i++) {
-                            INDEX_PUT.invoke(index, i & 7, 0, handles[i], i);
+                            index.putForTest(i & 7, 0, handles[i], i);
                         }
                         final long held = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM) - baseline;
                         Assert.assertEquals(
@@ -394,14 +350,14 @@ public class LiveViewCheckpointKeyIndexTest {
                                 reserved,
                                 held
                         );
-                        Assert.assertEquals(keyCount, (int) INDEX_SIZE.invoke(index));
+                        Assert.assertEquals(keyCount, index.sizeForTest());
                         assertBytesPerKey(held, keyCount);
                     } finally {
-                        INDEX_CLOSE.invoke(index);
+                        index.close();
                     }
                 }
             } finally {
-                ARENA_CLOSE.invoke(arena);
+                arena.close();
             }
         });
     }
@@ -409,23 +365,23 @@ public class LiveViewCheckpointKeyIndexTest {
     @Test
     public void testIndexAnswersAsTheHeapIndexThroughEveryRehash() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            final Object arena = ARENA_FOR_KEYS.invoke(null);
-            final Object index = INDEX_CONSTRUCTOR.newInstance(arena);
+            final LiveViewCheckpointRecordArena arena = LiveViewCheckpointRecordArena.forKeysForTest();
+            final LiveViewCheckpointKeyIndex index = LiveViewCheckpointKeyIndex.newForTest(arena);
             final HashMap<String, Integer> oracle = new HashMap<>();
             try (LiveViewCheckpointTestKeys probe = new LiveViewCheckpointTestKeys()) {
                 final long[] handles = appendKeys(arena, probe, KEY_COUNT);
                 for (int i = 0; i < KEY_COUNT; i++) {
-                    INDEX_PUT.invoke(index, i & 7, i & 3, handles[i], i);
+                    index.putForTest(i & 7, i & 3, handles[i], i);
                     oracle.put(oracleKey(i & 7, i & 3, key(i)), i);
                 }
-                Assert.assertEquals(oracle.size(), (int) INDEX_SIZE.invoke(index));
+                Assert.assertEquals(oracle.size(), index.sizeForTest());
                 for (int i = 0; i < KEY_COUNT; i++) {
                     final byte[] key = key(i);
                     probe.of(key);
                     Assert.assertEquals((int) oracle.get(oracleKey(i & 7, i & 3, key)), get(index, probe, i & 7, i & 3));
                     Assert.assertEquals(-1, get(index, probe, (i & 7) + 8, i & 3));
                     Assert.assertEquals(-1, get(index, probe, i & 7, (i & 3) + 4));
-                    Assert.assertEquals(-1, (int) INDEX_GET.invoke(index, i & 7, i & 3, probe.address(), KEY_LENGTH - 1));
+                    Assert.assertEquals(-1, index.getForTest(i & 7, i & 3, probe.address(), KEY_LENGTH - 1));
                 }
                 // Keys never put, of the indexed width.
                 for (int i = KEY_COUNT; i < KEY_COUNT + 1_000; i++) {
@@ -435,18 +391,18 @@ public class LiveViewCheckpointKeyIndexTest {
                 // key the arena holds it under.
                 final long[] duplicates = appendKeys(arena, probe, 100);
                 for (int i = 0; i < 100; i++) {
-                    INDEX_PUT.invoke(index, i & 7, i & 3, duplicates[i], KEY_COUNT + i);
+                    index.putForTest(i & 7, i & 3, duplicates[i], KEY_COUNT + i);
                 }
-                Assert.assertEquals(KEY_COUNT, (int) INDEX_SIZE.invoke(index));
+                Assert.assertEquals(KEY_COUNT, index.sizeForTest());
                 for (int i = 0; i < 100; i++) {
                     Assert.assertEquals(KEY_COUNT + i, get(index, probe.of(key(i)), i & 7, i & 3));
                 }
-                INDEX_CLEAR.invoke(index);
-                Assert.assertEquals(0, (int) INDEX_SIZE.invoke(index));
+                index.clear();
+                Assert.assertEquals(0, index.sizeForTest());
                 Assert.assertEquals(-1, get(index, probe.of(key(0)), 0, 0));
             } finally {
-                INDEX_CLOSE.invoke(index);
-                ARENA_CLOSE.invoke(arena);
+                index.close();
+                arena.close();
             }
         });
     }
@@ -460,26 +416,26 @@ public class LiveViewCheckpointKeyIndexTest {
         TestUtils.assertMemoryLeak(() -> {
             final int keyCount = 1_000;
             for (boolean hasLongTail : new boolean[]{false, true}) {
-                final Object arena = ARENA_FOR_KEYS.invoke(null);
-                final Object index = INDEX_CONSTRUCTOR.newInstance(arena);
+                final LiveViewCheckpointRecordArena arena = LiveViewCheckpointRecordArena.forKeysForTest();
+                final LiveViewCheckpointKeyIndex index = LiveViewCheckpointKeyIndex.newForTest(arena);
                 try (LiveViewCheckpointTestKeys probe = new LiveViewCheckpointTestKeys()) {
                     for (int i = 0; i < keyCount; i++) {
                         probe.of(zeroLedKey(hasLongTail, i));
-                        INDEX_PUT.invoke(index, 0, 0, (long) ARENA_APPEND.invoke(arena, probe.address(), probe.length()), i);
+                        index.putForTest(0, 0, arena.appendForTest(probe.address(), probe.length()), i);
                     }
-                    Assert.assertEquals(keyCount, (int) INDEX_SIZE.invoke(index));
+                    Assert.assertEquals(keyCount, index.sizeForTest());
                     for (int i = 0; i < keyCount; i++) {
                         Assert.assertEquals(i, get(index, probe.of(zeroLedKey(hasLongTail, i)), 0, 0));
                     }
-                    final double hitProbes = (double) INDEX_HIT_PROBES.invoke(index);
-                    final double missProbes = (double) INDEX_MISS_PROBES.invoke(index);
+                    final double hitProbes = index.getHitProbeAverageForTest();
+                    final double missProbes = index.getMissProbeAverageForTest();
                     final String table = " [hasLongTail=" + hasLongTail + ", hitProbes=" + hitProbes
                             + ", missProbes=" + missProbes + ']';
                     Assert.assertTrue("a hit must take a few probes" + table, hitProbes <= MAX_HIT_PROBES);
                     Assert.assertTrue("a miss must take a few probes" + table, missProbes <= MAX_MISS_PROBES);
                 } finally {
-                    INDEX_CLOSE.invoke(index);
-                    ARENA_CLOSE.invoke(arena);
+                    index.close();
+                    arena.close();
                 }
             }
         });
@@ -488,53 +444,48 @@ public class LiveViewCheckpointKeyIndexTest {
     @Test
     public void testReleaseAndCloseFreeEveryNativeByte() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            final Object arena = ARENA_FOR_KEYS.invoke(null);
-            final Object index = INDEX_CONSTRUCTOR.newInstance(arena);
+            final LiveViewCheckpointRecordArena arena = LiveViewCheckpointRecordArena.forKeysForTest();
+            final LiveViewCheckpointKeyIndex index = LiveViewCheckpointKeyIndex.newForTest(arena);
             try (LiveViewCheckpointTestKeys probe = new LiveViewCheckpointTestKeys()) {
                 final long[] handles = appendKeys(arena, probe, 2_000);
                 final long baseline = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM);
                 for (int i = 0; i < 2_000; i++) {
-                    INDEX_PUT.invoke(index, 1, 2, handles[i], i);
+                    index.putForTest(1, 2, handles[i], i);
                 }
                 Assert.assertTrue(Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM) > baseline);
-                INDEX_RELEASE.invoke(index);
+                index.releaseForTest();
                 Assert.assertEquals(baseline, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM));
-                Assert.assertEquals(0, (int) INDEX_SIZE.invoke(index));
+                Assert.assertEquals(0, index.sizeForTest());
                 Assert.assertEquals(-1, get(index, probe.of(key(0)), 1, 2));
                 // Released, not closed: it indexes again.
-                INDEX_PUT.invoke(index, 1, 2, handles[7], 7);
+                index.putForTest(1, 2, handles[7], 7);
                 Assert.assertEquals(7, get(index, probe.of(key(7)), 1, 2));
-                INDEX_CLOSE.invoke(index);
-                INDEX_CLOSE.invoke(index);
-                INDEX_RELEASE.invoke(index);
+                index.close();
+                index.close();
+                index.releaseForTest();
                 Assert.assertEquals(baseline, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM));
                 try {
-                    INDEX_PUT.invoke(index, 1, 2, handles[0], -1);
+                    index.putForTest(1, 2, handles[0], -1);
                     Assert.fail("a negative value is the index's miss and must be refused");
-                } catch (InvocationTargetException e) {
-                    Assert.assertTrue(e.getCause() instanceof IllegalArgumentException);
+                } catch (IllegalArgumentException e) {
+                    TestUtils.assertContains(e.getMessage(), "negative live view checkpoint key index value");
                 }
             } finally {
-                INDEX_CLOSE.invoke(index);
-                ARENA_CLOSE.invoke(arena);
+                index.close();
+                arena.close();
             }
         });
-    }
-
-    private static <T extends java.lang.reflect.AccessibleObject> T accessible(T member) {
-        member.setAccessible(true);
-        return member;
     }
 
     /**
      * Appends keys {@code 0 .. count - 1} to {@code arena}, copied from native memory as a
      * freeze copies them out of its key buffer.
      */
-    private static long[] appendKeys(Object arena, LiveViewCheckpointTestKeys keys, int count) throws Exception {
+    private static long[] appendKeys(LiveViewCheckpointRecordArena arena, LiveViewCheckpointTestKeys keys, int count) {
         final long[] handles = new long[count];
         for (int i = 0; i < count; i++) {
             keys.of(key(i));
-            handles[i] = (long) ARENA_APPEND.invoke(arena, keys.address(), keys.length());
+            handles[i] = arena.appendForTest(keys.address(), keys.length());
         }
         return handles;
     }
@@ -548,8 +499,8 @@ public class LiveViewCheckpointKeyIndexTest {
         }
     }
 
-    private static int get(Object index, LiveViewCheckpointTestKeys probe, int namespace, int version) throws Exception {
-        return (int) INDEX_GET.invoke(index, namespace, version, probe.address(), probe.length());
+    private static int get(LiveViewCheckpointKeyIndex index, LiveViewCheckpointTestKeys probe, int namespace, int version) {
+        return index.getForTest(namespace, version, probe.address(), probe.length());
     }
 
     /**
@@ -604,10 +555,6 @@ public class LiveViewCheckpointKeyIndexTest {
                 yield bytes;
             }
         };
-    }
-
-    private static int slotCount(Object index) throws Exception {
-        return (int) SLOTS_SLOT_COUNT.invoke(INDEX_SLOTS.get(index));
     }
 
     /**

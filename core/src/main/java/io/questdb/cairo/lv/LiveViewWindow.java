@@ -1527,6 +1527,24 @@ public class LiveViewWindow implements QuietCloseable {
     }
 
     /**
+     * Test-only {@link #borrowCheckpointKeySchema()}: the caller must not mutate the array
+     * it returns.
+     */
+    @TestOnly
+    public byte[] borrowCheckpointKeySchemaForTest() {
+        return borrowCheckpointKeySchema();
+    }
+
+    /**
+     * Test-only {@link #borrowCheckpointWindowNameUtf8()}: the caller must not mutate the
+     * array it returns.
+     */
+    @TestOnly
+    public byte[] borrowCheckpointWindowNameUtf8ForTest() {
+        return borrowCheckpointWindowNameUtf8();
+    }
+
+    /**
      * Initialises the anchor expression against {@code baseCursor} so that
      * bind variables, symbol tables, etc. resolve correctly for the rows this
      * window will process. Called once per refresh cycle by the wrapping cursor.

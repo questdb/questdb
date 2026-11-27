@@ -66,9 +66,27 @@ public class LiveViewCheckpointFunctionRoot implements Closeable {
         reader = new LiveViewCheckpointMetaSegmentReader(configuration);
     }
 
+    /**
+     * Test-only {@link #clearBorrowedCompiled()}: it nulls the arrays
+     * {@link #getFunctionIdentity()} and {@link #getKeySchema()} return.
+     */
+    @TestOnly
+    public void clearBorrowedCompiledForTest() {
+        clearBorrowedCompiled();
+    }
+
     @Override
     public void close() {
         Misc.free(reader);
+    }
+
+    /**
+     * @return the image bytes the root's decode pool holds, counted by walking the pool, for
+     * a test
+     */
+    @TestOnly
+    public long countRetainedDecodedBytesForTest() {
+        return decodedBytes.countRetainedBytesForTest();
     }
 
     /**
@@ -118,6 +136,11 @@ public class LiveViewCheckpointFunctionRoot implements Closeable {
 
     public int getStateFormatVersion() {
         return stateFormatVersion;
+    }
+
+    @TestOnly
+    public boolean isBorrowingCompiledForTest(byte[] functionIdentity, byte[] keySchema) {
+        return this.functionIdentity == functionIdentity && this.keySchema == keySchema;
     }
 
     public void of(@Transient @NotNull Path checkpointsDir, @NotNull LiveViewCheckpointPageRef rootRef) {
@@ -192,14 +215,25 @@ public class LiveViewCheckpointFunctionRoot implements Closeable {
         }
     }
 
+    /**
+     * Test-only {@link #ofBuilder}: the root stores the caller's arrays and counts as they
+     * are, unvalidated.
+     */
+    @TestOnly
+    public void ofBuilderForTest(
+            byte[] functionIdentity,
+            int stateFormatVersion,
+            byte[] keySchema,
+            LiveViewCheckpointStatePageRef scalarStateRef,
+            LiveViewCheckpointPageRef partitionMapRootRef,
+            LongList segmentUseCounts
+    ) {
+        ofBuilder(functionIdentity, stateFormatVersion, keySchema, scalarStateRef, partitionMapRootRef, segmentUseCounts);
+    }
+
     void clearBorrowedCompiled() {
         functionIdentity = null;
         keySchema = null;
-    }
-
-    @TestOnly
-    boolean isBorrowingCompiledForTest(byte[] functionIdentity, byte[] keySchema) {
-        return this.functionIdentity == functionIdentity && this.keySchema == keySchema;
     }
 
     void ofBuilder(

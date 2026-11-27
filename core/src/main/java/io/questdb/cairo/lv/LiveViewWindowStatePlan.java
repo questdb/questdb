@@ -35,6 +35,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.util.Arrays;
 
@@ -283,6 +284,15 @@ public final class LiveViewWindowStatePlan {
      */
     byte[] borrowWindowIdentity() {
         return windowIdentity;
+    }
+
+    /**
+     * Test-only {@link #borrowWindowIdentity()}: the caller must not mutate the array it
+     * returns.
+     */
+    @TestOnly
+    public byte[] borrowWindowIdentityForTest() {
+        return borrowWindowIdentity();
     }
 
     /**

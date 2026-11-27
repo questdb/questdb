@@ -32,6 +32,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
@@ -201,6 +202,33 @@ public class LiveViewCheckpointRootBuilder implements Closeable {
     }
 
     /**
+     * @return the image bytes the decode pool of the builder's function root holds, counted
+     * by walking the pool, for a test
+     */
+    @TestOnly
+    public long countRetainedFunctionRootDecodedBytesForTest() {
+        return functionRoot.countRetainedDecodedBytesForTest();
+    }
+
+    /**
+     * @return the image bytes the builder's identity pool holds, counted by walking the pool,
+     * for a test
+     */
+    @TestOnly
+    public long countRetainedIdentityBytesForTest() {
+        return functionIdentityBytes.countRetainedBytesForTest();
+    }
+
+    /**
+     * @return the image bytes the decode pool of the builder's window root holds, counted by
+     * walking the pool, for a test
+     */
+    @TestOnly
+    public long countRetainedWindowRootDecodedBytesForTest() {
+        return windowRoot.countRetainedDecodedBytesForTest();
+    }
+
+    /**
      * Releases every mapping this build read and discards any in-flight segment,
      * keeping the reader, writer and identity shells for the next build. The
      * identity slots let go of what they staged, and an identity pool that keeps
@@ -223,6 +251,15 @@ public class LiveViewCheckpointRootBuilder implements Closeable {
         if (functionIdentityBytes.getRetainedBytes() > LiveViewCheckpointMetadata.MAX_RETAINED_IDENTITY_BYTES) {
             functionIdentityBytes.clear();
         }
+    }
+
+    /**
+     * @return the identity slots the builder stages its functions in, for a test; the arrays
+     * are the identity pool's, which the caller must not mutate
+     */
+    @TestOnly
+    public ObjList<byte[]> getFunctionIdentitiesForTest() {
+        return functionIdentities;
     }
 
     public void getReferencedSegmentIds(@NotNull LongList out) {

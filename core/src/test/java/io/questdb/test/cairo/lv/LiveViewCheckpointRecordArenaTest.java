@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.lv;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.lv.LiveViewCheckpointRecordArena;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.std.LongList;
@@ -36,10 +37,6 @@ import io.questdb.std.Vect;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
-
-import java.lang.reflect.AccessibleObject;
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
 
 /**
  * The native arena checkpoint keys and payloads move into must keep every promise a heap
@@ -54,56 +51,8 @@ import java.lang.reflect.Method;
  * holds. And every byte comes back on release and on close.
  */
 public class LiveViewCheckpointRecordArenaTest {
-    private static final Method ABORT_RECORD;
-    private static final Method ADDRESS;
-    private static final Method APPEND;
-    private static final Method BEGIN_RECORD;
-    private static final Method BYTES_OFFSET;
-    private static final Method CAPACITY;
-    private static final Method CLEAR;
-    private static final Method CLOSE;
-    private static final Method COMMIT_RECORD;
-    private static final Method ENSURE_CAPACITY;
-    private static final Method FOR_KEYS;
-    private static final Method FOR_PAYLOADS;
-    private static final Method LENGTH;
-    private static final Method MEMORY;
-    private static final long NO_RECORD;
+    private static final long NO_RECORD = LiveViewCheckpointRecordArena.getNoRecordForTest();
     private static final long PAGE_SIZE = 4096;
-    private static final Method RECORD_BYTES;
-    private static final Method RECORD_COUNT;
-    private static final Method RELEASE;
-    private static final Method RESERVE;
-    private static final Method SIZE;
-
-    static {
-        // The arena is package-private to io.questdb.cairo.lv.
-        try {
-            final Class<?> arena = Class.forName("io.questdb.cairo.lv.LiveViewCheckpointRecordArena");
-            FOR_KEYS = accessible(arena.getDeclaredMethod("forKeys"));
-            FOR_PAYLOADS = accessible(arena.getDeclaredMethod("forPayloads"));
-            ABORT_RECORD = accessible(arena.getDeclaredMethod("abortRecord"));
-            ADDRESS = accessible(arena.getDeclaredMethod("address", long.class));
-            APPEND = accessible(arena.getDeclaredMethod("append", long.class, int.class));
-            BEGIN_RECORD = accessible(arena.getDeclaredMethod("beginRecord"));
-            BYTES_OFFSET = accessible(arena.getDeclaredMethod("bytesOffset", long.class));
-            CAPACITY = accessible(arena.getDeclaredMethod("capacity"));
-            CLEAR = accessible(arena.getDeclaredMethod("clear"));
-            CLOSE = accessible(arena.getDeclaredMethod("close"));
-            COMMIT_RECORD = accessible(arena.getDeclaredMethod("commitRecord"));
-            ENSURE_CAPACITY = accessible(arena.getDeclaredMethod("ensureCapacity", long.class));
-            LENGTH = accessible(arena.getDeclaredMethod("length", long.class));
-            MEMORY = accessible(arena.getDeclaredMethod("memory"));
-            RECORD_BYTES = accessible(arena.getDeclaredMethod("recordBytes", int.class));
-            RECORD_COUNT = accessible(arena.getDeclaredMethod("recordCount"));
-            RELEASE = accessible(arena.getDeclaredMethod("release"));
-            RESERVE = accessible(arena.getDeclaredMethod("reserve", int.class));
-            SIZE = accessible(arena.getDeclaredMethod("size"));
-            NO_RECORD = accessible(arena.getDeclaredField("NO_RECORD")).getLong(null);
-        } catch (ReflectiveOperationException e) {
-            throw new ExceptionInInitializerError(e);
-        }
-    }
 
     @Test
     public void testAFailedGrowthLeavesEveryPayloadItHolds() throws Exception {
@@ -517,11 +466,6 @@ public class LiveViewCheckpointRecordArenaTest {
         });
     }
 
-    private static <T extends AccessibleObject> T accessible(T member) {
-        member.setAccessible(true);
-        return member;
-    }
-
     /**
      * Requires every reader that takes a handle to refuse {@code handle} as naming no record.
      */
@@ -579,108 +523,91 @@ public class LiveViewCheckpointRecordArenaTest {
     }
 
     /**
-     * A typed face over the package-private arena, so the cases read as calls rather than as
-     * reflection. A failure inside the arena comes out as itself.
+     * A typed face over the arena's test-only wrappers, so the cases read as the arena's own
+     * calls. A failure inside the arena comes out as itself.
      */
     private static final class Arena implements QuietCloseable {
-        private final Object arena;
+        private final LiveViewCheckpointRecordArena arena;
 
-        private Arena(Method factory) {
-            arena = invoke(factory, null);
+        private Arena(LiveViewCheckpointRecordArena arena) {
+            this.arena = arena;
         }
 
         static Arena keys() {
-            return new Arena(FOR_KEYS);
+            return new Arena(LiveViewCheckpointRecordArena.forKeysForTest());
         }
 
         static Arena payloads() {
-            return new Arena(FOR_PAYLOADS);
+            return new Arena(LiveViewCheckpointRecordArena.forPayloadsForTest());
         }
 
         @Override
         public void close() {
-            invoke(CLOSE, arena);
+            arena.close();
         }
 
         void abortRecord() {
-            invoke(ABORT_RECORD, arena);
+            arena.abortRecordForTest();
         }
 
         long address(long handle) {
-            return (long) invoke(ADDRESS, arena, handle);
+            return arena.addressForTest(handle);
         }
 
         long append(long address, int length) {
-            return (long) invoke(APPEND, arena, address, length);
+            return arena.appendForTest(address, length);
         }
 
         MemoryA beginRecord() {
-            return (MemoryA) invoke(BEGIN_RECORD, arena);
+            return arena.beginRecordForTest();
         }
 
         long bytesOffset(long handle) {
-            return (long) invoke(BYTES_OFFSET, arena, handle);
+            return arena.bytesOffsetForTest(handle);
         }
 
         long capacity() {
-            return (long) invoke(CAPACITY, arena);
+            return arena.capacityForTest();
         }
 
         void clear() {
-            invoke(CLEAR, arena);
+            arena.clear();
         }
 
         long commitRecord() {
-            return (long) invoke(COMMIT_RECORD, arena);
+            return arena.commitRecordForTest();
         }
 
         void ensureCapacity(long additionalBytes) {
-            invoke(ENSURE_CAPACITY, arena, additionalBytes);
+            arena.ensureCapacityForTest(additionalBytes);
         }
 
         int length(long handle) {
-            return (int) invoke(LENGTH, arena, handle);
+            return arena.lengthForTest(handle);
         }
 
         MemoryR memory() {
-            return (MemoryR) invoke(MEMORY, arena);
+            return arena.memoryForTest();
         }
 
         long recordBytes(int length) {
-            return (long) invoke(RECORD_BYTES, arena, length);
+            return arena.recordBytesForTest(length);
         }
 
         int recordCount() {
-            return (int) invoke(RECORD_COUNT, arena);
+            return arena.recordCountForTest();
         }
 
         void release() {
-            invoke(RELEASE, arena);
+            arena.releaseForTest();
         }
 
         long reserve(int length) {
-            return (long) invoke(RESERVE, arena, length);
+            return arena.reserveForTest(length);
         }
 
         long size() {
-            return (long) invoke(SIZE, arena);
-        }
-
-        private static Object invoke(Method method, Object target, Object... args) {
-            try {
-                return method.invoke(target, args);
-            } catch (InvocationTargetException e) {
-                final Throwable cause = e.getCause();
-                if (cause instanceof RuntimeException runtimeException) {
-                    throw runtimeException;
-                }
-                if (cause instanceof Error error) {
-                    throw error;
-                }
-                throw new AssertionError(cause);
-            } catch (IllegalAccessException e) {
-                throw new AssertionError(e);
-            }
+            return arena.sizeForTest();
         }
     }
 }

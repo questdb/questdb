@@ -111,4 +111,21 @@ public class IntHashSetTest {
             }
         }
     }
+
+    @Test
+    public void testSlotCountIsTheKeyTableLength() {
+        // A new set holds 16 keys at a load factor of 0.4 in ceilPow2(16 / 0.4) = 64 slots.
+        // The 16th key doubles its capacity to 32 keys, in ceilPow2(32 / 0.4) = 128 slots.
+        final IntHashSet set = new IntHashSet();
+        Assert.assertEquals(64, set.getSlotCount());
+        for (int key = 0; key < 15; key++) {
+            Assert.assertTrue(set.add(key));
+        }
+        Assert.assertEquals(64, set.getSlotCount());
+        Assert.assertTrue(set.add(15));
+        Assert.assertEquals(128, set.getSlotCount());
+        // A clear keeps the table the set grew.
+        set.clear();
+        Assert.assertEquals(128, set.getSlotCount());
+    }
 }

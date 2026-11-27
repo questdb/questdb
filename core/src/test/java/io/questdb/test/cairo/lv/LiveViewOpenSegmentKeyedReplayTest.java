@@ -78,7 +78,6 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.lang.reflect.Field;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -1705,12 +1704,22 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
                             job.getTransplantPayloadArenaCapacityForTest()
                     );
                     Assert.assertEquals("the handles must go with the arena they name", 0, job.getTransplantPayloadCountForTest());
-                    Assert.assertEquals(0, transplantHandles(job, "transplantPayloads").size());
+                    Assert.assertEquals(0, job.getTransplantPayloadsForTest().size());
                     Assert.assertEquals(
                             "narrow keys within the key limits keep the key arena",
                             keyCount,
                             job.getTransplantKeyArenaKeyCountForTest()
                     );
+                    // A complete freeze takes one key handle and one anchor value per key, and
+                    // removes no key; the kept key arena keeps their handles.
+                    Assert.assertEquals(keyCount, job.getTransplantKeysForTest().size());
+                    Assert.assertEquals(keyCount, job.getTransplantValuesForTest().size());
+                    Assert.assertEquals(0, job.getTransplantRemovedKeysForTest().size());
+                    // The key arena clears before the freeze, so its first record sits at offset
+                    // 0, which is the record's handle.
+                    Assert.assertEquals(0, job.getTransplantKeysForTest().getQuick(0));
+                    // An anchor value is the 2026-01-02 anchor timestamp, never 0.
+                    Assert.assertNotEquals(0, job.getTransplantValuesForTest().getQuick(0));
                 }
                 assertNoRefreshFaults("lv");
             }
@@ -3306,7 +3315,7 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
         });
     }
 
-    private static void assertNoRoomKeptForAWideWalksRows(LiveViewCheckpointSegmentChangeSet changeSet) throws ReflectiveOperationException {
+    private static void assertNoRoomKeptForAWideWalksRows(LiveViewCheckpointSegmentChangeSet changeSet) {
         final long capacity = LiveViewCheckpointSegmentChangeSetTest.residualRowCapacity(changeSet);
         final long retained = LiveViewCheckpointSegmentChangeSetTest.maxRetainedResidualRows();
         Assert.assertTrue(
@@ -3329,12 +3338,6 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_SCAN_INDEX_OPEN_ROWS, 1);
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SPARSE_PUBLICATION_ENABLED, "true");
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1);
-    }
-
-    private static LongList transplantHandles(LiveViewRefreshJob job, String name) throws Exception {
-        final Field field = LiveViewRefreshJob.class.getDeclaredField(name);
-        field.setAccessible(true);
-        return (LongList) field.get(job);
     }
 
     /**
@@ -3515,14 +3518,14 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
                         0,
                         job.getTransplantKeyArenaKeyCountForTest()
                 );
-                final LongList keys = transplantHandles(job, "transplantKeys");
+                final LongList keys = job.getTransplantKeysForTest();
                 Assert.assertEquals("the handles must go with the arena they name", 0, keys.size());
                 Assert.assertTrue(
                         "the handle list must shrink back, capacity=" + keys.capacity(),
                         keys.capacity() < keyCount
                 );
-                Assert.assertEquals(0, transplantHandles(job, "transplantRemovedKeys").size());
-                final LongList values = transplantHandles(job, "transplantValues");
+                Assert.assertEquals(0, job.getTransplantRemovedKeysForTest().size());
+                final LongList values = job.getTransplantValuesForTest();
                 Assert.assertTrue(
                         "the anchor value list must shrink back, capacity=" + values.capacity(),
                         values.capacity() < keyCount
@@ -3539,7 +3542,7 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
                             0,
                             job.getTransplantPayloadArenaCapacityForTest()
                     );
-                    final LongList payloads = transplantHandles(job, "transplantPayloads");
+                    final LongList payloads = job.getTransplantPayloadsForTest();
                     Assert.assertEquals("the payload handles must go with the arena they name", 0, payloads.size());
                     Assert.assertTrue(
                             "the payload handle list must shrink back, capacity=" + payloads.capacity(),
@@ -3551,6 +3554,7 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
                             keyCount,
                             job.getTransplantPayloadCountForTest()
                     );
+                    Assert.assertEquals("the kept payload arena keeps their handles", keyCount, job.getTransplantPayloadsForTest().size());
                 }
                 assertViewMatchesRecompute();
             }

@@ -51,8 +51,6 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-import java.lang.reflect.Field;
-import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 
@@ -277,7 +275,10 @@ public class LiveViewCheckpointRootBuilderTest extends AbstractCairoTest {
                 }
                 // A detached builder stages nothing, so no slot of its identity list may keep an
                 // image of a definition it built before.
-                final ObjList<?> stagedIdentities = (ObjList<?>) readField(builder, "functionIdentities");
+                final ObjList<byte[]> stagedIdentities = builder.getFunctionIdentitiesForTest();
+                // Every definition staged one function, and a detach empties slots without
+                // dropping them.
+                Assert.assertEquals(1, stagedIdentities.size());
                 for (int i = 0, n = stagedIdentities.size(); i < n; i++) {
                     Assert.assertNull("detached builder still names a staged identity at " + i, stagedIdentities.getQuick(i));
                 }
@@ -424,43 +425,26 @@ public class LiveViewCheckpointRootBuilderTest extends AbstractCairoTest {
         mem.putInt(0);
     }
 
-    private static Object readField(Object owner, String name) throws ReflectiveOperationException {
-        final Field field = owner.getClass().getDeclaredField(name);
-        field.setAccessible(true);
-        return field.get(owner);
-    }
-
     /**
      * Image bytes each identity pool of the shells a worker keeps holds: the root builder's
      * own, those of the function and window roots it reads through, then those of the
-     * standalone directory, function root and window root.
+     * standalone directory, function root and window root. Each count sums the arrays of
+     * every width rather than reading the pool's own tally.
      */
     private static long[] retainedIdentityPoolBytes(
             LiveViewCheckpointRootBuilder builder,
             LiveViewCheckpointFunctionDirectory directory,
             LiveViewCheckpointFunctionRoot functionRoot,
             LiveViewCheckpointWindowRoot windowRoot
-    ) throws ReflectiveOperationException {
+    ) {
         return new long[]{
-                retainedPoolBytes(builder, "functionIdentityBytes"),
-                retainedPoolBytes(readField(builder, "functionRoot"), "decodedBytes"),
-                retainedPoolBytes(readField(builder, "windowRoot"), "decodedBytes"),
-                retainedPoolBytes(directory, "identityBytes"),
-                retainedPoolBytes(functionRoot, "decodedBytes"),
-                retainedPoolBytes(windowRoot, "decodedBytes")
+                builder.countRetainedIdentityBytesForTest(),
+                builder.countRetainedFunctionRootDecodedBytesForTest(),
+                builder.countRetainedWindowRootDecodedBytesForTest(),
+                directory.countRetainedIdentityBytesForTest(),
+                functionRoot.countRetainedDecodedBytesForTest(),
+                windowRoot.countRetainedDecodedBytesForTest()
         };
-    }
-
-    /**
-     * Image bytes the exact-width byte array pool in {@code owner}'s {@code poolField}
-     * holds. {@code countRetainedBytesForTest()} sums the arrays of every width rather than
-     * reading the pool's own tally.
-     */
-    private static long retainedPoolBytes(Object owner, String poolField) throws ReflectiveOperationException {
-        final Object pool = readField(owner, poolField);
-        final Method count = pool.getClass().getDeclaredMethod("countRetainedBytesForTest");
-        count.setAccessible(true);
-        return (long) count.invoke(pool);
     }
 
     private static LiveViewCheckpointStatePageRef stateRef(long segmentId, long offset) {

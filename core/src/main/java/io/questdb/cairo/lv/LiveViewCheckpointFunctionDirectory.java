@@ -32,6 +32,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
@@ -61,6 +62,15 @@ public class LiveViewCheckpointFunctionDirectory implements Closeable {
     @Override
     public void close() {
         Misc.free(reader);
+    }
+
+    /**
+     * @return the image bytes the directory's identity pool holds, counted by walking the
+     * pool, for a test
+     */
+    @TestOnly
+    public long countRetainedIdentityBytesForTest() {
+        return identityBytes.countRetainedBytesForTest();
     }
 
     /**

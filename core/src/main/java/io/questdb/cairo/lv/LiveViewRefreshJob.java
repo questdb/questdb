@@ -700,6 +700,24 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
+     * Test-only: this worker's checkpoint timeline writer, or null before a timeline write
+     * path first uses it.
+     */
+    @TestOnly
+    public @Nullable LiveViewCheckpointTimelineStoreWriter getCheckpointTimelineStoreWriterForTest() {
+        return checkpointTimelineStoreWriter;
+    }
+
+    /**
+     * Test-only: the worker's output uniqueness detector, which every repair it classifies
+     * re-arms.
+     */
+    @TestOnly
+    public LiveViewCheckpointOutputUniqueness getOutputUniquenessForTest() {
+        return outputUniqueness;
+    }
+
+    /**
      * Test-only: isolates the truncate path's lazy writer construction from earlier repair setup.
      */
     @TestOnly
@@ -818,6 +836,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
+     * Test-only: the key handles the last transplant froze, one per key, into the
+     * transplant's key arena.
+     */
+    @TestOnly
+    public LongList getTransplantKeysForTest() {
+        return transplantKeys;
+    }
+
+    /**
      * Test-only: the native address of the first payload the last transplant froze, so a
      * case can tell whether a later transplant froze its payloads into the same memory; 0
      * when it froze none or when its arena has been freed since.
@@ -842,6 +869,33 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     @TestOnly
     public int getTransplantPayloadCountForTest() {
         return transplantPayloadArena.recordCount();
+    }
+
+    /**
+     * Test-only: the payload handles the last transplant froze, index-aligned with its key
+     * handles, into the transplant's payload arena.
+     */
+    @TestOnly
+    public LongList getTransplantPayloadsForTest() {
+        return transplantPayloads;
+    }
+
+    /**
+     * Test-only: the handles of the keys the last transplant removed, into the transplant's
+     * key arena.
+     */
+    @TestOnly
+    public LongList getTransplantRemovedKeysForTest() {
+        return transplantRemovedKeys;
+    }
+
+    /**
+     * Test-only: the anchor values the last transplant froze, index-aligned with its key
+     * handles.
+     */
+    @TestOnly
+    public LongList getTransplantValuesForTest() {
+        return transplantValues;
     }
 
     /**

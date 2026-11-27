@@ -42,8 +42,11 @@ import org.jetbrains.annotations.TestOnly;
  * with zero denoting empty. Linear probing rejects hashes and qualifiers before
  * reading keys; growth reuses stored hashes. Allocation is lazy and tagged as live-view
  * native memory, but is outside the per-view refresh tracker.
+ * <p>
+ * The class is public only so that tests can name it. Its members stay package-private,
+ * and tests reach them through the {@code @TestOnly ...ForTest} wrappers.
  */
-final class LiveViewCheckpointKeyIndex implements Mutable, QuietCloseable {
+public final class LiveViewCheckpointKeyIndex implements Mutable, QuietCloseable {
     private static final double LOAD_FACTOR = 0.7;
     // reserve() stops presizing here, 2^25 slots in a 768 MiB table for about 23 million
     // entries; a put past it grows the table as it fills.
@@ -62,6 +65,15 @@ final class LiveViewCheckpointKeyIndex implements Mutable, QuietCloseable {
     }
 
     /**
+     * Test-only constructor: the index's keys are handles into {@code keys}, and become
+     * invalid when that arena clears, releases or closes.
+     */
+    @TestOnly
+    public static LiveViewCheckpointKeyIndex newForTest(@NotNull LiveViewCheckpointRecordArena keys) {
+        return new LiveViewCheckpointKeyIndex(keys);
+    }
+
+    /**
      * Forgets every entry while keeping the table the index has grown to.
      */
     @Override
@@ -75,6 +87,93 @@ final class LiveViewCheckpointKeyIndex implements Mutable, QuietCloseable {
     @Override
     public void close() {
         release();
+    }
+
+    /**
+     * Test-only {@link #get(int, int, long, int)}: the key address is valid only for the call.
+     */
+    @TestOnly
+    public int getForTest(int namespace, int version, long keyAddress, int keyLength) {
+        return get(namespace, version, keyAddress, keyLength);
+    }
+
+    /**
+     * @return the slots {@link #get} visits on average to find an entry the index holds:
+     * the entry's distance from its home slot, plus one; 0 when it holds none
+     */
+    @TestOnly
+    public double getHitProbeAverageForTest() {
+        long probes = 0;
+        if (slots.isAllocated()) {
+            final int mask = slots.mask();
+            for (int i = 0, n = slots.slotCount(); i < n; i++) {
+                final long slot = slots.slotAddress(i);
+                if (Unsafe.getLong(slot) != 0) {
+                    probes += ((i - Unsafe.getInt(slot + LiveViewCheckpointSlotTable.HASH_OFFSET)) & mask) + 1;
+                }
+            }
+        }
+        return size() == 0 ? 0 : (double) probes / size();
+    }
+
+    /**
+     * @return the slots {@link #get} visits on average to miss, over every home slot a
+     * missing key may hash to: the run of entries from that slot on, plus the empty slot
+     * that ends it
+     */
+    @TestOnly
+    public double getMissProbeAverageForTest() {
+        long probes = 0;
+        final int slotCount = slots.slotCount();
+        final int mask = slots.mask();
+        for (int i = 0; i < slotCount; i++) {
+            int run = 0;
+            while (slots.isAllocated() && run < slotCount && Unsafe.getLong(slots.slotAddress((i + run) & mask)) != 0) {
+                run++;
+            }
+            probes += run + 1;
+        }
+        return (double) probes / slotCount;
+    }
+
+    /**
+     * @return the slots of the index's table, for a test
+     */
+    @TestOnly
+    public int getSlotCountForTest() {
+        return slots.slotCount();
+    }
+
+    /**
+     * Test-only {@link #put(int, int, long, int)}: the key is a handle into this index's arena.
+     */
+    @TestOnly
+    public void putForTest(int namespace, int version, long keyHandle, int value) {
+        put(namespace, version, keyHandle, value);
+    }
+
+    /**
+     * Test-only {@link #release()}.
+     */
+    @TestOnly
+    public void releaseForTest() {
+        release();
+    }
+
+    /**
+     * Test-only {@link #reserve(long)}.
+     */
+    @TestOnly
+    public void reserveForTest(long keyCount) {
+        reserve(keyCount);
+    }
+
+    /**
+     * Test-only {@link #size()}.
+     */
+    @TestOnly
+    public int sizeForTest() {
+        return size();
     }
 
     /**
@@ -99,45 +198,6 @@ final class LiveViewCheckpointKeyIndex implements Mutable, QuietCloseable {
             }
             index = (index + 1) & mask;
         }
-    }
-
-    /**
-     * @return the slots {@link #get} visits on average to find an entry the index holds:
-     * the entry's distance from its home slot, plus one; 0 when it holds none
-     */
-    @TestOnly
-    double getHitProbeAverageForTest() {
-        long probes = 0;
-        if (slots.isAllocated()) {
-            final int mask = slots.mask();
-            for (int i = 0, n = slots.slotCount(); i < n; i++) {
-                final long slot = slots.slotAddress(i);
-                if (Unsafe.getLong(slot) != 0) {
-                    probes += ((i - Unsafe.getInt(slot + LiveViewCheckpointSlotTable.HASH_OFFSET)) & mask) + 1;
-                }
-            }
-        }
-        return size() == 0 ? 0 : (double) probes / size();
-    }
-
-    /**
-     * @return the slots {@link #get} visits on average to miss, over every home slot a
-     * missing key may hash to: the run of entries from that slot on, plus the empty slot
-     * that ends it
-     */
-    @TestOnly
-    double getMissProbeAverageForTest() {
-        long probes = 0;
-        final int slotCount = slots.slotCount();
-        final int mask = slots.mask();
-        for (int i = 0; i < slotCount; i++) {
-            int run = 0;
-            while (slots.isAllocated() && run < slotCount && Unsafe.getLong(slots.slotAddress((i + run) & mask)) != 0) {
-                run++;
-            }
-            probes += run + 1;
-        }
-        return (double) probes / slotCount;
     }
 
     /**

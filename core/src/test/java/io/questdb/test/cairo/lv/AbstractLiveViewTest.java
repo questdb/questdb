@@ -82,7 +82,6 @@ import org.junit.Before;
 
 import java.io.File;
 import java.io.IOException;
-import java.lang.reflect.Field;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.file.Files;
@@ -730,15 +729,11 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
     }
 
     /**
-     * The refresh job's private checkpoint timeline writer, for the tests that read what a seal
-     * or a repair left behind in it.
+     * The refresh job's checkpoint timeline writer, for the tests that read what a seal or a
+     * repair left behind in it.
      */
-    protected static LiveViewCheckpointTimelineStoreWriter checkpointTimelineStoreWriter(
-            LiveViewRefreshJob job
-    ) throws ReflectiveOperationException {
-        final Field field = LiveViewRefreshJob.class.getDeclaredField("checkpointTimelineStoreWriter");
-        field.setAccessible(true);
-        final LiveViewCheckpointTimelineStoreWriter writer = (LiveViewCheckpointTimelineStoreWriter) field.get(job);
+    protected static LiveViewCheckpointTimelineStoreWriter checkpointTimelineStoreWriter(LiveViewRefreshJob job) {
+        final LiveViewCheckpointTimelineStoreWriter writer = job.getCheckpointTimelineStoreWriterForTest();
         Assert.assertNotNull("the job must have sealed through its timeline writer", writer);
         return writer;
     }

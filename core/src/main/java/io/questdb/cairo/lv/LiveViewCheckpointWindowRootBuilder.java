@@ -102,6 +102,19 @@ public class LiveViewCheckpointWindowRootBuilder extends AbstractLiveViewCheckpo
     }
 
     /**
+     * @return the arena this builder stages its mutations in, for a test
+     */
+    @TestOnly
+    public LiveViewCheckpointMutationArena getMutationsForTest() {
+        return mutations;
+    }
+
+    @TestOnly
+    public boolean isBorrowingCompiledForTest(byte[] windowIdentity, byte[] keySchema, byte[] manifest) {
+        return this.windowIdentity == windowIdentity && this.keySchema == keySchema && this.manifest == manifest;
+    }
+
+    /**
      * Whether the root at {@code stateRootRef} may be built on incrementally by a seal
      * that lays its entries out the given way. False for a null reference, for a page of
      * any other kind, and for any window root whose identity, key schema, anchor type or
@@ -151,6 +164,26 @@ public class LiveViewCheckpointWindowRootBuilder extends AbstractLiveViewCheckpo
     ) {
         of0(checkpointsDir, oldStateRootRef, windowIdentity, anchorValueType, keySchema, manifest,
                 totalInlineStateBytes, isCompleteSnapshot, outputKeys, false);
+    }
+
+    /**
+     * Test-only {@link #ofBorrowedCompiled}: the caller must keep the arrays immutable and
+     * alive until build returns.
+     */
+    @TestOnly
+    public void ofBorrowedCompiledForTest(
+            @Transient @NotNull Path checkpointsDir,
+            @NotNull LiveViewCheckpointPageRef oldStateRootRef,
+            byte @NotNull [] windowIdentity,
+            int anchorValueType,
+            byte @NotNull [] keySchema,
+            byte @NotNull [] manifest,
+            int totalInlineStateBytes,
+            boolean isCompleteSnapshot,
+            @Nullable LiveViewCheckpointOutputKeyDomain outputKeys
+    ) {
+        ofBorrowedCompiled(checkpointsDir, oldStateRootRef, windowIdentity, anchorValueType, keySchema, manifest,
+                totalInlineStateBytes, isCompleteSnapshot, outputKeys);
     }
 
     /**
@@ -229,11 +262,6 @@ public class LiveViewCheckpointWindowRootBuilder extends AbstractLiveViewCheckpo
                 segmentUseCounts
         );
         resultWindowRoot.writeTo(writer, out);
-    }
-
-    @TestOnly
-    boolean isBorrowingCompiledForTest(byte[] windowIdentity, byte[] keySchema, byte[] manifest) {
-        return this.windowIdentity == windowIdentity && this.keySchema == keySchema && this.manifest == manifest;
     }
 
     /**

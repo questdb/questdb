@@ -40,6 +40,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * One localized out-of-order repair in flight, and everything it has to keep
@@ -320,6 +321,15 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
      */
     public int getCapturedBoundaries() {
         return capturedBoundaries;
+    }
+
+    /**
+     * @return the staged capture, or null when the session holds none, for a test. Unlike
+     * {@link #takeCapture()}, it leaves the capture staged.
+     */
+    @TestOnly
+    public @Nullable LiveViewCheckpointTimelineStoreWriter.RepairCapture getCaptureForTest() {
+        return capture;
     }
 
     /**

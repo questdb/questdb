@@ -35,6 +35,7 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 import java.util.Arrays;
@@ -178,6 +179,28 @@ public class LiveViewCheckpointRangeRingStateReader implements Closeable, LiveVi
      * scratch buffer at every width; a valueless ring writes no value page, so the
      * timestamp page alone bounds it
      */
+    /**
+     * Test-only {@link #encodeScalar}: it writes the whole scalar state at {@code address},
+     * unchecked past the scalar word count.
+     */
+    @TestOnly
+    public static void encodeScalarForTest(
+            long address,
+            int valueKind,
+            int scalarWords,
+            int headOffset,
+            long rowCount,
+            long scalarWord0,
+            long scalarWord1,
+            long scalarWord2,
+            long scalarWord3,
+            long frameSize,
+            long lastTimestamp
+    ) {
+        encodeScalar(address, valueKind, scalarWords, headOffset, rowCount, scalarWord0, scalarWord1, scalarWord2,
+                scalarWord3, frameSize, lastTimestamp);
+    }
+
     public static int maxChunkRows(int valueKind) {
         final int words = valueWords(valueKind);
         return words == 0
@@ -344,6 +367,15 @@ public class LiveViewCheckpointRangeRingStateReader implements Closeable, LiveVi
                     .put(" [index=").put(index).put(", count=").put(statePageRefCount).put(']');
         }
         copyRef(statePageRefs[index], out);
+    }
+
+    /**
+     * @return the reader's reference slots, the pooled ones past the open entry's references
+     * included, for a test
+     */
+    @TestOnly
+    public int getStatePageRefSlotCountForTest() {
+        return statePageRefs.length;
     }
 
     /**

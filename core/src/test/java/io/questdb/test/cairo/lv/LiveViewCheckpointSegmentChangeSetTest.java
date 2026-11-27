@@ -36,7 +36,6 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.std.DirectIntIntHashMap;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.DirectLongHashSet;
-import io.questdb.std.DirectLongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -49,7 +48,6 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.lang.management.ManagementFactory;
-import java.lang.reflect.Field;
 
 /**
  * Unit coverage for the decomposition itself: which segments a run of rows opens, in which
@@ -1434,18 +1432,12 @@ public class LiveViewCheckpointSegmentChangeSetTest {
         return false;
     }
 
-    private static Object fieldOf(LiveViewCheckpointSegmentChangeSet changeSet, String name) throws ReflectiveOperationException {
-        final Field field = LiveViewCheckpointSegmentChangeSet.class.getDeclaredField(name);
-        field.setAccessible(true);
-        return field.get(changeSet);
-    }
-
     /**
      * The native bytes the change set's key lists hold room for - every closed segment's
      * list and the open segment's - whatever keys they currently carry.
      */
-    static long keyListBytes(LiveViewCheckpointSegmentChangeSet changeSet) throws ReflectiveOperationException {
-        @SuppressWarnings("unchecked") final ObjList<DirectIntList> keySets = (ObjList<DirectIntList>) fieldOf(changeSet, "keySets");
+    static long keyListBytes(LiveViewCheckpointSegmentChangeSet changeSet) {
+        final ObjList<DirectIntList> keySets = changeSet.getKeySetsForTest();
         long bytes = changeSet.getResidualKeys().getCapacity() * Integer.BYTES;
         for (int i = 0, n = keySets.size(); i < n; i++) {
             bytes += keySets.getQuick(i).getCapacity() * Integer.BYTES;
@@ -1458,34 +1450,32 @@ public class LiveViewCheckpointSegmentChangeSetTest {
      * clears, or zero while the change set holds none. Read afresh on every call so that an
      * assertion never stands on a table the change set has since replaced.
      */
-    static int keyMembershipCapacity(LiveViewCheckpointSegmentChangeSet changeSet) throws ReflectiveOperationException {
-        final DirectLongHashSet keyMembership = (DirectLongHashSet) fieldOf(changeSet, "keyMembership");
+    static int keyMembershipCapacity(LiveViewCheckpointSegmentChangeSet changeSet) {
+        final DirectLongHashSet keyMembership = changeSet.getKeyMembershipForTest();
         return keyMembership != null ? keyMembership.capacity() : 0;
     }
 
     /**
      * The most open-segment row timestamps the change set keeps room for between repairs.
      */
-    static long maxRetainedResidualRows() throws ReflectiveOperationException {
-        final Field field = LiveViewCheckpointSegmentChangeSet.class.getDeclaredField("MAX_RETAINED_RESIDUAL_ROWS");
-        field.setAccessible(true);
-        return field.getInt(null);
+    static long maxRetainedResidualRows() {
+        return LiveViewCheckpointSegmentChangeSet.getMaxRetainedResidualRowsForTest();
     }
 
     /**
      * The open-segment row timestamps the change set's row list holds room for, whatever
      * rows it currently carries.
      */
-    static long residualRowCapacity(LiveViewCheckpointSegmentChangeSet changeSet) throws ReflectiveOperationException {
-        return ((DirectLongList) fieldOf(changeSet, "residualRowTimestamps")).getCapacity();
+    static long residualRowCapacity(LiveViewCheckpointSegmentChangeSet changeSet) {
+        return changeSet.getResidualRowTimestampsForTest().getCapacity();
     }
 
     /**
      * The slot count of the change set's WAL-to-base key resolution cache, or zero while
      * the change set holds none.
      */
-    private static int resolvedKeyCapacity(LiveViewCheckpointSegmentChangeSet changeSet) throws ReflectiveOperationException {
-        final DirectIntIntHashMap resolvedKeys = (DirectIntIntHashMap) fieldOf(changeSet, "resolvedKeys");
+    private static int resolvedKeyCapacity(LiveViewCheckpointSegmentChangeSet changeSet) {
+        final DirectIntIntHashMap resolvedKeys = changeSet.getResolvedKeysForTest();
         return resolvedKeys != null ? resolvedKeys.capacity() : 0;
     }
 

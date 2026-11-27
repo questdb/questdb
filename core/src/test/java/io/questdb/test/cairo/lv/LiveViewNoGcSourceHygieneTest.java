@@ -24,8 +24,21 @@
 
 package io.questdb.test.cairo.lv;
 
+import io.questdb.cairo.lv.LiveViewCheckpointByteArrayPool;
 import io.questdb.cairo.lv.LiveViewCheckpointCompaction;
+import io.questdb.cairo.lv.LiveViewCheckpointFunctionIdentity;
+import io.questdb.cairo.lv.LiveViewCheckpointFunctionRoot;
+import io.questdb.cairo.lv.LiveViewCheckpointFunctionRootBuilder;
+import io.questdb.cairo.lv.LiveViewCheckpointKeyIndex;
+import io.questdb.cairo.lv.LiveViewCheckpointKeys;
+import io.questdb.cairo.lv.LiveViewCheckpointMetadata;
+import io.questdb.cairo.lv.LiveViewCheckpointRecordArena;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineStoreWriter;
+import io.questdb.cairo.lv.LiveViewCheckpointWindowRoot;
+import io.questdb.cairo.lv.LiveViewCheckpointWindowRootBuilder;
+import io.questdb.cairo.lv.LiveViewWindow;
+import io.questdb.cairo.lv.LiveViewWindowStateManifest;
+import io.questdb.cairo.lv.LiveViewWindowStatePlan;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -122,11 +135,13 @@ public class LiveViewNoGcSourceHygieneTest {
                 1 byte[] getEncoded()
                 1 new byte[]
             LiveViewCheckpointByteArrayPool.java
-                # The pool of decoded per-root metadata images.
-                1 LiveViewCheckpointByteArrayPool
+                # The pool of decoded per-root metadata images, and the @TestOnly wrappers
+                # that reach them.
+                4 LiveViewCheckpointByteArrayPool
                 1 ObjList<byte[]> arrays
                 1 byte[] copy()
                 1 byte[] next()
+                1 byte[] nextForTest()
                 1 byte[] out
                 1 byte[] source
                 2 byte[] value
@@ -138,9 +153,12 @@ public class LiveViewNoGcSourceHygieneTest {
                 3 byte[] identity
                 1 byte[] previous
             LiveViewCheckpointFunctionIdentity.java
-                # A compiled function's identity and key schema, encoded once.
+                # A compiled function's identity and key schema, encoded once, and the
+                # @TestOnly wrappers that reach them.
                 1 byte[] borrowEncoded()
+                1 byte[] borrowEncodedForTest()
                 1 byte[] borrowEncodedKeySchema()
+                1 byte[] borrowEncodedKeySchemaForTest()
                 1 byte[] encode()
                 2 byte[] encoded
                 1 byte[] encodedKeySchema
@@ -148,30 +166,33 @@ public class LiveViewNoGcSourceHygieneTest {
                 1 byte[] sink
                 1 new byte[]
             LiveViewCheckpointFunctionRoot.java
-                # The identity and key schema a function root decodes once per root.
+                # The identity and key schema a function root decodes once per root, and the
+                # @TestOnly wrappers that reach them.
                 2 LiveViewCheckpointByteArrayPool
-                3 byte[] functionIdentity
+                4 byte[] functionIdentity
                 1 byte[] getFunctionIdentity()
                 1 byte[] getKeySchema()
-                3 byte[] keySchema
+                4 byte[] keySchema
                 2 new byte[]
             LiveViewCheckpointFunctionRootBuilder.java
-                # The identity and key schema a function root is built under.
-                5 byte[] functionIdentity
-                5 byte[] keySchema
+                # The identity and key schema a function root is built under, and the
+                # @TestOnly wrappers that reach them.
+                6 byte[] functionIdentity
+                6 byte[] keySchema
                 2 new byte[]
             LiveViewCheckpointMetadata.java
                 # The metadata codec's encoders and decoders for identities, key schemas
-                # and names.
+                # and names, and the @TestOnly wrappers that reach them.
                 1 LiveViewCheckpointByteArrayPool
                 1 byte[] EMPTY_KEY_SCHEMA
                 5 byte[] bytes
                 1 byte[] encodeKeySchema()
+                1 byte[] encodeKeySchemaForTest()
                 1 byte[] encodeUtf8()
                 1 byte[] encoded
-                1 byte[] left
+                2 byte[] left
                 2 byte[] readBytes()
-                1 byte[] right
+                2 byte[] right
                 3 byte[] sink
                 3 new byte[]
             LiveViewCheckpointPartitionMapEntry.java
@@ -181,9 +202,11 @@ public class LiveViewNoGcSourceHygieneTest {
                 1 byte[] copyScalarStateForTest()
                 2 new byte[]
             LiveViewCheckpointRootBuilder.java
-                # One function identity per function root a checkpoint root names.
+                # One function identity per function root a checkpoint root names, and the
+                # @TestOnly wrapper that reaches them.
                 2 LiveViewCheckpointByteArrayPool
                 1 ObjList<byte[]> functionIdentities
+                1 ObjList<byte[]> getFunctionIdentitiesForTest()
                 1 byte[] identity
             LiveViewCheckpointTimelineStoreReader.java
                 # The compiled function identity a restore looks its root up by.
@@ -200,39 +223,48 @@ public class LiveViewNoGcSourceHygieneTest {
                 1 byte[] resolvedIdentity
                 6 byte[] windowIdentity
             LiveViewCheckpointWindowRoot.java
-                # The identity, key schema and manifest a window root decodes once per root.
+                # The identity, key schema and manifest a window root decodes once per root,
+                # and the @TestOnly wrappers that reach them.
                 2 LiveViewCheckpointByteArrayPool
                 1 byte[] borrowWindowIdentity()
                 1 byte[] getKeySchema()
                 1 byte[] getManifest()
                 1 byte[] getWindowIdentity()
-                3 byte[] keySchema
-                3 byte[] manifest
-                3 byte[] windowIdentity
+                4 byte[] keySchema
+                4 byte[] manifest
+                4 byte[] windowIdentity
                 3 new byte[]
             LiveViewCheckpointWindowRootBuilder.java
-                # The identity, key schema and manifest a window root is built under.
-                6 byte[] keySchema
-                6 byte[] manifest
-                6 byte[] windowIdentity
+                # The identity, key schema and manifest a window root is built under, and the
+                # @TestOnly wrappers that reach them.
+                7 byte[] keySchema
+                7 byte[] manifest
+                7 byte[] windowIdentity
                 3 new byte[]
             LiveViewWindow.java
-                # The window's compiled key schema and name, encoded once.
+                # The window's compiled key schema and name, encoded once, and the @TestOnly
+                # wrappers that reach them.
                 1 byte[] borrowCheckpointKeySchema()
+                1 byte[] borrowCheckpointKeySchemaForTest()
                 1 byte[] borrowCheckpointWindowNameUtf8()
+                1 byte[] borrowCheckpointWindowNameUtf8ForTest()
                 1 byte[] checkpointKeySchema
                 1 byte[] checkpointWindowNameUtf8
             LiveViewWindowStateManifest.java
-                # The compiled manifest, encoded once from its component identities.
+                # The compiled manifest, encoded once from its component identities, and the
+                # @TestOnly wrapper that reaches it.
                 1 byte[] borrowEncoded()
+                1 byte[] borrowEncodedForTest()
                 1 byte[] encode()
                 2 byte[] encoded
                 1 byte[] getEncoded()
                 1 byte[] identity
                 1 new byte[]
             LiveViewWindowStatePlan.java
-                # The compiled window identity, encoded once and compared whole.
+                # The compiled window identity, encoded once and compared whole, and the
+                # @TestOnly wrapper that reaches it.
                 1 byte[] borrowWindowIdentity()
+                1 byte[] borrowWindowIdentityForTest()
                 1 byte[] candidateWindowIdentity
                 1 byte[] encodeWindowIdentity()
                 1 byte[] encoded
@@ -599,6 +631,73 @@ public class LiveViewNoGcSourceHygieneTest {
                 LiveViewCheckpointCompaction.class,
                 "compact"
         );
+    }
+
+    @Test
+    public void testTestSeamsKeepPackageInternalsOffTheApi() {
+        // The live-view tests reach package-private members of io.questdb.cairo.lv through
+        // @TestOnly ...ForTest wrappers rather than by making them public, because a member's
+        // visibility is part of its contract. A borrowing or lending member - one that takes
+        // or hands out a compiled array without copying it, or nulls what a public getter
+        // returns - stays package-private. A class made public only so that tests can name it
+        // publishes no constructor and no method besides the clear() and close() it implements
+        // for Mutable and QuietCloseable.
+        final Object[][] borrowingMembers = {
+                {LiveViewCheckpointFunctionRootBuilder.class, new String[]{"clearBorrowedCompiled", "ofBorrowedCompiled"}},
+                {LiveViewCheckpointWindowRootBuilder.class, new String[]{"clearBorrowedCompiled", "ofBorrowedCompiled"}},
+                {LiveViewCheckpointFunctionRoot.class, new String[]{"clearBorrowedCompiled", "ofBuilder"}},
+                {LiveViewCheckpointWindowRoot.class, new String[]{"borrowWindowIdentity", "clearBorrowedCompiled", "ofBuilder"}},
+                {LiveViewWindow.class, new String[]{"borrowCheckpointKeySchema", "borrowCheckpointWindowNameUtf8"}},
+                {LiveViewCheckpointFunctionIdentity.class, new String[]{"borrowEncoded", "borrowEncodedKeySchema"}},
+                {LiveViewWindowStatePlan.class, new String[]{"borrowWindowIdentity"}},
+                {LiveViewWindowStateManifest.class, new String[]{"borrowEncoded"}}
+        };
+        for (Object[] owner : borrowingMembers) {
+            final Class<?> type = (Class<?>) owner[0];
+            final String[] names = (String[]) owner[1];
+            final List<String> found = new ArrayList<>();
+            for (java.lang.reflect.Method method : type.getDeclaredMethods()) {
+                final String name = method.getName();
+                if (name.equals("clearBorrowedCompiled")
+                        || name.equals("ofBorrowedCompiled")
+                        || name.equals("ofBuilder")
+                        || (name.startsWith("borrow") && !name.endsWith("ForTest"))) {
+                    Assert.assertFalse(
+                            type.getSimpleName() + '.' + name + " lends or borrows compiled state and must stay off the API",
+                            java.lang.reflect.Modifier.isPublic(method.getModifiers())
+                    );
+                    found.add(name);
+                }
+            }
+            found.sort(Comparator.naturalOrder());
+            Assert.assertEquals("the borrowing members of " + type.getSimpleName(), List.of(names), found);
+        }
+
+        final Class<?>[] testNamedTypes = {
+                LiveViewCheckpointByteArrayPool.class,
+                LiveViewCheckpointKeyIndex.class,
+                LiveViewCheckpointKeys.class,
+                LiveViewCheckpointMetadata.class,
+                LiveViewCheckpointRecordArena.class
+        };
+        for (Class<?> type : testNamedTypes) {
+            Assert.assertTrue(type.getSimpleName() + " must be public for the tests to name it", java.lang.reflect.Modifier.isPublic(type.getModifiers()));
+            Assert.assertEquals(type.getSimpleName() + " must declare no public constructor", 0, type.getConstructors().length);
+            int testOnlyCount = 0;
+            for (java.lang.reflect.Method method : type.getDeclaredMethods()) {
+                final String name = method.getName();
+                if (java.lang.reflect.Modifier.isPublic(method.getModifiers())) {
+                    Assert.assertTrue(
+                            type.getSimpleName() + '.' + name + " is public but neither clear(), close() nor a test-only wrapper",
+                            name.equals("clear") || name.equals("close") || name.endsWith("ForTest")
+                    );
+                    if (name.endsWith("ForTest")) {
+                        testOnlyCount++;
+                    }
+                }
+            }
+            Assert.assertTrue(type.getSimpleName() + " must carry the test-only wrappers its tests call", testOnlyCount > 0);
+        }
     }
 
     @Test

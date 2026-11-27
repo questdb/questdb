@@ -30,8 +30,15 @@ import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.std.LongList;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
-final class LiveViewCheckpointMetadata {
+/**
+ * The checkpoint metadata codec's shared constants and helpers.
+ * <p>
+ * The class is public only so that tests can name it. Its members stay package-private,
+ * and tests reach them through the {@code @TestOnly ...ForTest} wrappers.
+ */
+public final class LiveViewCheckpointMetadata {
 
     static final byte[] EMPTY_KEY_SCHEMA = {0, 0, 0, 0};
     static final int MAX_BYTE_ARRAY_LENGTH = 1 << 20;
@@ -52,6 +59,23 @@ final class LiveViewCheckpointMetadata {
     static final int MAX_STATE_PAGE_REFS = 1 << 16;
 
     private LiveViewCheckpointMetadata() {
+    }
+
+    /**
+     * Test-only {@link #compareBytes(byte[], byte[])}.
+     */
+    @TestOnly
+    public static int compareBytesForTest(byte[] left, byte[] right) {
+        return compareBytes(left, right);
+    }
+
+    /**
+     * Test-only {@link #encodeKeySchema(ColumnTypes)}: a null or empty list returns the one
+     * array every empty key schema shares, which the caller must not mutate.
+     */
+    @TestOnly
+    public static byte[] encodeKeySchemaForTest(@Nullable ColumnTypes keyTypes) {
+        return encodeKeySchema(keyTypes);
     }
 
     /**

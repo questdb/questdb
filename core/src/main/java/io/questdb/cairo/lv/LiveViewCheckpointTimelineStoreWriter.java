@@ -788,9 +788,43 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         return compactionScratch.isVisitorShellStateClearForTest();
     }
 
+    /**
+     * Test-only lease of the writer's publication shells, with no memory tracker bound.
+     * Pair every call with {@link #releasePublicationShellsForTest()}.
+     */
+    @TestOnly
+    public void acquirePublicationShellsForTest() {
+        acquirePublicationShells(null);
+    }
+
+    /**
+     * @return the function root builder of the writer's publication shells, for a test
+     */
+    @TestOnly
+    public LiveViewCheckpointFunctionRootBuilder getPublicationFunctionRootBuilderForTest() {
+        return publicationShells.roots.functionRootBuilder;
+    }
+
     @TestOnly
     public int getRedirectRefWidthLookupCountForTest() {
         return publicationShells.roots.getRedirectRefWidthLookupCountForTest();
+    }
+
+    /**
+     * @return the redirect reference array of {@code count} slots the publication shells
+     * cache, for a test
+     */
+    @TestOnly
+    public LiveViewCheckpointStatePageRef[] redirectRefsForTest(int count) {
+        return publicationShells.roots.redirectRefs(count);
+    }
+
+    /**
+     * Test-only release of the lease {@link #acquirePublicationShellsForTest()} took.
+     */
+    @TestOnly
+    public void releasePublicationShellsForTest() {
+        releasePublicationShells();
     }
 
     /**
@@ -5702,9 +5736,80 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             return generation;
         }
 
+        /**
+         * @return the holder of the {@code b}-th boundary this capture froze, for identity
+         * comparison
+         */
+        @TestOnly
+        public Object getFrozenBoundaryForTest(int b) {
+            return boundaries.getQuick(b);
+        }
+
+        /**
+         * @return the key arena of the scratch the {@code f}-th function of the {@code b}-th
+         * boundary froze into, for a test
+         */
+        @TestOnly
+        public LiveViewCheckpointRecordArena getFrozenKeyArenaForTest(int b, int f) {
+            return boundaries.getQuick(b).functions.getQuick(f).scratch.frozenKeys;
+        }
+
+        /**
+         * @return the holder of the {@code p}-th partition the {@code f}-th function of the
+         * {@code b}-th boundary froze, for identity comparison
+         */
+        @TestOnly
+        public Object getFrozenPartitionForTest(int b, int f, int p) {
+            return boundaries.getQuick(b).functions.getQuick(f).partitions.getQuick(p);
+        }
+
+        /**
+         * @return the payload arena of the scratch the {@code f}-th function of the
+         * {@code b}-th boundary froze into, for a test
+         */
+        @TestOnly
+        public LiveViewCheckpointRecordArena getFrozenPayloadArenaForTest(int b, int f) {
+            return boundaries.getQuick(b).functions.getQuick(f).scratch.frozenPayloads;
+        }
+
+        /**
+         * @return the scalar state reference holder of the {@code f}-th function of the
+         * {@code b}-th boundary, for identity comparison
+         */
+        @TestOnly
+        public LiveViewCheckpointStatePageRef getFrozenScalarStateRefForTest(int b, int f) {
+            return boundaries.getQuick(b).functions.getQuick(f).scalarStateRef;
+        }
+
+        /**
+         * @return the scratch the {@code f}-th function of the {@code b}-th boundary froze
+         * into, for identity comparison
+         */
+        @TestOnly
+        public Object getFrozenScratchForTest(int b, int f) {
+            return boundaries.getQuick(b).functions.getQuick(f).scratch;
+        }
+
         @TestOnly
         public int getFunctionIdentityQualificationCountForTest() {
             return chain == null ? 0 : chain.getFunctionIdentityQualificationCountForTest();
+        }
+
+        /**
+         * @return this capture's own copy of {@code Q}, whether or not it adopted one, for a
+         * test
+         */
+        @TestOnly
+        public LiveViewCheckpointOutputKeyDomain getOutputKeysForTest() {
+            return outputKeys;
+        }
+
+        /**
+         * @return the freeze scratch this capture leased, for identity comparison
+         */
+        @TestOnly
+        public Object getScratchForTest() {
+            return scratch;
         }
 
         /**

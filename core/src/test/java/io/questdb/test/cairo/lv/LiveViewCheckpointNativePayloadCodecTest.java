@@ -49,8 +49,6 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
 
 /**
  * The native payload codecs must write and read exactly the bytes the heap codecs they
@@ -83,24 +81,9 @@ public class LiveViewCheckpointNativePayloadCodecTest extends AbstractCairoTest 
             ColumnType.STRING,
             ColumnType.VARCHAR
     };
-    private static final Method ENCODE_ANCHOR_NATIVE;
-    private static final Method ENCODE_RING_SCALAR_NATIVE;
     private static final int MAX_FAMILY = 64;
     private static final int PAYLOAD_SLACK = 24;
     private static final int ROUNDS = 200;
-
-    static {
-        // The anchor and ring encoders are package-private to io.questdb.cairo.lv.
-        try {
-            ENCODE_ANCHOR_NATIVE = accessible(LiveViewCheckpointWindowRoot.class.getDeclaredMethod(
-                    "encodeAnchorValue", long.class, long.class));
-            ENCODE_RING_SCALAR_NATIVE = accessible(LiveViewCheckpointRangeRingStateReader.class.getDeclaredMethod(
-                    "encodeScalar", long.class, int.class, int.class, int.class, long.class, long.class, long.class,
-                    long.class, long.class, long.class, long.class));
-        } catch (ReflectiveOperationException e) {
-            throw new ExceptionInInitializerError(e);
-        }
-    }
 
     @Test
     public void testAnchorCodecMatchesTheOracle() throws Exception {
@@ -117,7 +100,7 @@ public class LiveViewCheckpointNativePayloadCodecTest extends AbstractCairoTest 
 
                     final long address = buffer.addressOf(0);
                     copyIn(garbage, address);
-                    invokeStatic(ENCODE_ANCHOR_NATIVE, anchor, address);
+                    LiveViewCheckpointWindowRoot.encodeAnchorValueForTest(anchor, address);
                     final byte[] oracle = garbage.clone();
                     Oracle.encodeAnchorValue(anchor, oracle);
 
@@ -298,8 +281,8 @@ public class LiveViewCheckpointNativePayloadCodecTest extends AbstractCairoTest 
                         final byte[] garbage = randomBytes(rnd, scalarBytes + 2 * PAYLOAD_SLACK);
                         final long address = buffer.addressOf(0);
                         copyIn(garbage, address);
-                        invokeStatic(ENCODE_RING_SCALAR_NATIVE, address + PAYLOAD_SLACK, valueKind, scalarWords, headOffset,
-                                rowCount, w0, w1, w2, w3, frameSize, lastTimestamp);
+                        LiveViewCheckpointRangeRingStateReader.encodeScalarForTest(address + PAYLOAD_SLACK, valueKind,
+                                scalarWords, headOffset, rowCount, w0, w1, w2, w3, frameSize, lastTimestamp);
                         final byte[] expected = garbage.clone();
                         System.arraycopy(oracle, 0, expected, PAYLOAD_SLACK, scalarBytes);
                         Assert.assertArrayEquals("native ring scalar against the oracle", expected, copyOut(address, garbage.length));
@@ -316,7 +299,7 @@ public class LiveViewCheckpointNativePayloadCodecTest extends AbstractCairoTest 
                             () -> LiveViewCheckpointRangeRingStateReader.scalarStateBytes(scalarWords));
                     TestUtils.assertContains(expected.getFlyweightMessage(), "RANGE ring scalar width invalid");
                     final CairoException nativeException = Assert.assertThrows(CairoException.class,
-                            () -> invokeStatic(ENCODE_RING_SCALAR_NATIVE, address,
+                            () -> LiveViewCheckpointRangeRingStateReader.encodeScalarForTest(address,
                                     LiveViewCheckpointRangeRingStateReader.VALUE_KIND_DOUBLE, scalarWords,
                                     0, 1L, 2L, 3L, 4L, 5L, 6L, 7L));
                     assertSameFailure(expected, nativeException);
@@ -324,11 +307,6 @@ public class LiveViewCheckpointNativePayloadCodecTest extends AbstractCairoTest 
                 }
             }
         });
-    }
-
-    private static <T extends java.lang.reflect.AccessibleObject> T accessible(T member) {
-        member.setAccessible(true);
-        return member;
     }
 
     private static void assertSameFailure(CairoException expected, CairoException actual) {
@@ -388,23 +366,6 @@ public class LiveViewCheckpointNativePayloadCodecTest extends AbstractCairoTest 
         Assert.assertTrue(slotTypes.contains(ColumnType.DOUBLE));
         Assert.assertTrue(slotTypes.contains(ColumnType.LONG));
         return components;
-    }
-
-    private static Object invokeStatic(Method method, Object... args) {
-        try {
-            return method.invoke(null, args);
-        } catch (InvocationTargetException e) {
-            final Throwable cause = e.getCause();
-            if (cause instanceof RuntimeException runtimeException) {
-                throw runtimeException;
-            }
-            if (cause instanceof Error error) {
-                throw error;
-            }
-            throw new AssertionError(cause);
-        } catch (IllegalAccessException e) {
-            throw new AssertionError(e);
-        }
     }
 
     private static MemoryCARW newBuffer() {

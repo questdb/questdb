@@ -239,6 +239,14 @@ public final class LiveViewCheckpointPartitionMapEntry implements QuietCloseable
     }
 
     /**
+     * Test-only {@link #isScalarEqual(long, int)}: the address is valid only for the call.
+     */
+    @TestOnly
+    public boolean isScalarEqualForTest(long address, int length) {
+        return isScalarEqual(address, length);
+    }
+
+    /**
      * Zeroes the lookup count and starts it. An entry counts nothing until a test calls
      * this, so production copies pay one flag read rather than a counter write.
      */

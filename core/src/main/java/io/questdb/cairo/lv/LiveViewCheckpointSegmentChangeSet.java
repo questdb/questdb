@@ -38,6 +38,8 @@ import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Vect;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * One out-of-order change set decomposed into the anchor segments it actually touches.
@@ -194,6 +196,14 @@ public final class LiveViewCheckpointSegmentChangeSet implements QuietCloseable 
     private DirectIntIntHashMap resolvedKeys;
 
     /**
+     * @return {@link #MAX_RETAINED_RESIDUAL_ROWS}, for a test
+     */
+    @TestOnly
+    public static int getMaxRetainedResidualRowsForTest() {
+        return MAX_RETAINED_RESIDUAL_ROWS;
+    }
+
+    /**
      * Folds one qualifying base row into the decomposition. A row at or above
      * {@code activeSegmentStart} joins the residual; anything below it lands in - or opens -
      * the closed segment that holds it.
@@ -338,6 +348,40 @@ public final class LiveViewCheckpointSegmentChangeSet implements QuietCloseable 
      */
     public int getClosedSegmentCount() {
         return segments.size() / STRIDE;
+    }
+
+    /**
+     * @return the key membership table, or null while the change set holds none, for a test
+     */
+    @TestOnly
+    public @Nullable DirectLongHashSet getKeyMembershipForTest() {
+        return keyMembership;
+    }
+
+    /**
+     * @return the closed segments' key lists, in the order the segments were opened, for a
+     * test
+     */
+    @TestOnly
+    public ObjList<DirectIntList> getKeySetsForTest() {
+        return keySets;
+    }
+
+    /**
+     * @return the open segment's row timestamp list, for a test
+     */
+    @TestOnly
+    public DirectLongList getResidualRowTimestampsForTest() {
+        return residualRowTimestamps;
+    }
+
+    /**
+     * @return the WAL-to-base key resolution cache, or null while the change set holds none,
+     * for a test
+     */
+    @TestOnly
+    public @Nullable DirectIntIntHashMap getResolvedKeysForTest() {
+        return resolvedKeys;
     }
 
     /**

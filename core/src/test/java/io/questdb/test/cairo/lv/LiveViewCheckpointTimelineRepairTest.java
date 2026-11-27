@@ -77,7 +77,6 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-import java.lang.reflect.Field;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -3641,15 +3640,10 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
     /**
      * @return the copy of Q the staged capture of the parked repair {@code parked} owns
      */
-    private static LiveViewCheckpointOutputKeyDomain parkedCaptureKeys(LiveViewCheckpointRepairSession parked) throws Exception {
-        final Field captureField = LiveViewCheckpointRepairSession.class.getDeclaredField("capture");
-        captureField.setAccessible(true);
-        final LiveViewCheckpointTimelineStoreWriter.RepairCapture capture =
-                (LiveViewCheckpointTimelineStoreWriter.RepairCapture) captureField.get(parked);
+    private static LiveViewCheckpointOutputKeyDomain parkedCaptureKeys(LiveViewCheckpointRepairSession parked) {
+        final LiveViewCheckpointTimelineStoreWriter.RepairCapture capture = parked.getCaptureForTest();
         Assert.assertNotNull("the parked repair must hold its staged capture", capture);
-        final Field keysField = LiveViewCheckpointTimelineStoreWriter.RepairCapture.class.getDeclaredField("outputKeys");
-        keysField.setAccessible(true);
-        return (LiveViewCheckpointOutputKeyDomain) keysField.get(capture);
+        return capture.getOutputKeysForTest();
     }
 
     /**

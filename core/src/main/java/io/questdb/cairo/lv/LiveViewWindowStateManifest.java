@@ -115,6 +115,14 @@ public final class LiveViewWindowStateManifest {
     }
 
     /**
+     * Test-only {@link #borrowEncoded()}: the caller must not mutate the array it returns.
+     */
+    @TestOnly
+    public byte[] borrowEncodedForTest() {
+        return borrowEncoded();
+    }
+
+    /**
      * Returns component {@code index}'s offset in the fused scalar payload, in the plan's
      * canonical identity order. This is where a seal writes that component's whole-state
      * image and where a restore slices it back out.

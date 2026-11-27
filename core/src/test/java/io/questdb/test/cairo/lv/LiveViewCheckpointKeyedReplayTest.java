@@ -47,7 +47,6 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.std.AbstractIntHashSet;
 import io.questdb.std.Chars;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
@@ -64,7 +63,6 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.lang.reflect.Field;
 import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -1586,6 +1584,7 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
             try (LiveViewCheckpointKeyedReplay replay = new LiveViewCheckpointKeyedReplay()) {
                 Assert.assertTrue(replay.arm(0, symbols, checkpointKeyTypes, keys, false));
                 Assert.assertTrue(replay.bindStoredRows(storedRows, 0, 1));
+                Assert.assertSame("the merge must hold the cursor it bound", storedRows, replay.getStoredRowCursorForTest());
                 try {
                     replay.closeStoredRows();
                     Assert.fail("the stored rows' close failure must reach the caller");
@@ -1594,7 +1593,7 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
                 }
                 Assert.assertNull(
                         "the merge must not keep the cursor whose close failed",
-                        fieldOf(LiveViewCheckpointKeyedReplay.class, "storedRowCursor", replay)
+                        replay.getStoredRowCursorForTest()
                 );
             }
         });
@@ -1628,8 +1627,7 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
                     final boolean hasNullKey = pass == 0;
                     Assert.assertTrue(replay.arm(0, baseSymbols, checkpointKeyTypes, keys, hasNullKey));
                     Assert.assertTrue(replay.bindStoredRows(new SymbolTableCursor(storedSymbols), 0, 1));
-                    final IntHashSet stored =
-                            (IntHashSet) fieldOf(LiveViewCheckpointKeyedReplay.class, "storedSymbolKeys", replay);
+                    final IntHashSet stored = replay.getStoredSymbolKeysForTest();
                     Assert.assertEquals(hasNullKey ? 7 : 6, stored.size());
                     Assert.assertEquals(hasNullKey, stored.contains(SymbolTable.VALUE_IS_NULL));
                     for (int storedKey = 1; storedKey < 7; storedKey++) {
@@ -1695,8 +1693,7 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
                 // storage across the clear: that reuse is what the bounds are there for.
                 Assert.assertTrue(replay.arm(0, narrowSymbols, checkpointKeyTypes, narrowKeys, false));
                 Assert.assertTrue(replay.bindStoredRows(new SymbolTableCursor(narrowSymbols), 0, 1));
-                final IntHashSet stored =
-                        (IntHashSet) fieldOf(LiveViewCheckpointKeyedReplay.class, "storedSymbolKeys", replay);
+                final IntHashSet stored = replay.getStoredSymbolKeysForTest();
                 Assert.assertEquals(2, stored.size());
                 Assert.assertTrue(stored.contains(0));
                 Assert.assertTrue(stored.contains(1));
@@ -1763,8 +1760,7 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
                 narrowKeys.add(1);
                 Assert.assertTrue(replay.arm(0, symbols, checkpointKeyTypes, narrowKeys, false));
                 Assert.assertTrue(replay.bindStoredRows(storedRows, 0, 1));
-                final IntHashSet stored =
-                        (IntHashSet) fieldOf(LiveViewCheckpointKeyedReplay.class, "storedSymbolKeys", replay);
+                final IntHashSet stored = replay.getStoredSymbolKeysForTest();
                 Assert.assertEquals(1, stored.size());
                 Assert.assertTrue(stored.contains(1));
                 replay.closeStoredRows();
@@ -1788,8 +1784,6 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
             final IntList keys = new IntList();
             keys.add(0);
             keys.add(1);
-            final Field storedSymbolKeysField = LiveViewCheckpointKeyedReplay.class.getDeclaredField("storedSymbolKeys");
-            storedSymbolKeysField.setAccessible(true);
             final IntHashSet failingStoredSymbolKeys = new TablelessIntHashSet();
 
             // The stored rows fail to close first, and the clear() failure follows it.
@@ -1803,7 +1797,7 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
             Assert.assertTrue(replay.arm(0, symbols, checkpointKeyTypes, keys, false));
             Assert.assertTrue(replay.bindStoredRows(storedRows, 0, 1));
             Assert.assertTrue(replay.getOutputKeys().getSlotCount() > 0);
-            storedSymbolKeysField.set(replay, failingStoredSymbolKeys);
+            replay.setStoredSymbolKeysForTest(failingStoredSymbolKeys);
             Throwable failure = null;
             try {
                 replay.close();
@@ -1830,7 +1824,7 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
             final LiveViewCheckpointKeyedReplay lone = new LiveViewCheckpointKeyedReplay();
             Assert.assertTrue(lone.arm(0, symbols, checkpointKeyTypes, keys, false));
             Assert.assertTrue(lone.getOutputKeys().getSlotCount() > 0);
-            storedSymbolKeysField.set(lone, failingStoredSymbolKeys);
+            lone.setStoredSymbolKeysForTest(failingStoredSymbolKeys);
             try {
                 lone.close();
                 Assert.fail("the clear() failure must reach the caller");
@@ -1870,6 +1864,7 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
             final LiveViewCheckpointKeyedReplay replay = new LiveViewCheckpointKeyedReplay();
             Assert.assertTrue(replay.arm(0, symbols, checkpointKeyTypes, keys, false));
             Assert.assertTrue(replay.bindStoredRows(storedRows, 0, 1));
+            Assert.assertSame("the merge must hold the cursor it bound", storedRows, replay.getStoredRowCursorForTest());
             Assert.assertTrue(replay.getOutputKeys().getSlotCount() > 0);
             try {
                 replay.close();
@@ -1886,7 +1881,7 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
             Assert.assertFalse(replay.isArmed());
             Assert.assertNull(
                     "the merge must not keep the cursor whose close failed",
-                    fieldOf(LiveViewCheckpointKeyedReplay.class, "storedRowCursor", replay)
+                    replay.getStoredRowCursorForTest()
             );
             // The failed cursor is gone, so a second close has nothing left to fail on.
             replay.close();
@@ -2672,21 +2667,14 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
                 .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
     }
 
-    private static Object fieldOf(Class<?> owner, String name, Object target) throws ReflectiveOperationException {
-        final Field field = owner.getDeclaredField(name);
-        field.setAccessible(true);
-        return field.get(target);
-    }
-
     /**
      * The slot counts of the replay's two key tables - storedSymbolKeys and outputKeys -
      * which is what each clear of that table sweeps. Read afresh on every call so that an
      * assertion never stands on a table the replay has since replaced.
      */
-    private static int[] keyTableSlots(LiveViewCheckpointKeyedReplay replay) throws ReflectiveOperationException {
-        final Object storedSymbolKeys = fieldOf(LiveViewCheckpointKeyedReplay.class, "storedSymbolKeys", replay);
+    private static int[] keyTableSlots(LiveViewCheckpointKeyedReplay replay) {
         return new int[]{
-                ((int[]) fieldOf(AbstractIntHashSet.class, "keys", storedSymbolKeys)).length,
+                replay.getStoredSymbolKeysForTest().getSlotCount(),
                 replay.getOutputKeys().getSlotCount()
         };
     }

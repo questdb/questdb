@@ -116,7 +116,7 @@ public class LiveViewCheckpointFunctionRootBuilder extends AbstractLiveViewCheck
     }
 
     @TestOnly
-    boolean isBorrowingCompiledForTest(byte[] functionIdentity, byte[] keySchema) {
+    public boolean isBorrowingCompiledForTest(byte[] functionIdentity, byte[] keySchema) {
         return this.functionIdentity == functionIdentity && this.keySchema == keySchema;
     }
 
@@ -128,6 +128,21 @@ public class LiveViewCheckpointFunctionRootBuilder extends AbstractLiveViewCheck
             @NotNull byte[] keySchema
     ) {
         of0(checkpointsDir, oldFunctionRootRef, functionIdentity, stateFormatVersion, keySchema, false);
+    }
+
+    /**
+     * Test-only {@link #ofBorrowedCompiled}: the caller must keep the arrays immutable and
+     * alive until build returns.
+     */
+    @TestOnly
+    public void ofBorrowedCompiledForTest(
+            @Transient @NotNull Path checkpointsDir,
+            @NotNull LiveViewCheckpointPageRef oldFunctionRootRef,
+            @NotNull byte[] functionIdentity,
+            int stateFormatVersion,
+            @NotNull byte[] keySchema
+    ) {
+        ofBorrowedCompiled(checkpointsDir, oldFunctionRootRef, functionIdentity, stateFormatVersion, keySchema);
     }
 
     /**

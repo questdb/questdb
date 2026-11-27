@@ -34,6 +34,7 @@ import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * Append-only native storage for encoded checkpoint records: partition keys in an arena
@@ -72,8 +73,11 @@ import org.jetbrains.annotations.NotNull;
  * view's refresh tracker counts it: the arena holds keys and payloads that were heap
  * arrays {@code cairo.live.view.refresh.memory.limit.bytes} never covered, so every
  * allocation and free here is untracked.
+ * <p>
+ * The class is public only so that tests can name it. Its members stay package-private,
+ * and tests reach them through the {@code @TestOnly ...ForTest} wrappers.
  */
-final class LiveViewCheckpointRecordArena implements Mutable, QuietCloseable {
+public final class LiveViewCheckpointRecordArena implements Mutable, QuietCloseable {
     /**
      * The handle of no record. Records start at non-negative offsets, so it never
      * names one.
@@ -95,6 +99,30 @@ final class LiveViewCheckpointRecordArena implements Mutable, QuietCloseable {
         this.alignment = alignment;
         this.isEmptyRecordAllowed = isEmptyRecordAllowed;
         this.kind = kind;
+    }
+
+    /**
+     * Test-only {@link #forKeys()}.
+     */
+    @TestOnly
+    public static LiveViewCheckpointRecordArena forKeysForTest() {
+        return forKeys();
+    }
+
+    /**
+     * Test-only {@link #forPayloads()}.
+     */
+    @TestOnly
+    public static LiveViewCheckpointRecordArena forPayloadsForTest() {
+        return forPayloads();
+    }
+
+    /**
+     * @return {@link #NO_RECORD}, for a test
+     */
+    @TestOnly
+    public static long getNoRecordForTest() {
+        return NO_RECORD;
     }
 
     /**
@@ -121,6 +149,56 @@ final class LiveViewCheckpointRecordArena implements Mutable, QuietCloseable {
     }
 
     /**
+     * Test-only {@link #abortRecord()}.
+     */
+    @TestOnly
+    public void abortRecordForTest() {
+        abortRecord();
+    }
+
+    /**
+     * Test-only {@link #address(long)}: the address is valid until the next call that
+     * appends to, grows, clears or frees this arena.
+     */
+    @TestOnly
+    public long addressForTest(long handle) {
+        return address(handle);
+    }
+
+    /**
+     * Test-only {@link #append(long, int)}: the source must not lie inside this arena.
+     */
+    @TestOnly
+    public long appendForTest(long address, int length) {
+        return append(address, length);
+    }
+
+    /**
+     * Test-only {@link #beginRecord()}: the sink writes the arena's own storage until
+     * {@link #commitRecordForTest()} or {@link #abortRecordForTest()}.
+     */
+    @TestOnly
+    public MemoryA beginRecordForTest() {
+        return beginRecord();
+    }
+
+    /**
+     * Test-only {@link #bytesOffset(long)}.
+     */
+    @TestOnly
+    public long bytesOffsetForTest(long handle) {
+        return bytesOffset(handle);
+    }
+
+    /**
+     * Test-only {@link #capacity()}.
+     */
+    @TestOnly
+    public long capacityForTest() {
+        return capacity();
+    }
+
+    /**
      * Forgets every record while keeping the capacity the arena has grown to.
      */
     @Override
@@ -138,6 +216,79 @@ final class LiveViewCheckpointRecordArena implements Mutable, QuietCloseable {
     @Override
     public void close() {
         release();
+    }
+
+    /**
+     * Test-only {@link #commitRecord()}.
+     */
+    @TestOnly
+    public long commitRecordForTest() {
+        return commitRecord();
+    }
+
+    /**
+     * Test-only {@link #ensureCapacity(long)}: never call it while an address is live.
+     */
+    @TestOnly
+    public void ensureCapacityForTest(long additionalBytes) {
+        ensureCapacity(additionalBytes);
+    }
+
+    /**
+     * Test-only {@link #length(long)}.
+     */
+    @TestOnly
+    public int lengthForTest(long handle) {
+        return length(handle);
+    }
+
+    /**
+     * Test-only {@link #memory()}: the storage is valid until the next call that appends to,
+     * grows, clears or frees this arena.
+     */
+    @TestOnly
+    public MemoryR memoryForTest() {
+        return memory();
+    }
+
+    /**
+     * Test-only {@link #recordBytes(int)}.
+     */
+    @TestOnly
+    public long recordBytesForTest(int length) {
+        return recordBytes(length);
+    }
+
+    /**
+     * Test-only {@link #recordCount()}.
+     */
+    @TestOnly
+    public int recordCountForTest() {
+        return recordCount();
+    }
+
+    /**
+     * Test-only {@link #release()}.
+     */
+    @TestOnly
+    public void releaseForTest() {
+        release();
+    }
+
+    /**
+     * Test-only {@link #reserve(int)}.
+     */
+    @TestOnly
+    public long reserveForTest(int length) {
+        return reserve(length);
+    }
+
+    /**
+     * Test-only {@link #size()}.
+     */
+    @TestOnly
+    public long sizeForTest() {
+        return size();
     }
 
     /**

@@ -57,7 +57,6 @@ import org.junit.Before;
 import org.junit.Test;
 
 import java.io.Closeable;
-import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -216,7 +215,7 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
                         TestUtils.assertContains(e.getFlyweightMessage(), "state page reference count invalid, count=65538");
                     }
                 }
-                Assert.assertEquals(65_536, statePageRefSlots(reader));
+                Assert.assertEquals(65_536, reader.getStatePageRefSlotCountForTest());
                 // A narrower entry opens after the rejection and leaves the array alone.
                 Assert.assertEquals(65_536, openRepeatedChunks(reader, chunk, 3));
             }
@@ -1042,10 +1041,10 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
             // One partition expires the head chunk and a row of the next, then seals a tail.
             builder.of(third, valueKind, 1);
             builder.dropHeadRows(4);
-            assertPooledReferencesDistinct(builder);
+            assertPooledReferencesDistinct(builder, 3 * pagesPerChunk);
             appendRingRows(builder, writer, valueKind, 9, 10);
             LiveViewCheckpointTestKeys.freeze(builder, writer, KEY, 0, 0, 0, 0, 6, out);
-            assertPooledReferencesDistinct(builder);
+            assertPooledReferencesDistinct(builder, 3 * pagesPerChunk);
             Assert.assertEquals(3 * pagesPerChunk, out.getStatePageCount());
             for (int i = 0; i < 2 * pagesPerChunk; i++) {
                 assertRefEquals(third.getStatePageRef(pagesPerChunk + i), out.getStatePageRef(i));
@@ -1066,7 +1065,7 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
             // The next partition carries the whole ring forward through the same slots.
             builder.of(third, valueKind, 1);
             LiveViewCheckpointTestKeys.freeze(builder, writer, KEY, 0, 0, 0, 0, 9, out);
-            assertPooledReferencesDistinct(builder);
+            assertPooledReferencesDistinct(builder, 3 * pagesPerChunk);
             Assert.assertEquals(3 * pagesPerChunk, out.getStatePageCount());
             for (int i = 0; i < 3 * pagesPerChunk; i++) {
                 assertRefEquals(third.getStatePageRef(i), out.getStatePageRef(i));
@@ -1089,16 +1088,18 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
 
     /**
      * Asserts that no two reference slots of {@code builder} name one object. The slots past
-     * the references the builder holds keep objects for reuse, so they count too.
+     * the references the builder holds keep objects for reuse, so they count too. The first
+     * {@code heldSlotCount} slots must each hold an object: the ring the builder carries puts
+     * one in each, and a dropped chunk's objects rotate into the slots it vacates.
      */
-    private static void assertPooledReferencesDistinct(LiveViewCheckpointRangeRingStateBuilder builder) {
-        final LiveViewCheckpointStatePageRef[] refs;
-        try {
-            final Field field = LiveViewCheckpointRangeRingStateBuilder.class.getDeclaredField("refs");
-            field.setAccessible(true);
-            refs = (LiveViewCheckpointStatePageRef[]) field.get(builder);
-        } catch (ReflectiveOperationException e) {
-            throw new AssertionError(e);
+    private static void assertPooledReferencesDistinct(LiveViewCheckpointRangeRingStateBuilder builder, int heldSlotCount) {
+        final LiveViewCheckpointStatePageRef[] refs = builder.getRefSlotsForTest();
+        Assert.assertTrue(
+                "the builder must keep a slot for each reference of the ring [slots=" + refs.length + ']',
+                refs.length >= heldSlotCount
+        );
+        for (int i = 0; i < heldSlotCount; i++) {
+            Assert.assertNotNull("reference slot " + i + " holds no object", refs[i]);
         }
         for (int i = 0; i < refs.length; i++) {
             for (int j = i + 1; j < refs.length; j++) {
@@ -1817,7 +1818,7 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
             reader.ofMetadata(entry);
             Assert.assertEquals(chunkCount * chunk.getStatePageCount(), reader.getStatePageCount());
         }
-        return statePageRefSlots(reader);
+        return reader.getStatePageRefSlotCountForTest();
     }
 
     private static LiveViewCheckpointStatePageRef[] refs(LiveViewCheckpointPartitionMapEntry entry) {
@@ -1850,20 +1851,6 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
             scalar[Long.BYTES + b] = (byte) (rowCount >>> (b * 8));
         }
         return entry(scalar, refs);
-    }
-
-    /**
-     * @return the length of the reader's reference array, which no accessor exposes: the
-     * reader hands out only the references of the entry it has open
-     */
-    private static int statePageRefSlots(LiveViewCheckpointRangeRingStateReader reader) {
-        try {
-            final Field field = LiveViewCheckpointRangeRingStateReader.class.getDeclaredField("statePageRefs");
-            field.setAccessible(true);
-            return ((LiveViewCheckpointStatePageRef[]) field.get(reader)).length;
-        } catch (ReflectiveOperationException e) {
-            throw new AssertionError(e);
-        }
     }
 
     private static void writeInitial(

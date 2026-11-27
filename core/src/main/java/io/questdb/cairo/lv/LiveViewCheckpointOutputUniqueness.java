@@ -32,6 +32,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * Checks uniqueness of corrected (timestamp, projected key) pairs before sparse
@@ -54,14 +55,15 @@ public final class LiveViewCheckpointOutputUniqueness implements Mutable {
      * leaves the detector disarmed and the repair unchecked.
      */
     public static final int NO_KEY_COLUMN = -1;
-    // The keys of the timestamp group being walked, empty until that group holds a second
-    // row. Never holds the set's own -1 marker, for the reason the class comment gives.
-    private final GroupKeySet groupKeys = new GroupKeySet();
     private long checkedRows;
     private long duplicateRows;
     private int firstDuplicateKey = SymbolTable.VALUE_NOT_FOUND;
     private long firstDuplicateTs = Numbers.LONG_NULL;
     private int groupFirstKey = SymbolTable.VALUE_NOT_FOUND;
+    // The keys of the timestamp group being walked, empty until that group holds a second
+    // row. Never holds the set's own -1 marker, for the reason the class comment gives.
+    // Not final only so that setGroupKeysForTest() can stand a test's own set in.
+    private GroupKeySet groupKeys = new GroupKeySet();
     private long groupRows;
     private long groupTs;
     private int keyColumnIndex = NO_KEY_COLUMN;
@@ -223,6 +225,15 @@ public final class LiveViewCheckpointOutputUniqueness implements Mutable {
     }
 
     /**
+     * Stands {@code groupKeys} in for the detector's group scratch, so a test can watch the
+     * set or make it fail. The detector keeps the set until the next call.
+     */
+    @TestOnly
+    public void setGroupKeysForTest(@NotNull GroupKeySet groupKeys) {
+        this.groupKeys = groupKeys;
+    }
+
+    /**
      * The projected partition key's column index in the record a replay emits, which is the
      * half of {@code (designated timestamp, projected partition key)} that is not the
      * timestamp.
@@ -281,8 +292,10 @@ public final class LiveViewCheckpointOutputUniqueness implements Mutable {
      * sweeps the whole table only while the keys fill enough of it that the sweep is the
      * cheaper way, and otherwise erases just the clusters those keys sit in.
      * <p>
-     * Public and open to extension only so that a test can stand a failing set in for the
-     * copy a park makes, whose allocation failure has no reproducible natural producer.
+     * Public and open to extension only so that a test can stand a set of its own in, through
+     * {@link LiveViewCheckpointOutputUniqueness#setGroupKeysForTest}: a failing set for the copy
+     * a park makes, whose allocation failure has no reproducible natural producer, or one that
+     * reads its own table.
      */
     public static class GroupKeySet extends CompactIntHashSet {
         // Past this many table slots per key, erasing the keys' clusters beats sweeping the

@@ -26,9 +26,9 @@ package io.questdb.test.cairo.lv;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.lv.LiveViewAccumulatorDescriptor;
 import io.questdb.cairo.lv.LiveViewCheckpointFunctionIdentity;
+import io.questdb.cairo.lv.LiveViewCheckpointMetadata;
 import io.questdb.cairo.lv.LiveViewStatePageReader;
 import io.questdb.cairo.lv.LiveViewWindowStateManifest;
 import io.questdb.cairo.lv.LiveViewWindowStatePlan;
@@ -405,12 +405,12 @@ public class LiveViewWindowStateGoldenEncodingTest extends AbstractLiveViewTest 
 
     @Test
     public void testKeySchemaBytes() throws Exception {
-        assertGolden("a null key schema", "00000000", encodeKeySchema(null));
-        assertGolden("an empty key schema", "00000000", encodeKeySchema(ArrayColumnTypes.EMPTY));
+        assertGolden("a null key schema", "00000000", LiveViewCheckpointMetadata.encodeKeySchemaForTest(null));
+        assertGolden("an empty key schema", "00000000", LiveViewCheckpointMetadata.encodeKeySchemaForTest(ArrayColumnTypes.EMPTY));
         assertGolden(
                 "an INT, STRING, SYMBOL key schema",
                 "00000003000000050000000b0000000c",
-                encodeKeySchema(
+                LiveViewCheckpointMetadata.encodeKeySchemaForTest(
                         new ArrayColumnTypes()
                                 .add(ColumnType.INT)
                                 .add(ColumnType.STRING)
@@ -503,13 +503,6 @@ public class LiveViewWindowStateGoldenEncodingTest extends AbstractLiveViewTest 
 
     private static void assertGolden(String what, String expectedHex, byte[] actual) {
         Assert.assertEquals(what, expectedHex, hex(actual));
-    }
-
-    private static byte[] encodeKeySchema(ColumnTypes keyTypes) throws Exception {
-        final Class<?> metadata = Class.forName("io.questdb.cairo.lv.LiveViewCheckpointMetadata");
-        final java.lang.reflect.Method method = metadata.getDeclaredMethod("encodeKeySchema", ColumnTypes.class);
-        method.setAccessible(true);
-        return (byte[]) method.invoke(null, keyTypes);
     }
 
     /**

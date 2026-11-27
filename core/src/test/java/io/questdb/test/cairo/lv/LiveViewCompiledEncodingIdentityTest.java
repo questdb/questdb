@@ -51,8 +51,6 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
 import java.util.Arrays;
 
 /**
@@ -62,16 +60,14 @@ import java.util.Arrays;
  * rather than cloning them.
  * <p>
  * Backing identity is an {@code ==} property, so every comparison here is a reference check.
- * The owners expose their backing arrays through package-private {@code borrow*} accessors, and
- * the builders and result roots expose their borrowed state through package-private
- * {@code isBorrowingCompiledForTest} / {@code ofBorrowedCompiled} / {@code ofBuilder} methods.
- * This test reaches all of them by reflection, so no test-only <i>class</i> ships inside
- * {@code io.questdb.cairo.lv}. Package-private access is not open to it: every test class in the
- * repository declares a package under {@code io.questdb.test}, so no test can sit in the package
- * it exercises, and over forty test classes reach production internals with {@code setAccessible}
- * for that reason. The {@code io.questdb.cairo.lv} package still carries {@code @TestOnly} members,
- * this diff included; what reflection keeps out of it is a whole production-shaped type that exists
- * only for a test.
+ * The owners lend their backing arrays through package-private {@code borrow*} accessors, and the
+ * builders and result roots take borrowed arrays through package-private
+ * {@code ofBorrowedCompiled} / {@code ofBuilder} methods. Package-private visibility keeps those
+ * lending and borrowing members off the package's API, so this test reads the backing arrays
+ * through the owners' {@code @TestOnly borrow*ForTest} accessors and drives the borrowing entry
+ * points through their {@code @TestOnly ...ForTest} wrappers, which return or take the very arrays
+ * the package-private members do. {@code isBorrowingCompiledForTest} reports what a builder or a
+ * root holds.
  */
 public class LiveViewCompiledEncodingIdentityTest extends AbstractLiveViewTest {
 
@@ -155,69 +151,90 @@ public class LiveViewCompiledEncodingIdentityTest extends AbstractLiveViewTest {
         try (LiveViewCheckpointFunctionRootBuilder builder = new LiveViewCheckpointFunctionRootBuilder(configuration);
              LiveViewCheckpointMetaSegmentWriter unopened = new LiveViewCheckpointMetaSegmentWriter(configuration)) {
             expectInitializerFailure("function root metadata page reference invalid", () ->
-                    ofBorrowedCompiled(builder, dir, invalidMetaRef, invalidIdentity, 1, invalidSchema));
+                    builder.ofBorrowedCompiledForTest(dir, invalidMetaRef, invalidIdentity, 1, invalidSchema));
             Assert.assertFalse("function builder retained invalid-predecessor bytes",
-                    isBorrowingCompiled(builder, invalidIdentity, invalidSchema));
-            ofBorrowedCompiled(builder, dir, nullMetaRef, identityB, 1, schemaB);
+                    builder.isBorrowingCompiledForTest(invalidIdentity, invalidSchema));
+            builder.ofBorrowedCompiledForTest(dir, nullMetaRef, identityB, 1, schemaB);
             Assert.assertTrue("function builder did not reuse after invalid predecessor",
-                    isBorrowingCompiled(builder, identityB, schemaB));
-            ofBorrowedCompiled(builder, dir, nullMetaRef, identityA, 1, schemaA);
-            Assert.assertTrue("function builder cloned compiled bytes", isBorrowingCompiled(builder, identityA, schemaA));
+                    builder.isBorrowingCompiledForTest(identityB, schemaB));
+            builder.ofBorrowedCompiledForTest(dir, nullMetaRef, identityA, 1, schemaA);
+            Assert.assertTrue("function builder cloned compiled bytes", builder.isBorrowingCompiledForTest(identityA, schemaA));
+            Assert.assertFalse("function builder borrows its key schema with its identity",
+                    builder.isBorrowingCompiledForTest(identityA, schemaB));
             expectBuildFailure(() -> builder.buildIntoOpenSegment(78, unopened, new LiveViewCheckpointPageRef()));
-            Assert.assertFalse("function builder retained failed-view bytes", isBorrowingCompiled(builder, identityA, schemaA));
-            ofBorrowedCompiled(builder, dir, nullMetaRef, identityB, 1, schemaB);
-            Assert.assertTrue("function builder did not borrow replacement bytes", isBorrowingCompiled(builder, identityB, schemaB));
-            Assert.assertFalse("function builder leaked prior-view bytes", isBorrowingCompiled(builder, identityA, schemaA));
+            Assert.assertFalse("function builder retained failed-view bytes", builder.isBorrowingCompiledForTest(identityA, schemaA));
+            builder.ofBorrowedCompiledForTest(dir, nullMetaRef, identityB, 1, schemaB);
+            Assert.assertTrue("function builder did not borrow replacement bytes", builder.isBorrowingCompiledForTest(identityB, schemaB));
+            Assert.assertFalse("function builder leaked prior-view bytes", builder.isBorrowingCompiledForTest(identityA, schemaA));
         }
 
         try (LiveViewCheckpointWindowRootBuilder builder = new LiveViewCheckpointWindowRootBuilder(configuration);
              LiveViewCheckpointMetaSegmentWriter unopened = new LiveViewCheckpointMetaSegmentWriter(configuration)) {
-            expectInitializerFailure("window state root metadata page reference invalid", () -> ofBorrowedCompiled(
-                    builder, dir, invalidMetaRef, invalidIdentity, ColumnType.TIMESTAMP_MICRO,
+            expectInitializerFailure("window state root metadata page reference invalid", () -> builder.ofBorrowedCompiledForTest(
+                    dir, invalidMetaRef, invalidIdentity, ColumnType.TIMESTAMP_MICRO,
                     invalidSchema, invalidManifest, 16, true, null
             ));
             Assert.assertFalse("window builder retained invalid-predecessor bytes",
-                    isBorrowingCompiled(builder, invalidIdentity, invalidSchema, invalidManifest));
-            ofBorrowedCompiled(
-                    builder, dir, nullMetaRef, identityB, ColumnType.TIMESTAMP_MICRO, schemaB, manifestB, 16, true, null
+                    builder.isBorrowingCompiledForTest(invalidIdentity, invalidSchema, invalidManifest));
+            builder.ofBorrowedCompiledForTest(
+                    dir, nullMetaRef, identityB, ColumnType.TIMESTAMP_MICRO, schemaB, manifestB, 16, true, null
             );
             Assert.assertTrue("window builder did not reuse after invalid predecessor",
-                    isBorrowingCompiled(builder, identityB, schemaB, manifestB));
-            ofBorrowedCompiled(builder, dir, nullMetaRef, identityA, ColumnType.TIMESTAMP_MICRO, schemaA, manifestA, 16, true, null);
-            Assert.assertTrue("window builder cloned compiled bytes", isBorrowingCompiled(builder, identityA, schemaA, manifestA));
+                    builder.isBorrowingCompiledForTest(identityB, schemaB, manifestB));
+            builder.ofBorrowedCompiledForTest(dir, nullMetaRef, identityA, ColumnType.TIMESTAMP_MICRO, schemaA, manifestA, 16, true, null);
+            Assert.assertTrue("window builder cloned compiled bytes", builder.isBorrowingCompiledForTest(identityA, schemaA, manifestA));
+            Assert.assertFalse("window builder borrows its key schema with its identity",
+                    builder.isBorrowingCompiledForTest(identityA, schemaB, manifestA));
+            Assert.assertFalse("window builder borrows its manifest with its identity and key schema",
+                    builder.isBorrowingCompiledForTest(identityA, schemaA, manifestB));
             expectBuildFailure(() -> builder.buildIntoOpenSegment(79, unopened, new LiveViewCheckpointPageRef()));
-            Assert.assertFalse("window builder retained failed-view bytes", isBorrowingCompiled(builder, identityA, schemaA, manifestA));
-            ofBorrowedCompiled(builder, dir, nullMetaRef, identityB, ColumnType.TIMESTAMP_MICRO, schemaB, manifestB, 16, true, null);
-            Assert.assertTrue("window builder did not borrow replacement bytes", isBorrowingCompiled(builder, identityB, schemaB, manifestB));
-            Assert.assertFalse("window builder leaked prior-view bytes", isBorrowingCompiled(builder, identityA, schemaA, manifestA));
+            Assert.assertFalse("window builder retained failed-view bytes", builder.isBorrowingCompiledForTest(identityA, schemaA, manifestA));
+            builder.ofBorrowedCompiledForTest(dir, nullMetaRef, identityB, ColumnType.TIMESTAMP_MICRO, schemaB, manifestB, 16, true, null);
+            Assert.assertTrue("window builder did not borrow replacement bytes", builder.isBorrowingCompiledForTest(identityB, schemaB, manifestB));
+            Assert.assertFalse("window builder leaked prior-view bytes", builder.isBorrowingCompiledForTest(identityA, schemaA, manifestA));
         }
 
         final LiveViewCheckpointPageRef functionPredecessor = new LiveViewCheckpointPageRef();
         try (LiveViewCheckpointFunctionRootBuilder builder = new LiveViewCheckpointFunctionRootBuilder(configuration)) {
-            ofBorrowedCompiled(builder, dir, nullMetaRef, identityA, 1, schemaA);
+            builder.ofBorrowedCompiledForTest(dir, nullMetaRef, identityA, 1, schemaA);
             builder.build(81, functionPredecessor);
             expectInitializerFailure("function root identity or schema mismatch", () ->
-                    ofBorrowedCompiled(builder, dir, functionPredecessor, identityB, 1, schemaB));
+                    builder.ofBorrowedCompiledForTest(dir, functionPredecessor, identityB, 1, schemaB));
             Assert.assertFalse("function builder retained semantic-mismatch bytes",
-                    isBorrowingCompiled(builder, identityB, schemaB));
-            ofBorrowedCompiled(builder, dir, functionPredecessor, identityA, 1, schemaA);
+                    builder.isBorrowingCompiledForTest(identityB, schemaB));
+            builder.ofBorrowedCompiledForTest(dir, functionPredecessor, identityA, 1, schemaA);
             Assert.assertTrue("function builder did not reuse after semantic mismatch",
-                    isBorrowingCompiled(builder, identityA, schemaA));
+                    builder.isBorrowingCompiledForTest(identityA, schemaA));
         }
 
         try (LiveViewCheckpointFunctionRoot root = new LiveViewCheckpointFunctionRoot(configuration)) {
-            ofBuilder(root, identityA, 1, schemaA, nullStateRef, nullMetaRef, noSegments);
-            Assert.assertTrue("function result root cloned compiled bytes", isBorrowingCompiled(root, identityA, schemaA));
-            clearBorrowedCompiled(root);
-            ofBuilder(root, identityB, 1, schemaB, nullStateRef, nullMetaRef, noSegments);
-            Assert.assertTrue("function result root did not replace bytes", isBorrowingCompiled(root, identityB, schemaB));
+            root.ofBuilderForTest(identityA, 1, schemaA, nullStateRef, nullMetaRef, noSegments);
+            Assert.assertTrue("function result root cloned compiled bytes", root.isBorrowingCompiledForTest(identityA, schemaA));
+            Assert.assertFalse("function result root borrows its key schema with its identity",
+                    root.isBorrowingCompiledForTest(identityA, schemaB));
+            root.clearBorrowedCompiledForTest();
+            Assert.assertNull("function result root kept its identity past the clear", root.getFunctionIdentity());
+            Assert.assertNull("function result root kept its key schema past the clear", root.getKeySchema());
+            Assert.assertFalse("function result root kept borrowed bytes past the clear",
+                    root.isBorrowingCompiledForTest(identityA, schemaA));
+            root.ofBuilderForTest(identityB, 1, schemaB, nullStateRef, nullMetaRef, noSegments);
+            Assert.assertTrue("function result root did not replace bytes", root.isBorrowingCompiledForTest(identityB, schemaB));
         }
         try (LiveViewCheckpointWindowRoot root = new LiveViewCheckpointWindowRoot(configuration)) {
-            ofBuilder(root, identityA, ColumnType.TIMESTAMP_MICRO, schemaA, manifestA, 16, nullMetaRef, noSegments);
-            Assert.assertTrue("window result root cloned compiled bytes", isBorrowingCompiled(root, identityA, schemaA, manifestA));
-            clearBorrowedCompiled(root);
-            ofBuilder(root, identityB, ColumnType.TIMESTAMP_MICRO, schemaB, manifestB, 16, nullMetaRef, noSegments);
-            Assert.assertTrue("window result root did not replace bytes", isBorrowingCompiled(root, identityB, schemaB, manifestB));
+            root.ofBuilderForTest(identityA, ColumnType.TIMESTAMP_MICRO, schemaA, manifestA, 16, nullMetaRef, noSegments);
+            Assert.assertTrue("window result root cloned compiled bytes", root.isBorrowingCompiledForTest(identityA, schemaA, manifestA));
+            Assert.assertFalse("window result root borrows its key schema with its identity",
+                    root.isBorrowingCompiledForTest(identityA, schemaB, manifestA));
+            Assert.assertFalse("window result root borrows its manifest with its identity and key schema",
+                    root.isBorrowingCompiledForTest(identityA, schemaA, manifestB));
+            root.clearBorrowedCompiledForTest();
+            Assert.assertNull("window result root kept its identity past the clear", root.getWindowIdentity());
+            Assert.assertNull("window result root kept its key schema past the clear", root.getKeySchema());
+            Assert.assertNull("window result root kept its manifest past the clear", root.getManifest());
+            Assert.assertFalse("window result root kept borrowed bytes past the clear",
+                    root.isBorrowingCompiledForTest(identityA, schemaA, manifestA));
+            root.ofBuilderForTest(identityB, ColumnType.TIMESTAMP_MICRO, schemaB, manifestB, 16, nullMetaRef, noSegments);
+            Assert.assertTrue("window result root did not replace bytes", root.isBorrowingCompiledForTest(identityB, schemaB, manifestB));
         }
     }
 
@@ -256,7 +273,7 @@ public class LiveViewCompiledEncodingIdentityTest extends AbstractLiveViewTest {
                 null
         );
         Assert.assertArrayEquals("malformed window name UTF-8 bytes changed",
-                expectedUtf8, borrowBytes(window, "borrowCheckpointWindowNameUtf8"));
+                expectedUtf8, window.borrowCheckpointWindowNameUtf8ForTest());
         final LiveViewCheckpointFunctionIdentity malformed = new LiveViewCheckpointFunctionIdentity(
                 malformedName, "f", 0, "", "o", "c", null
         );
@@ -275,13 +292,19 @@ public class LiveViewCompiledEncodingIdentityTest extends AbstractLiveViewTest {
                 0, 0, 0, 1, 'c'
         };
         Assert.assertArrayEquals("malformed function identity bytes changed",
-                expectedIdentity, borrowBytes(malformed, "borrowEncoded"));
+                expectedIdentity, malformed.borrowEncodedForTest());
         Assert.assertSame("malformed Unicode identity was recreated",
-                borrowBytes(malformed, "borrowEncoded"), borrowBytes(malformed, "borrowEncoded"));
+                malformed.borrowEncodedForTest(), malformed.borrowEncodedForTest());
         Assert.assertNotSame("public function identity is not defensive",
-                borrowBytes(malformed, "borrowEncoded"), malformed.getEncoded());
+                malformed.borrowEncodedForTest(), malformed.getEncoded());
         Assert.assertSame("empty schemas do not share singleton",
-                borrowBytes(malformed, "borrowEncodedKeySchema"), borrowBytes(emptyAgain, "borrowEncodedKeySchema"));
+                malformed.borrowEncodedKeySchemaForTest(), emptyAgain.borrowEncodedKeySchemaForTest());
+        // An empty key list encodes as a zero column count, the one array every empty key
+        // schema shares, whether a window or a function identity encodes it.
+        Assert.assertArrayEquals("empty window key schema bytes changed",
+                new byte[]{0, 0, 0, 0}, window.borrowCheckpointKeySchemaForTest());
+        Assert.assertSame("the window's empty schema is not the shared singleton",
+                window.borrowCheckpointKeySchemaForTest(), malformed.borrowEncodedKeySchemaForTest());
     }
 
     private static void assertSameOwners(Snapshot snapshot, LiveViewInstance instance, boolean isPlanExpected) {
@@ -289,21 +312,28 @@ public class LiveViewCompiledEncodingIdentityTest extends AbstractLiveViewTest {
         final WindowFunction function = firstFunction(instance);
         final LiveViewWindowStatePlan plan = window.getCheckpointWindowStatePlan();
         Assert.assertSame("window name backing changed",
-                snapshot.windowName, borrowBytes(window, "borrowCheckpointWindowNameUtf8"));
+                snapshot.windowName, window.borrowCheckpointWindowNameUtf8ForTest());
         Assert.assertSame("window schema backing changed",
-                snapshot.windowSchema, borrowBytes(window, "borrowCheckpointKeySchema"));
+                snapshot.windowSchema, window.borrowCheckpointKeySchemaForTest());
         Assert.assertSame("function identity backing changed",
-                snapshot.functionIdentity, borrowBytes(function.checkpointFunctionIdentity(), "borrowEncoded"));
+                snapshot.functionIdentity, function.checkpointFunctionIdentity().borrowEncodedForTest());
         Assert.assertSame("function schema backing changed",
-                snapshot.functionSchema, borrowBytes(function.checkpointFunctionIdentity(), "borrowEncodedKeySchema"));
+                snapshot.functionSchema, function.checkpointFunctionIdentity().borrowEncodedKeySchemaForTest());
         Assert.assertNotSame("public function identity is not defensive",
                 snapshot.functionIdentity, function.checkpointFunctionIdentity().getEncoded());
+        // The public getter copies the very array the borrow lends.
+        Assert.assertArrayEquals("borrowed function identity differs from its public copy",
+                function.checkpointFunctionIdentity().getEncoded(), function.checkpointFunctionIdentity().borrowEncodedForTest());
         if (isPlanExpected) {
             Assert.assertNotNull("fused plan disappeared", plan);
+            Assert.assertArrayEquals("borrowed window identity differs from its public copy",
+                    plan.getWindowIdentity(), plan.borrowWindowIdentityForTest());
+            Assert.assertArrayEquals("borrowed manifest differs from its public copy",
+                    plan.getManifest().getEncoded(), plan.getManifest().borrowEncodedForTest());
             Assert.assertSame("window identity backing changed",
-                    snapshot.windowIdentity, borrowBytes(plan, "borrowWindowIdentity"));
+                    snapshot.windowIdentity, plan.borrowWindowIdentityForTest());
             Assert.assertSame("manifest backing changed",
-                    snapshot.manifest, borrowBytes(plan.getManifest(), "borrowEncoded"));
+                    snapshot.manifest, plan.getManifest().borrowEncodedForTest());
             Assert.assertNotSame("public window identity is not defensive",
                     snapshot.windowIdentity, plan.getWindowIdentity());
             Assert.assertNotSame("public manifest is not defensive",
@@ -313,45 +343,18 @@ public class LiveViewCompiledEncodingIdentityTest extends AbstractLiveViewTest {
         }
     }
 
-    /**
-     * Reads an owner's compiled backing array through its package-private {@code borrow*} accessor.
-     * Reflection hands back the very array the owner holds, so the {@code ==} checks above compare
-     * the same references the production code compares.
-     */
-    private static byte[] borrowBytes(Object owner, String name) {
-        return (byte[]) call(owner, name);
-    }
-
-    private static Object call(Object target, String name, Object... args) {
-        final Method method = declaredMethod(target.getClass(), name, args.length);
-        try {
-            return method.invoke(target, args);
-        } catch (InvocationTargetException e) {
-            final Throwable cause = e.getCause();
-            if (cause instanceof RuntimeException runtime) {
-                throw runtime;
-            }
-            if (cause instanceof Error error) {
-                throw error;
-            }
-            throw new AssertionError("unexpected checked exception from " + name, cause);
-        } catch (IllegalAccessException e) {
-            throw new AssertionError("cannot invoke " + name + " on " + target.getClass().getName(), e);
-        }
-    }
-
     private static Snapshot capture(LiveViewInstance instance) {
         final LiveViewWindow window = instance.getAnchorWindow();
         final WindowFunction function = firstFunction(instance);
         final LiveViewWindowStatePlan plan = window.getCheckpointWindowStatePlan();
         Assert.assertNotNull("expected fused window plan", plan);
         return new Snapshot(
-                borrowBytes(window, "borrowCheckpointWindowNameUtf8"),
-                borrowBytes(window, "borrowCheckpointKeySchema"),
-                borrowBytes(function.checkpointFunctionIdentity(), "borrowEncoded"),
-                borrowBytes(function.checkpointFunctionIdentity(), "borrowEncodedKeySchema"),
-                borrowBytes(plan, "borrowWindowIdentity"),
-                borrowBytes(plan.getManifest(), "borrowEncoded")
+                window.borrowCheckpointWindowNameUtf8ForTest(),
+                window.borrowCheckpointKeySchemaForTest(),
+                function.checkpointFunctionIdentity().borrowEncodedForTest(),
+                function.checkpointFunctionIdentity().borrowEncodedKeySchemaForTest(),
+                plan.borrowWindowIdentityForTest(),
+                plan.getManifest().borrowEncodedForTest()
         );
     }
 
@@ -359,22 +362,6 @@ public class LiveViewCompiledEncodingIdentityTest extends AbstractLiveViewTest {
         return new Path().of(configuration.getDbRoot())
                 .concat(instance.getLiveViewToken())
                 .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
-    }
-
-    private static void clearBorrowedCompiled(Object root) {
-        call(root, "clearBorrowedCompiled");
-    }
-
-    private static Method declaredMethod(Class<?> type, String name, int paramCount) {
-        for (Class<?> c = type; c != null; c = c.getSuperclass()) {
-            for (Method method : c.getDeclaredMethods()) {
-                if (method.getName().equals(name) && method.getParameterCount() == paramCount) {
-                    method.setAccessible(true);
-                    return method;
-                }
-            }
-        }
-        throw new AssertionError(type.getName() + " declares no " + name + "() taking " + paramCount + " arguments");
     }
 
     private static void expectBuildFailure(CheckedRunnable action) {
@@ -407,18 +394,6 @@ public class LiveViewCompiledEncodingIdentityTest extends AbstractLiveViewTest {
         final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance(name);
         Assert.assertNotNull(instance);
         return instance;
-    }
-
-    private static boolean isBorrowingCompiled(Object owner, Object... compiled) {
-        return (boolean) call(owner, "isBorrowingCompiledForTest", compiled);
-    }
-
-    private static void ofBorrowedCompiled(Object builder, Object... args) {
-        call(builder, "ofBorrowedCompiled", args);
-    }
-
-    private static void ofBuilder(Object root, Object... args) {
-        call(root, "ofBuilder", args);
     }
 
     private static void restoreTwice(LiveViewInstance instance) {

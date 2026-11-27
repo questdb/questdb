@@ -25,13 +25,11 @@
 package io.questdb.test.cairo.lv;
 
 import io.questdb.cairo.lv.LiveViewCheckpointOutputUniqueness;
+import io.questdb.cairo.lv.LiveViewCheckpointOutputUniqueness.GroupKeySet;
 import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.std.AbstractIntHashSet;
 import io.questdb.std.Numbers;
 import org.junit.Assert;
 import org.junit.Test;
-
-import java.lang.reflect.Field;
 
 /**
  * Coverage for the detector itself: whether a repair's qualifying output carries each
@@ -93,7 +91,7 @@ public class LiveViewCheckpointOutputUniquenessTest {
     }
 
     @Test
-    public void testANarrowGroupPaysOnlyForItsOwnKeys() throws Exception {
+    public void testANarrowGroupPaysOnlyForItsOwnKeys() {
         // The cost contract. A whole-second snapshot of many accounts grows the scratch
         // table for good, and one worker's detector carries that table into every later
         // repair it runs, for every view. Emptying the table by sweeping all of it charged
@@ -101,8 +99,9 @@ public class LiveViewCheckpointOutputUniquenessTest {
         // closed group, and once more per re-arm and per resumed park. The slot stamped
         // below lies outside every cluster the narrow groups take, so only a sweep of the
         // whole table can reach it.
-        final LiveViewCheckpointOutputUniqueness uniqueness = widened();
-        final int[] table = groupKeyTable(uniqueness);
+        final InspectableGroupKeySet groupKeys = new InspectableGroupKeySet();
+        final LiveViewCheckpointOutputUniqueness uniqueness = widened(groupKeys);
+        final int[] table = groupKeys.keyTable();
         Assert.assertTrue("the wide group must have grown the table past its keys", table.length > WIDE_GROUP_ROWS);
         final int untouchedSlot = table.length / 2;
         Assert.assertEquals(EMPTY_SLOT, table[untouchedSlot]);
@@ -120,7 +119,7 @@ public class LiveViewCheckpointOutputUniquenessTest {
         Assert.assertEquals(
                 "closing a group of two swept the table an earlier, wider group grew",
                 untouchedSlot,
-                groupKeyTable(uniqueness)[untouchedSlot]
+                groupKeys.keyTable()[untouchedSlot]
         );
 
         // The next repair on the same worker re-arms while the last group still holds two
@@ -129,7 +128,7 @@ public class LiveViewCheckpointOutputUniquenessTest {
         Assert.assertEquals(
                 "re-arming for the next repair swept the table an earlier, wider group grew",
                 untouchedSlot,
-                groupKeyTable(uniqueness)[untouchedSlot]
+                groupKeys.keyTable()[untouchedSlot]
         );
 
         // A resumed park copies its group over whatever group this worker last walked.
@@ -142,7 +141,7 @@ public class LiveViewCheckpointOutputUniquenessTest {
         Assert.assertEquals(
                 "resuming a park swept the table an earlier, wider group grew",
                 untouchedSlot,
-                groupKeyTable(uniqueness)[untouchedSlot]
+                groupKeys.keyTable()[untouchedSlot]
         );
         Assert.assertTrue(uniqueness.observe(9_000, 0));
         Assert.assertFalse("the parked group must come back with the resume", uniqueness.observe(9_000, 9));
@@ -206,15 +205,16 @@ public class LiveViewCheckpointOutputUniquenessTest {
     }
 
     @Test
-    public void testAStrayKeyFallsBackToTheFullClear() throws Exception {
+    public void testAStrayKeyFallsBackToTheFullClear() {
         // Emptying the table without sweeping all of it assumes each key sits in the
         // cluster that runs from its home slot. A key found anywhere else - which only a
         // change to the set's probe could produce - must not survive its group, or a later
         // group would be told that key is a duplicate. The close counts the slots it empties
         // and sweeps the whole table when that count comes up short.
-        final LiveViewCheckpointOutputUniqueness uniqueness = widened();
+        final InspectableGroupKeySet groupKeys = new InspectableGroupKeySet();
+        final LiveViewCheckpointOutputUniqueness uniqueness = widened(groupKeys);
         Assert.assertTrue(uniqueness.observe(2_000, 1));
-        final int[] table = groupKeyTable(uniqueness);
+        final int[] table = groupKeys.keyTable();
         Assert.assertEquals(1, table[1]);
         final int strandedSlot = 5;
         Assert.assertEquals(EMPTY_SLOT, table[strandedSlot]);
@@ -226,7 +226,7 @@ public class LiveViewCheckpointOutputUniquenessTest {
         Assert.assertEquals(
                 "a key its home cluster did not hold must still leave with its group",
                 EMPTY_SLOT,
-                groupKeyTable(uniqueness)[strandedSlot]
+                groupKeys.keyTable()[strandedSlot]
         );
         Assert.assertTrue(uniqueness.observe(3_000, 0));
         Assert.assertFalse(uniqueness.observe(3_000, 1));
@@ -266,7 +266,7 @@ public class LiveViewCheckpointOutputUniquenessTest {
     }
 
     @Test
-    public void testKeysSharingAClusterLeaveWithTheirGroup() throws Exception {
+    public void testKeysSharingAClusterLeaveWithTheirGroup() {
         // Keys that collide on a home slot pile into one cluster, and a cluster can run off
         // the end of the table and wrap to its start. The null key and the not-found key
         // are the sentinels most likely to do that: INT_NULL's home is slot zero and -2's is
@@ -274,11 +274,12 @@ public class LiveViewCheckpointOutputUniquenessTest {
         // such a cluster would make the same key in the next group a false duplicate, and a
         // real repeat inside that group must still be found. The stamped slot shows the
         // closes emptied those clusters themselves rather than sweeping the whole table.
-        final LiveViewCheckpointOutputUniqueness uniqueness = widened();
-        final int mask = groupKeyTable(uniqueness).length - 1;
+        final InspectableGroupKeySet groupKeys = new InspectableGroupKeySet();
+        final LiveViewCheckpointOutputUniqueness uniqueness = widened(groupKeys);
+        final int mask = groupKeys.keyTable().length - 1;
         final int untouchedSlot = (mask + 1) / 2;
-        Assert.assertEquals(EMPTY_SLOT, groupKeyTable(uniqueness)[untouchedSlot]);
-        groupKeyTable(uniqueness)[untouchedSlot] = untouchedSlot;
+        Assert.assertEquals(EMPTY_SLOT, groupKeys.keyTable()[untouchedSlot]);
+        groupKeys.keyTable()[untouchedSlot] = untouchedSlot;
         final int[] keys = {
                 0,
                 SymbolTable.VALUE_NOT_FOUND,
@@ -291,7 +292,7 @@ public class LiveViewCheckpointOutputUniquenessTest {
         for (int i = 2; i < keys.length; i++) {
             Assert.assertTrue(uniqueness.observe(2_000, keys[i]));
         }
-        final int[] table = groupKeyTable(uniqueness);
+        final int[] table = groupKeys.keyTable();
         Assert.assertNotEquals("the group must fill the table's last slot", EMPTY_SLOT, table[mask]);
         Assert.assertNotEquals("the group must wrap its cluster to the table's first slot", EMPTY_SLOT, table[0]);
 
@@ -310,7 +311,7 @@ public class LiveViewCheckpointOutputUniquenessTest {
         Assert.assertEquals(
                 "closing a wrapped cluster swept the table an earlier, wider group grew",
                 untouchedSlot,
-                groupKeyTable(uniqueness)[untouchedSlot]
+                groupKeys.keyTable()[untouchedSlot]
         );
     }
 
@@ -407,27 +408,40 @@ public class LiveViewCheckpointOutputUniquenessTest {
         return uniqueness;
     }
 
-    // The detector's scratch table, read afresh on every call so that an assertion never
-    // stands on an array the set has since replaced.
-    private static int[] groupKeyTable(
-            LiveViewCheckpointOutputUniqueness uniqueness
-    ) throws ReflectiveOperationException {
-        final Field groupKeys = LiveViewCheckpointOutputUniqueness.class.getDeclaredField("groupKeys");
-        groupKeys.setAccessible(true);
-        final Field keys = AbstractIntHashSet.class.getDeclaredField("keys");
-        keys.setAccessible(true);
-        return (int[]) keys.get(groupKeys.get(uniqueness));
-    }
-
-    // An armed detector that has walked one wide group of distinct keys and closed it with
-    // the first row, key 0, of the group at timestamp 2_000.
-    private static LiveViewCheckpointOutputUniqueness widened() {
-        final LiveViewCheckpointOutputUniqueness uniqueness = armed();
+    // Walks one wide group of distinct keys on the armed uniqueness and closes it with the
+    // first row, key 0, of the group at timestamp 2_000.
+    private static LiveViewCheckpointOutputUniqueness widen(LiveViewCheckpointOutputUniqueness uniqueness) {
         for (int key = 0; key < WIDE_GROUP_ROWS; key++) {
             Assert.assertTrue(uniqueness.observe(1_000, key));
         }
         Assert.assertTrue(uniqueness.observe(2_000, 0));
         Assert.assertTrue(uniqueness.isUnique());
         return uniqueness;
+    }
+
+    // An armed detector that has walked one wide group of distinct keys and closed it with
+    // the first row, key 0, of the group at timestamp 2_000.
+    private static LiveViewCheckpointOutputUniqueness widened() {
+        return widen(armed());
+    }
+
+    // The same, over groupKeys as its scratch, which the detector takes before it is armed.
+    private static LiveViewCheckpointOutputUniqueness widened(GroupKeySet groupKeys) {
+        final LiveViewCheckpointOutputUniqueness uniqueness = new LiveViewCheckpointOutputUniqueness();
+        uniqueness.setGroupKeysForTest(groupKeys);
+        uniqueness.of(KEY_COLUMN);
+        return widen(uniqueness);
+    }
+
+    /**
+     * A group key set that reads its own key table. It adds only that reader, so every set
+     * operation the detector runs is the one {@link GroupKeySet} implements.
+     */
+    private static final class InspectableGroupKeySet extends GroupKeySet {
+        // Read afresh on every call so that an assertion never stands on an array a rehash
+        // has since replaced.
+        int[] keyTable() {
+            return keys;
+        }
     }
 }

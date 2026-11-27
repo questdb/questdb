@@ -27,6 +27,7 @@ package io.questdb.cairo.lv;
 import io.questdb.std.Hash;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
+import org.jetbrains.annotations.TestOnly;
 
 import java.nio.ByteOrder;
 
@@ -47,11 +48,46 @@ import java.nio.ByteOrder;
  * The compare loop stays in Java and reads eight bytes at a time: a key is tens of bytes,
  * so a native call per probe would cost more than the comparison. Equality goes through
  * {@link Vect#memeq}, which stays in Java below 128 bytes for the same reason.
+ * <p>
+ * The class is public only so that tests can name it. Its members stay package-private,
+ * and tests reach them through the {@code @TestOnly ...ForTest} wrappers.
  */
-final class LiveViewCheckpointKeys {
+public final class LiveViewCheckpointKeys {
     private static final boolean IS_LITTLE_ENDIAN = ByteOrder.nativeOrder() == ByteOrder.LITTLE_ENDIAN;
 
     private LiveViewCheckpointKeys() {
+    }
+
+    /**
+     * Test-only {@link #compare(long, int, long, int)}: each address is valid only for the call.
+     */
+    @TestOnly
+    public static int compareForTest(long left, int leftLength, long right, int rightLength) {
+        return compare(left, leftLength, right, rightLength);
+    }
+
+    /**
+     * Test-only {@link #equals(long, int, long, int)}: each address is valid only for the call.
+     */
+    @TestOnly
+    public static boolean equalsForTest(long left, int leftLength, long right, int rightLength) {
+        return equals(left, leftLength, right, rightLength);
+    }
+
+    /**
+     * Test-only {@link #hash(long, int)}: the address is valid only for the call.
+     */
+    @TestOnly
+    public static int hashForTest(long address, int length) {
+        return hash(address, length);
+    }
+
+    /**
+     * Test-only {@link #hashCode(long, int)}: the address is valid only for the call.
+     */
+    @TestOnly
+    public static int hashCodeForTest(long address, int length) {
+        return hashCode(address, length);
     }
 
     /**

@@ -25,6 +25,8 @@
 
 package io.questdb.test.cairo.lv;
 
+import io.questdb.cairo.lv.LiveViewCheckpointKeys;
+import io.questdb.cairo.lv.LiveViewCheckpointMetadata;
 import io.questdb.std.Hash;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Rnd;
@@ -33,7 +35,6 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.lang.reflect.Method;
 import java.util.Arrays;
 
 /**
@@ -44,27 +45,7 @@ import java.util.Arrays;
  * prefixes so the first difference falls anywhere in a chunk.
  */
 public class LiveViewCheckpointKeysTest {
-    private static final Method COMPARE_BYTES;
-    private static final Method COMPARE_NATIVE;
-    private static final Method EQUALS_NATIVE;
-    private static final Method HASH;
-    private static final Method HASH_CODE;
     private static final int MAX_KEY_LENGTH = 300;
-
-    static {
-        // The helpers are package-private to io.questdb.cairo.lv.
-        try {
-            final Class<?> keys = Class.forName("io.questdb.cairo.lv.LiveViewCheckpointKeys");
-            final Class<?> metadata = Class.forName("io.questdb.cairo.lv.LiveViewCheckpointMetadata");
-            COMPARE_BYTES = accessible(metadata.getDeclaredMethod("compareBytes", byte[].class, byte[].class));
-            COMPARE_NATIVE = accessible(keys.getDeclaredMethod("compare", long.class, int.class, long.class, int.class));
-            EQUALS_NATIVE = accessible(keys.getDeclaredMethod("equals", long.class, int.class, long.class, int.class));
-            HASH = accessible(keys.getDeclaredMethod("hash", long.class, int.class));
-            HASH_CODE = accessible(keys.getDeclaredMethod("hashCode", long.class, int.class));
-        } catch (ReflectiveOperationException e) {
-            throw new ExceptionInInitializerError(e);
-        }
-    }
 
     @Test
     public void testCompareOrdersAsThePersistedMapDoes() throws Exception {
@@ -78,9 +59,11 @@ public class LiveViewCheckpointKeysTest {
                     final byte[] b = relatedKey(rnd, a);
                     copy(a, left);
                     copy(b, right);
-                    final int expected = (int) COMPARE_BYTES.invoke(null, a, b);
-                    Assert.assertEquals(describe(a, b), expected, (int) COMPARE_NATIVE.invoke(null, left, a.length, right, b.length));
-                    Assert.assertEquals(describe(b, a), -expected, (int) COMPARE_NATIVE.invoke(null, right, b.length, left, a.length));
+                    final int expected = LiveViewCheckpointMetadata.compareBytesForTest(a, b);
+                    // The heap order is the JDK's unsigned lexicographic order, a shorter prefix first.
+                    Assert.assertEquals(describe(a, b), Integer.signum(Arrays.compareUnsigned(a, b)), expected);
+                    Assert.assertEquals(describe(a, b), expected, LiveViewCheckpointKeys.compareForTest(left, a.length, right, b.length));
+                    Assert.assertEquals(describe(b, a), -expected, LiveViewCheckpointKeys.compareForTest(right, b.length, left, a.length));
                 }
             } finally {
                 Unsafe.free(left, MAX_KEY_LENGTH, MemoryTag.NATIVE_DEFAULT);
@@ -102,16 +85,16 @@ public class LiveViewCheckpointKeysTest {
                     }
                     copy(key, left);
                     copy(key, right);
-                    Assert.assertTrue((boolean) EQUALS_NATIVE.invoke(null, left, length, right, length));
+                    Assert.assertTrue(LiveViewCheckpointKeys.equalsForTest(left, length, right, length));
                     if (length > 0) {
-                        Assert.assertFalse("a shorter prefix is not equal", (boolean) EQUALS_NATIVE.invoke(null, left, length, right, length - 1));
+                        Assert.assertFalse("a shorter prefix is not equal", LiveViewCheckpointKeys.equalsForTest(left, length, right, length - 1));
                     }
                     // A difference at any position, in a full chunk or in the tail, is seen.
                     for (int p = 0; p < length; p++) {
                         final byte[] other = key.clone();
                         other[p] ^= 1;
                         copy(other, right);
-                        Assert.assertFalse("[length=" + length + ", at=" + p + ']', (boolean) EQUALS_NATIVE.invoke(null, left, length, right, length));
+                        Assert.assertFalse("[length=" + length + ", at=" + p + ']', LiveViewCheckpointKeys.equalsForTest(left, length, right, length));
                     }
                 }
             } finally {
@@ -130,18 +113,13 @@ public class LiveViewCheckpointKeysTest {
                 for (int round = 0; round < 5_000; round++) {
                     final byte[] key = randomKey(rnd);
                     copy(key, address);
-                    Assert.assertEquals(Arrays.hashCode(key), (int) HASH_CODE.invoke(null, address, key.length));
-                    Assert.assertEquals(Hash.spread(Arrays.hashCode(key)), (int) HASH.invoke(null, address, key.length));
+                    Assert.assertEquals(Arrays.hashCode(key), LiveViewCheckpointKeys.hashCodeForTest(address, key.length));
+                    Assert.assertEquals(Hash.spread(Arrays.hashCode(key)), LiveViewCheckpointKeys.hashForTest(address, key.length));
                 }
             } finally {
                 Unsafe.free(address, MAX_KEY_LENGTH, MemoryTag.NATIVE_DEFAULT);
             }
         });
-    }
-
-    private static Method accessible(Method method) {
-        method.setAccessible(true);
-        return method;
     }
 
     private static void copy(byte[] key, long address) {

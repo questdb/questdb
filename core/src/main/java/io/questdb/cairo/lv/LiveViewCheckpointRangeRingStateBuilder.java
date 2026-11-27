@@ -34,6 +34,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 import java.util.Arrays;
@@ -296,6 +297,15 @@ public class LiveViewCheckpointRangeRingStateBuilder implements Closeable {
     public long getLastTimestamp() {
         ensureInitialized();
         return lastTimestamp;
+    }
+
+    /**
+     * @return the builder's reference slots, the pooled ones past its live references
+     * included, for a test
+     */
+    @TestOnly
+    public LiveViewCheckpointStatePageRef[] getRefSlotsForTest() {
+        return refs;
     }
 
     public long getRowCount() {

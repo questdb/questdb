@@ -27,6 +27,7 @@ package io.questdb.cairo.lv;
 import io.questdb.cairo.ColumnTypes;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.util.Arrays;
 
@@ -89,6 +90,23 @@ public final class LiveViewCheckpointFunctionIdentity {
         this.encoded = encode();
         this.encodedKeySchema = LiveViewCheckpointMetadata.encodeKeySchema(checkpointKeyColumnTypes);
         LiveViewCheckpointMetadata.validateByteArrayLength(encoded.length, "function identity");
+    }
+
+    /**
+     * Test-only {@link #borrowEncoded()}: the caller must not mutate the array it returns.
+     */
+    @TestOnly
+    public byte[] borrowEncodedForTest() {
+        return borrowEncoded();
+    }
+
+    /**
+     * Test-only {@link #borrowEncodedKeySchema()}: the caller must not mutate the array it
+     * returns.
+     */
+    @TestOnly
+    public byte[] borrowEncodedKeySchemaForTest() {
+        return borrowEncodedKeySchema();
     }
 
     public String getCanonicalWindowName() {

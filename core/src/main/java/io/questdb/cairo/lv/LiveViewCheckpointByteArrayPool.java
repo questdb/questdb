@@ -41,11 +41,77 @@ import java.util.Arrays;
  * serves reads {@link #getRetainedBytes()} once an operation ends and calls
  * {@link #clear()} when one outlier operation left more behind than the owner is
  * willing to park.
+ * <p>
+ * The class is public only so that tests can name it. Its members stay package-private,
+ * and tests reach them through the {@code @TestOnly ...ForTest} wrappers.
  */
-final class LiveViewCheckpointByteArrayPool {
+public final class LiveViewCheckpointByteArrayPool {
     private final IntObjHashMap<WidthPool> poolsByWidth = new IntObjHashMap<>();
     private int epoch;
     private long retainedBytes;
+
+    LiveViewCheckpointByteArrayPool() {
+    }
+
+    /**
+     * Test-only constructor.
+     */
+    @TestOnly
+    public static LiveViewCheckpointByteArrayPool newForTest() {
+        return new LiveViewCheckpointByteArrayPool();
+    }
+
+    /**
+     * @return the epoch {@link #next} stamps on the widths it serves, for a test
+     */
+    @TestOnly
+    public int getEpochForTest() {
+        return epoch;
+    }
+
+    /**
+     * @return the list of arrays the pool keeps for {@code width}, for identity comparison;
+     * the pool must already hold that width
+     */
+    @TestOnly
+    public Object getWidthArraysForTest(int width) {
+        return poolsByWidth.get(width).arrays;
+    }
+
+    /**
+     * @return the pool's bucket for {@code width}, or null when it holds none, for identity
+     * comparison
+     */
+    @TestOnly
+    public Object getWidthPoolForTest(int width) {
+        return poolsByWidth.get(width);
+    }
+
+    /**
+     * Test-only {@link #next(int)}: the pool zero-fills the array it lends and lends it again
+     * after {@link #reset()}.
+     */
+    @TestOnly
+    public byte[] nextForTest(int length) {
+        return next(length);
+    }
+
+    /**
+     * Test-only {@link #reset()}.
+     */
+    @TestOnly
+    public void resetForTest() {
+        reset();
+    }
+
+    /**
+     * Sets the epoch {@link #next} stamps on the widths it serves, so a test can reach the
+     * epoch's rollover.
+     */
+    @TestOnly
+    public void setEpochForTest(int epoch) {
+        this.epoch = epoch;
+    }
 
     /**
      * Drops every pooled array, so the next operation allocates its images afresh.

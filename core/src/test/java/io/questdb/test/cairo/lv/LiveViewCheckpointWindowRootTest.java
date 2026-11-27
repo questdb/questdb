@@ -69,7 +69,6 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-import java.lang.reflect.Field;
 import java.nio.file.StandardOpenOption;
 import java.util.Arrays;
 import java.util.zip.CRC32;
@@ -229,7 +228,7 @@ public class LiveViewCheckpointWindowRootTest extends AbstractLiveViewTest {
                         );
                     }
                 }
-                final LiveViewCheckpointMutationArena mutations = stagingArena(builder);
+                final LiveViewCheckpointMutationArena mutations = builder.getMutationsForTest();
                 mutations.resetSortComparisonCountForTest();
                 builder.build(2, second);
                 buildComparisons = mutations.getSortComparisonCountForTest();
@@ -1515,15 +1514,6 @@ public class LiveViewCheckpointWindowRootTest extends AbstractLiveViewTest {
         writeLongLe(payload, 0, anchorValue);
         writeLongLe(payload, ANCHOR_BYTES, count);
         return payload;
-    }
-
-    /**
-     * @return the arena {@code builder} stages its mutations in, which it keeps to itself
-     */
-    private static LiveViewCheckpointMutationArena stagingArena(LiveViewCheckpointWindowRootBuilder builder) throws Exception {
-        final Field mutations = LiveViewCheckpointWindowRootBuilder.class.getSuperclass().getDeclaredField("mutations");
-        mutations.setAccessible(true);
-        return (LiveViewCheckpointMutationArena) mutations.get(builder);
     }
 
     private static byte[] sumCountPayload(long anchorValue, double sum, long count) {

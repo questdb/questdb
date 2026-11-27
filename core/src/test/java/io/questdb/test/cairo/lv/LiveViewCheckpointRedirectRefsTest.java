@@ -28,26 +28,14 @@ import io.questdb.cairo.lv.LiveViewCheckpointFunctionRootBuilder;
 import io.questdb.cairo.lv.LiveViewCheckpointPageRef;
 import io.questdb.cairo.lv.LiveViewCheckpointStatePageRef;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineStoreWriter;
-import io.questdb.std.MemoryTracker;
 import io.questdb.std.str.Path;
 import org.junit.Assert;
 import org.junit.Test;
-
-import java.lang.reflect.Field;
-import java.lang.reflect.Method;
 
 public class LiveViewCheckpointRedirectRefsTest extends AbstractLiveViewTest {
     @Test
     public void testRedirectRefsKeepEveryCountWithinTheirRetentionLimit() throws Exception {
         assertMemoryLeak(() -> {
-            final Method acquireShells = LiveViewCheckpointTimelineStoreWriter.class.getDeclaredMethod(
-                    "acquirePublicationShells",
-                    MemoryTracker.class
-            );
-            final Method releaseShells =
-                    LiveViewCheckpointTimelineStoreWriter.class.getDeclaredMethod("releasePublicationShells");
-            acquireShells.setAccessible(true);
-            releaseShells.setAccessible(true);
             // The even counts from 2 to 512 add up to 65,792 reference slots, and three wider counts
             // bring that to exactly 262,144: what the redirect cache may keep once a publication ends.
             final int[] otherCounts = {65_535, 65_533, 65_284};
@@ -59,47 +47,47 @@ public class LiveViewCheckpointRedirectRefsTest extends AbstractLiveViewTest {
 
             try (LiveViewCheckpointTimelineStoreWriter writer = new LiveViewCheckpointTimelineStoreWriter(configuration)) {
                 final Object[] evenPass = new Object[256];
-                Object roots = rootBuilders(acquireShells.invoke(writer, new Object[]{null}));
+                writer.acquirePublicationShellsForTest();
                 try {
-                    fillRedirectRefs(roots, evenPass, otherCounts);
+                    fillRedirectRefs(writer, evenPass, otherCounts);
                     Assert.assertEquals(retainedRefLimit, writer.getRetainedRedirectStatePageRefCountForTest());
                 } finally {
-                    releaseShells.invoke(writer);
+                    writer.releasePublicationShellsForTest();
                 }
 
                 // A cache at its limit keeps every count past the end of its publication.
-                roots = rootBuilders(acquireShells.invoke(writer, new Object[]{null}));
+                writer.acquirePublicationShellsForTest();
                 try {
                     Assert.assertEquals(retainedRefLimit, writer.getRetainedRedirectStatePageRefCountForTest());
-                    Assert.assertSame(evenPass[0], redirectRefs(roots, 2));
-                    Assert.assertSame(evenPass[255], redirectRefs(roots, 512));
+                    Assert.assertSame(evenPass[0], writer.redirectRefsForTest(2));
+                    Assert.assertSame(evenPass[255], writer.redirectRefsForTest(512));
                     // One more reference slot takes the cache past its limit.
-                    redirectRefs(roots, 1);
+                    writer.redirectRefsForTest(1);
                     Assert.assertEquals(retainedRefLimit + 1, writer.getRetainedRedirectStatePageRefCountForTest());
                 } finally {
-                    releaseShells.invoke(writer);
+                    writer.releasePublicationShellsForTest();
                 }
 
                 // A cache past its limit drops every count when its publication ends.
                 final Object[] refillPass = new Object[256];
-                roots = rootBuilders(acquireShells.invoke(writer, new Object[]{null}));
+                writer.acquirePublicationShellsForTest();
                 try {
                     Assert.assertEquals(0, writer.getRetainedRedirectStatePageRefCountForTest());
-                    fillRedirectRefs(roots, refillPass, otherCounts);
+                    fillRedirectRefs(writer, refillPass, otherCounts);
                     Assert.assertNotSame("a count the cache dropped must get a fresh array", evenPass[0], refillPass[0]);
                     Assert.assertEquals(retainedRefLimit, writer.getRetainedRedirectStatePageRefCountForTest());
                 } finally {
-                    releaseShells.invoke(writer);
+                    writer.releasePublicationShellsForTest();
                 }
 
                 // The refill counts from zero, so the cache sits at its limit again and keeps every count.
-                roots = rootBuilders(acquireShells.invoke(writer, new Object[]{null}));
+                writer.acquirePublicationShellsForTest();
                 try {
                     Assert.assertEquals(retainedRefLimit, writer.getRetainedRedirectStatePageRefCountForTest());
-                    Assert.assertSame(refillPass[0], redirectRefs(roots, 2));
-                    Assert.assertSame(refillPass[255], redirectRefs(roots, 512));
+                    Assert.assertSame(refillPass[0], writer.redirectRefsForTest(2));
+                    Assert.assertSame(refillPass[255], writer.redirectRefsForTest(512));
                 } finally {
-                    releaseShells.invoke(writer);
+                    writer.releasePublicationShellsForTest();
                 }
             }
         });
@@ -108,32 +96,17 @@ public class LiveViewCheckpointRedirectRefsTest extends AbstractLiveViewTest {
     @Test
     public void testRedirectRefsUsesOneExactWidthLookupPerPartition() throws Exception {
         assertMemoryLeak(() -> {
-            final Method acquireShells = LiveViewCheckpointTimelineStoreWriter.class.getDeclaredMethod(
-                    "acquirePublicationShells",
-                    MemoryTracker.class
-            );
-            final Method releaseShells =
-                    LiveViewCheckpointTimelineStoreWriter.class.getDeclaredMethod("releasePublicationShells");
-            acquireShells.setAccessible(true);
-            releaseShells.setAccessible(true);
-
             try (
                     LiveViewCheckpointTimelineStoreWriter writer =
                             new LiveViewCheckpointTimelineStoreWriter(configuration);
                     Path dir = new Path()
             ) {
-                final Object shells = acquireShells.invoke(writer, new Object[]{null});
+                writer.acquirePublicationShellsForTest();
                 try {
-                    final Field rootsField = shells.getClass().getDeclaredField("roots");
-                    rootsField.setAccessible(true);
-                    final Object roots = rootsField.get(shells);
-                    final Field builderField = roots.getClass().getDeclaredField("functionRootBuilder");
-                    final Method redirectRefs = roots.getClass().getDeclaredMethod("redirectRefs", int.class);
-                    builderField.setAccessible(true);
-                    redirectRefs.setAccessible(true);
-
-                    final LiveViewCheckpointFunctionRootBuilder builder =
-                            (LiveViewCheckpointFunctionRootBuilder) builderField.get(roots);
+                    final LiveViewCheckpointFunctionRootBuilder builder = writer.getPublicationFunctionRootBuilderForTest();
+                    // The publication shells hold one function root builder for every publication.
+                    Assert.assertNotNull(builder);
+                    Assert.assertSame(builder, writer.getPublicationFunctionRootBuilderForTest());
                     builder.of(
                             dir.of(configuration.getDbRoot()),
                             new LiveViewCheckpointPageRef(),
@@ -148,8 +121,7 @@ public class LiveViewCheckpointRedirectRefsTest extends AbstractLiveViewTest {
                     writer.resetRedirectRefWidthLookupCountForTest();
                     for (int partition = 0; partition < widthCount; partition++) {
                         final int count = 2 * (partition + 1);
-                        final LiveViewCheckpointStatePageRef[] refs =
-                                (LiveViewCheckpointStatePageRef[]) redirectRefs.invoke(roots, count);
+                        final LiveViewCheckpointStatePageRef[] refs = writer.redirectRefsForTest(count);
                         firstPass[partition] = refs;
                         for (int i = 0; i < count; i++) {
                             refs[i].of(partition + 1L, i * 64L, 32, 64, 1, 0, 1, 0);
@@ -168,11 +140,7 @@ public class LiveViewCheckpointRedirectRefsTest extends AbstractLiveViewTest {
                     );
 
                     for (int partition = widthCount - 1; partition >= 0; partition--) {
-                        final LiveViewCheckpointStatePageRef[] refs =
-                                (LiveViewCheckpointStatePageRef[]) redirectRefs.invoke(
-                                        roots,
-                                        2 * (partition + 1)
-                                );
+                        final LiveViewCheckpointStatePageRef[] refs = writer.redirectRefsForTest(2 * (partition + 1));
                         Assert.assertSame(firstPass[partition], refs);
                     }
                     Assert.assertEquals(
@@ -181,9 +149,8 @@ public class LiveViewCheckpointRedirectRefsTest extends AbstractLiveViewTest {
                             writer.getRedirectRefWidthLookupCountForTest()
                     );
 
-                    final LiveViewCheckpointStatePageRef[] empty =
-                            (LiveViewCheckpointStatePageRef[]) redirectRefs.invoke(roots, 0);
-                    Assert.assertSame(empty, redirectRefs.invoke(roots, 0));
+                    final LiveViewCheckpointStatePageRef[] empty = writer.redirectRefsForTest(0);
+                    Assert.assertSame(empty, writer.redirectRefsForTest(0));
                     Assert.assertEquals(0, empty.length);
                     Assert.assertEquals(
                             "zero-width reuse must use the same direct index",
@@ -193,31 +160,19 @@ public class LiveViewCheckpointRedirectRefsTest extends AbstractLiveViewTest {
                     // The even counts from 2 to 512 add up to 65,792 reference slots.
                     Assert.assertEquals(65_792, writer.getRetainedRedirectStatePageRefCountForTest());
                 } finally {
-                    releaseShells.invoke(writer);
+                    writer.releasePublicationShellsForTest();
                 }
             }
         });
     }
 
     // Requests every even reference count from 2 to 512, keeping each array in pass, then otherCounts.
-    private static void fillRedirectRefs(Object roots, Object[] pass, int[] otherCounts) throws Exception {
+    private static void fillRedirectRefs(LiveViewCheckpointTimelineStoreWriter writer, Object[] pass, int[] otherCounts) {
         for (int i = 0; i < pass.length; i++) {
-            pass[i] = redirectRefs(roots, 2 * (i + 1));
+            pass[i] = writer.redirectRefsForTest(2 * (i + 1));
         }
         for (int count : otherCounts) {
-            Assert.assertEquals(count, redirectRefs(roots, count).length);
+            Assert.assertEquals(count, writer.redirectRefsForTest(count).length);
         }
-    }
-
-    private static LiveViewCheckpointStatePageRef[] redirectRefs(Object roots, int count) throws Exception {
-        final Method redirectRefs = roots.getClass().getDeclaredMethod("redirectRefs", int.class);
-        redirectRefs.setAccessible(true);
-        return (LiveViewCheckpointStatePageRef[]) redirectRefs.invoke(roots, count);
-    }
-
-    private static Object rootBuilders(Object shells) throws Exception {
-        final Field rootsField = shells.getClass().getDeclaredField("roots");
-        rootsField.setAccessible(true);
-        return rootsField.get(shells);
     }
 }

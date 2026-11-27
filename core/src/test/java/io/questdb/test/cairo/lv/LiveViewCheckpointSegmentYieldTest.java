@@ -56,7 +56,6 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.io.File;
-import java.lang.reflect.Field;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -1178,7 +1177,7 @@ public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
                 Assert.assertNotNull("the repair must park for the case to reach a second park", parked);
                 Assert.assertNotNull(
                         "the parked repair must hold a staged capture, or there is nothing to strand",
-                        stagedCapture(parked)
+                        parked.getCaptureForTest()
                 );
 
                 final ThrowingGroupKeySet injected = failTheNextUniquenessCopy(parked);
@@ -2013,16 +2012,9 @@ public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
      *
      * @return the injected set, which records whether it actually fired
      */
-    private static ReadThrowingGroupKeySet failTheFirstUniquenessCopy(LiveViewRefreshJob job) throws Exception {
-        final Field jobUniquenessField = LiveViewRefreshJob.class.getDeclaredField("outputUniqueness");
-        jobUniquenessField.setAccessible(true);
-        final LiveViewCheckpointOutputUniqueness uniqueness =
-                (LiveViewCheckpointOutputUniqueness) jobUniquenessField.get(job);
+    private static ReadThrowingGroupKeySet failTheFirstUniquenessCopy(LiveViewRefreshJob job) {
         final ReadThrowingGroupKeySet injected = new ReadThrowingGroupKeySet();
-        final Field groupKeysField =
-                LiveViewCheckpointOutputUniqueness.class.getDeclaredField("groupKeys");
-        groupKeysField.setAccessible(true);
-        groupKeysField.set(uniqueness, injected);
+        job.getOutputUniquenessForTest().setGroupKeysForTest(injected);
         return injected;
     }
 
@@ -2040,18 +2032,12 @@ public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
      *
      * @return the injected set, which records whether it actually fired
      */
-    private static ThrowingGroupKeySet failTheNextUniquenessCopy(LiveViewCheckpointRepairSession session)
-            throws Exception {
+    private static ThrowingGroupKeySet failTheNextUniquenessCopy(LiveViewCheckpointRepairSession session) {
         final LiveViewCheckpointOutputUniqueness uniqueness = session.getOutputUniqueness();
-        final Field keyColumnIndexField =
-                LiveViewCheckpointOutputUniqueness.class.getDeclaredField("keyColumnIndex");
-        keyColumnIndexField.setAccessible(true);
-        keyColumnIndexField.setInt(uniqueness, LiveViewCheckpointOutputUniqueness.NO_KEY_COLUMN);
+        // of() empties the set the detector holds, so the seeded set goes in after it.
+        uniqueness.of(LiveViewCheckpointOutputUniqueness.NO_KEY_COLUMN);
         final ThrowingGroupKeySet injected = new ThrowingGroupKeySet(SEEDED_GROUP_KEY);
-        final Field groupKeysField =
-                LiveViewCheckpointOutputUniqueness.class.getDeclaredField("groupKeys");
-        groupKeysField.setAccessible(true);
-        groupKeysField.set(uniqueness, injected);
+        uniqueness.setGroupKeysForTest(injected);
         return injected;
     }
 
@@ -2060,12 +2046,8 @@ public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
      * fails on the first key {@code copyFrom} adds - which is what an allocation failure inside
      * {@link GroupKeySet#add(int)} looks like from suspend()'s side.
      */
-    private static void failTheUniquenessCopy(LiveViewCheckpointRepairSession session) throws Exception {
-        final LiveViewCheckpointOutputUniqueness uniqueness = session.getOutputUniqueness();
-        final Field groupKeysField =
-                LiveViewCheckpointOutputUniqueness.class.getDeclaredField("groupKeys");
-        groupKeysField.setAccessible(true);
-        groupKeysField.set(uniqueness, new ThrowingGroupKeySet());
+    private static void failTheUniquenessCopy(LiveViewCheckpointRepairSession session) {
+        session.getOutputUniqueness().setGroupKeysForTest(new ThrowingGroupKeySet());
     }
 
     // Holds the view's monitor while the checkpoint agent takes the refresh latch and blocks on that monitor, and
@@ -2102,25 +2084,14 @@ public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
     }
 
     /**
-     * The staged capture {@code session} is holding, read straight off the field rather than
-     * through {@code takeCapture()}, which would take it away from the parked repair.
+     * The freeze scratch the staged capture of {@code session} leased from its writer, for an
+     * identity comparison. It reads the capture rather than taking it, so the parked repair
+     * keeps it.
      */
-    private static Object stagedCapture(LiveViewCheckpointRepairSession session) throws Exception {
-        final Field captureField = LiveViewCheckpointRepairSession.class.getDeclaredField("capture");
-        captureField.setAccessible(true);
-        return captureField.get(session);
-    }
-
-    /**
-     * The freeze scratch the staged capture of {@code session} leased from its writer, read off
-     * the capture's field for an identity comparison.
-     */
-    private static Object stagedCaptureScratch(LiveViewCheckpointRepairSession session) throws Exception {
-        final Object capture = stagedCapture(session);
+    private static Object stagedCaptureScratch(LiveViewCheckpointRepairSession session) {
+        final LiveViewCheckpointTimelineStoreWriter.RepairCapture capture = session.getCaptureForTest();
         Assert.assertNotNull("the parked repair must hold a staged capture", capture);
-        final Field scratchField = LiveViewCheckpointTimelineStoreWriter.RepairCapture.class.getDeclaredField("scratch");
-        scratchField.setAccessible(true);
-        return scratchField.get(capture);
+        return capture.getScratchForTest();
     }
 
     // Parks a staged capture, invalidates its view while the checkpoint agent holds the refresh latch, and fails the

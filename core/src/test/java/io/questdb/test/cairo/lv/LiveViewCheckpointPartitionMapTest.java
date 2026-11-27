@@ -51,7 +51,6 @@ import org.junit.Before;
 import org.junit.Test;
 
 import java.lang.management.ManagementFactory;
-import java.lang.reflect.Method;
 import java.util.Arrays;
 import java.util.Map;
 import java.util.TreeMap;
@@ -1144,9 +1143,6 @@ public class LiveViewCheckpointPartitionMapTest extends AbstractCairoTest {
             // entry's comparison must tell two scalars apart exactly as Arrays.equals did over
             // the heap images: equal bytes, bytes that differ in the last one only, lengths that
             // differ by one byte with every shared byte equal, and empty scalars on either side.
-            final Method nativeEquals = LiveViewCheckpointPartitionMapEntry.class
-                    .getDeclaredMethod("isScalarEqual", long.class, int.class);
-            nativeEquals.setAccessible(true);
             final int maxWidth = 300;
             final int rounds = 4_000;
             final LiveViewCheckpointStatePageRef[] emptyRefs = new LiveViewCheckpointStatePageRef[0];
@@ -1180,7 +1176,7 @@ public class LiveViewCheckpointPartitionMapTest extends AbstractCairoTest {
                     final boolean isEqualExpected = Arrays.equals(mine, theirs);
                     outcomeCounts[isEqualExpected ? 1 : 0]++;
                     final String message = "[round=" + round + ", mine=" + mine.length + ", theirs=" + theirs.length + ']';
-                    Assert.assertEquals(message, isEqualExpected, nativeEquals.invoke(entry, other, theirs.length));
+                    Assert.assertEquals(message, isEqualExpected, entry.isScalarEqualForTest(other, theirs.length));
                 }
                 Assert.assertTrue("both outcomes must occur", outcomeCounts[0] > rounds / 2 && outcomeCounts[1] >= rounds / 5);
             } finally {
