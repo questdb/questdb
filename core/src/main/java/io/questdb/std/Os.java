@@ -61,6 +61,9 @@ public final class Os {
     public static final String archName;
     public static final String name;
     public static final int type;
+    // Read when this class loads, which happens before any thread can restrict itself through
+    // setCurrentThreadCpus() or setCurrentThreadAffinity().
+    private static final int PROCESS_CPU_COUNT = Runtime.getRuntime().availableProcessors();
     /**
      * Downcall to {@code qdb_sleep_millis} in libquestdbr, resolved eagerly in the
      * static initializer so a native library that lacks the symbol fails class load
@@ -195,6 +198,15 @@ public final class Os {
     }
 
     public static native int getPid();
+
+    /**
+     * The number of CPUs available to the process. {@link Runtime#availableProcessors()} reports
+     * the calling thread's CPU set on Linux, so a worker restricted to one socket's CPUs sees only
+     * those; this count is the one the JVM reported before any thread restricted itself.
+     */
+    public static int getProcessCpuCount() {
+        return PROCESS_CPU_COUNT;
+    }
 
     /**
      * Returns physical memory used by this process (Resident Set Size/Working Set Size).
@@ -458,18 +470,15 @@ public final class Os {
                 throw new Error("Unsupported OS: " + osName);
             }
 
-            // Production layout: /io/questdb/bin/<os>-<arch>/. The directories that exist are
-            // exactly the platforms CI builds, tests and ships: darwin-aarch64, linux-x86-64,
-            // linux-aarch64 and windows-x86-64 -- OsTest#testOnlySupportedPlatformNativeLibsAreShipped
-            // pins that set. Any other combination -- darwin-x86-64 above all -- resolves to a
-            // missing resource, and loadLib() below reports it as an unsupported platform.
+            // Production layout: /io/questdb/bin/<os>-<arch>/. Official artifacts contain
+            // darwin-aarch64, linux-x86-64, linux-aarch64 and windows-x86-64. Local source
+            // builds may also populate this path for the current host, such as an Intel Mac.
             String prdLibRoot = "/io/questdb/bin/" + name + '-' + archName + '/';
             String devCXXLibRoot = "/io/questdb/bin-local/";
             String cxxLibName = "libquestdb" + outputLibExt;
             String devCXXLib = devCXXLibRoot + cxxLibName;
 
             // The Rust library file is missing "lib" prefix on Windows
-            String devRustLibRoot = "/io/questdb/rust/";
             final String rustLibName;
             if (type == WINDOWS) {
                 rustLibName = "questdbr" + outputLibExt;
@@ -490,15 +499,9 @@ public final class Os {
                     loadLib(devCXXLib, libCXXStream);
                 }
 
-
-                final String devRustLib = devRustLibRoot + rustLibName;
-                InputStream libRustStream = Os.class.getResourceAsStream(devRustLib);
-                if (libRustStream == null) {
-                    loadLib(prdLibRoot + rustLibName);
-                } else {
-                    System.err.println("Loading DEV Rust library: " + devRustLib);
-                    loadLib(devRustLib, libRustStream);
-                }
+                // The Rust library is always built into the production path
+                // (target/classes/io/questdb/bin/<platform>/), so there is no DEV override for it.
+                loadLib(prdLibRoot + rustLibName);
             }
             initRust();
             SLEEP_MILLIS = Linker.nativeLinker().downcallHandle(

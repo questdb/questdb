@@ -55,7 +55,7 @@ public class SkewnessPopGroupByFunctionFactory implements FunctionFactory {
         return new SkewnessPopGroupByFunction(args.getQuick(0));
     }
 
-    private static class SkewnessPopGroupByFunction extends AbstractSkewnessGroupByFunction {
+    static class SkewnessPopGroupByFunction extends AbstractSkewnessGroupByFunction {
 
         public SkewnessPopGroupByFunction(@NotNull Function arg) {
             super(arg);

@@ -1372,6 +1372,25 @@ public class CastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCharToNumbersRejectHighByteDigits() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE chars (c CHAR)");
+            execute("INSERT INTO chars VALUES ('İ')");
+            for (String type : new String[]{"BYTE", "SHORT", "INT", "LONG", "FLOAT", "DOUBLE", "DATE", "TIMESTAMP", "TIMESTAMP_NS"}) {
+                // ::FLOAT is the PostgreSQL spelling of DOUBLE; ::FLOAT4 reaches the FLOAT cast
+                final String castType = "FLOAT".equals(type) ? "FLOAT4" : type;
+                final String error = "inconvertible value: İ [CHAR -> " + type + "]";
+                assertQuery("SELECT 'İ'::" + castType).noLeakCheck().fails(0, error);
+                assertQuery("SELECT c::" + castType + " FROM chars").noLeakCheck().fails(-1, error);
+                execute("CREATE TABLE target_" + type + " (v " + type + ")");
+                assertQuery("INSERT INTO target_" + type + " SELECT c FROM chars")
+                        .noLeakCheck().fails(-1, error);
+            }
+            assertQuery("SELECT c + 1 FROM chars").noLeakCheck().fails(-1, "inconvertible value: İ [CHAR -> INT]");
+        });
+    }
+
+    @Test
     public void testCharToShort() throws Exception {
         assertQuery("select a from tab")
                 .ddl("create table tab (a short)")
@@ -1648,6 +1667,17 @@ public class CastTest extends AbstractCairoTest {
                         Y
                         Z
                         """);
+    }
+
+    @Test
+    public void testCharWindowBoundsRejectHighByteDigits() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE bounds (v INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            String window = "SELECT sum(v) OVER (ORDER BY ts ROWS BETWEEN 'İ' PRECEDING AND CURRENT ROW) FROM bounds";
+            assertQuery(window).noLeakCheck().fails(window.indexOf("'İ'"), "non-negative integer expression expected");
+            String join = "SELECT a.ts, sum(b.v) FROM bounds a WINDOW JOIN bounds b RANGE BETWEEN 'İ' PRECEDING AND CURRENT ROW";
+            assertQuery(join).noLeakCheck().fails(join.indexOf("'İ'"), "non-negative integer expression expected");
+        });
     }
 
     @Test
@@ -4548,6 +4578,41 @@ public class CastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNullConstantToText() throws Exception {
+        // A NULL constant casts to a NULL string, as a NULL column does, rather than to the text
+        // of its sentinel. Infinity reads as NULL, and so does a CASE that folds to NULL.
+        for (String target : new String[]{"VARCHAR", "STRING", "SYMBOL"}) {
+            assertQuery(String.format("""
+                    SELECT
+                        (null::INT)::%1$s IS NULL i,
+                        (null::LONG)::%1$s IS NULL l,
+                        (null::FLOAT4)::%1$s IS NULL f,
+                        (null::DOUBLE)::%1$s IS NULL d,
+                        ('Infinity'::DOUBLE)::%1$s IS NULL inf,
+                        (null::DATE)::%1$s IS NULL dt,
+                        (null::TIMESTAMP)::%1$s IS NULL ts,
+                        (null::IPv4)::%1$s IS NULL ip,
+                        (CASE 1 WHEN 2 THEN 0.5::FLOAT4 END)::%1$s IS NULL c
+                    FROM long_sequence(1)
+                    """, target))
+                    .expectSize()
+                    .returns("""
+                            i\tl\tf\td\tinf\tdt\tts\tip\tc
+                            true\ttrue\ttrue\ttrue\ttrue\ttrue\ttrue\ttrue\ttrue
+                            """);
+        }
+        // nothing compares greater than NULL, while 'a' is greater than the text 'NaN'
+        assertQuery("SELECT count() FROM t WHERE s > (CASE 1 WHEN 2 THEN 0.5::FLOAT4 END)::SYMBOL")
+                .ddl("CREATE TABLE t AS (SELECT 'a' s FROM long_sequence(3))")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        count
+                        0
+                        """);
+    }
+
+    @Test
     public void testNullToBinary() throws Exception {
         assertQuery("select a from tab")
                 .ddl("create table tab (a binary)")
@@ -4619,7 +4684,7 @@ public class CastTest extends AbstractCairoTest {
                     "order by ts")
                     .noLeakCheck()
                     .timestamp("ts")
-                    .expectSize()
+                    .noRandomAccess()
                     .returns("""
                             ts\ti\tsh\tb\td\tf\tl\tstr\tsym\tbool\tbin\tdat\tl256\tc\tu\tip\tv\tcount
                             1970-01-01T00:00:00.000000Z\t-1148479920\t24814\t27\t0.12966659791573354\t0.2845577597618103\t-7611843578141082998\tYR\tA\tfalse\t00000000 f1 59 88 c4 91 3b 72 db f3 04 1b c7 88 de a0 79
@@ -5605,7 +5670,6 @@ public class CastTest extends AbstractCairoTest {
                 "ORDER BY 1")
                 .ddl("create table trades (timestamp timestamp, symbol symbol, price double) timestamp(timestamp)")
                 .mutateWith("insert into trades select x::timestamp, x::string, x from long_sequence(10)")
-                .expectSize()
                 .returns("timestamp\tID\tEvt1\n", """
                         timestamp\tID\tEvt1
                         1\t1\t1
@@ -5694,11 +5758,10 @@ public class CastTest extends AbstractCairoTest {
     public void testSymbolColumnToSymbolInSampleBy() throws Exception {
         assertQuery("SELECT timestamp, symbol::SYMBOL AS \"ID\", round(avg(price))::LONG AS \"Evt1\" " +
                 "FROM 'trades'" +
-                "SAMPLE BY 1h")
+                "SAMPLE BY 1h ORDER BY timestamp, \"Evt1\"")
                 .ddl("create table trades (timestamp timestamp, symbol symbol, price double) timestamp(timestamp)")
                 .timestamp("timestamp")
                 .mutateWith("insert into trades select x::timestamp, x::string, x from long_sequence(10)")
-                .expectSize()
                 .returns("timestamp\tID\tEvt1\n", """
                         timestamp\tID\tEvt1
                         1970-01-01T00:00:00.000000Z\t1\t1

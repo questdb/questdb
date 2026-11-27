@@ -37,6 +37,7 @@ import io.questdb.std.str.BorrowableUtf8Sink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.Arrays;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.ReentrantLock;
@@ -69,14 +70,7 @@ public abstract class WorkerPoolManager implements Target {
         try {
             final WorkerPoolConfiguration networkConfiguration = config.getSharedWorkerPoolNetworkConfiguration();
             networkPool = config.createWorkerPool(networkConfiguration);
-            // createWorkerPool() may wrap the configuration, and a wrapper that doesn't forward the group
-            // methods builds a pool without the groups the configuration reports
-            if (networkPool.getGroupCount() != networkConfiguration.getGroupCount()) {
-                throw new IllegalStateException("network pool does not have the configured worker groups [pool="
-                        + networkPool.getPoolName()
-                        + ", configured=" + networkConfiguration.getGroupCount()
-                        + ", actual=" + networkPool.getGroupCount() + ']');
-            }
+            checkGroups(networkPool, networkConfiguration);
             queryPool = config.getSharedWorkerPoolQueryConfiguration().getWorkerCount() > 0
                     ? config.createWorkerPool(config.getSharedWorkerPoolQueryConfiguration())
                     : null;
@@ -146,6 +140,12 @@ public abstract class WorkerPoolManager implements Target {
             WorkerPool dedicatedPool = dedicatedPools.get(poolName);
             if (dedicatedPool == null) {
                 dedicatedPool = serverConfiguration.createWorkerPool(config);
+                try {
+                    checkGroups(dedicatedPool, config);
+                } catch (Throwable th) {
+                    Misc.free(dedicatedPool);
+                    throw th;
+                }
                 dedicatedPools.put(poolName, dedicatedPool);
             }
             LOG.info().$("custom thread pool [name=").$(poolName)
@@ -153,12 +153,6 @@ public abstract class WorkerPoolManager implements Target {
                     .$(", workers=").$(dedicatedPool.getWorkerCount())
                     .$(", priority=").$(config.workerPoolPriority())
                     .I$();
-            if (sharedPool.getGroupCount() > 1) {
-                LOG.advisory().$("not split by CPU socket, the split applies to the shared network pool only [requester=")
-                        .$(requesterName)
-                        .$(", pool=").$(poolName)
-                        .I$();
-            }
             pool = dedicatedPool;
         }
         recordPoolRole(pool, requesterName);
@@ -254,6 +248,20 @@ public abstract class WorkerPoolManager implements Target {
 
                 startWorkerPool(sharedPoolLog, pool, "started dedicated pool [name=");
             }
+        }
+    }
+
+    // createWorkerPool() may wrap the configuration, and a wrapper that doesn't forward the group
+    // methods builds a pool without the worker groups or CPU sets the configuration reports
+    private static void checkGroups(WorkerPool pool, WorkerPoolConfiguration configuration) {
+        if (pool.getGroupCount() != configuration.getGroupCount()
+                || !Arrays.deepEquals(pool.getGroupCpus(), configuration.getGroupCpus())) {
+            throw new IllegalStateException("pool does not have the configured worker groups [pool="
+                    + pool.getPoolName()
+                    + ", configured=" + configuration.getGroupCount()
+                    + ", actual=" + pool.getGroupCount()
+                    + ", configuredCpus=" + Arrays.deepToString(configuration.getGroupCpus())
+                    + ", actualCpus=" + Arrays.deepToString(pool.getGroupCpus()) + ']');
         }
     }
 
@@ -426,6 +434,7 @@ public abstract class WorkerPoolManager implements Target {
         VIEW_COMPILER("view-compiler"),
         MAT_VIEW_REFRESH("mat-view-refresh"),
         LIVE_VIEW_REFRESH("live-view-refresh"),
+        PARTITION_COMPACTION("partition-compaction"),
         EXPORT("export");
 
         private final String requester;

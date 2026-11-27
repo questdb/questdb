@@ -37,6 +37,7 @@ import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import static org.junit.Assert.assertTrue;
@@ -81,6 +82,7 @@ public class RssMemoryLimitTest extends AbstractCairoTest {
     @Test
     public void testLargeTxEventuallySucceeds() throws Exception {
         long limitMiB = 60;
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
         assertMemoryLeak(limitMiB, () -> {
             // fewer transactions on slow CI runners (Mac, Windows); the workload below still triggers
             // memory pressure during WAL apply, which the easing-up log assertion at the end verifies

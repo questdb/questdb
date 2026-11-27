@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
@@ -89,6 +90,7 @@ class LatestByValuesIndexedRecordCursor extends AbstractPageFrameRecordCursor {
         recordA.of(pageFrameCursor);
         recordB.of(pageFrameCursor);
         circuitBreaker = executionContext.getCircuitBreaker();
+        frameMemoryPool.setCircuitBreaker(circuitBreaker);
         rows.setMemoryTracker(executionContext.getMemoryTracker());
         rows.reopen();
         remainingKeys.clear();
@@ -117,10 +119,23 @@ class LatestByValuesIndexedRecordCursor extends AbstractPageFrameRecordCursor {
         index = 0;
     }
 
-    private boolean addFoundKey(int symbolKey, IndexReader indexReader, int frameIndex, long partitionLo, long partitionHi) {
-        try (RowCursor cursor = indexReader.getCursor(symbolKey, partitionLo, partitionHi)) {
+    private boolean addFoundKey(
+            int symbolKey,
+            IndexReader indexReader,
+            int invertedFrameIndex,
+            long indexRowLo,
+            long indexRowHi,
+            PageFrameMemory frameMemory
+    ) {
+        try (RowCursor cursor = indexReader.getCursor(
+                symbolKey,
+                indexRowLo,
+                indexRowHi,
+                null,
+                frameMemory.getSourceRowResolver()
+        )) {
             if (cursor.hasNext()) {
-                rows.add(Rows.toRowID(frameIndex, cursor.next()));
+                rows.add(Rows.toRowID(invertedFrameIndex, cursor.next()));
                 return true;
             }
         }
@@ -138,11 +153,12 @@ class LatestByValuesIndexedRecordCursor extends AbstractPageFrameRecordCursor {
             circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             final int frameIndex = frameCount;
             final IndexReader indexReader = frame.getIndexReader(columnIndex, IndexReader.DIR_BACKWARD);
-            final long partitionLo = frame.getPartitionLo();
-            final long partitionHi = frame.getPartitionHi() - 1;
+            final long indexRowLo = frame.getIndexRowLo();
+            final long indexRowHi = frame.getIndexRowHi() - 1;
 
-            frameAddressCache.add(frameCount, frame);
-            frameMemoryPool.navigateTo(frameCount++, recordA);
+            frameAddressCache.add(frameIndex, frame);
+            final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameCount++);
+            recordA.init(frameMemory);
 
             // Invert page frame indexes, so that they grow asc in time order.
             // That's to be able to do post-processing (sorting) of the result set.
@@ -151,7 +167,14 @@ class LatestByValuesIndexedRecordCursor extends AbstractPageFrameRecordCursor {
             // the list shrinks, so the next (older) frame only probes keys that are still unresolved.
             for (int i = remainingKeys.size() - 1; i >= 0; i--) {
                 int symbolKey = remainingKeys.getQuick(i);
-                if (addFoundKey(symbolKey, indexReader, invertedFrameIndex, partitionLo, partitionHi)) {
+                if (addFoundKey(
+                        symbolKey,
+                        indexReader,
+                        invertedFrameIndex,
+                        indexRowLo,
+                        indexRowHi,
+                        frameMemory
+                )) {
                     int last = remainingKeys.size() - 1;
                     remainingKeys.setQuick(i, remainingKeys.getQuick(last));
                     remainingKeys.setPos(last);

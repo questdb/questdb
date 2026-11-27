@@ -172,6 +172,12 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
         return base.getTableToken();
     }
 
+    // The metadata and the sort keys refer to the columns of the page frame base it reads, as the base's own do.
+    @Override
+    public boolean hasTableScanTimestamp() {
+        return SortedRecordCursorFactory.hasTableScanTimestamp(getMetadata(), orderByFilter, base);
+    }
+
     @Override
     public boolean implementsLimit() {
         return true;
@@ -287,7 +293,7 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
             // Release the slot even if buffer cleanup throws; a stranded slot never returns (PerWorkerLocks has no reset).
             try {
                 recordB.clear();
-                frameMemoryPool.releaseParquetBuffers();
+                frameMemoryPool.releaseDecodedFrameBuffers();
             } finally {
                 atom.release(slotId);
             }
@@ -338,7 +344,7 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
             // Release the slot even if buffer cleanup throws; a stranded slot never returns (PerWorkerLocks has no reset).
             try {
                 recordB.clear();
-                frameMemoryPool.releaseParquetBuffers();
+                frameMemoryPool.releaseDecodedFrameBuffers();
             } finally {
                 atom.release(slotId);
             }

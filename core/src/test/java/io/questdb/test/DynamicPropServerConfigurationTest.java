@@ -116,6 +116,7 @@ import static io.questdb.test.cutlass.qwp.QwpWireTestFixtures.assertQwpBrowserUp
 import static io.questdb.test.cutlass.qwp.QwpWireTestFixtures.browserCredentialOffer;
 import static io.questdb.test.cutlass.qwp.QwpWireTestFixtures.browserCredentialProtocol;
 import static io.questdb.test.cutlass.qwp.QwpWireTestFixtures.browserCredentialUpgrade;
+import static io.questdb.test.cutlass.qwp.QwpWireTestFixtures.execStatusLine;
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 import static org.junit.Assert.assertFalse;
 
@@ -180,6 +181,26 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
     }
 
     @Test
+    public void testBrowserTlsTerminationEnabled() throws Exception {
+        // The HTTP connections and the QWP upgrade processors read this flag off the
+        // objects ServerConfiguration.getHttpServerConfiguration() and
+        // getHttpMinServerConfiguration() return, which are the configuration wrappers
+        // and not the PropServerConfiguration behind them. Asserting through
+        // PropServerConfiguration alone passes even when a wrapper drops the property.
+        assertMemoryLeak(() -> {
+            try (FileWriter w = new FileWriter(serverConf)) {
+                w.write(PropertyKey.BROWSER_TLS_TERMINATION_ENABLED.getPropertyPath() + "=true\n");
+            }
+
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                serverMain.start();
+                Assert.assertTrue(serverMain.getConfiguration().getHttpServerConfiguration().isBrowserTlsTerminationEnabled());
+                Assert.assertTrue(serverMain.getConfiguration().getHttpMinServerConfiguration().isBrowserTlsTerminationEnabled());
+            }
+        });
+    }
+
+    @Test
     public void testCairoMemoryLimitsReload() throws Exception {
         assertMemoryLeak(() -> {
             try (ServerMain serverMain = new ServerMain(getBootstrap())) {
@@ -219,11 +240,14 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
             try (ServerMain serverMain = new ServerMain(getBootstrap())) {
                 serverMain.start();
 
-                // Seed two tables whose hash join build map needs far more tracked memory
+                // Seed two tables whose hash join build needs far more tracked memory
                 // than the low limit configured below. Seeding runs under the default
                 // unlimited limit, so it is never constrained. A hash join drives the breach
-                // because its build map fails at a single deterministic site with the
-                // per-query OOM message intact, keeping the client-visible error stable.
+                // because it holds its whole build side in tracked memory before it returns
+                // a row. That holds whether the planner fuses the join into the count (Async
+                // Hash Join Group By) or counts over an ordinary hash join, and either build
+                // fails with the per-query OOM message intact, keeping the client-visible
+                // error stable.
                 try (Connection conn = getConnection("admin", "quest")) {
                     try (PreparedStatement stmt = conn.prepareStatement(
                             "CREATE TABLE master AS (SELECT cast(x AS varchar) k FROM long_sequence(100_000))")) {
@@ -508,6 +532,91 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                         runtime.awaitClosed();
                     }
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testHttpAllowedHostsReload() throws Exception {
+        // without authentication, the server serves a host name public DNS can point at it
+        // only once http.allowed.hosts lists it, and a reload changes the list
+        assertMemoryLeak(() -> {
+            try (FileWriter w = new FileWriter(serverConf)) {
+                w.write(QWP_ORIGINS_TEST_BOOT_CONFIG);
+            }
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                serverMain.start();
+                int port = serverMain.getHttpServerPort();
+                String host = "Host: questdb.example.com:" + port + "\r\n";
+                Assert.assertEquals("HTTP/1.1 403 Forbidden", execStatusLine(port, host));
+
+                try (FileWriter w = new FileWriter(serverConf)) {
+                    w.write(QWP_ORIGINS_TEST_BOOT_CONFIG);
+                    w.write("http.allowed.hosts=questdb.example.com\n");
+                }
+                Assert.assertTrue(serverMain.getEngine().getConfigReloader().reload());
+                Assert.assertEquals("HTTP/1.1 200 OK", execStatusLine(port, host));
+
+                // an invalid value keeps the previous list in force
+                try (FileWriter w = new FileWriter(serverConf)) {
+                    w.write(QWP_ORIGINS_TEST_BOOT_CONFIG);
+                    w.write("http.allowed.hosts=questdb.example.com:" + port + "\n");
+                }
+                Assert.assertTrue(serverMain.getEngine().getConfigReloader().reload());
+                Assert.assertEquals("HTTP/1.1 200 OK", execStatusLine(port, host));
+
+                try (FileWriter w = new FileWriter(serverConf)) {
+                    w.write(QWP_ORIGINS_TEST_BOOT_CONFIG);
+                    w.write("http.allowed.hosts=*\n");
+                }
+                Assert.assertTrue(serverMain.getEngine().getConfigReloader().reload());
+                Assert.assertEquals("HTTP/1.1 200 OK", execStatusLine(port, "Host: rebind.example.net:" + port + "\r\n"));
+
+                // removing the property restores the default
+                try (FileWriter w = new FileWriter(serverConf)) {
+                    w.write(QWP_ORIGINS_TEST_BOOT_CONFIG);
+                }
+                Assert.assertTrue(serverMain.getEngine().getConfigReloader().reload());
+                Assert.assertEquals("HTTP/1.1 403 Forbidden", execStatusLine(port, host));
+                Assert.assertEquals("HTTP/1.1 200 OK", execStatusLine(port, "Host: localhost:" + port + "\r\n"));
+            }
+        });
+    }
+
+    @Test
+    public void testHttpBrowserAllowedOriginsReload() throws Exception {
+        assertMemoryLeak(() -> {
+            try (FileWriter w = new FileWriter(serverConf)) {
+                w.write(QWP_ORIGINS_TEST_BOOT_CONFIG);
+            }
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                serverMain.start();
+                int port = serverMain.getHttpServerPort();
+                String crossSite = "Host: localhost:" + port + "\r\nSec-Fetch-Site: cross-site\r\nOrigin: https://app.example.com\r\n";
+                Assert.assertEquals("HTTP/1.1 403 Forbidden", execStatusLine(port, crossSite));
+
+                try (FileWriter w = new FileWriter(serverConf)) {
+                    w.write(QWP_ORIGINS_TEST_BOOT_CONFIG);
+                    w.write("http.browser.allowed.origins=https://app.example.com\n");
+                }
+                Assert.assertTrue(serverMain.getEngine().getConfigReloader().reload());
+                Assert.assertEquals("HTTP/1.1 200 OK", execStatusLine(port, crossSite));
+
+                // an invalid value keeps the previous list in force
+                try (FileWriter w = new FileWriter(serverConf)) {
+                    w.write(QWP_ORIGINS_TEST_BOOT_CONFIG);
+                    w.write("http.browser.allowed.origins=https://app.example.com/*\n");
+                }
+                Assert.assertTrue(serverMain.getEngine().getConfigReloader().reload());
+                Assert.assertEquals("HTTP/1.1 200 OK", execStatusLine(port, crossSite));
+
+                try (FileWriter w = new FileWriter(serverConf)) {
+                    w.write(QWP_ORIGINS_TEST_BOOT_CONFIG);
+                    w.write("http.browser.allowed.origins=https://new.example.com\n");
+                }
+                Assert.assertTrue(serverMain.getEngine().getConfigReloader().reload());
+                Assert.assertEquals("HTTP/1.1 403 Forbidden", execStatusLine(port, crossSite));
+                Assert.assertEquals("HTTP/1.1 200 OK", execStatusLine(port, crossSite.replace("app.example.com", "new.example.com")));
             }
         });
     }
@@ -1593,9 +1702,13 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
 
     @Test
     public void testQwpBrowserCrossOriginGateSkipsNonQwpEndpoints() throws Exception {
-        // Only the QWP upgrade endpoints refuse ambient credentials from another
-        // origin. A REST request carrying a foreign Origin still authenticates
-        // with the session cookie or the Authorization header.
+        // The QWP gate that refuses ambient credentials on a cross-origin upgrade
+        // does not apply to REST endpoints: a REST request carrying a foreign
+        // Origin still authenticates with the session cookie or the Authorization
+        // header when the browser reports it same-origin, as it does for a page
+        // served through a TLS-terminating proxy. Without Sec-Fetch-Site, the
+        // connection rejects the foreign Origin as a cross-site request, whatever
+        // credentials the request carries.
         assertMemoryLeak(() -> {
             try (FileWriter w = new FileWriter(serverConf)) {
                 w.write(QWP_ORIGINS_TEST_BOOT_CONFIG);
@@ -1610,16 +1723,16 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                 String cookie = "Cookie: " + createHttpSessionCookie(port) + "\r\n";
                 for (String origin : new String[]{"https://app.example.com", "https://other.example.com"}) {
                     for (String credentials : new String[]{cookie, basicAuthorization}) {
-                        try (Socket socket = new Socket("localhost", port)) {
-                            socket.setSoTimeout(5_000);
-                            String request = "GET /exec?query=select%201 HTTP/1.1\r\n"
-                                    + "Host: localhost:" + port + "\r\n"
+                        for (boolean isSameOrigin : new boolean[]{true, false}) {
+                            final String headers = "Host: localhost:" + port + "\r\n"
                                     + "Origin: " + origin + "\r\n"
-                                    + credentials
-                                    + "Connection: close\r\n\r\n";
-                            socket.getOutputStream().write(request.getBytes(StandardCharsets.US_ASCII));
-                            String response = QwpWireTestFixtures.readHttpHeaders(socket.getInputStream());
-                            Assert.assertTrue(response, response.startsWith("HTTP/1.1 200"));
+                                    + (isSameOrigin ? "Sec-Fetch-Site: same-origin\r\n" : "")
+                                    + credentials;
+                            Assert.assertEquals(
+                                    headers,
+                                    isSameOrigin ? "HTTP/1.1 200 OK" : "HTTP/1.1 403 Forbidden",
+                                    execStatusLine(port, headers)
+                            );
                         }
                     }
                 }
@@ -1675,27 +1788,6 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
     }
 
     @Test
-    public void testQwpBrowserTlsTerminationEnabled() throws Exception {
-        // The QWP upgrade processors read this flag off the object
-        // ServerConfiguration.getHttpServerConfiguration() returns, which is
-        // HttpServerConfigurationWrapper and not the PropServerConfiguration
-        // behind it. Asserting through PropServerConfiguration alone passes
-        // even when the wrapper drops the property on the floor.
-        assertMemoryLeak(() -> {
-            try (FileWriter w = new FileWriter(serverConf)) {
-                w.write(PropertyKey.QWP_BROWSER_TLS_TERMINATION_ENABLED.getPropertyPath() + "=true\n");
-            }
-
-            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
-                serverMain.start();
-                Assert.assertTrue(
-                        serverMain.getConfiguration().getHttpServerConfiguration().isQwpBrowserTlsTerminationEnabled()
-                );
-            }
-        });
-    }
-
-    @Test
     public void testQwpBrowserTlsTerminationSameOriginUsesAmbientCredentials() throws Exception {
         // Behind a TLS-terminating proxy the socket is plaintext, yet the Web
         // Console's Origin is https://. HttpConnectionContext must treat that
@@ -1706,7 +1798,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
             try (FileWriter w = new FileWriter(serverConf)) {
                 w.write(QWP_ORIGINS_TEST_BOOT_CONFIG);
                 w.write("http.user=admin\nhttp.password=quest\n");
-                w.write(PropertyKey.QWP_BROWSER_TLS_TERMINATION_ENABLED.getPropertyPath() + "=true\n");
+                w.write(PropertyKey.BROWSER_TLS_TERMINATION_ENABLED.getPropertyPath() + "=true\n");
             }
             try (ServerMain serverMain = new ServerMain(getBootstrap())) {
                 serverMain.start();
@@ -1750,7 +1842,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                 String credential = browserCredentialProtocol(basic);
                 String offer = "questdb.qwp.v1, " + credential;
 
-                // A TLS terminator without qwp.browser.tls.termination.enabled turns the
+                // A TLS terminator without browser.tls.termination.enabled turns the
                 // page's own https Origin cross-origin, so its session cookie no longer counts.
                 String proxiedCookie = browserCredentialUpgrade(port, "/read/v1", "https://localhost:" + port,
                         "questdb.qwp.v1", "Cookie: " + createHttpSessionCookie(port) + "\r\n");
@@ -1806,6 +1898,51 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
 
                 try (Connection conn = getConnection("steven", "sklar")) {
                     assertFalse(conn.isClosed());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testReloadOnRestrictedThreadKeepsCpuDerivedDefaults() throws Exception {
+        // A worker of a network pool split by CPU socket runs reload_config() on its socket's CPUs.
+        // Restricted to one CPU, the defaults size each shared pool at 2 workers, so a difference
+        // shows from 3 CPUs on.
+        TestUtils.assumeRestrictableToOneCpu(3);
+        assertMemoryLeak(() -> {
+            try (FileWriter w = new FileWriter(serverConf)) {
+                w.write("pg.net.connection.limit=10\n");
+            }
+            try (ServerMain serverMain = new ServerMain(getBootstrap(false))) {
+                final DynamicPropServerConfiguration configuration =
+                        (DynamicPropServerConfiguration) serverMain.getConfiguration();
+                final WorkerPoolConfiguration network = configuration.getSharedWorkerPoolNetworkConfiguration();
+                final WorkerPoolConfiguration query = configuration.getSharedWorkerPoolQueryConfiguration();
+                final int networkWorkerCount = network.getWorkerCount();
+                final int networkMaxLiveCount = network.getFiberMaxLiveCount();
+                final int networkRetainedCount = network.getFiberRetainedCount();
+                final int queryWorkerCount = query.getWorkerCount();
+                final int queryMaxLiveCount = query.getFiberMaxLiveCount();
+                try (WorkerPool pool = new WorkerPool(network)) {
+                    final FiberRuntime runtime = pool.getFiberRuntime();
+                    Assert.assertEquals(networkMaxLiveCount, runtime.getMaxLiveFiberCount());
+
+                    try (FileWriter w = new FileWriter(serverConf)) {
+                        w.write("pg.net.connection.limit=11\n");
+                    }
+                    final AtomicBoolean isReloaded = new AtomicBoolean();
+                    TestUtils.runOnOneCpu(() -> isReloaded.set(configuration.reload()));
+                    Assert.assertTrue(isReloaded.get());
+                    // the reload took effect, so the values below come from the reloaded configuration
+                    Assert.assertEquals(11, configuration.getPGWireConfiguration().getLimit());
+
+                    Assert.assertEquals(networkWorkerCount, network.getWorkerCount());
+                    Assert.assertEquals(networkMaxLiveCount, network.getFiberMaxLiveCount());
+                    Assert.assertEquals(networkRetainedCount, network.getFiberRetainedCount());
+                    Assert.assertEquals(queryWorkerCount, query.getWorkerCount());
+                    Assert.assertEquals(queryMaxLiveCount, query.getFiberMaxLiveCount());
+                    Assert.assertEquals(networkMaxLiveCount, runtime.getMaxLiveFiberCount());
+                    Assert.assertEquals(networkRetainedCount, runtime.getMaxRetainedFiberCount());
                 }
             }
         });
@@ -2418,16 +2555,23 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
     }
 
     private Bootstrap getBootstrap() {
+        return getBootstrap(true);
+    }
+
+    // with isSharedWorkerCountPinned false, the shared pools take their default size from the CPU count
+    private Bootstrap getBootstrap(boolean isSharedWorkerCountPinned) {
         return new Bootstrap(
-                getBootstrapConfig(),
+                getBootstrapConfig(isSharedWorkerCountPinned),
                 Bootstrap.getServerMainArgs(root)
         );
     }
 
-    private BootstrapConfiguration getBootstrapConfig() {
+    private BootstrapConfiguration getBootstrapConfig(boolean isSharedWorkerCountPinned) {
         Map<String, String> envMap = new HashMap<>();
         envMap.put(PropertyKey.METRICS_ENABLED.getEnvVarName(), "true");
-        envMap.put(PropertyKey.SHARED_WORKER_COUNT.getEnvVarName(), "1");
+        if (isSharedWorkerCountPinned) {
+            envMap.put(PropertyKey.SHARED_WORKER_COUNT.getEnvVarName(), "1");
+        }
         envMap.put(PropertyKey.WAL_APPLY_WORKER_COUNT.getEnvVarName(), "1");
         return new DefaultBootstrapConfiguration() {
             @Override

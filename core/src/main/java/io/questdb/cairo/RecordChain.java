@@ -53,6 +53,7 @@ import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
@@ -93,8 +94,12 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
             int maxPages,
             String maxPagesConfigKey
     ) {
+        this(columnTypes, recordSink, Vm.getCARWInstance(pageSize, maxPages, MemoryTag.NATIVE_RECORD_CHAIN, maxPagesConfigKey));
+    }
+
+    protected RecordChain(@Transient @NotNull ColumnTypes columnTypes, @Nullable RecordSink recordSink, MemoryCARW mem) {
+        this.mem = mem;
         try {
-            this.mem = Vm.getCARWInstance(pageSize, maxPages, MemoryTag.NATIVE_RECORD_CHAIN, maxPagesConfigKey);
             this.recordSink = recordSink;
             this.columnCount = columnTypes.getColumnCount();
             this.recordA = this.newChainRecord();
@@ -167,6 +172,15 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
         return addressOf(getOffsetOfColumn(recordOffset, columnIndex));
     }
 
+    public long getAppendOffset() {
+        return mem.getAppendOffset();
+    }
+
+    @TestOnly
+    public long getReservedBytes() {
+        return mem.size();
+    }
+
     public long getOffsetOfColumn(long recordOffset, int columnIndex) {
         return rowToDataOffset(recordOffset) + varOffset + columnOffsets[columnIndex];
     }
@@ -223,6 +237,21 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
         mem.putLong(rowToDataOffset(recordOffset), varAppendOffset);
         recordOffset += 8;
         // appendAddressFor grows the memory if necessary
+        long byteCount = ArrayTypeDriver.getPlainValueSize(value);
+        final long appendAddress = mem.appendAddressFor(varAppendOffset, byteCount);
+        ArrayTypeDriver.appendPlainValue(appendAddress, value);
+        varAppendOffset += byteCount;
+    }
+
+    @Override
+    public void putArray(long recordOffset, int columnIndex, @NotNull ArrayView value) {
+        // For variable-size columns (like arrays), the pointer is stored at the beginning of the record
+        // Calculate the offset: rowToDataOffset + columnOffsets[columnIndex]
+        // (do NOT add varOffset since array columns are already in the var-size area)
+        long columnOffset = rowToDataOffset(recordOffset) + columnOffsets[columnIndex];
+        // Write the pointer to where the array data will be stored
+        mem.putLong(columnOffset, varAppendOffset);
+        // Write the actual array data
         long byteCount = ArrayTypeDriver.getPlainValueSize(value);
         final long appendAddress = mem.appendAddressFor(varAppendOffset, byteCount);
         ArrayTypeDriver.appendPlainValue(appendAddress, value);
@@ -386,6 +415,10 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
         mem.setMemoryTracker(tracker);
     }
 
+    public void reserve(long bytes) {
+        mem.extend(bytes);
+    }
+
     public void setSymbolTableResolver(SymbolTableSource resolver) {
         this.symbolTableResolver = resolver;
     }
@@ -398,6 +431,14 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
     @Override
     public void skip(int bytes) {
         mem.skip(bytes);
+    }
+
+    @Override
+    public void skipVarSize() {
+        // The column's owner, such as a window function's pass 2, writes the slot later.
+        // Until then it holds NULL rather than whatever the freshly allocated memory held,
+        // which a reader would dereference as a pointer.
+        putNull();
     }
 
     @Override

@@ -35,9 +35,11 @@ import io.questdb.cairo.TxnScoreboardPoolV2;
 import io.questdb.cairo.TxnScoreboardV2;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Chars;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -81,7 +83,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
             for (int i = 127; i < 130; i++) {
                 try (TxnScoreboardV2 scoreboard = new TxnScoreboardV2(i)) {
                     for (int j = 1; j < 88; j++) {
-                        scoreboard.acquireTxn(i - j, i * j);
+                        scoreboard.acquireTxn(i - j, i * j, i * j);
                         Assert.assertFalse(scoreboard.isTxnAvailable(i * j));
                         Assert.assertEquals(1, scoreboard.getActiveReaderCount(i * j));
                         Assert.assertFalse(scoreboard.isRangeAvailable(i * j, i * (j + 1)));
@@ -101,15 +103,55 @@ public class TxnScoreboardTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBooleanRangeDoesNotClassifyHolders() throws Exception {
+        assertMemoryLeak(() -> {
+            try (TxnScoreboardV2 scoreboard = new TxnScoreboardV2(320) {
+                @Override
+                public int scanRangeHolders(long fromTxn, long toTxn) {
+                    throw new AssertionError("boolean availability must not request a full holder classification");
+                }
+            }) {
+                for (int i = 0; i < 320; i++) {
+                    Assert.assertTrue(scoreboard.acquireTxn(i, 1, 1));
+                }
+                Assert.assertFalse(scoreboard.isRangeAvailable(1, 2));
+                Assert.assertTrue(scoreboard.isRangeAvailable(2, 3));
+                for (int i = 0; i < 320; i++) {
+                    scoreboard.releaseTxn(i, 1);
+                }
+                Assert.assertTrue(scoreboard.isRangeAvailable(1, 2));
+                Assert.assertTrue(scoreboard.acquireTxn(TxnScoreboard.EPOCH_ID_A, 3, TxnScoreboard.NO_SEQ_TXN_FLOOR));
+                Assert.assertFalse(scoreboard.isRangeAvailable(3, 4));
+                scoreboard.releaseTxn(TxnScoreboard.EPOCH_ID_A, 3);
+            }
+        });
+    }
+
+    @Test
+    public void testRangeHolderClassification() throws Exception {
+        assertMemoryLeak(() -> {
+            try (TxnScoreboardV2 scoreboard = new TxnScoreboardV2(2)) {
+                Assert.assertTrue(scoreboard.acquireTxn(TxnScoreboard.EPOCH_ID_A, 1, TxnScoreboard.NO_SEQ_TXN_FLOOR));
+                Assert.assertTrue(scoreboard.acquireTxn(0, 1, 1));
+                Assert.assertEquals(TxnScoreboard.RANGE_HELD_BY_EPOCH | TxnScoreboard.RANGE_HELD_BY_OTHER, scoreboard.scanRangeHolders(1, 2));
+                scoreboard.releaseTxn(0, 1);
+                Assert.assertEquals(TxnScoreboard.RANGE_HELD_BY_EPOCH, scoreboard.scanRangeHolders(1, 2));
+                scoreboard.releaseTxn(TxnScoreboard.EPOCH_ID_A, 1);
+                Assert.assertEquals(TxnScoreboard.RANGE_FREE, scoreboard.scanRangeHolders(1, 2));
+            }
+        });
+    }
+
+    @Test
     public void testCannotLockTwice() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (TxnScoreboard txnScoreboard = newTxnScoreboard()) {
-                Assume.assumeTrue(txnScoreboard.acquireTxn(0, 1));
-                Assume.assumeFalse(txnScoreboard.acquireTxn(0, 1));
+                Assume.assumeTrue(txnScoreboard.acquireTxn(0, 1, 1));
+                Assume.assumeFalse(txnScoreboard.acquireTxn(0, 1, 1));
 
-                Assume.assumeTrue(txnScoreboard.acquireTxn(1, 1));
+                Assume.assumeTrue(txnScoreboard.acquireTxn(1, 1, 1));
                 txnScoreboard.releaseTxn(0, 1);
-                Assume.assumeTrue(txnScoreboard.acquireTxn(0, 1));
+                Assume.assumeTrue(txnScoreboard.acquireTxn(0, 1, 1));
             }
             scoreboardPoolFactory.clear();
         });
@@ -121,17 +163,17 @@ public class TxnScoreboardTest extends AbstractCairoTest {
         ff = new TestFilesFacadeImpl();
         try (TxnScoreboard txnScoreboard = newTxnScoreboard()) {
             // Thread A (reader) - grabs read permit
-            Assert.assertTrue(txnScoreboard.acquireTxn(0, lastCommittedTxn));
+            Assert.assertTrue(txnScoreboard.acquireTxn(0, lastCommittedTxn, lastCommittedTxn));
             // Thread B (reader) - lags behind and grabs read permit for the previous transaction. Acquire rejected
-            Assert.assertFalse(txnScoreboard.acquireTxn(1, lastCommittedTxn - 1));
+            Assert.assertFalse(txnScoreboard.acquireTxn(1, lastCommittedTxn - 1, lastCommittedTxn - 1));
             // Thread B (reader) - grabs read permit
-            txnScoreboard.acquireTxn(1, lastCommittedTxn);
+            txnScoreboard.acquireTxn(1, lastCommittedTxn, lastCommittedTxn);
             // txngetMin(scoreboard) equals to 2 and will stay so
             Assert.assertTrue(txnScoreboard.isTxnAvailable(lastCommittedTxn - 1));
             Assert.assertFalse(txnScoreboard.isTxnAvailable(lastCommittedTxn));
 
             // Thread C (writer) - checkScoreboardHasReadersBeforeLastCommittedTxn
-            txnScoreboard.acquireTxn(2, lastCommittedTxn + 1);
+            txnScoreboard.acquireTxn(2, lastCommittedTxn + 1, lastCommittedTxn + 1);
             txnScoreboard.releaseTxn(2, lastCommittedTxn + 1);
             // The assertion fails while there are readers
             Assert.assertEquals(lastCommittedTxn, getMin(txnScoreboard));
@@ -143,7 +185,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             try (TxnScoreboard scoreboard = newTxnScoreboard()) {
                 for (int i = 0; i < 1500; i++) {
-                    scoreboard.acquireTxn(0, i);
+                    scoreboard.acquireTxn(0, i, i);
                     scoreboard.releaseTxn(0, i);
                 }
                 assertScoreboardMinOrNoLocks(scoreboard);
@@ -163,7 +205,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             try (TxnScoreboard scoreboard = newTxnScoreboard()) {
                 for (int i = 0; i < 1500; i++) {
-                    scoreboard.acquireTxn(0, i);
+                    scoreboard.acquireTxn(0, i, i);
                     scoreboard.releaseTxn(0, i);
                 }
                 assertScoreboardMinOrNoLocks(scoreboard);
@@ -173,7 +215,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
             try (TxnScoreboard scoreboard2 = newTxnScoreboard()) {
                 Assert.assertTrue(getMin(scoreboard2) <= 0);
                 for (int i = 0; i < 10; i++) {
-                    scoreboard2.acquireTxn(0, i);
+                    scoreboard2.acquireTxn(0, i, i);
                     scoreboard2.releaseTxn(0, i);
                 }
 
@@ -189,15 +231,116 @@ public class TxnScoreboardTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCopyReaderSeqTxns() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final long address = Unsafe.malloc(2 * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            try (TxnScoreboardV2 scoreboard = new TxnScoreboardV2(4)) {
+                Assert.assertEquals(0, scoreboard.copyReaderSeqTxns(10, address, 2));
+
+                // Readers and the checkpoint slot are all copied.
+                Assert.assertTrue(scoreboard.acquireTxn(0, 10, 100));
+                Assert.assertTrue(scoreboard.incrementTxn(TxnScoreboard.CHECKPOINT_ID, 10, 100));
+                Assert.assertTrue(scoreboard.acquireTxn(1, 12, 120));
+                Assert.assertEquals(3, scoreboard.copyReaderSeqTxns(12, address, 2));
+                final long first = Unsafe.getUnsafe().getLong(address);
+                final long second = Unsafe.getUnsafe().getLong(address + Long.BYTES);
+                Assert.assertTrue(first == 100 || first == 120);
+                Assert.assertTrue(second == 100 || second == 120);
+
+                // The copy fences later readers below the current table txn.
+                Assert.assertFalse(scoreboard.acquireTxn(2, 11, 110));
+
+                scoreboard.releaseTxn(TxnScoreboard.CHECKPOINT_ID, 10);
+                scoreboard.releaseTxn(0, 10);
+                Assert.assertEquals(1, scoreboard.copyReaderSeqTxns(12, address, 2));
+                Assert.assertEquals(120, Unsafe.getUnsafe().getLong(address));
+                scoreboard.releaseTxn(1, 12);
+                Assert.assertEquals(0, scoreboard.copyReaderSeqTxns(12, address, 2));
+            } finally {
+                Unsafe.free(address, 2 * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testCopyReaderSeqTxnsBehindTheMax() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final long address = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            try (TxnScoreboardV2 scoreboard = new TxnScoreboardV2(4)) {
+                // A caller behind the max still gets every seqTxn, and later readers stay fenced.
+                Assert.assertTrue(scoreboard.acquireTxn(0, 10, 100));
+                Assert.assertEquals(1, scoreboard.copyReaderSeqTxns(5, address, 1));
+                Assert.assertEquals(100, Unsafe.getUnsafe().getLong(address));
+                Assert.assertFalse(scoreboard.acquireTxn(1, 4, 40));
+                scoreboard.releaseTxn(0, 10);
+            } finally {
+                Unsafe.free(address, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testCopyReaderSeqTxnsFencesAnEmptyScoreboard() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final long address = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            try (TxnScoreboardV2 scoreboard = new TxnScoreboardV2(4)) {
+                // With no earlier reader, the copy alone fences readers below its txn.
+                Assert.assertEquals(0, scoreboard.copyReaderSeqTxns(10, address, 1));
+                Assert.assertFalse(scoreboard.acquireTxn(0, 9, 90));
+                Assert.assertTrue(scoreboard.acquireTxn(0, 10, 100));
+                scoreboard.releaseTxn(0, 10);
+            } finally {
+                Unsafe.free(address, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testCopyReaderSeqTxnsReportsUnknownSeqTxn() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final long address = Unsafe.malloc(2 * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            try (TxnScoreboardV2 scoreboard = new TxnScoreboardV2(4)) {
+                Assert.assertTrue(scoreboard.acquireTxn(0, 10, 100));
+                Assert.assertTrue(scoreboard.acquireTxn(1, 10, TxnScoreboard.UNKNOWN_SEQ_TXN));
+                Assert.assertEquals(-1, scoreboard.copyReaderSeqTxns(10, address, 2));
+                scoreboard.releaseTxn(1, 10);
+                Assert.assertEquals(1, scoreboard.copyReaderSeqTxns(10, address, 2));
+                Assert.assertEquals(100, Unsafe.getUnsafe().getLong(address));
+                scoreboard.releaseTxn(0, 10);
+            } finally {
+                Unsafe.free(address, 2 * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testCopyReaderSeqTxnsSkipsSavePoints() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final long address = Unsafe.malloc(2 * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            try (TxnScoreboardV2 scoreboard = new TxnScoreboardV2(4)) {
+                Assert.assertTrue(scoreboard.acquireTxn(0, 10, 100));
+                Assert.assertTrue(scoreboard.incrementTxn(TxnScoreboard.EPOCH_ID_A, 10, TxnScoreboard.NO_SEQ_TXN_FLOOR));
+                Assert.assertEquals(1, scoreboard.copyReaderSeqTxns(10, address, 2));
+                Assert.assertEquals(100, Unsafe.getUnsafe().getLong(address));
+                scoreboard.releaseTxn(0, 10);
+                Assert.assertEquals(0, scoreboard.copyReaderSeqTxns(10, address, 2));
+                scoreboard.releaseTxn(TxnScoreboard.EPOCH_ID_A, 10);
+            } finally {
+                Unsafe.free(address, 2 * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
     public void testCrawlV1() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (TxnScoreboard scoreboard = newTxnScoreboard()) {
                 for (int i = 0; i < 1024; i++) {
-                    Assert.assertTrue(scoreboard.acquireTxn(0, i));
+                    Assert.assertTrue(scoreboard.acquireTxn(0, i, i));
                     scoreboard.releaseTxn(0, i);
                 }
                 for (int i = 1024; i < 1500; i++) {
-                    Assert.assertTrue(scoreboard.acquireTxn(0, i));
+                    Assert.assertTrue(scoreboard.acquireTxn(0, i, i));
                     scoreboard.releaseTxn(0, i);
                 }
                 assertScoreboardMinOrNoLocks(scoreboard);
@@ -206,7 +349,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
                 try (TxnScoreboard scoreboard2 = newTxnScoreboard()) {
                     assertScoreboardMinOrNoLocks(scoreboard2);
                     for (int i = 1500; i < 3000; i++) {
-                        scoreboard2.acquireTxn(0, i);
+                        scoreboard2.acquireTxn(0, i, i);
                         scoreboard2.releaseTxn(0, i);
                     }
 
@@ -224,7 +367,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
             try (final TxnScoreboard rootBoard = newTxnScoreboard()) {
                 try (final TxnScoreboard scoreboard = newTxnScoreboard()) {
                     for (int i = 0; i < 1500; i++) {
-                        scoreboard.acquireTxn(0, i);
+                        scoreboard.acquireTxn(0, i, i);
                         scoreboard.releaseTxn(0, i);
                     }
                     assertScoreboardMinOrNoLocks(scoreboard);
@@ -234,7 +377,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
                 try (final TxnScoreboard scoreboard2 = newTxnScoreboard()) {
                     assertScoreboardMinOrNoLocks(scoreboard2);
                     for (int i = 1500; i < 3000; i++) {
-                        scoreboard2.acquireTxn(0, i);
+                        scoreboard2.acquireTxn(0, i, i);
                         scoreboard2.releaseTxn(0, i);
                     }
                     assertScoreboardMinOrNoLocks(scoreboard2);
@@ -253,17 +396,17 @@ public class TxnScoreboardTest extends AbstractCairoTest {
                     final TxnScoreboard scoreboard = newTxnScoreboard()
             ) {
                 assertScoreboardMinOrNoLocks(scoreboard);
-                Assert.assertTrue(scoreboard.acquireTxn(0, 2048));
+                Assert.assertTrue(scoreboard.acquireTxn(0, 2048, 2048));
                 Assert.assertEquals(2048, getMin(scoreboard));
                 scoreboard.releaseTxn(0, 2048);
                 assertScoreboardMinOrNoLocks(scoreboard);
 
-                Assert.assertTrue(scoreboard.acquireTxn(0, 10000L));
+                Assert.assertTrue(scoreboard.acquireTxn(0, 10000L, 10000L));
                 scoreboard.releaseTxn(0, 10000L);
                 assertScoreboardMinOrNoLocks(scoreboard);
 
 
-                Assert.assertFalse(scoreboard.acquireTxn(0, 4095));
+                Assert.assertFalse(scoreboard.acquireTxn(0, 4095, 4095));
             }
             scoreboardPoolFactory.clear();
         });
@@ -283,16 +426,17 @@ public class TxnScoreboardTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             try (final TxnScoreboard scoreboard = newTxnScoreboard()) {
                 assertScoreboardMinOrNoLocks(scoreboard);
-                Assert.assertTrue(scoreboard.acquireTxn(0, 1));
+                Assert.assertTrue(scoreboard.acquireTxn(0, 1, 10));
                 Assert.assertEquals(1, getMin(scoreboard));
 
                 // Don't release the older txn.
-                Assert.assertTrue(scoreboard.acquireTxn(1, 2));
+                Assert.assertTrue(scoreboard.acquireTxn(1, 2, 20));
                 scoreboard.releaseTxn(1, 2);
                 Assert.assertEquals(1, getMin(scoreboard));
 
                 // acquireTxn() would have failed here, but we can use incrementTxn()
-                Assert.assertTrue(scoreboard.incrementTxn(2, 1));
+                Assert.assertTrue(scoreboard.incrementTxn(2, 1, 10));
+                Assert.assertEquals(10, scoreboard.getMinSeqTxn(2, 20));
                 scoreboard.releaseTxn(2, 1);
                 Assert.assertEquals(1, getMin(scoreboard));
 
@@ -301,6 +445,185 @@ public class TxnScoreboardTest extends AbstractCairoTest {
                 assertScoreboardMinOrNoLocks(scoreboard);
             }
             scoreboardPoolFactory.clear();
+        });
+    }
+
+    /**
+     * The epoch pin (EPOCH_ID_A) and CHECKPOINT_ID are independent virtual pins that must not
+     * collide: pinning the same txn under both must succeed (each occupies a distinct internal
+     * slot), holding either one must keep the txn unavailable for purge, and the txn becomes
+     * available only after both are released. A reader at id 0 (the lowest real reader id) must also
+     * not collide with either virtual pin. The adaptive epoch pin relies on this: an epoch pin and a
+     * concurrent checkpoint pin on overlapping partition-version txns must coexist without one
+     * clobbering the other's slot.
+     */
+    @Test
+    public void testEpochAndCheckpointPinsDoNotCollide() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TxnScoreboard scoreboard = newTxnScoreboard()) {
+                final long txn = 42;
+
+                // Both virtual pins acquire the same txn. acquireTxn would refuse the second
+                // acquisition of a txn at-or-below max via the same slot, so virtual pins use
+                // incrementTxn (no max gate), as DatabaseCheckpointAgent and the epoch path do.
+                Assert.assertTrue("checkpoint pin must take", scoreboard.incrementTxn(TxnScoreboard.CHECKPOINT_ID, txn, txn));
+                Assert.assertTrue("epoch pin must take (distinct slot)", scoreboard.incrementTxn(TxnScoreboard.EPOCH_ID_A, txn, TxnScoreboard.NO_SEQ_TXN_FLOOR));
+
+                // A real reader at id 0 pins the same txn too: must also coexist (distinct slot).
+                Assert.assertTrue("reader id 0 must take same txn", scoreboard.incrementTxn(0, txn, txn));
+
+                // While any pin is held, the txn's version range is not available for purge.
+                Assert.assertFalse("range held by 3 pins", scoreboard.isRangeAvailable(txn, txn + 1));
+
+                // Release the reader: still held by the two virtual pins.
+                scoreboard.releaseTxn(0, txn);
+                Assert.assertFalse("range still held by epoch+checkpoint", scoreboard.isRangeAvailable(txn, txn + 1));
+
+                // Release the checkpoint pin: the epoch pin alone must still hold the range
+                // (proves the checkpoint release did not clobber the epoch slot).
+                scoreboard.releaseTxn(TxnScoreboard.CHECKPOINT_ID, txn);
+                Assert.assertFalse("range still held by epoch alone", scoreboard.isRangeAvailable(txn, txn + 1));
+                Assert.assertEquals("epoch is the min holder", txn, getMin(scoreboard));
+
+                // Release the epoch pin: the range is free.
+                scoreboard.releaseTxn(TxnScoreboard.EPOCH_ID_A, txn);
+                Assert.assertTrue("range free after both virtual pins released", scoreboard.isRangeAvailable(txn, txn + 1));
+                assertScoreboardMinOrNoLocks(scoreboard);
+            }
+            scoreboardPoolFactory.clear();
+        });
+    }
+
+    /**
+     * Symmetric to {@link #testEpochAndCheckpointPinsDoNotCollide} but releases in the opposite
+     * order (epoch first, then checkpoint) to prove neither release clobbers the other slot
+     * regardless of order. Also pins the two virtual ids on different txns to confirm each tracks
+     * its own value independently.
+     */
+    @Test
+    public void testEpochAndCheckpointPinsIndependentTxns() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TxnScoreboard scoreboard = newTxnScoreboard()) {
+                final long epochTxn = 7;
+                final long checkpointTxn = 11;
+
+                Assert.assertTrue(scoreboard.incrementTxn(TxnScoreboard.EPOCH_ID_A, epochTxn, TxnScoreboard.NO_SEQ_TXN_FLOOR));
+                Assert.assertTrue(scoreboard.incrementTxn(TxnScoreboard.CHECKPOINT_ID, checkpointTxn, checkpointTxn));
+
+                // The min pinned txn is the epoch's (7); both ranges are individually held.
+                Assert.assertEquals(epochTxn, getMin(scoreboard));
+                Assert.assertFalse("epoch txn held", scoreboard.isRangeAvailable(epochTxn, epochTxn + 1));
+                Assert.assertFalse("checkpoint txn held", scoreboard.isRangeAvailable(checkpointTxn, checkpointTxn + 1));
+
+                // Release the epoch pin first: the checkpoint pin (different txn) is untouched.
+                scoreboard.releaseTxn(TxnScoreboard.EPOCH_ID_A, epochTxn);
+                Assert.assertTrue("epoch txn now free", scoreboard.isRangeAvailable(epochTxn, epochTxn + 1));
+                Assert.assertFalse("checkpoint txn still held", scoreboard.isRangeAvailable(checkpointTxn, checkpointTxn + 1));
+                Assert.assertEquals("checkpoint is now the min holder", checkpointTxn, getMin(scoreboard));
+
+                scoreboard.releaseTxn(TxnScoreboard.CHECKPOINT_ID, checkpointTxn);
+                assertScoreboardMinOrNoLocks(scoreboard);
+            }
+            scoreboardPoolFactory.clear();
+        });
+    }
+
+    /**
+     * The two ping-pong epoch pins (EPOCH_ID_A / EPOCH_ID_B) must coexist on different txns: this is
+     * the double-pin window in {@code TableWriter.advanceDurableEpoch()} - the new epoch txn is
+     * pinned in the free slot before the prior epoch txn is released from the other slot, so a
+     * concurrent partition purge never sees an unprotected gap between epoch generations. The test
+     * mimics that handover: pin prior in A; pin new in B (both held); release prior from A; only the
+     * new txn remains held; finally release new from B.
+     */
+    @Test
+    public void testEpochPingPongPinsHandover() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TxnScoreboard scoreboard = newTxnScoreboard()) {
+                final long priorEpochTxn = 30;
+                final long newEpochTxn = 50;
+
+                // Prior epoch pinned in slot A.
+                Assert.assertTrue(scoreboard.incrementTxn(TxnScoreboard.EPOCH_ID_A, priorEpochTxn, TxnScoreboard.NO_SEQ_TXN_FLOOR));
+                Assert.assertEquals(priorEpochTxn, getMin(scoreboard));
+
+                // Pin the new epoch in slot B before releasing the prior. Both coexist.
+                Assert.assertTrue("new epoch must pin in the other ping-pong slot", scoreboard.incrementTxn(TxnScoreboard.EPOCH_ID_B, newEpochTxn, TxnScoreboard.NO_SEQ_TXN_FLOOR));
+                Assert.assertFalse("prior epoch range held", scoreboard.isRangeAvailable(priorEpochTxn, priorEpochTxn + 1));
+                Assert.assertFalse("new epoch range held", scoreboard.isRangeAvailable(newEpochTxn, newEpochTxn + 1));
+                Assert.assertEquals("prior is still the min while both held", priorEpochTxn, getMin(scoreboard));
+
+                // Release the prior from slot A: only the new epoch remains protected, with no gap exposed.
+                scoreboard.releaseTxn(TxnScoreboard.EPOCH_ID_A, priorEpochTxn);
+                Assert.assertTrue("prior epoch range now free", scoreboard.isRangeAvailable(priorEpochTxn, priorEpochTxn + 1));
+                Assert.assertFalse("new epoch range still held by slot B", scoreboard.isRangeAvailable(newEpochTxn, newEpochTxn + 1));
+                Assert.assertEquals("new epoch is now the min holder", newEpochTxn, getMin(scoreboard));
+
+                scoreboard.releaseTxn(TxnScoreboard.EPOCH_ID_B, newEpochTxn);
+                assertScoreboardMinOrNoLocks(scoreboard);
+            }
+            scoreboardPoolFactory.clear();
+        });
+    }
+
+    @Test
+    public void testMinSeqTxnHandlesSlotReuse() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (TxnScoreboardV2 scoreboard = new TxnScoreboardV2(2)) {
+                Assert.assertTrue(scoreboard.acquireTxn(0, 1, 10));
+                Assert.assertEquals(10, scoreboard.getMinSeqTxn(1, 20));
+                scoreboard.releaseTxn(0, 1);
+
+                Assert.assertTrue(scoreboard.acquireTxn(0, 2, 20));
+                Assert.assertEquals(20, scoreboard.getMinSeqTxn(2, 30));
+                scoreboard.releaseTxn(0, 2);
+            }
+        });
+    }
+
+    @Test
+    public void testMinSeqTxnRejectsLateOldTableTxn() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (TxnScoreboardV2 scoreboard = new TxnScoreboardV2(4)) {
+                Assert.assertTrue(scoreboard.acquireTxn(0, 10, 100));
+                Assert.assertEquals(100, scoreboard.getMinSeqTxn(12, 120));
+                Assert.assertFalse(scoreboard.acquireTxn(1, 11, 110));
+                Assert.assertEquals(100, scoreboard.getMinSeqTxn(12, 120));
+                Assert.assertEquals(TxnScoreboard.UNKNOWN_SEQ_TXN, scoreboard.getMinSeqTxn(11, 90));
+                scoreboard.releaseTxn(0, 10);
+            }
+        });
+    }
+
+    @Test
+    public void testMinSeqTxnSealsEmptyScoreboard() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (TxnScoreboardV2 scoreboard = new TxnScoreboardV2(2)) {
+                Assert.assertEquals(100, scoreboard.getMinSeqTxn(10, 100));
+                Assert.assertFalse(scoreboard.acquireTxn(0, 9, 90));
+                Assert.assertTrue(scoreboard.acquireTxn(0, 10, 100));
+                Assert.assertEquals(100, scoreboard.getMinSeqTxn(10, 100));
+                scoreboard.releaseTxn(0, 10);
+            }
+        });
+    }
+
+    @Test
+    public void testMinSeqTxnUsesActiveValuesAndBlocksUnknownValues() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (TxnScoreboardV2 scoreboard = new TxnScoreboardV2(4)) {
+                Assert.assertTrue(scoreboard.acquireTxn(0, 10, 90));
+                Assert.assertTrue(scoreboard.acquireTxn(1, 11, 100));
+                Assert.assertEquals(90, scoreboard.getMinSeqTxn(12, 120));
+
+                scoreboard.releaseTxn(0, 10);
+                Assert.assertEquals(100, scoreboard.getMinSeqTxn(12, 120));
+
+                scoreboard.releaseTxn(1, 11);
+                Assert.assertTrue(scoreboard.acquireTxn(0, 12, TxnScoreboard.UNKNOWN_SEQ_TXN));
+                Assert.assertEquals(TxnScoreboard.UNKNOWN_SEQ_TXN, scoreboard.getMinSeqTxn(12, 120));
+                scoreboard.releaseTxn(0, 12);
+            }
         });
     }
 
@@ -323,8 +646,9 @@ public class TxnScoreboardTest extends AbstractCairoTest {
                         barrier.await();
                         for (int s = 0; s < 100; s++) {
                             try {
-                                if (scoreboard.acquireTxn(id, txn + (long) s * entryCount)) {
-                                    scoreboard.releaseTxn(id, txn + (long) s * entryCount);
+                                final long tableTxn = txn + (long) s * entryCount;
+                                if (scoreboard.acquireTxn(id, tableTxn, tableTxn)) {
+                                    scoreboard.releaseTxn(id, tableTxn);
                                     Os.pause();
                                 }
                             } catch (CairoException e) {
@@ -367,7 +691,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
                 Thread reader = new Thread(() -> {
                     try {
                         barrier.await();
-                        if (scoreboard.acquireTxn(id, txn)) {
+                        if (scoreboard.acquireTxn(id, txn, txn)) {
                             long activeReaderCount = getActiveReaderCount(scoreboard, txn);
                             if (activeReaderCount > readers || activeReaderCount < 1) {
                                 LOG.errorW()
@@ -434,12 +758,12 @@ public class TxnScoreboardTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             try (final TxnScoreboard scoreboard2 = newTxnScoreboard()) {
                 try (TxnScoreboard scoreboard1 = newTxnScoreboard()) {
-                    scoreboard1.acquireTxn(0, 67);
-                    scoreboard1.acquireTxn(1, 68);
-                    scoreboard1.acquireTxn(2, 68);
-                    scoreboard1.acquireTxn(3, 69);
-                    scoreboard1.acquireTxn(4, 70);
-                    scoreboard1.acquireTxn(5, 71);
+                    scoreboard1.acquireTxn(0, 67, 67);
+                    scoreboard1.acquireTxn(1, 68, 68);
+                    scoreboard1.acquireTxn(2, 68, 68);
+                    scoreboard1.acquireTxn(3, 69, 69);
+                    scoreboard1.acquireTxn(4, 70, 70);
+                    scoreboard1.acquireTxn(5, 71, 71);
                     Assert.assertEquals(67, getMin(scoreboard1));
 
                     scoreboard1.releaseTxn(1, 68);
@@ -460,9 +784,9 @@ public class TxnScoreboardTest extends AbstractCairoTest {
                     scoreboard1.releaseTxn(4, 70);
 
                     assertScoreboardMinOrNoLocks(scoreboard1);
-                    scoreboard1.acquireTxn(0, 72);
+                    scoreboard1.acquireTxn(0, 72, 72);
                 }
-                scoreboard2.acquireTxn(0, 72);
+                scoreboard2.acquireTxn(0, 72, 72);
                 Assert.assertFalse(scoreboard2.isTxnAvailable(72));
 
                 scoreboard2.releaseTxn(0, 72);
@@ -477,9 +801,9 @@ public class TxnScoreboardTest extends AbstractCairoTest {
     public void testWideRange() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TxnScoreboard scoreboard = newTxnScoreboard()) {
-                scoreboard.acquireTxn(0, 15);
+                scoreboard.acquireTxn(0, 15, 15);
                 scoreboard.releaseTxn(0, 15);
-                scoreboard.acquireTxn(0, 900992);
+                scoreboard.acquireTxn(0, 900992, 900992);
                 Assert.assertFalse(scoreboard.isTxnAvailable(900992));
             }
             scoreboardPoolFactory.clear();
@@ -558,7 +882,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
                 barrier.await();
                 long t;
                 while ((t = txn) < iterations) {
-                    if (scoreboard.acquireTxn(id, t)) {
+                    if (scoreboard.acquireTxn(id, t, t)) {
                         long writerMinLoc = writerMin;
                         long activeReaderCount = getActiveReaderCount(scoreboard, t);
                         if (activeReaderCount > readers + 1 || activeReaderCount < 1) {

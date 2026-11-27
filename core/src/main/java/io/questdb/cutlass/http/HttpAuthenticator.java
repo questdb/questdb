@@ -25,6 +25,7 @@
 package io.questdb.cutlass.http;
 
 import io.questdb.cutlass.auth.Authenticator;
+import org.jetbrains.annotations.Nullable;
 
 public interface HttpAuthenticator extends Authenticator {
 
@@ -35,4 +36,25 @@ public interface HttpAuthenticator extends Authenticator {
      * @return true if the authentication succeeded, false - otherwise
      */
     boolean authenticate(HttpRequestHeader headers);
+
+    /**
+     * Returns the credential the last successful {@link #authenticate(HttpRequestHeader)} call accepted,
+     * so that an HTTP session it opens or re-authenticates ends when the credential is revoked.
+     * Valid only until the next {@code authenticate()} or {@code clear()} call.
+     *
+     * @return the credential, or null if it cannot be revoked by this server, such as a token issued by
+     * an external identity provider
+     */
+    @Nullable
+    default HttpSessionCredential getSessionCredential() {
+        return null;
+    }
+
+    /**
+     * Returns false when this authenticator admits every request without a
+     * credential, as it does when the server runs without authentication.
+     */
+    default boolean isCredentialRequired() {
+        return true;
+    }
 }

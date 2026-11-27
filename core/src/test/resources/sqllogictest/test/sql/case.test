@@ -1,0 +1,54 @@
+# CASE behaviour that QuestDB shares with PostgreSQL and DuckDB. The one deliberate
+# difference is marked below.
+
+statement ok
+create table t (x int, ts timestamp) timestamp(ts);
+
+statement ok
+insert into t values (1, '2013-07-06T00:00:00.000000Z'), (2, '2013-07-07T10:00:00.000000Z'), (-1, '2013-07-08T00:00:00.000000Z'), (null, '2013-07-09T00:00:00.000000Z');
+
+# a function call, a unary minus and a cast as the operand of the simple form
+query TTT
+select case abs(x) when 1 then 'one' else 'other' end, case -x when -1 then 'minus one' else 'other' end, case cast(x as double precision) when 2 then 'two' else 'other' end from t order by ts;
+----
+one	minus one	other
+other	other	two
+one	other	other
+other	other	other
+
+# extract() inside CASE; July 6 and 7, 2013 were a Saturday and a Sunday
+query T
+select case when extract(dow from ts) in (0, 6) then 'weekend' else 'weekday' end from t order by ts;
+----
+weekend
+weekend
+weekday
+weekday
+
+# a negative key
+query T
+select case x when -1 then 'minus one' when 1 then 'one' end from t order by ts;
+----
+one
+NULL
+minus one
+NULL
+
+# -0.0 equals 0, in the simple and the searched form
+statement ok
+create table z (d double);
+
+statement ok
+insert into z values (-0.0);
+
+query TT
+select case d when 0 then 'zero' else 'other' end, case when d = 0 then 'zero' else 'other' end from z;
+----
+zero	zero
+
+# A NULL operand takes the ELSE branch. QuestDB differs from PostgreSQL and DuckDB in one
+# case: its 'null = null' is true, so a NULL operand matches a NULL key, where they take ELSE.
+query TT
+select case null when 1 then 'one' else 'other' end, case null when null then 'null' else 'other' end;
+----
+other	null

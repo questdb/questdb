@@ -447,16 +447,14 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                             " sample by 1h")
                             .noLeakCheck()
                             .assertsPlan("""
-                                    Encode sort light
+                                    Async Stream Group By workers: 1
                                       keys: [timestamp]
-                                        Async Group By workers: 1
-                                          keys: [timestamp]
-                                          keyFunctions: [timestamp_floor_utc('1h',timestamp)]
-                                          values: [count(*)]
-                                          filter: (symbol ~ .*?.ETH [state-shared] and row_id!=100)
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: x
+                                      keyFunctions: [timestamp_floor_utc('1h',timestamp)]
+                                      values: [count(*)]
+                                      filter: (symbol ~ .*?.ETH [state-shared] and row_id!=100)
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: x
                                     """);
                 }, 4, 4
         );
@@ -1660,6 +1658,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         }
 
         @Override
+        public boolean isExpiryReadFilterEnabled() {
+            return sqlExecutionContext.isExpiryReadFilterEnabled();
+        }
+
+        @Override
         public boolean isParallelFilterEnabled() {
             return sqlExecutionContext.isParallelFilterEnabled();
         }
@@ -1667,6 +1670,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         @Override
         public boolean isParallelGroupByEnabled() {
             return sqlExecutionContext.isParallelGroupByEnabled();
+        }
+
+        @Override
+        public boolean isParallelHashJoinGroupByEnabled() {
+            return sqlExecutionContext.isParallelHashJoinGroupByEnabled();
         }
 
         @Override
@@ -1692,6 +1700,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         @Override
         public boolean isParquetRowGroupPruningEnabled() {
             return sqlExecutionContext.isParquetRowGroupPruningEnabled();
+        }
+
+        @Override
+        public boolean isStreamGroupByEnabled() {
+            return sqlExecutionContext.isStreamGroupByEnabled();
         }
 
         @Override
@@ -1781,6 +1794,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         }
 
         @Override
+        public void setExpiryReadFilterEnabled(boolean enabled) {
+            sqlExecutionContext.setExpiryReadFilterEnabled(enabled);
+        }
+
+        @Override
         public void setIntervalFunctionType(int intervalType) {
             sqlExecutionContext.setIntervalFunctionType(intervalType);
         }
@@ -1811,6 +1829,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         }
 
         @Override
+        public void setParallelHashJoinGroupByEnabled(boolean isEnabled) {
+            sqlExecutionContext.setParallelHashJoinGroupByEnabled(isEnabled);
+        }
+
+        @Override
         public void setParallelHorizonJoinEnabled(boolean parallelHorizonJoinEnabled) {
             sqlExecutionContext.setParallelHorizonJoinEnabled(parallelHorizonJoinEnabled);
         }
@@ -1838,6 +1861,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         @Override
         public void setRandom(Rnd rnd) {
             sqlExecutionContext.setRandom(rnd);
+        }
+
+        @Override
+        public void setStreamGroupByEnabled(boolean isEnabled) {
+            sqlExecutionContext.setStreamGroupByEnabled(isEnabled);
         }
 
         @Override

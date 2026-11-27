@@ -120,6 +120,11 @@ public abstract class AbstractCovarGroupByFunction extends DoubleFunction implem
     }
 
     @Override
+    public boolean isStateSelfContained() {
+        return true;
+    }
+
+    @Override
     public void setDouble(MapValue mapValue, double value) {
         mapValue.putDouble(valueIndex + 2, value);
         mapValue.putLong(valueIndex + 3, 1L);

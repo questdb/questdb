@@ -27,6 +27,8 @@ package io.questdb.test.griffin.fuzz;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.test.griffin.fuzz.clauses.GroupByClause;
+import io.questdb.test.griffin.fuzz.clauses.GroupingSetsClause;
+import io.questdb.test.griffin.fuzz.clauses.HashJoinGroupByClause;
 import io.questdb.test.griffin.fuzz.clauses.HorizonJoinClause;
 import io.questdb.test.griffin.fuzz.clauses.LatestOnClause;
 import io.questdb.test.griffin.fuzz.clauses.PostingClause;
@@ -42,8 +44,9 @@ import io.questdb.test.griffin.fuzz.expr.BindContext;
  * <p>
  * Shape distribution is roughly: temporal JOIN 15% (when two or more
  * tables exist), posting-index read 15% (when the table has a
- * posting-indexed symbol), SAMPLE BY 20%, GROUP BY 20%, and the remaining
- * ~30% split between SIMPLE, LATEST ON and WINDOW. The join and posting
+ * posting-indexed symbol), SAMPLE BY 20%, GROUP BY 15%, equi-join GROUP BY
+ * 5% (when two or more tables exist), and the remaining ~30% split between
+ * SIMPLE, LATEST ON and WINDOW. The join, posting and equi-join GROUP BY
  * bands fall through to the generic single-table shapes when their
  * precondition is not met; SAMPLE BY, LATEST ON and WINDOW downgrade to
  * SIMPLE on sources without a designated timestamp.
@@ -54,7 +57,13 @@ import io.questdb.test.griffin.fuzz.expr.BindContext;
  * LATEST ON band is carved just below it ([78, 85)). Both carve from the
  * SIMPLE range and leave the SAMPLE BY and GROUP BY bands untouched, so
  * disabling either knob independently restores the exact prior shape
- * distribution.
+ * distribution. When equi-join GROUP BY fuzzing is enabled
+ * ({@code hashJoinEnabled}, on by default), its band is carved out of the top
+ * of the GROUP BY range ([65, 70)), since the shape is a GROUP BY over a join;
+ * disabling it gives the band back to GROUP BY without an extra rnd draw. When
+ * grouping sets fuzzing is enabled ({@code groupingSetsEnabled}, on by default),
+ * ROLLUP, CUBE and GROUPING SETS queries take the band [60, 65) of the GROUP BY
+ * range in the same way.
  * <p>
  * For non-join shapes the {@link FuzzSource} is usually a direct
  * reference to a real table, but occasionally wrapped in a subquery or
@@ -73,20 +82,28 @@ public final class QueryGenerator {
     private QueryGenerator() {
     }
 
-    public static GeneratedQuery generate(Rnd rnd, ObjList<FuzzTable> tables, BindContext ctx, boolean injectFaultFn, boolean windowEnabled, boolean latestOnEnabled, boolean horizonJoinEnabled, boolean windowJoinEnabled) {
+    public static GeneratedQuery generate(
+            Rnd rnd,
+            ObjList<FuzzTable> tables,
+            BindContext ctx,
+            boolean injectFaultFn,
+            boolean windowEnabled,
+            boolean latestOnEnabled,
+            boolean horizonJoinEnabled,
+            boolean windowJoinEnabled,
+            boolean hashJoinEnabled,
+            boolean groupingSetsEnabled,
+            FuzzConfig config
+    ) {
         int pick = rnd.nextInt(100);
         FuzzTable t = tables.getQuick(rnd.nextInt(tables.size()));
 
         if (pick < 15 && tables.size() >= 2) {
-            FuzzTable other = tables.getQuick(rnd.nextInt(tables.size()));
-            if (other == t) {
-                other = tables.getQuick((tables.indexOf(t) + 1) % tables.size());
-            }
-            // Joins stay on direct, real tables: ASOF/LT/SPLICE, HORIZON and
-            // WINDOW joins all need a designated timestamp on both sides which
-            // virtual tables don't carry. The 15% join band is split across the
-            // enabled join kinds; with both new kinds off it stays temporal-only
-            // and draws no extra rnd op, preserving the original distribution.
+            FuzzTable other = pickOtherTable(rnd, tables, t);
+            // Joins stay on real tables: ASOF/LT/SPLICE, HORIZON and WINDOW
+            // joins all need a designated timestamp on both sides which virtual
+            // tables don't carry. The 15% join band is split across the
+            // enabled join kinds; with both new kinds off it stays temporal-only.
             return generateJoin(rnd, t, other, ctx, injectFaultFn, horizonJoinEnabled, windowJoinEnabled);
         }
 
@@ -103,6 +120,17 @@ public final class QueryGenerator {
             }
         }
 
+        // Equi-join GROUP BY: the band [65, 70) of the GROUP BY range. The check draws nothing
+        // from rnd, so with the knob off, or with a single table, the query falls through to
+        // the GROUP BY below exactly as it did before the band existed. The join reads direct,
+        // real tables: the fused hash join GROUP BY accepts only projections down to a table,
+        // so a long_sequence() or CTE source would keep the ordinary plan and leave the fused
+        // on/off axis in QueryRunner with nothing to compare.
+        if (hashJoinEnabled && pick >= 65 && pick < 70 && tables.size() >= 2) {
+            FuzzTable other = pickOtherTable(rnd, tables, t);
+            return HashJoinGroupByClause.generate(rnd, t, other, ctx, injectFaultFn, config).withShape(QueryShape.HASH_JOIN_GROUP_BY);
+        }
+
         FuzzSource source = pickSource(rnd, t);
         if (pick < 50) {
             // SAMPLE BY requires a designated ts; downgrade to SIMPLE on
@@ -111,6 +139,9 @@ public final class QueryGenerator {
                 return SimpleClause.generate(rnd, source, ctx, injectFaultFn);
             }
             return SampleByClause.generate(rnd, source, ctx, injectFaultFn).withShape(QueryShape.SAMPLE_BY);
+        }
+        if (groupingSetsEnabled && pick >= 60 && pick < 65) {
+            return GroupingSetsClause.generate(rnd, source, ctx, injectFaultFn).withShape(QueryShape.GROUPING_SETS);
         }
         if (pick < 70) {
             return GroupByClause.generate(rnd, source, ctx, injectFaultFn).withShape(QueryShape.GROUP_BY);
@@ -135,9 +166,10 @@ public final class QueryGenerator {
      * Picks one of the enabled join kinds for the join band. Temporal
      * (ASOF/LT/SPLICE) is always available; HORIZON and WINDOW joins are added
      * when their config flags are on. The sub-pick is drawn only when more than
-     * one kind is enabled, so the both-off case reproduces the pre-existing
-     * temporal-only rnd stream exactly. All three kinds run on direct real
-     * tables and thread {@code injectFaultFn} into their master-only WHERE.
+     * one kind is enabled. All three kinds run on real tables, directly or, for
+     * a side that SPLICE or HORIZON JOIN reads by row id, through a WINDOW JOIN
+     * sub-query (see {@link FuzzSource#rowIdJoinSide}), and thread
+     * {@code injectFaultFn} into their master-only WHERE.
      */
     private static GeneratedQuery generateJoin(
             Rnd rnd,
@@ -151,7 +183,7 @@ public final class QueryGenerator {
         int kinds = 1 + (horizonJoinEnabled ? 1 : 0) + (windowJoinEnabled ? 1 : 0);
         int joinPick = kinds > 1 ? rnd.nextInt(kinds) : 0;
         if (joinPick == 0) {
-            return TemporalJoinClause.generate(rnd, FuzzSource.direct(t), FuzzSource.direct(other), ctx, injectFaultFn).withShape(QueryShape.TEMPORAL_JOIN);
+            return TemporalJoinClause.generate(rnd, t, other, ctx, injectFaultFn).withShape(QueryShape.TEMPORAL_JOIN);
         }
         if (horizonJoinEnabled && joinPick == 1) {
             return HorizonJoinClause.generate(rnd, t, other, ctx, injectFaultFn).withShape(QueryShape.HORIZON_JOIN);
@@ -159,6 +191,15 @@ public final class QueryGenerator {
         // The remaining slot is WINDOW: either joinPick == 2 (both kinds on) or
         // joinPick == 1 with only WINDOW enabled.
         return WindowJoinClause.generate(rnd, t, other, ctx, injectFaultFn).withShape(QueryShape.WINDOW_JOIN);
+    }
+
+    // A table other than t, with one rnd draw; the caller guarantees two or more tables.
+    private static FuzzTable pickOtherTable(Rnd rnd, ObjList<FuzzTable> tables, FuzzTable t) {
+        FuzzTable other = tables.getQuick(rnd.nextInt(tables.size()));
+        if (other == t) {
+            other = tables.getQuick((tables.indexOf(t) + 1) % tables.size());
+        }
+        return other;
     }
 
     private static FuzzSource pickSource(Rnd rnd, FuzzTable realTable) {

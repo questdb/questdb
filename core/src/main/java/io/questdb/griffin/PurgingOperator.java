@@ -43,6 +43,7 @@ import io.questdb.std.Os;
 import io.questdb.std.Transient;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.ColumnPurgeTask;
+import org.jetbrains.annotations.TestOnly;
 
 public final class PurgingOperator {
     public static final long TABLE_ROOT_PARTITION = Long.MIN_VALUE + 1;
@@ -51,6 +52,7 @@ public final class PurgingOperator {
     private final FilesFacade ff;
     private final Log log;
     private final MessageBus messageBus;
+    private final PostingIndexUtils.SealedFileRemover sealedFileRemover = new PostingIndexUtils.SealedFileRemover();
     private final IntList updateColumnIndexes = new IntList();
 
     public PurgingOperator(
@@ -61,6 +63,60 @@ public final class PurgingOperator {
         this.log = log;
         this.messageBus = messageBus;
         this.ff = configuration.getFilesFacade();
+    }
+
+    /**
+     * Queues {@code columnVersions} for the column purge job. Static because a caller with nothing else to purge -
+     * {@code TableWriter} handing over the {@code _geometry} generations a rotation retired, see COMPOSITE_PARTITIONS.md -
+     * needs the queue without needing this operator's per-column bookkeeping.
+     */
+    public static void purgeColumnVersionAsync(
+            Log log,
+            MessageBus messageBus,
+            TableToken tableToken,
+            String columnName,
+            int tableId,
+            int tableTruncateVersion,
+            int columnType,
+            byte indexType,
+            int timestampType,
+            int partitionBy,
+            long updateTxn,
+            @Transient LongList columnVersions,
+            int columnVersionsLo,
+            int columnVersionsHi
+    ) {
+        Sequence pubSeq = messageBus.getColumnPurgePubSeq();
+        while (true) {
+            long cursor = pubSeq.next();
+            if (cursor > -1L) {
+                ColumnPurgeTask task = messageBus.getColumnPurgeQueue().get(cursor);
+                task.of(
+                        tableToken,
+                        columnName,
+                        tableId,
+                        tableTruncateVersion,
+                        columnType,
+                        indexType,
+                        timestampType,
+                        partitionBy,
+                        updateTxn,
+                        columnVersions,
+                        columnVersionsLo,
+                        columnVersionsHi
+                );
+                pubSeq.done(cursor);
+                return;
+            } else if (cursor == -1L) {
+                // Queue overflow
+                log.error().$("cannot schedule column purge, purge queue is full. Please run 'VACUUM TABLE \"").$safe(tableToken.getTableName())
+                        .$("\"' [columnName=").$safe(columnName)
+                        .$(", updateTxn=").$(updateTxn)
+                        .I$();
+                return;
+            }
+            Os.pause();
+        }
     }
 
     public void add(
@@ -83,6 +139,12 @@ public final class PurgingOperator {
     public void clear() {
         updateColumnIndexes.clear();
         cleanupColumnVersions.clear();
+        columnNames.clear();
+    }
+
+    @TestOnly
+    public int getColumnNameCount() {
+        return columnNames.size();
     }
 
     public void purge(
@@ -141,12 +203,12 @@ public final class PurgingOperator {
                                     if (IndexType.isPosting(indexType)) {
                                         // Enumerate every sealed .pv / .pc<N> for this column
                                         // instance across all on-disk sealTxn generations.
-                                        // removeAllSealedFiles tolerates missing files, so
+                                        // sealedFileRemover tolerates missing files, so
                                         // successive purge passes are idempotent. Returns true
                                         // if at least one removal failed and the file is still
                                         // on disk — fold that into columnPurged so the column
                                         // version is rescheduled for async purge.
-                                        boolean sidecarRemovalFailed = PostingIndexUtils.removeAllSealedFiles(ff, path, pathPartitionLen, columnName, columnVersion);
+                                        boolean sidecarRemovalFailed = sealedFileRemover.remove(ff, path, pathPartitionLen, columnName, columnVersion);
                                         IndexFactory.keyFileName(indexType, path.trimTo(pathPartitionLen), columnName, columnVersion);
                                         columnPurged &= ff.removeQuiet(path.$());
                                         columnPurged &= !sidecarRemovalFailed;
@@ -227,37 +289,22 @@ public final class PurgingOperator {
             int columnVersionsLo,
             int columnVersionsHi
     ) {
-        Sequence pubSeq = messageBus.getColumnPurgePubSeq();
-        while (true) {
-            long cursor = pubSeq.next();
-            if (cursor > -1L) {
-                ColumnPurgeTask task = messageBus.getColumnPurgeQueue().get(cursor);
-                task.of(
-                        tableToken,
-                        columnName,
-                        tableId,
-                        tableTruncateVersion,
-                        columnType,
-                        indexType,
-                        timestampType,
-                        partitionBy,
-                        updateTxn,
-                        columnVersions,
-                        columnVersionsLo,
-                        columnVersionsHi
-                );
-                pubSeq.done(cursor);
-                return;
-            } else if (cursor == -1L) {
-                // Queue overflow
-                log.error().$("cannot schedule column purge, purge queue is full. Please run 'VACUUM TABLE \"").$safe(tableToken.getTableName())
-                        .$("\"' [columnName=").$safe(columnName)
-                        .$(", updateTxn=").$(updateTxn)
-                        .I$();
-                return;
-            }
-            Os.pause();
-        }
+        purgeColumnVersionAsync(
+                log,
+                messageBus,
+                tableToken,
+                columnName,
+                tableId,
+                tableTruncateVersion,
+                columnType,
+                indexType,
+                timestampType,
+                partitionBy,
+                updateTxn,
+                columnVersions,
+                columnVersionsLo,
+                columnVersionsHi
+        );
     }
 
 }

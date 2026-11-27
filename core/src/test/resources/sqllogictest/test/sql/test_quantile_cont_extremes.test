@@ -1,0 +1,34 @@
+# name: test/sql/test_quantile_cont_extremes.test
+# description: QUANTILE_CONT interpolates between finite extremes without overflow
+# group: [aggregates]
+#
+# After DuckDB test/sql/aggregate/aggregates/quantile_test_all_types.test_slow,
+# which takes the median of each type's (min, max) pair. The expected values
+# are DuckDB's results for the DOUBLE pair: the interpolation between two
+# finite values is finite.
+
+query RR
+SELECT quantile_cont(t, 0.5), quantile_cont(t, 0.25)
+FROM (SELECT 1.7976931348623157E308 t UNION ALL SELECT -1.7976931348623157E308 t)
+----
+0.000000 -8.988465674311579e+307
+
+query R
+SELECT percentile_cont(t, 0.5) OVER ()
+FROM (SELECT 1.7976931348623157E308 t UNION ALL SELECT -1.7976931348623157E308 t)
+----
+0.000000
+0.000000
+
+query R
+SELECT quantile_cont(t, ARRAY[0.5, 0.25])
+FROM (SELECT 1.7976931348623157E308 t UNION ALL SELECT -1.7976931348623157E308 t)
+----
+{0.000000,-8.988465674311579e+307}
+
+query R
+SELECT percentile_cont(t, ARRAY[0.5, 0.25]) OVER ()
+FROM (SELECT 1.7976931348623157E308 t UNION ALL SELECT -1.7976931348623157E308 t)
+----
+{0.000000,-8.988465674311579e+307}
+{0.000000,-8.988465674311579e+307}

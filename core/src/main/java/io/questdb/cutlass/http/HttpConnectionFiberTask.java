@@ -55,8 +55,12 @@ import org.jetbrains.annotations.TestOnly;
  * must not borrow the launching worker's selector. {@code runStep()} brackets each
  * step with {@code selectorPool} acquire/release, so a suspended step retains
  * exclusive ownership until it resumes and releases the selector. The pool belongs
- * to the worker group whose job created the task, and that group's workers run its
- * fibers. Per-connection request state lives on the context (LocalValue), never on
+ * to the worker group whose job created the task. Each step runs on the fiber runtime
+ * of the group whose worker claimed its event. When each group has a dispatcher of its
+ * own, that is always the creating group. When one dispatcher serves a split pool (the
+ * server binds to port 0), any group's worker can claim a later event, so a step can
+ * run on another group's workers while it draws selectors from the creating group's
+ * pool. Per-connection request state lives on the context (LocalValue), never on
  * the selector.
  *
  * <p>The busy-writer retry path is a third trigger, next to fd events and heartbeats:

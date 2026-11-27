@@ -29,7 +29,6 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.IndexType;
-import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableStructure;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -43,6 +42,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
+import io.questdb.std.Hash;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
@@ -61,7 +61,8 @@ import static io.questdb.cutlass.line.LineUtils.from;
 
 public class LineUdpParserImpl implements LineUdpParser, Closeable {
     private final static Log LOG = LogFactory.getLog(LineUdpParserImpl.class);
-    private static final FieldNameParser NOOP_FIELD_NAME = _ -> {
+    private static final String DESIGNATED_TIMESTAMP_NAME = "timestamp"; // the name a table this parser creates gives it
+    private static final FieldNameParser NOOP_FIELD_NAME = (_, _) -> {
     };
     private static final FieldValueParser NOOP_FIELD_VALUE = (_, _) -> {
     };
@@ -72,6 +73,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
     private final boolean autoCreateNewTables;
     private final Clock clock;
     private final LongList columnIndexAndType = new LongList();
+    private final LongList columnLines = new LongList(); // the number of the line that last set each column of an existing table
     private final LongList columnNameType = new LongList();
     private final LongList columnValues = new LongList();
     private final CharSequenceObjHashMap<TableWriter> commitList = new CharSequenceObjHashMap<>();
@@ -80,8 +82,9 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
     private final short defaultFloatColumnType;
     private final short defaultIntegerColumnType;
     private final CairoEngine engine;
-    private final IntList geoHashBitsSizeByColIdx = new IntList(); // 0 if not a GeoHash, else bits precision
+    private final IntList valueTypeByColIdx = new IntList(); // what getValueType() made of each value; putValue reads the spelling from it
     private final FieldValueParser MY_NEW_TAG_VALUE = this::parseTagValueNewTable;
+    private final ColumnNameSet newTableNames = new ColumnNameSet(); // the names the line that creates a table has kept
     private final Path path = new Path();
     private final TableStructureAdapter tableStructureAdapter = new TableStructureAdapter();
     private final byte timestampUnit;
@@ -94,6 +97,8 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
     private int columnIndex;
     private long columnName;
     private int columnType;
+    private long currentLine = 1; // numbers the lines from 1, so that no column starts out set by the current one
+    private boolean isNewTableValueSkipped; // the line that creates a table named a column again, so its value is dropped
     private RecordMetadata metadata;
     private final FieldNameParser MY_FIELD_NAME = this::parseFieldName;
     private FieldNameParser onFieldName;
@@ -209,7 +214,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
                 break;
             case EVT_FIELD_NAME:
             case EVT_TAG_NAME:
-                onFieldName.parse(token);
+                onFieldName.parse(token, cache);
                 break;
             case EVT_TAG_VALUE:
                 onTagValue.parse(token, cache);
@@ -219,7 +224,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
                 break;
             case EVT_TIMESTAMP:
                 columnValues.add(token.getCacheAddress());
-                geoHashBitsSizeByColIdx.add(0);
+                valueTypeByColIdx.add(ColumnType.TIMESTAMP);
                 break;
             default:
                 break;
@@ -253,7 +258,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
             LineUdpParserSupport.putValue(
                     row,
                     (int) columnNameType.getQuick(i * 2 + 1),
-                    geoHashBitsSizeByColIdx.getQuick(i),
+                    valueTypeByColIdx.getQuick(i),
                     i,
                     cache.get(columnValues.getQuick(i))
             );
@@ -273,7 +278,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
             LineUdpParserSupport.putValue(
                     row,
                     Numbers.decodeHighInt(value),
-                    geoHashBitsSizeByColIdx.getQuick(i),
+                    valueTypeByColIdx.getQuick(i),
                     Numbers.decodeLowInt(value),
                     cache.get(columnValues.getQuick(i))
             );
@@ -282,6 +287,12 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
     }
 
     private void cacheWriter(CacheEntry entry, CachedCharSequence tableName, TableToken tableToken) {
+        // Re-checked here, not only on first resolve: an entry left in state 1 by a failed
+        // cacheWriter re-resolves the token, and the table may since have been re-created as WAL.
+        if (tableToken != null && tableToken.isWal()) {
+            rejectWalTable(entry, tableToken);
+            return;
+        }
         try {
             entry.writer = engine.getWriter(tableToken, WRITER_LOCK_REASON);
             this.tableToken = tableToken;
@@ -297,8 +308,10 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
     private void clearState() {
         columnNameType.clear();
         columnIndexAndType.clear();
-        geoHashBitsSizeByColIdx.clear();
+        valueTypeByColIdx.clear();
         columnValues.clear();
+        currentLine++;
+        isNewTableValueSkipped = false;
     }
 
     private TableWriter.Row createNewRow(CharSequenceCache cache, int columnCount) {
@@ -323,6 +336,11 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
     }
 
     private void createTableAndAppendRow(CharSequenceCache cache) {
+        for (int i = 0, n = columnNameType.size() / 2; i < n; i++) {
+            final int valueType = (int) columnNameType.getQuick(2 * i + 1);
+            final CharSequence value = cache.get(columnValues.getQuick(i));
+            columnNameType.setQuick(2 * i + 1, LineUdpParserSupport.getNewColumnType(value, valueType, defaultFloatColumnType));
+        }
         tableToken = engine.createTable(
                 AllowAllSecurityContext.INSTANCE,
                 ddlMem,
@@ -332,6 +350,12 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
                 false,
                 TableUtils.TABLE_KIND_REGULAR_TABLE
         );
+        // The adapter always creates a non-WAL table, but createTable() is IF NOT EXISTS: if another
+        // path created the table as WAL in the meantime, this is that table's token.
+        if (tableToken.isWal()) {
+            rejectWalTable(writerCache.valueAtQuick(cacheEntryIndex), tableToken);
+            return;
+        }
         appendFirstRowAndCacheWriter(cache);
     }
 
@@ -385,7 +409,16 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
         }
     }
 
-    private void parseFieldName(CachedCharSequence token) {
+    // whether the current line has set the column already; marks it set by the current line
+    private boolean isColumnSetByLine(int columnIndex) {
+        if (columnIndex < columnLines.size() && columnLines.getQuick(columnIndex) == currentLine) {
+            return true;
+        }
+        columnLines.extendAndSet(columnIndex, currentLine);
+        return false;
+    }
+
+    private void parseFieldName(CachedCharSequence token, CharSequenceCache cache) {
         columnIndex = metadata.getColumnIndexQuiet(token);
         if (columnIndex > -1) {
             columnType = metadata.getColumnType(columnIndex);
@@ -396,10 +429,16 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
         }
     }
 
-    private void parseFieldNameNewTable(CachedCharSequence token) {
+    private void parseFieldNameNewTable(CachedCharSequence token, CharSequenceCache cache) {
         if (!TableUtils.isValidColumnName(token, udpConfiguration.getMaxFileNameLength())) {
             LOG.error().$("invalid column name [columnName=").$safe(token).I$();
             switchModeToSkipLine();
+            return;
+        }
+        if (Chars.equalsIgnoreCase(token, DESIGNATED_TIMESTAMP_NAME) || !newTableNames.add(token, cache, currentLine)) {
+            // the line names a column again, or names the designated timestamp: keep the first value, as
+            // for a table that exists
+            isNewTableValueSkipped = true;
             return;
         }
         columnNameType.add(token.getCacheAddress());
@@ -416,7 +455,8 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
 
     private void parseFieldValueNewTable(CachedCharSequence value, CharSequenceCache cache) {
         int valueType = LineUdpParserSupport.getValueType(value, defaultFloatColumnType, defaultIntegerColumnType, useLegacyStringDefault);
-        if (valueType == ColumnType.UNDEFINED || valueType == ColumnType.NULL) { // cannot create a col of type null
+        // cannot create a col of type null, but the empty value of a column named again is dropped anyway
+        if (valueType == ColumnType.UNDEFINED || (valueType == ColumnType.NULL && !isNewTableValueSkipped)) {
             switchModeToSkipLine();
         } else {
             parseValueNewTable(value, valueType);
@@ -434,8 +474,13 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
     private void parseValue(CachedCharSequence value, int valueType, CharSequenceCache cache, boolean isForField) {
         assert valueType > ColumnType.UNDEFINED;
         if (columnType > ColumnType.UNDEFINED) {
+            if (columnIndex == metadata.getTimestampIndex() || isColumnSetByLine(columnIndex)) {
+                // a row takes one value per column, the first, as with ILP over TCP; a field named like the
+                // designated timestamp is dropped as well, since the line's own timestamp sets that column,
+                // where ILP over TCP takes the field as the row timestamp
+                return;
+            }
             boolean valid;
-            int geoHashBits = 0;
             if (valueType != ColumnType.NULL) {
                 final int valueTypeTag = ColumnType.tagOf(valueType);
                 final int columnTypeTag = ColumnType.tagOf(columnType);
@@ -453,14 +498,25 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
                             || columnTypeTag == ColumnType.BYTE;
                     case ColumnType.BYTE -> columnTypeTag == ColumnType.BYTE;
                     case ColumnType.BOOLEAN -> columnTypeTag == ColumnType.BOOLEAN;
+                    // the same conversions as ILP over TCP gives a quoted string; a geohash column is
+                    // recognised by its type tag, since other types keep their own data in the bits a
+                    // geohash type uses
                     case ColumnType.STRING, ColumnType.VARCHAR -> columnTypeTag == ColumnType.STRING ||
                             columnTypeTag == ColumnType.VARCHAR ||
                             columnTypeTag == ColumnType.CHAR ||
                             columnTypeTag == ColumnType.IPv4 ||
-                            isForField &&
-                                    (geoHashBits = ColumnType.getGeoHashBits(columnType)) != 0;
-                    case ColumnType.DOUBLE -> columnTypeTag == ColumnType.DOUBLE || columnTypeTag == ColumnType.FLOAT;
-                    case ColumnType.FLOAT -> columnTypeTag == ColumnType.FLOAT;
+                            columnTypeTag == ColumnType.SYMBOL ||
+                            columnTypeTag == ColumnType.UUID ||
+                            ColumnType.isDecimalType(columnTypeTag) ||
+                            isForField && ColumnType.isGeoType(columnTypeTag);
+                    // a number goes into a SYMBOL column as its text, as over TCP
+                    case ColumnType.DOUBLE -> columnTypeTag == ColumnType.DOUBLE
+                            || columnTypeTag == ColumnType.FLOAT
+                            || columnTypeTag == ColumnType.SYMBOL
+                            || ColumnType.isDecimalType(columnTypeTag);
+                    case ColumnType.FLOAT -> columnTypeTag == ColumnType.FLOAT
+                            || columnTypeTag == ColumnType.SYMBOL
+                            || ColumnType.isDecimalType(columnTypeTag);
                     case ColumnType.SYMBOL -> columnTypeTag == ColumnType.SYMBOL;
                     case ColumnType.LONG256 -> columnTypeTag == ColumnType.LONG256;
                     case ColumnType.TIMESTAMP -> columnTypeTag == ColumnType.TIMESTAMP;
@@ -472,7 +528,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
             if (valid) {
                 columnIndexAndType.add(Numbers.encodeLowHighInts(columnIndex, columnType));
                 columnValues.add(value.getCacheAddress());
-                geoHashBitsSizeByColIdx.add(geoHashBits);
+                valueTypeByColIdx.add(valueType);
             } else {
                 LOG.error().$("mismatched column and value types [table=").$(writer.getTableToken())
                         .$(", column=").$safe(metadata.getColumnName(columnIndex))
@@ -484,13 +540,16 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
         } else {
             CharSequence colNameAsChars = cache.get(columnName);
             if (autoCreateNewColumns && TableUtils.isValidColumnName(colNameAsChars, udpConfiguration.getMaxFileNameLength())) {
+                final int newColumnType = LineUdpParserSupport.getNewColumnType(value, valueType, defaultFloatColumnType);
                 // Using AllowAllSecurityContext, currently there is no authentication on the UDP interface
-                writer.addColumn(colNameAsChars, valueType, AllowAllSecurityContext.INSTANCE);
+                writer.addColumn(colNameAsChars, newColumnType, AllowAllSecurityContext.INSTANCE);
                 // Writer index can be different from column count, it keeps deleted columns in metadata
                 int columnIndex = writer.getColumnIndex(colNameAsChars);
-                columnIndexAndType.add(Numbers.encodeLowHighInts(columnIndex, valueType));
+                // a new column, so the line cannot have set it; this marks it for a repeat further on
+                isColumnSetByLine(columnIndex);
+                columnIndexAndType.add(Numbers.encodeLowHighInts(columnIndex, newColumnType));
                 columnValues.add(value.getCacheAddress());
-                geoHashBitsSizeByColIdx.add(0);
+                valueTypeByColIdx.add(valueType);
             } else if (!autoCreateNewColumns) {
                 throw CairoException.nonCritical()
                         .put("column does not exist, creating new columns is disabled [table=").put(writer.getTableToken().getTableName())
@@ -506,15 +565,32 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
     }
 
     private void parseValueNewTable(CachedCharSequence value, int valueType) {
+        if (isNewTableValueSkipped) {
+            isNewTableValueSkipped = false;
+            return;
+        }
         columnNameType.add(valueType);
         columnValues.add(value.getCacheAddress());
-        geoHashBitsSizeByColIdx.add(0); // not a GeoHash, no constant literal
-        // that can be recognised yet
+        valueTypeByColIdx.add(valueType);
     }
 
     private void prepareNewColumn(CachedCharSequence token) {
         columnName = token.getCacheAddress();
         columnType = ColumnType.UNDEFINED;
+    }
+
+    /**
+     * ILP over UDP writes through a TableWriter directly, bypassing the WAL, the sequencer and
+     * replication, so it must never write a WAL table. The rejection is logged as critical once per
+     * cache entry; the entry is parked in the skip state, so every later line for the table is
+     * dropped without flooding the log at datagram rate.
+     */
+    private void rejectWalTable(CacheEntry entry, TableToken tableToken) {
+        entry.state = 3;
+        switchModeToSkipLine();
+        LOG.critical().$("ILP over UDP cannot write to a WAL table, the table's rows will be dropped; ")
+                .$("use ILP over TCP/HTTP, or convert the table to non-WAL [table=").$(tableToken)
+                .I$();
     }
 
     /**
@@ -596,8 +672,17 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
         }
 
         this.cacheEntryIndex = entryIndex;
+        // The previous table's writer, if any, is on the commit list now. Drop it as the current
+        // writer: if the new table is skipped (WAL, view, wrong type) no createState() replaces it,
+        // and onEvent() would take the stale writer as "this table is cached" on the next line of
+        // the new table and append that line to the previous table.
+        this.writer = null;
+        this.metadata = null;
 
         if (entry.writer == null) {
+            // The previous table's writer is on the commit list. A table left without a writer must not take the
+            // same-table shortcut into it on its next line.
+            writer = null;
             initCacheEntry(tableName, entry);
         } else {
             createState(entry);
@@ -606,7 +691,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
 
     @FunctionalInterface
     private interface FieldNameParser {
-        void parse(CachedCharSequence name);
+        void parse(CachedCharSequence name, CharSequenceCache cache);
     }
 
     @FunctionalInterface
@@ -624,6 +709,65 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
         private TableWriter writer;
     }
 
+    // The names the line that creates a table has kept, to find a name the line repeats without comparing it
+    // with every kept name. The set keeps a name as its cache address, an offset into the lexer's buffer, which
+    // holds the current line only, and matches names ignoring case, as the table's column names do. A slot an
+    // earlier line filled reads as free, so each line starts with an empty set and nothing has to clear it.
+    private static class ColumnNameSet {
+        private static final int INITIAL_CAPACITY = 16;
+        private long[] addresses = new long[INITIAL_CAPACITY];
+        private int[] hashes = new int[INITIAL_CAPACITY];
+        private long line; // the line whose names the set holds
+        private long[] lines = new long[INITIAL_CAPACITY]; // the line that filled each slot
+        private int mask = INITIAL_CAPACITY - 1;
+        private int size;
+
+        // adds the name unless the line has added it already; returns whether it added the name
+        boolean add(CachedCharSequence name, CharSequenceCache cache, long currentLine) {
+            if (currentLine != line) {
+                line = currentLine;
+                size = 0;
+            }
+            final int hash = Chars.lowerCaseHashCode(name);
+            int slot = Hash.spread(hash) & mask;
+            while (lines[slot] == line) {
+                if (hashes[slot] == hash && Chars.equalsIgnoreCase(name, cache.get(addresses[slot]))) {
+                    return false;
+                }
+                slot = (slot + 1) & mask;
+            }
+            addresses[slot] = name.getCacheAddress();
+            hashes[slot] = hash;
+            lines[slot] = line;
+            if (++size >= lines.length >> 1) {
+                grow();
+            }
+            return true;
+        }
+
+        private void grow() {
+            final long[] oldAddresses = addresses;
+            final int[] oldHashes = hashes;
+            final long[] oldLines = lines;
+            final int capacity = oldLines.length << 1;
+            addresses = new long[capacity];
+            hashes = new int[capacity];
+            lines = new long[capacity];
+            mask = capacity - 1;
+            for (int i = 0, n = oldLines.length; i < n; i++) {
+                if (oldLines[i] == line) {
+                    int slot = Hash.spread(oldHashes[i]) & mask;
+                    while (lines[slot] == line) {
+                        slot = (slot + 1) & mask;
+                    }
+                    addresses[slot] = oldAddresses[i];
+                    hashes[slot] = oldHashes[i];
+                    lines[slot] = line;
+                }
+            }
+        }
+    }
+
     private class TableStructureAdapter implements TableStructure {
         private CharSequenceCache cache;
         private int columnCount;
@@ -637,7 +781,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
         @Override
         public CharSequence getColumnName(int columnIndex) {
             if (columnIndex == getTimestampIndex()) {
-                return "timestamp";
+                return DESIGNATED_TIMESTAMP_NAME;
             }
             CharSequence colName = cache.get(columnNameType.getQuick(columnIndex * 2));
             if (TableUtils.isValidColumnName(colName, configuration.getMaxFileNameLength())) {
@@ -706,7 +850,8 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
 
         @Override
         public boolean isWalEnabled() {
-            return configuration.getWalEnabledDefault() && PartitionBy.isPartitioned(getPartitionBy());
+            // ILP over UDP writes through a TableWriter, which cannot write a WAL table.
+            return false;
         }
 
         TableStructureAdapter of(CharSequenceCache cache) {

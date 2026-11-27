@@ -39,6 +39,8 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.auth.AuthUtils;
+import io.questdb.cutlass.http.BrowserAllowedOrigins;
+import io.questdb.cutlass.http.HttpAllowedHosts;
 import io.questdb.cutlass.http.HttpContextConfiguration;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpServerConfiguration;
@@ -54,7 +56,6 @@ import io.questdb.cutlass.line.tcp.LineTcpReceiverConfigurationHelper;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
 import io.questdb.cutlass.pgwire.PGConfiguration;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
-import io.questdb.cutlass.qwp.server.QwpBrowserAllowedOrigins;
 import io.questdb.cutlass.qwp.server.QwpUdpReceiverConfiguration;
 import io.questdb.cutlass.text.CsvFileIndexer;
 import io.questdb.cutlass.text.TextConfiguration;
@@ -153,6 +154,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     public static final long COMMIT_INTERVAL_DEFAULT = 2000;
     public static final String CONFIG_DIRECTORY = "conf";
     public static final String DB_DIRECTORY = "db";
+    // the most worker groups a network pool splits into; it bounds the fiber runtimes, one per
+    // group, that the split network pools create
+    public static final int MAX_NETWORK_GROUP_COUNT = 16;
+    // the fewest workers a group of a split network pool has
+    public static final int MIN_NETWORK_GROUP_WORKERS = 8;
     public static final int MIN_TCP_ILP_BUF_SIZE = AuthUtils.CHALLENGE_LEN + 1;
     // public so a downstream configuration can detect the secret-file channel a sensitive key may arrive
     // through without re-deriving the suffixes from string literals
@@ -163,6 +169,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private static final String ILP_PROTO_SUPPORT_VERSIONS_NAME = "line.proto.support.versions";
     private static final String ILP_PROTO_TRANSPORTS = "ilp.proto.transports";
     private static final long MAX_MEMORY_USAGE_LOG_INTERVAL_MILLIS = 24L * 60 * 60 * 1000;
+    // Keeps WAL apply block row counts, and the look-ahead txn estimates derived from them, within int range
+    private static final long MAX_WAL_APPLY_BLOCK_MAX_ROWS = 2_000_000_000L;
     // Minimum heap page sizes: a page must hold one fixed-size block or it corrupts the heap.
     // sort.key also feeds RecordTreeChain's MemoryPages (41-byte node -> 64-byte page); window.tree
     // feeds AbstractRedBlackTree (BLOCK_SIZE 24); sort.light.value/window.rowid feed value chains
@@ -241,6 +249,13 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final double columnPurgeRetryDelayMultiplier;
     private final int columnPurgeTaskPoolCapacity;
     private final int commitMode;
+    private final boolean commitModeAdaptiveDowngrade;
+    private final long adaptiveEpochIntervalMs;
+    private final long adaptiveEpochMaxRows;
+    private final long adaptiveCommitGroupWindowUs;
+    private final boolean adaptiveEpochFlushOnClose;
+    private final boolean adaptiveEpochColumnSyncBatched;
+    private final boolean walCommitWritebackDrain;
     private final String confRoot;
     private final boolean configReloadEnabled;
     private final boolean copierChunkedEnabled;
@@ -251,6 +266,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final String dbLogName;
     private final String dbRoot;
     private final boolean debugWalApplyBlockFailureNoRetry;
+    private final int debugWalApplyMaxTxnBlockSize;
+    private final boolean debugWriterInvariantCheckEnabled;
     private final int decimalAdapterPoolCapacity;
     private final int defaultSeqPartTxnCount;
     private final boolean defaultSymbolCacheFlag;
@@ -271,6 +288,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int fileOperationRetryCount;
     private final FilesFacade filesFacade;
     private final FactoryProviderFactory fpf;
+    private final HttpAllowedHosts httpAllowedHosts;
+    private final BrowserAllowedOrigins httpBrowserAllowedOrigins;
     private final PropHttpContextConfiguration httpContextConfiguration;
     private final ObjHashSet<String> httpContextPathExport = new ObjHashSet<>();
     private final ObjHashSet<String> httpContextPathILP = new ObjHashSet<>();
@@ -325,6 +344,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long instanceHashLo;
     private final boolean interruptOnClosedConnection;
     private final boolean ioURingEnabled;
+    private final boolean isBrowserTlsTerminationEnabled;
     private final boolean isQueryTracingEnabled;
     private final boolean isReadOnlyInstance;
     private final int jsonCacheLimit;
@@ -363,7 +383,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final LineHttpProcessorConfiguration lineHttpProcessorConfiguration = new PropLineHttpProcessorConfiguration();
     private final String lineTcpAuthDB;
     private final boolean lineTcpEnabled;
-    private final WorkerPoolConfiguration lineTcpIOWorkerPoolConfiguration = new PropLineTcpIOWorkerPoolConfiguration();
+    private final PropLineTcpIOWorkerPoolConfiguration lineTcpIOWorkerPoolConfiguration = new PropLineTcpIOWorkerPoolConfiguration();
     private final LineTcpReceiverConfiguration lineTcpReceiverConfiguration = new PropLineTcpReceiverConfiguration();
     private final WorkerPoolConfiguration lineTcpWriterWorkerPoolConfiguration = new PropLineTcpWriterWorkerPoolConfiguration();
     private final int lineUdpCommitMode;
@@ -409,6 +429,9 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final WorkerPoolMode matViewRefreshWorkerPoolMode;
     private final long matViewRefreshWorkerSleepThreshold;
     private final long matViewRefreshWorkerYieldThreshold;
+    private final boolean matViewRowExpiryCleanupEnabled;
+    private final int matViewRowExpiryCleanupMaxCachedPartitions;
+    private final double matViewRowExpiryCleanupMinExpiredFraction;
     private final long matViewRowsPerQueryEstimate;
     private final int maxFileNameLength;
     private final long maxHttpQueryResponseRowLimit;
@@ -438,9 +461,16 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int o3LastPartitionMaxSplits;
     private final long o3MaxLagUs;
     private final int o3MidPartitionMaxSplits;
+    private final long o3PartitionClusterBinWidth;
+    private final int o3PartitionClusterMaxBins;
+    private final int o3PartitionMaxSplits;
     private final long o3MinLagUs;
     private final int o3OpenColumnQueueCapacity;
+    private final boolean o3PartitionMergeAppendEnabled;
+    private final int o3PartitionMergeAppendFrameCacheSize;
     private final boolean o3PartitionOverwriteControlEnabled;
+    private final int o3PartitionPreSplitMaxCuts;
+    private final int o3PartitionPreSplitMinPieceMultiple;
     private final int o3PartitionPurgeListCapacity;
     private final int o3PartitionQueueCapacity;
     private final long o3PartitionSplitMinSize;
@@ -459,6 +489,31 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean parquetExportStatisticsEnabled;
     private final CharSequence parquetExportTableNamePrefix;
     private final int parquetExportVersion;
+    private final long partitionCompactionAvgRowsPieceLim;
+    private final long partitionCompactionCheckInterval;
+    private final long partitionCompactionDeadMinSize;
+    private final double partitionCompactionDeadRowsRatio;
+    private final long partitionCompactionDeclineBackoffMax;
+    private final long partitionCompactionDeclineBackoffMin;
+    private final int partitionCompactionDeclineBackoffMultiplier;
+    private final int partitionCompactionHotCommits;
+    private final long partitionCompactionIdleTimeout;
+    private final long partitionCompactionIoBudget;
+    private final int partitionCompactionIoCostMultiplier;
+    private final long partitionCompactionSquashIdleTimeout;
+    private final int partitionCompactionMoveTailDeadRowsPercent;
+    private final int partitionCompactionMoveTailPieceThreshold;
+    private final int partitionCompactionMoveTailPrefixMultiple;
+    private final int partitionCompactionPieceThreshold;
+    private final int partitionCompactionSquashTargetSizeMultiple;
+    private final long partitionCompactionSwapTimeout;
+    private final int partitionCompactionTableDeadStopPercent;
+    private final int partitionCompactionTableDeadStopTriggerPercent;
+    private final long partitionCompactionTableDeadThreshold;
+    private final int partitionCompactionTableDeadThresholdPercent;
+    private final long partitionCompactionTableDeadTrigger;
+    private final double partitionCompactionTablePressureDeadRatio;
+    private final long partitionCompactionTimeBudgetMs;
     private final double partitionEncoderParquetBloomFilterFpp;
     private final int partitionEncoderParquetCompressionCodec;
     private final int partitionEncoderParquetCompressionLevel;
@@ -489,12 +544,12 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long queryContinuationWakeIntervalMillis;
     private final long queryMemoryLimitBytes;
     private final boolean queryWithinLatestByOptimisationEnabled;
-    private final QwpBrowserAllowedOrigins qwpBrowserAllowedOrigins;
-    private final boolean qwpBrowserTlsTerminationEnabled;
+    private final BrowserAllowedOrigins qwpBrowserAllowedOrigins;
     private final int qwpEgressForcedZstdLevel;
     private final int qwpMaxRowsPerTable;
     private final int qwpMaxTablesPerConnection;
     private final long qwpMaxUncommittedRows;
+    private final long qwpMinIdleMsBeforeWriterRelease;
     private final long qwpUdpCommitInterval;
     private final boolean qwpUdpEnabled;
     private final int qwpUdpGroupIPv4Address;
@@ -519,6 +574,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int rollBufferLimit;
     private final int rollBufferSize;
     private final long sequencerCheckInterval;
+    private final long sequencerCheckMinInterval;
     private final PropWorkerPoolConfiguration sharedWorkerPoolNetworkConfiguration = new PropWorkerPoolConfiguration("shared-network");
     private final PropWorkerPoolConfiguration sharedWorkerPoolQueryConfiguration = new PropWorkerPoolConfiguration("shared-query");
     private final PropWorkerPoolConfiguration sharedWorkerPoolWriteConfiguration = new PropWorkerPoolConfiguration("shared-write");
@@ -579,6 +635,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlMapMaxPages;
     private final int sqlMapMaxResizes;
     private final int sqlMaxArrayElementCount;
+    private final int sqlMaxGroupingSets;
     private final int sqlMaxNegativeLimit;
     private final int sqlMaxSymbolNotEqualsCount;
     private final int sqlModelPoolCapacity;
@@ -589,6 +646,12 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean sqlParallelFilterEnabled;
     private final double sqlParallelFilterPreTouchThreshold;
     private final boolean sqlParallelGroupByEnabled;
+    private final long sqlParallelHashJoinGroupByBuildParallelMinRows;
+    private final long sqlParallelHashJoinGroupByBuildRowsPerPartition;
+    private final boolean sqlParallelHashJoinGroupByEnabled;
+    private final long sqlParallelHashJoinGroupByPayloadCopyMaxSize;
+    private final double sqlParallelHashJoinGroupByPayloadCopyMinProbeRatio;
+    private final double sqlParallelHashJoinGroupByPayloadCopyParallelMinProbeRatio;
     private final boolean sqlParallelHorizonJoinEnabled;
     private final boolean sqlParallelReadParquetEnabled;
     private final boolean sqlParallelTopKEnabled;
@@ -618,6 +681,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long sqlSortValueMaxBytes;
     private final int sqlSortValuePageSize;
     private final int sqlStrFunctionBufferMaxSize;
+    private final boolean sqlStreamGroupByEnabled;
     private final boolean sqlSymbolPatternIndexEnabled;
     private final int sqlSymbolPatternIndexThreshold;
     private final long subsampleMaxRows;
@@ -661,6 +725,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int utf8SinkSize;
     private final PropertyValidator validator;
     private final int vectorAggregateQueueCapacity;
+    private final long viewCompileBusyRetryTimeout;
     private final PropViewCompilerPoolConfiguration viewCompilerPoolConfiguration = new PropViewCompilerPoolConfiguration();
     private final long viewCompilerSleepTimeout;
     private final int[] viewCompilerWorkerAffinity;
@@ -671,6 +736,9 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long viewCompilerWorkerYieldThreshold;
     private final int viewWalWriterPoolMaxSegments;
     private final VolumeDefinitions volumeDefinitions = new VolumeDefinitions();
+    private final long walApplyBlockMaxRows;
+    private final int walApplyBlockMemoryPercent;
+    private final long walApplyBlockSize;
     private final boolean walApplyEnabled;
     private final int walApplyLookAheadTransactionCount;
     private final long walApplyMemoryLimitBytes;
@@ -1068,10 +1136,19 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.walSquashUncommittedRowsMultiplier = getDouble(properties, env, PropertyKey.CAIRO_WAL_SQUASH_UNCOMMITTED_ROWS_MULTIPLIER, "20.0");
         this.walMaxLagTxnCount = getInt(properties, env, PropertyKey.CAIRO_WAL_MAX_LAG_TXN_COUNT, -1);
         this.debugWalApplyBlockFailureNoRetry = getBoolean(properties, env, PropertyKey.DEBUG_WAL_APPLY_BLOCK_FAILURE_NO_RETRY, false);
+        this.debugWalApplyMaxTxnBlockSize = getInt(properties, env, PropertyKey.DEBUG_WAL_APPLY_MAX_TXN_BLOCK_SIZE, Integer.MAX_VALUE);
+        this.debugWriterInvariantCheckEnabled = getBoolean(properties, env, PropertyKey.DEBUG_CAIRO_WRITER_INVARIANT_CHECK_ENABLED, false);
         this.walMaxLagSize = getLongSize(properties, env, PropertyKey.CAIRO_WAL_MAX_LAG_SIZE, 75 * Numbers.SIZE_1MB, 0);
         this.walMaxSegmentFileDescriptorsCache = getInt(properties, env, PropertyKey.CAIRO_WAL_MAX_SEGMENT_FILE_DESCRIPTORS_CACHE, 30);
         this.walApplyTableTimeQuota = getMillis(properties, env, PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 1000);
         this.walApplyLookAheadTransactionCount = getInt(properties, env, PropertyKey.CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT, 200);
+        this.walApplyBlockSize = getLongSize(properties, env, PropertyKey.CAIRO_WAL_APPLY_BLOCK_SIZE, 75 * Numbers.SIZE_1MB, 0);
+        this.walApplyBlockMemoryPercent = getIntPercentage(properties, env, PropertyKey.CAIRO_WAL_APPLY_BLOCK_MEMORY_PERCENT, 25);
+        this.walApplyBlockMaxRows = getLong(properties, env, PropertyKey.CAIRO_WAL_APPLY_BLOCK_MAX_ROWS, 100_000_000L);
+        if (walApplyBlockMaxRows < 1 || walApplyBlockMaxRows > MAX_WAL_APPLY_BLOCK_MAX_ROWS) {
+            throw new ServerConfigurationException(PropertyKey.CAIRO_WAL_APPLY_BLOCK_MAX_ROWS.getPropertyPath()
+                    + " must be between 1 and " + MAX_WAL_APPLY_BLOCK_MAX_ROWS);
+        }
         final String walApplySuspendedTablesValue = getString(properties, env, PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_TABLES, null);
         if (walApplySuspendedTablesValue != null) {
             for (String entry : walApplySuspendedTablesValue.split(",")) {
@@ -1085,6 +1162,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.tableTypeConversionEnabled = getBoolean(properties, env, PropertyKey.TABLE_TYPE_CONVERSION_ENABLED, true);
         this.tempRenamePendingTablePrefix = getString(properties, env, PropertyKey.CAIRO_WAL_TEMP_PENDING_RENAME_TABLE_PREFIX, "temp_5822f658-31f6-11ee-be56-0242ac120002");
         this.sequencerCheckInterval = getMillis(properties, env, PropertyKey.CAIRO_WAL_SEQUENCER_CHECK_INTERVAL, 10_000);
+        this.sequencerCheckMinInterval = getMillis(properties, env, PropertyKey.CAIRO_WAL_SEQUENCER_CHECK_MIN_INTERVAL, 500);
         if (tempRenamePendingTablePrefix.length() > maxFileNameLength - 4) {
             throw CairoException.critical(0).put("Temp pending table prefix is too long [")
                     .put(PropertyKey.CAIRO_MAX_FILE_NAME_LENGTH.toString()).put("=")
@@ -1205,7 +1283,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.checkpointRecoveryThreadpoolMax = checkpointRecoveryThreadpoolMaxRaw;
         this.devModeEnabled = getBoolean(properties, env, PropertyKey.DEV_MODE_ENABLED, false);
 
-        int cpuAvailable = Runtime.getRuntime().availableProcessors();
+        // the process's CPUs, also when a reload runs on a network worker restricted to one socket's CPUs
+        int cpuAvailable = Os.getProcessCpuCount();
         int cpuWalApplyWorkers = 2;
         int cpuExportWorkers = 1;
         int cpuSpare = 0;
@@ -1489,6 +1568,9 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.publicDirectory = new File(installRoot, publicDirectory).getAbsolutePath();
             }
 
+            // 0 keeps the V1 sequencer log. V2 splits the log across a header file and part files, so a
+            // crash can leave the header naming txns whose part never landed, and the apply path then
+            // suspends the table. V1 is a single file and cannot do that.
             this.defaultSeqPartTxnCount = getInt(properties, env, PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 0);
             this.httpNetConnectionHint = getBoolean(properties, env, PropertyKey.HTTP_NET_CONNECTION_HINT, false);
             // deprecated
@@ -1540,6 +1622,26 @@ public class PropServerConfiguration implements ServerConfiguration {
                 throw new ServerConfigurationException("HTTP password is set but username is missing. " +
                         "Use the '" + PropertyKey.HTTP_USER.getPropertyPath() + "' configuration property to set a username.");
             }
+            try {
+                this.httpAllowedHosts = HttpAllowedHosts.parse(getString(properties, env, PropertyKey.HTTP_ALLOWED_HOSTS, ""));
+            } catch (IllegalArgumentException e) {
+                throw new ServerConfigurationException(PropertyKey.HTTP_ALLOWED_HOSTS.getPropertyPath() + ": " + e.getMessage());
+            }
+            try {
+                this.httpBrowserAllowedOrigins = BrowserAllowedOrigins.parse(
+                        getString(properties, env, PropertyKey.HTTP_BROWSER_ALLOWED_ORIGINS, "")
+                );
+            } catch (IllegalArgumentException e) {
+                throw new ServerConfigurationException(PropertyKey.HTTP_BROWSER_ALLOWED_ORIGINS.getPropertyPath() + ": " + e.getMessage());
+            }
+            // qwp.browser.tls.termination.enabled is the deprecated name of the setting, which only
+            // the QWP WebSocket upgrades read before every HTTP endpoint compared Origin with Host
+            this.isBrowserTlsTerminationEnabled = getBoolean(
+                    properties,
+                    env,
+                    PropertyKey.BROWSER_TLS_TERMINATION_ENABLED,
+                    getBoolean(properties, env, PropertyKey.QWP_BROWSER_TLS_TERMINATION_ENABLED, false)
+            );
 
             if (loadAdditionalConfigurations && httpServerEnabled) {
                 this.jsonQueryConnectionCheckFrequency = getInt(properties, env, PropertyKey.HTTP_JSON_QUERY_CONNECTION_CHECK_FREQUENCY, 1_000_000);
@@ -1680,6 +1782,15 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             // reuse wal-apply defaults for mat view workers
             this.matViewEnabled = getBoolean(properties, env, PropertyKey.CAIRO_MAT_VIEW_ENABLED, true);
+            this.matViewRowExpiryCleanupEnabled = getBoolean(properties, env, PropertyKey.CAIRO_MAT_VIEW_ROW_EXPIRY_CLEANUP_ENABLED, true);
+            this.matViewRowExpiryCleanupMaxCachedPartitions = getInt(properties, env, PropertyKey.CAIRO_MAT_VIEW_ROW_EXPIRY_CLEANUP_MAX_CACHED_PARTITIONS, 16_384);
+            if (matViewRowExpiryCleanupMaxCachedPartitions < 0) {
+                throw new ServerConfigurationException(PropertyKey.CAIRO_MAT_VIEW_ROW_EXPIRY_CLEANUP_MAX_CACHED_PARTITIONS.getPropertyPath() + " must not be negative");
+            }
+            this.matViewRowExpiryCleanupMinExpiredFraction = getDouble(properties, env, PropertyKey.CAIRO_MAT_VIEW_ROW_EXPIRY_CLEANUP_MIN_EXPIRED_FRACTION, "0.5");
+            if (!(matViewRowExpiryCleanupMinExpiredFraction >= 0 && matViewRowExpiryCleanupMinExpiredFraction <= 1)) {
+                throw new ServerConfigurationException(PropertyKey.CAIRO_MAT_VIEW_ROW_EXPIRY_CLEANUP_MIN_EXPIRED_FRACTION.getPropertyPath() + " must be between 0 and 1");
+            }
             this.matViewMaxRefreshRetries = getInt(properties, env, PropertyKey.CAIRO_MAT_VIEW_MAX_REFRESH_RETRIES, 10);
             this.matViewRefreshBusyRetryTimeout = getMillis(properties, env, PropertyKey.CAIRO_MAT_VIEW_REFRESH_BUSY_RETRY_TIMEOUT, 1000);
             this.matViewRefreshBusyRetryLimit = getInt(properties, env, PropertyKey.CAIRO_MAT_VIEW_REFRESH_BUSY_RETRY_LIMIT, 10);
@@ -1706,6 +1817,10 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.viewCompilerWorkerAffinity = getAffinity(properties, env, PropertyKey.VIEW_COMPILER_WORKER_AFFINITY, viewCompilerWorkerCount);
             this.viewCompilerWorkerYieldThreshold = getLong(properties, env, PropertyKey.VIEW_COMPILER_WORKER_YIELD_THRESHOLD, 1000);
             this.viewCompilerWorkerHaltOnError = getBoolean(properties, env, PropertyKey.VIEW_COMPILER_WORKER_HALT_ON_ERROR, false);
+            this.viewCompileBusyRetryTimeout = getMillis(properties, env, PropertyKey.CAIRO_VIEW_COMPILE_BUSY_RETRY_TIMEOUT, 1000);
+            if (viewCompileBusyRetryTimeout < 0) {
+                throw new ServerConfigurationException(PropertyKey.CAIRO_VIEW_COMPILE_BUSY_RETRY_TIMEOUT.getPropertyPath() + " must not be negative");
+            }
 
             // Export pool configuration
             this.exportWorkerCount = getInt(properties, env, PropertyKey.EXPORT_WORKER_COUNT, cpuExportWorkers);
@@ -1716,7 +1831,27 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.exportWorkerSleepTimeout = getMillis(properties, env, PropertyKey.EXPORT_WORKER_SLEEP_TIMEOUT, 10);
             this.exportWorkerYieldThreshold = getLong(properties, env, PropertyKey.EXPORT_WORKER_YIELD_THRESHOLD, 1000);
 
-            this.commitMode = getCommitMode(properties, env, PropertyKey.CAIRO_COMMIT_MODE);
+            // Enterprise overrides this default when replication is configured, but an explicit cairo.commit.mode wins over both.
+            this.commitMode = getCommitMode(properties, env, PropertyKey.CAIRO_COMMIT_MODE, CommitMode.toString(CommitMode.DEFAULT));
+            this.commitModeAdaptiveDowngrade = getBoolean(properties, env, PropertyKey.CAIRO_COMMIT_MODE_ADAPTIVE_DOWNGRADE, false);
+            if (commitModeAdaptiveDowngrade && commitMode != CommitMode.NOSYNC) {
+                // The downgrade start unlocks every table for an older release, so it runs NOSYNC only, the
+                // mode that leaves nothing else behind: an adaptive table keeps a save point that release
+                // ignores, and only a start under another mode takes the table out of adaptive.
+                throw new ServerConfigurationException(
+                        PropertyKey.CAIRO_COMMIT_MODE_ADAPTIVE_DOWNGRADE.getPropertyPath() + "=true requires "
+                                + PropertyKey.CAIRO_COMMIT_MODE.getPropertyPath() + "=nosync [mode="
+                                + CommitMode.toString(commitMode) + ']'
+                );
+            }
+            this.adaptiveEpochIntervalMs = getMillis(properties, env, PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 60000);
+            this.adaptiveEpochMaxRows = getLong(properties, env, PropertyKey.CAIRO_ADAPTIVE_EPOCH_MAX_ROWS, 5_000_000);
+            // 0 fdatasyncs every commit before it returns. A negative value clamps to 0, so a
+            // misconfiguration never weakens durability.
+            this.adaptiveCommitGroupWindowUs = Math.max(0, getMicros(properties, env, PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, 50_000));
+            this.adaptiveEpochFlushOnClose = getBoolean(properties, env, PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, true);
+            this.adaptiveEpochColumnSyncBatched = getBoolean(properties, env, PropertyKey.CAIRO_ADAPTIVE_EPOCH_COLUMN_SYNC_BATCHED, true);
+            this.walCommitWritebackDrain = getBoolean(properties, env, PropertyKey.CAIRO_WAL_COMMIT_WRITEBACK_DRAIN, true);
             this.createAsSelectRetryCount = getInt(properties, env, PropertyKey.CAIRO_CREATE_AS_SELECT_RETRY_COUNT, 5);
             this.defaultSymbolCacheFlag = getBoolean(properties, env, PropertyKey.CAIRO_DEFAULT_SYMBOL_CACHE_FLAG, true);
             this.defaultSymbolCapacity = getInt(properties, env, PropertyKey.CAIRO_DEFAULT_SYMBOL_CAPACITY, 256);
@@ -1771,6 +1906,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlViewLexerPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_VIEW_LEXER_POOL_CAPACITY, 8);
             this.sqlExplainModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_EXPLAIN_MODEL_POOL_CAPACITY, 32);
             this.sqlModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_MODEL_POOL_CAPACITY, 1024);
+            this.sqlMaxGroupingSets = getInt(properties, env, PropertyKey.CAIRO_SQL_MAX_GROUPING_SETS, 4096);
             this.sqlMaxNegativeLimit = getInt(properties, env, PropertyKey.CAIRO_SQL_MAX_NEGATIVE_LIMIT, 10_000);
             // Heap-backed page sizes (sort.key, sort.light.value, window.*) must hold one fixed-size
             // block, so validatePageSizeAtLeast rejects a sub-block value at startup rather than let a
@@ -1794,7 +1930,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             warnIfMaxBytesBelowPageSize(properties, env,
                     PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES, this.sqlSortLightValueMaxBytes,
                     PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_PAGE_SIZE, this.sqlSortLightValuePageSize);
-            this.sqlHashJoinValuePageSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_PAGE_SIZE, 16777216);
+            // divisor-only RecordChain page, as sort.value.page.size below.
+            this.sqlHashJoinValuePageSize = Math.max(1, getIntSize(properties, env, PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_PAGE_SIZE, 16777216));
             this.sqlHashJoinValueMaxPages = getIntSize(properties, env, PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_MAX_PAGES, Integer.MAX_VALUE);
             this.sqlLatestByJitEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_LATEST_BY_JIT_ENABLED, true);
             this.sqlLatestByRowCount = getInt(properties, env, PropertyKey.CAIRO_SQL_LATEST_BY_ROW_COUNT, 1000);
@@ -1979,6 +2116,63 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.o3CallbackQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_O3_CALLBACK_QUEUE_CAPACITY, 128);
             this.o3PartitionQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_O3_PARTITION_QUEUE_CAPACITY, 128);
             this.o3OpenColumnQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_O3_OPEN_COLUMN_QUEUE_CAPACITY, 128);
+            this.o3PartitionPreSplitMaxCuts = Math.max(1, getInt(properties, env, PropertyKey.CAIRO_O3_PARTITION_PRESPLIT_MAX_CUTS, 10_000));
+            this.o3PartitionClusterBinWidth = Math.max(1, getMicros(properties, env, PropertyKey.CAIRO_O3_PARTITION_CLUSTER_BIN_WIDTH, Micros.MINUTE_MICROS));
+            this.o3PartitionClusterMaxBins = Math.max(1, Math.min(1 << 20, getInt(properties, env, PropertyKey.CAIRO_O3_PARTITION_CLUSTER_MAX_BINS, 4096)));
+            this.o3PartitionPreSplitMinPieceMultiple = Math.max(1, getInt(properties, env, PropertyKey.CAIRO_O3_PARTITION_PRESPLIT_MIN_PIECE_MULTIPLE, 2));
+            this.o3PartitionMergeAppendEnabled = getBoolean(properties, env, PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, false);
+            this.o3PartitionMergeAppendFrameCacheSize = Math.max(0, getInt(properties, env, PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_FRAME_CACHE_SIZE, 2));
+            this.partitionCompactionDeadRowsRatio = getDouble(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_ROWS_RATIO, "1.0");
+            // Defaults below the waste ratio, so lowering dead.rows.ratio on its own never leaves an invalid pair.
+            this.partitionCompactionTablePressureDeadRatio = getDouble(
+                    properties,
+                    env,
+                    PropertyKey.CAIRO_PARTITION_COMPACTION_TABLE_PRESSURE_DEAD_RATIO,
+                    Double.toString(Math.min(0.5, partitionCompactionDeadRowsRatio / 2.0))
+            );
+            if (!Double.isFinite(partitionCompactionTablePressureDeadRatio)
+                    || partitionCompactionTablePressureDeadRatio <= 0
+                    || !(partitionCompactionTablePressureDeadRatio < partitionCompactionDeadRowsRatio)) {
+                throw new ServerConfigurationException(PropertyKey.CAIRO_PARTITION_COMPACTION_TABLE_PRESSURE_DEAD_RATIO.getPropertyPath()
+                        + " must be positive and below " + PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_ROWS_RATIO.getPropertyPath());
+            }
+            this.partitionCompactionDeadMinSize = getLongSize(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, 50 * Numbers.SIZE_1MB);
+            this.partitionCompactionIdleTimeout = getMicros(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, 60 * Micros.MINUTE_MICROS);
+            // The squash threshold can never sit above the single-folder one: a logical partition whose
+            // folders are all idle past the single threshold must squash rather than compact its folders
+            // one by one, and raising only the squash timeout would otherwise turn squashing off.
+            this.partitionCompactionSquashIdleTimeout = Math.min(
+                    this.partitionCompactionIdleTimeout,
+                    getMicros(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_SQUASH_IDLE_TIMEOUT, 30 * Micros.MINUTE_MICROS)
+            );
+            this.partitionCompactionIoBudget = getLongSize(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_IO_BUDGET, Numbers.SIZE_1GB);
+            this.partitionCompactionTableDeadThresholdPercent = getIntPercentage(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_TABLE_DEAD_THRESHOLD_PERCENT, 50);
+            // The off-threshold can never sit above the on-threshold: the rule would then turn itself off
+            // on the very pass that turned it on, and lowering only table.dead.threshold.percent - which
+            // is the natural way to make the rule more eager - would silently disable it.
+            this.partitionCompactionTableDeadStopPercent = Math.min(
+                    this.partitionCompactionTableDeadThresholdPercent,
+                    getIntPercentage(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_TABLE_DEAD_STOP_PERCENT, 10)
+            );
+            this.partitionCompactionTableDeadTrigger = getLongSize(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_TABLE_DEAD_TRIGGER, 10 * Numbers.SIZE_1GB);
+            this.partitionCompactionTableDeadThreshold = getLongSize(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_TABLE_DEAD_THRESHOLD, 50 * Numbers.SIZE_1MB);
+            this.partitionCompactionPieceThreshold = Math.max(1, getInt(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_PIECE_THRESHOLD, 20));
+            // 0 turns the hot-partition exclusion off entirely, restoring the pre-existing behaviour.
+            this.partitionCompactionHotCommits = Math.max(0, getInt(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_HOT_COMMITS, 10));
+            // A merge triggers MOVE-TAIL once its projected dead rows exceed this percentage of the
+            // projected live rows. 0 triggers on any dead space above cairo.o3.partition.split.min.size.
+            this.partitionCompactionMoveTailDeadRowsPercent = Math.max(0, getInt(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_MOVE_TAIL_DEAD_ROWS_PERCENT, 10));
+            this.partitionCompactionAvgRowsPieceLim = Math.max(1, getLong(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 4096));
+            this.partitionCompactionTimeBudgetMs = getMillis(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_TIME_BUDGET, 1000);
+            this.partitionCompactionDeclineBackoffMax = getMicros(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_DECLINE_BACKOFF_MAX, 60 * Micros.MINUTE_MICROS);
+            this.partitionCompactionDeclineBackoffMin = Math.max(0, Math.min(partitionCompactionDeclineBackoffMax, getMicros(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_DECLINE_BACKOFF_MIN, Micros.MINUTE_MICROS)));
+            this.partitionCompactionDeclineBackoffMultiplier = Math.max(1, getInt(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_DECLINE_BACKOFF_MULTIPLIER, 2));
+            this.partitionCompactionIoCostMultiplier = Math.max(1, getInt(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_IO_COST_MULTIPLIER, 2));
+            this.partitionCompactionMoveTailPieceThreshold = Math.max(0, getInt(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_MOVE_TAIL_PIECE_THRESHOLD, 1_000));
+            this.partitionCompactionMoveTailPrefixMultiple = Math.max(1, getInt(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_MOVE_TAIL_PREFIX_MULTIPLE, 2));
+            this.partitionCompactionSquashTargetSizeMultiple = Math.max(0, getInt(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_SQUASH_TARGET_SIZE_MULTIPLE, 4));
+            this.partitionCompactionSwapTimeout = Math.max(1, getMicros(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_SWAP_TIMEOUT, 30 * Micros.MINUTE_MICROS));
+            this.partitionCompactionTableDeadStopTriggerPercent = getIntPercentage(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_TABLE_DEAD_STOP_TRIGGER_PERCENT, 50);
             this.o3CopyQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_O3_COPY_QUEUE_CAPACITY, 128);
             this.o3LagCalculationWindowsSize = getIntSize(properties, env, PropertyKey.CAIRO_O3_LAG_CALCULATION_WINDOW_SIZE, 4);
             this.o3PurgeDiscoveryQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_O3_PURGE_DISCOVERY_QUEUE_CAPACITY, 128));
@@ -2072,7 +2266,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlWindowInitialRangeBufferSize = getInt(properties, env, PropertyKey.CAIRO_SQL_ANALYTIC_INITIAL_RANGE_BUFFER_SIZE, 32);
             this.sqlTxnScoreboardEntryCount = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_O3_TXN_SCOREBOARD_ENTRY_COUNT, 16384));
             this.sqlTimerShardCount = Math.max(1, getInt(properties, env, PropertyKey.CAIRO_TIMER_SHARDS,
-                    Math.min(4, Math.max(1, Runtime.getRuntime().availableProcessors() / 4))));
+                    Math.min(4, Math.max(1, cpuAvailable / 4))));
             this.latestByQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_LATEST_ON_QUEUE_CAPACITY, 32));
 
             // telemetry config
@@ -2089,6 +2283,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.ioURingEnabled = getBoolean(properties, env, PropertyKey.CAIRO_IO_URING_ENABLED, true);
             this.cairoMaxCrashFiles = getInt(properties, env, PropertyKey.CAIRO_MAX_CRASH_FILES, 100);
             this.o3LastPartitionMaxSplits = Math.max(1, getInt(properties, env, PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 20));
+            this.o3PartitionMaxSplits = Math.max(1, getInt(properties, env, PropertyKey.CAIRO_O3_PARTITION_MAX_SPLITS, o3LastPartitionMaxSplits));
             this.o3MidPartitionMaxSplits = Math.max(1, getInt(properties, env, PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 1));
             this.o3PartitionSplitMinSize = getLongSize(properties, env, PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 50 * Numbers.SIZE_1MB);
             this.o3PartitionOverwriteControlEnabled = getBoolean(properties, env, PropertyKey.CAIRO_O3_PARTITION_OVERWRITE_CONTROL_ENABLED, false);
@@ -2107,7 +2302,9 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.lineUdpOwnThreadAffinity = getInt(properties, env, PropertyKey.LINE_UDP_OWN_THREAD_AFFINITY, -1);
             this.lineUdpOwnThread = getBoolean(properties, env, PropertyKey.LINE_UDP_OWN_THREAD, false);
             this.lineUdpUnicast = getBoolean(properties, env, PropertyKey.LINE_UDP_UNICAST, false);
-            this.lineUdpCommitMode = getCommitMode(properties, env, PropertyKey.LINE_UDP_COMMIT_MODE);
+            // Line UDP keeps its own default, nosync: the adaptive durable epoch covers WAL apply, not the
+            // line-UDP commit path.
+            this.lineUdpCommitMode = getCommitMode(properties, env, PropertyKey.LINE_UDP_COMMIT_MODE, "nosync");
             this.lineUdpTimestampUnit = getLineTimestampUnit(properties, env, PropertyKey.LINE_UDP_TIMESTAMP);
             String defaultUdpPartitionByProperty = getString(properties, env, PropertyKey.LINE_DEFAULT_PARTITION_BY, "DAY");
             this.lineUdpDefaultPartitionBy = PartitionBy.fromString(defaultUdpPartitionByProperty);
@@ -2122,18 +2319,12 @@ public class PropServerConfiguration implements ServerConfiguration {
             });
             this.qwpUdpGroupIPv4Address = getIPv4Address(properties, env, PropertyKey.QWP_UDP_JOIN, "224.1.1.1");
             try {
-                this.qwpBrowserAllowedOrigins = QwpBrowserAllowedOrigins.parse(
+                this.qwpBrowserAllowedOrigins = BrowserAllowedOrigins.parse(
                         getString(properties, env, PropertyKey.QWP_BROWSER_ALLOWED_ORIGINS, "")
                 );
             } catch (IllegalArgumentException e) {
                 throw new ServerConfigurationException(PropertyKey.QWP_BROWSER_ALLOWED_ORIGINS.getPropertyPath() + ": " + e.getMessage());
             }
-            this.qwpBrowserTlsTerminationEnabled = getBoolean(
-                    properties,
-                    env,
-                    PropertyKey.QWP_BROWSER_TLS_TERMINATION_ENABLED,
-                    false
-            );
             this.qwpEgressForcedZstdLevel = getInt(
                     properties,
                     env,
@@ -2172,6 +2363,12 @@ public class PropServerConfiguration implements ServerConfiguration {
                                 + " must be at least 1"
                 );
             }
+            this.qwpMinIdleMsBeforeWriterRelease = getMillis(
+                    properties,
+                    env,
+                    PropertyKey.QWP_MIN_IDLE_MS_BEFORE_WRITER_RELEASE,
+                    QwpConstants.DEFAULT_MIN_IDLE_MS_BEFORE_WRITER_RELEASE
+            );
             long qwpUdpCommitInterval = getMillis(properties, env, PropertyKey.QWP_UDP_COMMIT_INTERVAL, COMMIT_INTERVAL_DEFAULT);
             if (qwpUdpCommitInterval < 1L) {
                 throw new ServerConfigurationException(
@@ -2387,9 +2584,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                     sharedWorkerSleepThreshold,
                     sharedWorkerSleepTimeout
             );
-            if (getBoolean(properties, env, PropertyKey.SHARED_NETWORK_WORKER_SPLIT_BY_CPU_SOCKET, false)) {
-                configureNetworkGroups(sharedWorkerPoolNetworkConfiguration);
-            }
+            placeNetworkPools(properties, env);
             this.isNetworkConnectionSteeringEnabled = getBoolean(properties, env, PropertyKey.SHARED_NETWORK_WORKER_SPLIT_STEER_CONNECTIONS, false);
 
             final int queryWorkers = configureSharedThreadPool(
@@ -2504,6 +2699,27 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlParallelHorizonJoinEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_HORIZON_JOIN_ENABLED, defaultParallelSqlEnabled);
             this.sqlParallelWindowJoinEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_JOIN_ENABLED, defaultParallelSqlEnabled);
             this.sqlParallelGroupByEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, defaultParallelSqlEnabled);
+            this.sqlParallelHashJoinGroupByEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_ENABLED, defaultParallelSqlEnabled);
+            this.sqlStreamGroupByEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_STREAM_GROUPBY_ENABLED, true);
+            this.sqlParallelHashJoinGroupByBuildParallelMinRows = getLong(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, 300_000);
+            if (sqlParallelHashJoinGroupByBuildParallelMinRows < 0) {
+                throw ServerConfigurationException.forInvalidKey(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS.getPropertyPath(),
+                        Long.toString(sqlParallelHashJoinGroupByBuildParallelMinRows));
+            }
+            this.sqlParallelHashJoinGroupByBuildRowsPerPartition = getLong(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_ROWS_PER_PARTITION, 32_768);
+            if (sqlParallelHashJoinGroupByBuildRowsPerPartition < 1) {
+                throw ServerConfigurationException.forInvalidKey(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_ROWS_PER_PARTITION.getPropertyPath(),
+                        Long.toString(sqlParallelHashJoinGroupByBuildRowsPerPartition));
+            }
+            this.sqlParallelHashJoinGroupByPayloadCopyMaxSize = getLongSize(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_MAX_SIZE, 128 * Numbers.SIZE_1MB, 0);
+            this.sqlParallelHashJoinGroupByPayloadCopyMinProbeRatio = getDouble(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_MIN_PROBE_RATIO, "0.4");
+            if (sqlParallelHashJoinGroupByPayloadCopyMinProbeRatio < 0 || !Double.isFinite(sqlParallelHashJoinGroupByPayloadCopyMinProbeRatio)) {
+                throw new ServerConfigurationException("Configuration value for " + PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_MIN_PROBE_RATIO.getPropertyPath() + " has to be a non-negative real number.");
+            }
+            this.sqlParallelHashJoinGroupByPayloadCopyParallelMinProbeRatio = getDouble(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_PARALLEL_MIN_PROBE_RATIO, "0.125");
+            if (sqlParallelHashJoinGroupByPayloadCopyParallelMinProbeRatio < 0 || !Double.isFinite(sqlParallelHashJoinGroupByPayloadCopyParallelMinProbeRatio)) {
+                throw new ServerConfigurationException("Configuration value for " + PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_PARALLEL_MIN_PROBE_RATIO.getPropertyPath() + " has to be a non-negative real number.");
+            }
             this.sqlParallelReadParquetEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_READ_PARQUET_ENABLED, defaultParallelSqlEnabled);
             if (!sqlParallelFilterEnabled && !sqlParallelGroupByEnabled && !sqlParallelHorizonJoinEnabled
                     && !sqlParallelReadParquetEnabled && !sqlParallelTopKEnabled && !sqlParallelWindowJoinEnabled) {
@@ -2558,6 +2774,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.partitionEncoderParquetMinCompressionRatio = getDouble(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_MIN_COMPRESSION_RATIO, "1.2");
         this.partitionEncoderParquetO3RewriteUnusedMaxBytes = getLongSize(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, 1024 * 1024 * 1024L);
         this.partitionEncoderParquetO3RewriteUnusedRatio = getDouble(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, "0.5");
+        this.partitionCompactionCheckInterval = getMillis(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL, 120_000);
 
         // compatibility switch, to be removed in future
         this.sqlSampleByValidateFillType = getBoolean(properties, env, PropertyKey.CAIRO_SQL_SAMPLEBY_VALIDATE_FILL_TYPE, true);
@@ -2883,60 +3100,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         );
     }
 
-    // Splits the shared network pool into one group per CPU socket when the detected layout passes
-    // the checks of CpuTopology, and logs the outcome either way.
-    private void configureNetworkGroups(PropWorkerPoolConfiguration poolConfiguration) throws ServerConfigurationException {
-        final String splitKey = PropertyKey.SHARED_NETWORK_WORKER_SPLIT_BY_CPU_SOCKET.getPropertyPath();
-        for (int cpu : poolConfiguration.sharedWorkerAffinity) {
-            if (cpu > -1) {
-                throw ServerConfigurationException.forInvalidKey(
-                        splitKey,
-                        "cannot be combined with " + PropertyKey.SHARED_NETWORK_WORKER_AFFINITY.getPropertyPath()
-                );
-            }
-        }
-        final CpuTopology topology = createCpuTopology();
-        if (topology == null) {
-            log.advisory().$("network workers not split: ").$(splitKey)
-                    .$(" applies on Linux only, where SO_REUSEPORT spreads connections over the groups' listeners").$();
-            return;
-        }
-        final int workerCount = poolConfiguration.sharedWorkerCount;
-        final CpuTopology.Layout layout = topology.readLayout(workerCount);
-        final int[][] socketCpus = layout.getSocketCpus();
-        final int[] socketIds = layout.getSocketIds();
-        if (socketCpus == null || socketIds == null) {
-            final String refusal = layout.getRefusal();
-            final String description = layout.getDescription();
-            (layout.isRefusalWarning() ? log.advisory() : log.info())
-                    .$("network workers not split: ").$(refusal)
-                    .$(" [layout=").$(description).I$();
-            return;
-        }
-        final int groupCount = socketCpus.length;
-        // for example "group 0 workers 0-94 on CPUs 0-95 (socket 0), group 1 workers 95-189 on CPUs 96-191 (socket 1)"
-        final StringBuilder groups = new StringBuilder();
-        int firstWorker = 0;
-        for (int g = 0; g < groupCount; g++) {
-            int lastWorker = firstWorker;
-            while (lastWorker + 1 < workerCount && WorkerPool.getGroup(lastWorker + 1, groupCount, workerCount) == g) {
-                lastWorker++;
-            }
-            if (g > 0) {
-                groups.append(", ");
-            }
-            groups.append("group ").append(g)
-                    .append(" workers ").append(firstWorker).append('-').append(lastWorker)
-                    .append(" on CPUs ").append(CpuTopology.formatCpuList(socketCpus[g]))
-                    .append(" (socket ").append(socketIds[g]).append(')');
-            firstWorker = lastWorker + 1;
-        }
-        poolConfiguration.groupCount = groupCount;
-        poolConfiguration.groupCpus = socketCpus;
-        final String groupsText = groups.toString();
-        log.info().$("network workers split by CPU socket: ").$(groupsText).$();
-    }
-
     private int configureSharedThreadPool(
             Properties properties,
             Map<String, String> env,
@@ -3002,24 +3165,25 @@ public class PropServerConfiguration implements ServerConfiguration {
         return Long.MAX_VALUE;
     }
 
-    private int getCommitMode(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key) {
-        final String commitMode = getString(properties, env, key, "nosync");
+    private int getCommitMode(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key, String defaultMode) throws ServerConfigurationException {
+        final String commitMode = getString(properties, env, key, defaultMode);
 
         // must not be null because we provided non-null default value
         assert commitMode != null;
 
-        if (Chars.equalsLowerCaseAscii(commitMode, "nosync")) {
-            return CommitMode.NOSYNC;
+        final int mode = CommitMode.fromString(commitMode);
+        if (mode != CommitMode.UNKNOWN) {
+            return mode;
         }
 
-        if (Chars.equalsLowerCaseAscii(commitMode, "async")) {
-            return CommitMode.ASYNC;
+        if (key == PropertyKey.CAIRO_COMMIT_MODE) {
+            // The database-wide mode is a durability contract. A typo such as "syncc" must not silently fall
+            // back to NOSYNC.
+            throw new ServerConfigurationException("invalid configuration value [key="
+                    + key.getPropertyPath() + ", value=" + commitMode
+                    + ", expected=nosync|async|sync|adaptive]");
         }
-
-        if (Chars.equalsLowerCaseAscii(commitMode, "sync")) {
-            return CommitMode.SYNC;
-        }
-
+        // line.udp.commit.mode falls back to NOSYNC on an unrecognized value.
         return CommitMode.NOSYNC;
     }
 
@@ -3145,6 +3309,24 @@ public class PropServerConfiguration implements ServerConfiguration {
         return properties.getProperty(key.getPropertyPath()) != null;
     }
 
+    // Logs that the shared network pool's group count doesn't reach an enabled server that runs on
+    // a pool of its own, unless that pool has a group count of its own.
+    private void logOwnPoolNotSplit(
+            String label,
+            String poolDescription,
+            @Nullable String disabledReason,
+            int workerCount,
+            int groupCount,
+            PropertyKey groupsKey
+    ) {
+        if (disabledReason == null && workerCount > 0 && groupCount < 2) {
+            final String sharedGroupsKey = PropertyKey.SHARED_NETWORK_WORKER_GROUPS.getPropertyPath();
+            final String groupsKeyPath = groupsKey.getPropertyPath();
+            log.advisory().$(label).$(" workers not split: ").$(sharedGroupsKey)
+                    .$(" doesn't reach ").$(poolDescription).$(", which ").$(groupsKeyPath).$(" splits").$();
+        }
+    }
+
     private void parseMatViewRefreshBlockList(String value) {
         matViewRefreshBlockList.clear();
         if (value == null) {
@@ -3177,15 +3359,238 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
+    // Runs a network pool's groups, a multiple of the CPU socket count, on the CPUs of their CPU
+    // sockets: the first groupCount / socketCount groups on the first CPU socket, and so on.
+    private void pinNetworkGroups(
+            NetworkPoolGroups pool,
+            String label,
+            int workerCount,
+            int groupCount,
+            int[][] socketCpus,
+            int[] socketIds
+    ) {
+        final int groupsPerSocket = groupCount / socketCpus.length;
+        final int[][] groupCpus = new int[groupCount][];
+        // for example "group 0 workers 0-94 on CPUs 0-95 (socket 0), group 1 workers 95-189 on CPUs 96-191 (socket 1)"
+        final StringBuilder groups = new StringBuilder();
+        int firstWorker = 0;
+        for (int g = 0; g < groupCount; g++) {
+            final int socket = g / groupsPerSocket;
+            groupCpus[g] = socketCpus[socket];
+            int lastWorker = firstWorker;
+            while (lastWorker + 1 < workerCount && WorkerPool.getGroup(lastWorker + 1, groupCount, workerCount) == g) {
+                lastWorker++;
+            }
+            if (g > 0) {
+                groups.append(", ");
+            }
+            groups.append("group ").append(g)
+                    .append(" workers ").append(firstWorker).append('-').append(lastWorker)
+                    .append(" on CPUs ").append(CpuTopology.formatCpuList(socketCpus[socket]))
+                    .append(" (socket ").append(socketIds[socket]).append(')');
+            firstWorker = lastWorker + 1;
+        }
+        pool.setGroups(groupCount, groupCpus);
+        final String groupsText = groups.toString();
+        log.info().$(label).$(" workers split by CPU socket: ").$(groupsText).$();
+    }
+
+    // Splits each network pool whose group count is above 1 and that hosts an enabled server, and
+    // logs why a group count above 1 has no effect.
+    private void placeNetworkPools(Properties properties, @Nullable Map<String, String> env) throws ServerConfigurationException {
+        final int sharedGroupCount = readNetworkGroupCount(properties, env, PropertyKey.SHARED_NETWORK_WORKER_GROUPS);
+        final int httpGroupCount = readNetworkGroupCount(properties, env, PropertyKey.HTTP_WORKER_GROUPS);
+        final int pgGroupCount = readNetworkGroupCount(properties, env, PropertyKey.PG_WORKER_GROUPS);
+        final int ilpGroupCount = readNetworkGroupCount(properties, env, PropertyKey.LINE_TCP_IO_WORKER_GROUPS);
+        final String httpDisabledReason = httpServerEnabled ? null : PropertyKey.HTTP_ENABLED.getPropertyPath() + "=false";
+        final String pgDisabledReason = pgEnabled ? null : PropertyKey.PG_ENABLED.getPropertyPath() + "=false";
+        final String ilpDisabledReason = !lineTcpEnabled
+                ? PropertyKey.LINE_TCP_ENABLED.getPropertyPath() + "=false"
+                : isReadOnlyInstance ? "ILP/TCP doesn't run on a read-only instance" : null;
+        if (sharedGroupCount > 1) {
+            final boolean isHostingServer = (httpDisabledReason == null && httpWorkerCount < 1)
+                    || (pgDisabledReason == null && pgWorkerCount < 1)
+                    || (ilpDisabledReason == null && lineTcpIOWorkerCount < 1);
+            if (isHostingServer) {
+                splitNetworkPool(
+                        sharedWorkerPoolNetworkConfiguration,
+                        "network",
+                        PropertyKey.SHARED_NETWORK_WORKER_GROUPS,
+                        sharedGroupCount,
+                        sharedWorkerPoolNetworkConfiguration.sharedWorkerCount,
+                        sharedWorkerPoolNetworkConfiguration.sharedWorkerAffinity,
+                        PropertyKey.SHARED_NETWORK_WORKER_AFFINITY
+                );
+            } else {
+                log.advisory().$("network workers not split: the shared network pool hosts no HTTP, PostgreSQL wire or ILP/TCP server").$();
+            }
+            // the shared group count doesn't reach a server on a pool of its own
+            logOwnPoolNotSplit("http", "the HTTP server's own pool", httpDisabledReason, httpWorkerCount, httpGroupCount, PropertyKey.HTTP_WORKER_GROUPS);
+            logOwnPoolNotSplit("pgwire", "the PostgreSQL wire server's own pool", pgDisabledReason, pgWorkerCount, pgGroupCount, PropertyKey.PG_WORKER_GROUPS);
+            logOwnPoolNotSplit("ilpio", "the ILP/TCP server's own IO pool", ilpDisabledReason, lineTcpIOWorkerCount, ilpGroupCount, PropertyKey.LINE_TCP_IO_WORKER_GROUPS);
+        }
+        splitDedicatedPool(
+                (PropHttpServerConfiguration) httpServerConfiguration,
+                "http",
+                "the HTTP server",
+                PropertyKey.HTTP_WORKER_GROUPS,
+                httpGroupCount,
+                httpDisabledReason,
+                httpWorkerCount,
+                PropertyKey.HTTP_WORKER_COUNT,
+                httpWorkerAffinity,
+                PropertyKey.HTTP_WORKER_AFFINITY
+        );
+        splitDedicatedPool(
+                pgConfiguration,
+                "pgwire",
+                "the PostgreSQL wire server",
+                PropertyKey.PG_WORKER_GROUPS,
+                pgGroupCount,
+                pgDisabledReason,
+                pgWorkerCount,
+                PropertyKey.PG_WORKER_COUNT,
+                pgWorkerAffinity,
+                PropertyKey.PG_WORKER_AFFINITY
+        );
+        splitDedicatedPool(
+                lineTcpIOWorkerPoolConfiguration,
+                "ilpio",
+                "ILP/TCP",
+                PropertyKey.LINE_TCP_IO_WORKER_GROUPS,
+                ilpGroupCount,
+                ilpDisabledReason,
+                lineTcpIOWorkerCount,
+                PropertyKey.LINE_TCP_IO_WORKER_COUNT,
+                lineTcpIOWorkerAffinity,
+                PropertyKey.LINE_TCP_IO_WORKER_AFFINITY
+        );
+    }
+
+    private int readNetworkGroupCount(Properties properties, @Nullable Map<String, String> env, PropertyKey key) throws ServerConfigurationException {
+        final int groupCount = getInt(properties, env, key, 1);
+        if (groupCount < 1) {
+            throw ServerConfigurationException.forInvalidKey(key.getPropertyPath(), groupCount + ", expected 1 or more");
+        }
+        return groupCount;
+    }
+
     private WorkerPoolMode readWorkerPoolMode(
             Properties properties,
             @Nullable Map<String, String> env,
             ConfigPropertyKey key,
             boolean isFiberHostByDefault
-    ) {
+    ) throws ServerConfigurationException {
         return getBoolean(properties, env, key, isFiberHostByDefault)
                 ? WorkerPoolMode.FIBER_HOST
                 : WorkerPoolMode.LEGACY;
+    }
+
+    // Splits a server's own pool when its group count is above 1, or logs why the count has no effect.
+    private void splitDedicatedPool(
+            NetworkPoolGroups pool,
+            String label,
+            String serverName,
+            PropertyKey groupsKey,
+            int groupCount,
+            @Nullable String disabledReason,
+            int workerCount,
+            PropertyKey workerCountKey,
+            @Nullable int[] affinity,
+            PropertyKey affinityKey
+    ) {
+        if (groupCount < 2) {
+            return;
+        }
+        if (disabledReason != null) {
+            log.advisory().$(label).$(" workers not split: ").$(disabledReason).$();
+            return;
+        }
+        if (workerCount < 1) {
+            final String workerCountKeyPath = workerCountKey.getPropertyPath();
+            final String sharedGroupsKey = PropertyKey.SHARED_NETWORK_WORKER_GROUPS.getPropertyPath();
+            log.advisory().$(label).$(" workers not split: ").$(workerCountKeyPath).$('=').$(workerCount)
+                    .$(" runs ").$(serverName).$(" on the shared network pool, which ").$(sharedGroupsKey)
+                    .$(" splits").$();
+            return;
+        }
+        splitNetworkPool(pool, label, groupsKey, groupCount, workerCount, affinity, affinityKey);
+    }
+
+    // Splits a network pool into requestedGroupCount worker groups, so that each server on it gets
+    // one dispatcher per group, and logs the outcome. Each group needs MIN_NETWORK_GROUP_WORKERS
+    // workers, so a pool too small for the requested count gets fewer groups, and no pool gets more
+    // than MAX_NETWORK_GROUP_COUNT. On a layout of several
+    // CPU sockets that passes the checks of CpuTopology, groups that divide evenly over the CPU
+    // sockets run on their CPU socket's CPUs. Groups on any other layout, one CPU socket included,
+    // run on all the allowed CPUs: the gain comes from the extra dispatchers, which pay off on one
+    // CPU socket too.
+    private void splitNetworkPool(
+            NetworkPoolGroups pool,
+            String label,
+            PropertyKey groupsKey,
+            int requestedGroupCount,
+            int workerCount,
+            @Nullable int[] affinity,
+            PropertyKey affinityKey
+    ) {
+        final String groupsKeyPath = groupsKey.getPropertyPath();
+        final CpuTopology topology = createCpuTopology();
+        if (topology == null) {
+            log.advisory().$(label).$(" workers not split: ").$(groupsKeyPath)
+                    .$(" applies on Linux only, where SO_REUSEPORT spreads connections over the groups' listeners").$();
+            return;
+        }
+        final int fillableGroupCount = workerCount / MIN_NETWORK_GROUP_WORKERS;
+        final int groupCount = Math.min(Math.min(requestedGroupCount, MAX_NETWORK_GROUP_COUNT), fillableGroupCount);
+        if (groupCount < 2) {
+            log.advisory().$(label).$(" workers not split: ").$(workerCount).$(' ').$(label)
+                    .$(" workers cannot fill 2 groups of ").$(MIN_NETWORK_GROUP_WORKERS).$();
+            return;
+        }
+        if (groupCount < requestedGroupCount) {
+            if (groupCount == fillableGroupCount) {
+                log.advisory().$(groupsKeyPath).$('=').$(requestedGroupCount)
+                        .$(" reduced to ").$(groupCount)
+                        .$(": ").$(workerCount).$(' ').$(label).$(" workers fill ").$(groupCount)
+                        .$(" groups of ").$(MIN_NETWORK_GROUP_WORKERS).$();
+            } else {
+                log.advisory().$(groupsKeyPath).$('=').$(requestedGroupCount)
+                        .$(" reduced to ").$(groupCount)
+                        .$(", the most groups a network pool splits into").$();
+            }
+        }
+        pool.setGroups(groupCount, null);
+        if (affinity != null) {
+            for (int cpu : affinity) {
+                if (cpu > -1) {
+                    final String affinityKeyPath = affinityKey.getPropertyPath();
+                    log.info().$(label).$(" workers split into ").$(groupCount).$(" groups without CPU pinning: ")
+                            .$(affinityKeyPath).$(" sets the workers' CPUs").$();
+                    return;
+                }
+            }
+        }
+        final CpuTopology.Layout layout = topology.read();
+        final int[][] socketCpus = layout.getSocketCpus();
+        final int[] socketIds = layout.getSocketIds();
+        final String unpinnedReason;
+        final boolean isUnpinnedWarning;
+        if (socketCpus == null || socketIds == null) {
+            unpinnedReason = layout.getRefusal();
+            isUnpinnedWarning = layout.isRefusalWarning();
+        } else if (groupCount % socketCpus.length != 0) {
+            unpinnedReason = groupCount + " groups don't divide evenly over " + socketCpus.length + " sockets";
+            isUnpinnedWarning = true;
+        } else {
+            pinNetworkGroups(pool, label, workerCount, groupCount, socketCpus, socketIds);
+            return;
+        }
+        final String description = layout.getDescription();
+        (isUnpinnedWarning ? log.advisory() : log.info())
+                .$(label).$(" workers split into ").$(groupCount)
+                .$(" groups without CPU pinning: ").$(unpinnedReason)
+                .$(" [layout=").$(description).I$();
     }
 
     private void validateHttpConnectionLimits(
@@ -3277,8 +3682,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     /**
-     * The source of the CPU socket layout for {@code shared.network.worker.split.by.cpu.socket},
-     * or null where the split doesn't apply.
+     * The source of the CPU socket layout that places the groups of a split network pool, or null
+     * where worker groups don't apply.
      */
     protected @Nullable CpuTopology createCpuTopology() {
         return Os.isLinux() ? new CpuTopology() : null;
@@ -3309,8 +3714,14 @@ public class PropServerConfiguration implements ServerConfiguration {
         return result;
     }
 
-    protected boolean getBoolean(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key, boolean defaultValue) {
-        return Boolean.parseBoolean(getString(properties, env, key, Boolean.toString(defaultValue)));
+    protected boolean getBoolean(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key, boolean defaultValue) throws ServerConfigurationException {
+        final String value = getString(properties, env, key, Boolean.toString(defaultValue));
+        // Strict validation rejects a value other than true or false; otherwise it reads as false.
+        if (!"true".equalsIgnoreCase(value) && !"false".equalsIgnoreCase(value)
+                && Boolean.parseBoolean(getString(properties, env, PropertyKey.CONFIG_VALIDATION_STRICT, "false"))) {
+            throw ServerConfigurationException.forInvalidKey(key.getPropertyPath(), value + ", expected true or false");
+        }
+        return Boolean.parseBoolean(value);
     }
 
     String getCanonicalPath(String path) throws ServerConfigurationException {
@@ -3744,20 +4155,30 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    private abstract static class PropFiberWorkerPoolConfiguration implements WorkerPoolConfiguration {
+    // a network pool configuration that takes the worker groups placeNetworkPools() decides
+    private interface NetworkPoolGroups {
+        void setGroups(int groupCount, @Nullable int[][] groupCpus);
+    }
+
+    private abstract static class PropFiberWorkerPoolConfiguration implements WorkerPoolConfiguration, NetworkPoolGroups {
         private int fiberMaxLiveCount;
         private int fiberMountBudget = WorkerPoolConfiguration.super.getFiberMountBudget();
         private int fiberRetainedCount;
+        private int groupCount = 1;
+        private @Nullable int[][] groupCpus;
 
         protected PropFiberWorkerPoolConfiguration() {
         }
 
+        // copies the fiber limits and the worker groups
         protected PropFiberWorkerPoolConfiguration(WorkerPoolConfiguration configuration) {
             configureFiber(
                     configuration.getFiberMaxLiveCount(),
                     configuration.getFiberMountBudget(),
                     configuration.getFiberRetainedCount()
             );
+            this.groupCount = configuration.getGroupCount();
+            this.groupCpus = configuration.getGroupCpus();
         }
 
         @Override
@@ -3779,6 +4200,22 @@ public class PropServerConfiguration implements ServerConfiguration {
                     : WorkerPoolConfiguration.super.getFiberRetainedCount();
         }
 
+        @Override
+        public int getGroupCount() {
+            return groupCount;
+        }
+
+        @Override
+        public @Nullable int[][] getGroupCpus() {
+            return groupCpus;
+        }
+
+        @Override
+        public void setGroups(int groupCount, @Nullable int[][] groupCpus) {
+            this.groupCount = groupCount;
+            this.groupCpus = groupCpus;
+        }
+
         private void configureFiber(int maxLiveCount, int mountBudget, int retainedCount) {
             this.fiberMaxLiveCount = maxLiveCount;
             this.fiberMountBudget = mountBudget;
@@ -3788,8 +4225,6 @@ public class PropServerConfiguration implements ServerConfiguration {
 
     private static class PropWorkerPoolConfiguration extends PropFiberWorkerPoolConfiguration {
         private final String name;
-        public int groupCount = 1;
-        public int[][] groupCpus;
         public Metrics metrics;
         public int[] sharedWorkerAffinity;
         public int sharedWorkerCount;
@@ -3803,16 +4238,6 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         private PropWorkerPoolConfiguration(String name) {
             this.name = name;
-        }
-
-        @Override
-        public int getGroupCount() {
-            return groupCount;
-        }
-
-        @Override
-        public int[][] getGroupCpus() {
-            return groupCpus;
         }
 
         @Override
@@ -3977,6 +4402,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                     PropertyKey.LINE_TCP_DEFAULT_PARTITION_BY,
                     PropertyKey.LINE_DEFAULT_PARTITION_BY
             );
+            registerDeprecated(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, PropertyKey.CAIRO_O3_PARTITION_MAX_SPLITS);
             registerDeprecated(
                     PropertyKey.CAIRO_REPLACE_BUFFER_MAX_SIZE,
                     PropertyKey.CAIRO_SQL_STR_FUNCTION_BUFFER_MAX_SIZE
@@ -4074,6 +4500,10 @@ public class PropServerConfiguration implements ServerConfiguration {
             registerDeprecated(PropertyKey.PG_UPDATE_CACHE_ENABLED);
             registerDeprecated(PropertyKey.PG_UPDATE_CACHE_BLOCK_COUNT);
             registerDeprecated(PropertyKey.PG_UPDATE_CACHE_ROW_COUNT);
+            registerDeprecated(
+                    PropertyKey.QWP_BROWSER_TLS_TERMINATION_ENABLED,
+                    PropertyKey.BROWSER_TLS_TERMINATION_ENABLED
+            );
         }
 
         public ValidationResult validate(Properties properties) {
@@ -4379,6 +4809,26 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public long getAdaptiveEpochIntervalMs() {
+            return adaptiveEpochIntervalMs;
+        }
+
+        @Override
+        public long getAdaptiveEpochMaxRows() {
+            return adaptiveEpochMaxRows;
+        }
+
+        @Override
+        public long getAdaptiveCommitGroupWindowUs() {
+            return adaptiveCommitGroupWindowUs;
+        }
+
+        @Override
+        public boolean isAdaptiveEpochFlushOnClose() {
+            return adaptiveEpochFlushOnClose;
+        }
+
+        @Override
         public int getCompileViewModelPoolCapacity() {
             return sqlCompileViewModelPoolCapacity;
         }
@@ -4474,6 +4924,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean getDebugWalApplyBlockFailureNoRetry() {
             return debugWalApplyBlockFailureNoRetry;
+        }
+
+        @Override
+        public int getDebugWalApplyMaxTxnBlockSize() {
+            return debugWalApplyMaxTxnBlockSize;
         }
 
         @Override
@@ -4817,6 +5272,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getMatViewRowExpiryCleanupMaxCachedPartitions() {
+            return matViewRowExpiryCleanupMaxCachedPartitions;
+        }
+
+        @Override
+        public double getMatViewRowExpiryCleanupMinExpiredFraction() {
+            return matViewRowExpiryCleanupMinExpiredFraction;
+        }
+
+        @Override
         public long getMatViewRowsPerQueryEstimate() {
             return matViewRowsPerQueryEstimate;
         }
@@ -4902,6 +5367,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getO3PartitionMergeAppendFrameCacheSize() {
+            return o3PartitionMergeAppendFrameCacheSize;
+        }
+
+        @Override
         public long getO3MaxLag() {
             return o3MaxLagUs;
         }
@@ -4917,6 +5387,21 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public long getO3PartitionClusterBinWidth() {
+            return o3PartitionClusterBinWidth;
+        }
+
+        @Override
+        public int getO3PartitionClusterMaxBins() {
+            return o3PartitionClusterMaxBins;
+        }
+
+        @Override
+        public int getO3PartitionMaxSplits() {
+            return o3PartitionMaxSplits;
+        }
+
+        @Override
         public long getO3MinLag() {
             return o3MinLagUs;
         }
@@ -4924,6 +5409,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getO3OpenColumnQueueCapacity() {
             return o3OpenColumnQueueCapacity;
+        }
+
+        @Override
+        public int getO3PartitionPreSplitMaxCuts() {
+            return o3PartitionPreSplitMaxCuts;
+        }
+
+        @Override
+        public int getO3PartitionPreSplitMinPieceMultiple() {
+            return o3PartitionPreSplitMinPieceMultiple;
         }
 
         @Override
@@ -5004,6 +5499,131 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getParquetExportVersion() {
             return parquetExportVersion;
+        }
+
+        @Override
+        public long getPartitionCompactionAvgRowsPieceLim() {
+            return partitionCompactionAvgRowsPieceLim;
+        }
+
+        @Override
+        public long getPartitionCompactionCheckInterval() {
+            return partitionCompactionCheckInterval;
+        }
+
+        @Override
+        public long getPartitionCompactionDeadMinSize() {
+            return partitionCompactionDeadMinSize;
+        }
+
+        @Override
+        public double getPartitionCompactionDeadRowsRatio() {
+            return partitionCompactionDeadRowsRatio;
+        }
+
+        @Override
+        public long getPartitionCompactionDeclineBackoffMax() {
+            return partitionCompactionDeclineBackoffMax;
+        }
+
+        @Override
+        public long getPartitionCompactionDeclineBackoffMin() {
+            return partitionCompactionDeclineBackoffMin;
+        }
+
+        @Override
+        public int getPartitionCompactionDeclineBackoffMultiplier() {
+            return partitionCompactionDeclineBackoffMultiplier;
+        }
+
+        @Override
+        public int getPartitionCompactionHotCommits() {
+            return partitionCompactionHotCommits;
+        }
+
+        @Override
+        public long getPartitionCompactionIdleTimeout() {
+            return partitionCompactionIdleTimeout;
+        }
+
+        @Override
+        public long getPartitionCompactionIoBudget() {
+            return partitionCompactionIoBudget;
+        }
+
+        @Override
+        public int getPartitionCompactionIoCostMultiplier() {
+            return partitionCompactionIoCostMultiplier;
+        }
+
+        @Override
+        public int getPartitionCompactionMoveTailDeadRowsPercent() {
+            return partitionCompactionMoveTailDeadRowsPercent;
+        }
+
+        @Override
+        public int getPartitionCompactionMoveTailPieceThreshold() {
+            return partitionCompactionMoveTailPieceThreshold;
+        }
+
+        @Override
+        public int getPartitionCompactionMoveTailPrefixMultiple() {
+            return partitionCompactionMoveTailPrefixMultiple;
+        }
+
+        @Override
+        public int getPartitionCompactionPieceThreshold() {
+            return partitionCompactionPieceThreshold;
+        }
+
+        @Override
+        public long getPartitionCompactionSquashIdleTimeout() {
+            return partitionCompactionSquashIdleTimeout;
+        }
+
+        @Override
+        public int getPartitionCompactionSquashTargetSizeMultiple() {
+            return partitionCompactionSquashTargetSizeMultiple;
+        }
+
+        @Override
+        public long getPartitionCompactionSwapTimeout() {
+            return partitionCompactionSwapTimeout;
+        }
+
+        @Override
+        public int getPartitionCompactionTableDeadStopPercent() {
+            return partitionCompactionTableDeadStopPercent;
+        }
+
+        @Override
+        public int getPartitionCompactionTableDeadStopTriggerPercent() {
+            return partitionCompactionTableDeadStopTriggerPercent;
+        }
+
+        @Override
+        public long getPartitionCompactionTableDeadThreshold() {
+            return partitionCompactionTableDeadThreshold;
+        }
+
+        @Override
+        public int getPartitionCompactionTableDeadThresholdPercent() {
+            return partitionCompactionTableDeadThresholdPercent;
+        }
+
+        @Override
+        public long getPartitionCompactionTableDeadTrigger() {
+            return partitionCompactionTableDeadTrigger;
+        }
+
+        @Override
+        public double getPartitionCompactionTablePressureDeadRatio() {
+            return partitionCompactionTablePressureDeadRatio;
+        }
+
+        @Override
+        public long getPartitionCompactionTimeBudgetMs() {
+            return partitionCompactionTimeBudgetMs;
         }
 
         @Override
@@ -5174,6 +5794,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getSampleByIndexSearchPageSize() {
             return sqlSampleByIndexSearchPageSize;
+        }
+
+        @Override
+        public long getSequencerCheckMinInterval() {
+            return sequencerCheckMinInterval;
         }
 
         @Override
@@ -5412,6 +6037,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getSqlMaxGroupingSets() {
+            return sqlMaxGroupingSets;
+        }
+
+        @Override
         public int getSqlMaxNegativeLimit() {
             return sqlMaxNegativeLimit;
         }
@@ -5439,6 +6069,31 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public double getSqlParallelFilterPreTouchThreshold() {
             return sqlParallelFilterPreTouchThreshold;
+        }
+
+        @Override
+        public long getSqlParallelHashJoinGroupByBuildParallelMinRows() {
+            return sqlParallelHashJoinGroupByBuildParallelMinRows;
+        }
+
+        @Override
+        public long getSqlParallelHashJoinGroupByBuildRowsPerPartition() {
+            return sqlParallelHashJoinGroupByBuildRowsPerPartition;
+        }
+
+        @Override
+        public long getSqlParallelHashJoinGroupByPayloadCopyMaxSize() {
+            return sqlParallelHashJoinGroupByPayloadCopyMaxSize;
+        }
+
+        @Override
+        public double getSqlParallelHashJoinGroupByPayloadCopyMinProbeRatio() {
+            return sqlParallelHashJoinGroupByPayloadCopyMinProbeRatio;
+        }
+
+        @Override
+        public double getSqlParallelHashJoinGroupByPayloadCopyParallelMinProbeRatio() {
+            return sqlParallelHashJoinGroupByPayloadCopyParallelMinProbeRatio;
         }
 
         @Override
@@ -5677,6 +6332,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public long getViewCompileBusyRetryTimeout() {
+            return viewCompileBusyRetryTimeout;
+        }
+
+        @Override
         public int getViewLexerPoolCapacity() {
             return sqlViewLexerPoolCapacity;
         }
@@ -5689,6 +6349,21 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public @NotNull VolumeDefinitions getVolumeDefinitions() {
             return volumeDefinitions;
+        }
+
+        @Override
+        public long getWalApplyBlockMaxRows() {
+            return walApplyBlockMaxRows;
+        }
+
+        @Override
+        public int getWalApplyBlockMemoryPercent() {
+            return walApplyBlockMemoryPercent;
+        }
+
+        @Override
+        public long getWalApplyBlockSize() {
+            return walApplyBlockSize;
         }
 
         @Override
@@ -5709,6 +6384,12 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getWalApplyTableTimeQuota() {
             return walApplyTableTimeQuota;
+        }
+
+        @Override
+        public int getWalApplyWorkerCount() {
+            // No dedicated pool: ServerMain runs WAL apply on the shared write pool
+            return Math.max(1, walApplyWorkerCount > 0 ? walApplyWorkerCount : sharedWorkerPoolWriteConfiguration.getWorkerCount());
         }
 
         @Override
@@ -5837,8 +6518,18 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean isAdaptiveEpochColumnSyncBatched() {
+            return adaptiveEpochColumnSyncBatched;
+        }
+
+        @Override
         public boolean isAllPartitionOperationsAllowed() {
             return sqlAllPartitionOperationsAllowed;
+        }
+
+        @Override
+        public boolean isWalCommitWritebackDrainEnabled() {
+            return walCommitWritebackDrain;
         }
 
         @Override
@@ -5862,8 +6553,18 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean isCommitModeAdaptiveDowngrade() {
+            return commitModeAdaptiveDowngrade;
+        }
+
+        @Override
         public boolean isCopierChunkedEnabled() {
             return copierChunkedEnabled;
+        }
+
+        @Override
+        public boolean isDebugWriterInvariantCheckEnabled() {
+            return debugWriterInvariantCheckEnabled;
         }
 
         @Override
@@ -5912,8 +6613,18 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean isMatViewRowExpiryCleanupEnabled() {
+            return matViewRowExpiryCleanupEnabled;
+        }
+
+        @Override
         public boolean isMultiKeyDedupEnabled() {
             return false;
+        }
+
+        @Override
+        public boolean isO3PartitionMergeAppendEnabled() {
+            return o3PartitionMergeAppendEnabled;
         }
 
         @Override
@@ -6000,6 +6711,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean isSqlParallelHashJoinGroupByEnabled() {
+            return sqlParallelHashJoinGroupByEnabled;
+        }
+
+        @Override
         public boolean isSqlParallelHorizonJoinEnabled() {
             return sqlParallelHorizonJoinEnabled;
         }
@@ -6022,6 +6738,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isSqlParquetRowGroupPruningEnabled() {
             return sqlParquetRowGroupPruningEnabled;
+        }
+
+        @Override
+        public boolean isSqlStreamGroupByEnabled() {
+            return sqlStreamGroupByEnabled;
         }
 
         @Override
@@ -6185,6 +6906,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public HttpAllowedHosts getAllowedHosts() {
+            return httpAllowedHosts;
+        }
+
+        @Override
         public int getBindIPv4Address() {
             return httpMinBindIPv4Address;
         }
@@ -6192,6 +6918,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getBindPort() {
             return httpMinBindPort;
+        }
+
+        @Override
+        public BrowserAllowedOrigins getBrowserAllowedOrigins() {
+            return httpBrowserAllowedOrigins;
         }
 
         @Override
@@ -6340,6 +7071,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean isBrowserTlsTerminationEnabled() {
+            return isBrowserTlsTerminationEnabled;
+        }
+
+        @Override
         public boolean isEnabled() {
             return httpMinServerEnabled;
         }
@@ -6380,6 +7116,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public HttpAllowedHosts getAllowedHosts() {
+            return httpAllowedHosts;
+        }
+
+        @Override
         public int getBindIPv4Address() {
             return httpNetBindIPv4Address;
         }
@@ -6387,6 +7128,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getBindPort() {
             return httpNetBindPort;
+        }
+
+        @Override
+        public BrowserAllowedOrigins getBrowserAllowedOrigins() {
+            return httpBrowserAllowedOrigins;
         }
 
         @Override
@@ -6550,7 +7296,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public QwpBrowserAllowedOrigins getQwpBrowserAllowedOrigins() {
+        public BrowserAllowedOrigins getQwpBrowserAllowedOrigins() {
             return qwpBrowserAllowedOrigins;
         }
 
@@ -6633,6 +7379,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean isBrowserTlsTerminationEnabled() {
+            return isBrowserTlsTerminationEnabled;
+        }
+
+        @Override
         public boolean isConnectionSteeringEnabled() {
             return isNetworkConnectionSteeringEnabled;
         }
@@ -6655,11 +7406,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isQueryCacheEnabled() {
             return httpSqlCacheEnabled;
-        }
-
-        @Override
-        public boolean isQwpBrowserTlsTerminationEnabled() {
-            return qwpBrowserTlsTerminationEnabled;
         }
 
         @Override
@@ -6789,6 +7535,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public long getQwpMinIdleMsBeforeWriterRelease() {
+            return qwpMinIdleMsBeforeWriterRelease;
+        }
+
+        @Override
         public long getSymbolCacheWaitUsBeforeReload() {
             return symbolCacheWaitBeforeReload;
         }
@@ -6819,7 +7570,19 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    private class PropLineTcpIOWorkerPoolConfiguration implements WorkerPoolConfiguration {
+    private class PropLineTcpIOWorkerPoolConfiguration implements WorkerPoolConfiguration, NetworkPoolGroups {
+        private int groupCount = 1;
+        private @Nullable int[][] groupCpus;
+
+        @Override
+        public int getGroupCount() {
+            return groupCount;
+        }
+
+        @Override
+        public @Nullable int[][] getGroupCpus() {
+            return groupCpus;
+        }
 
         @Override
         public Metrics getMetrics() {
@@ -6859,6 +7622,12 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean haltOnError() {
             return lineTcpIOWorkerPoolHaltOnError;
+        }
+
+        @Override
+        public void setGroups(int groupCount, @Nullable int[][] groupCpus) {
+            this.groupCount = groupCount;
+            this.groupCpus = groupCpus;
         }
     }
 

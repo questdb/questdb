@@ -111,11 +111,27 @@ abstract class AbstractPageFrameSequence {
         return SuspensionScope.isFiberMode() && Fiber.isMounted();
     }
 
+    // A suspended reducer may hold the frame this owner waits for and need its carrier to resume.
+    protected static void yieldOrPause(boolean isFiberSuspendable) {
+        if (!isFiberSuspendable || !Fiber.yieldCooperatively()) {
+            Os.pause();
+        }
+    }
+
     protected final void awaitProgress(
             PageFrameReduceDispatcher dispatcher,
             long observedSequenceProgress,
-            long observedGlobalProgress,
             boolean isDraining
+    ) {
+        awaitProgress(dispatcher, observedSequenceProgress, 0, isDraining, -1);
+    }
+
+    protected final void awaitProgress(
+            PageFrameReduceDispatcher dispatcher,
+            long observedSequenceProgress,
+            long observedRingProgress,
+            boolean isDraining,
+            int ring
     ) {
         final boolean isInterruptible = !isDraining && !isUninterruptible();
         final SqlExecutionCircuitBreaker circuitBreaker = isInterruptible ? getCircuitBreaker() : null;
@@ -148,13 +164,14 @@ abstract class AbstractPageFrameSequence {
             isProgressWaitTerminated = dispatcher.isProgressWaitTerminated(
                     this,
                     observedSequenceProgress,
-                    observedGlobalProgress,
+                    observedRingProgress,
                     cancellationSignal,
                     cancellationSignalGeneration,
                     supplementalCancellationSignal,
                     supplementalCancellationSignalGeneration,
                     circuitBreaker,
-                    isDraining
+                    isDraining,
+                    ring
             );
         } catch (CairoException e) {
             if (isInterruptionSuperseded(e)) {
@@ -255,6 +272,6 @@ abstract class AbstractPageFrameSequence {
 
     void signalProgress() {
         progressVersion.incrementAndGet();
-        progressWaitQueue.fire();
+        progressWaitQueue.fireAll();
     }
 }

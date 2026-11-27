@@ -26,6 +26,8 @@ endif ()
 
 if (APPLE)
     set(OS_DARWIN 1)
+    # Apple clang outlines repeated instructions out of hot loops, which made keyed aggregates 2.2x slower.
+    add_compile_options(-mno-outline)
 elseif (UNIX)
     if (CMAKE_SYSTEM_NAME MATCHES "FreeBSD")
         set(OS_FREEBSD 1)
@@ -186,6 +188,12 @@ if (JIT_TEST)
     include_directories(${asmjit_SOURCE_DIR}/asmjit-testing/commons SYSTEM)
     add_executable(jittests src/test/c/jittests/test_app.cpp)
     target_link_libraries(jittests questdb)
+
+    # The dedup merge, compiled with the alignment sanitizer in trap mode: a read that assumes more alignment
+    # than its address has traps whatever instructions the compiler emits for it. Trap mode links no sanitizer
+    # runtime.
+    add_executable(dedup_tests src/test/c/dedup/dedup_test.cpp src/main/c/share/dedup.cpp)
+    target_compile_options(dedup_tests PRIVATE -fsanitize=alignment -fsanitize-undefined-trap-on-error)
 endif ()
 
 #liburing

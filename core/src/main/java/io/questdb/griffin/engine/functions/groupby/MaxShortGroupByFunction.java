@@ -186,4 +186,9 @@ public class MaxShortGroupByFunction extends IntFunction implements GroupByFunct
     public boolean supportsParallelism() {
         return UnaryFunction.super.supportsParallelism();
     }
+
+    @Override
+    public boolean isStateSelfContained() {
+        return true;
+    }
 }

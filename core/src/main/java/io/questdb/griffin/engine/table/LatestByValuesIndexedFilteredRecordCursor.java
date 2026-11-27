@@ -29,6 +29,7 @@ import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
@@ -100,6 +101,7 @@ class LatestByValuesIndexedFilteredRecordCursor extends AbstractPageFrameRecordC
         recordB.of(pageFrameCursor);
         filter.init(pageFrameCursor, executionContext);
         circuitBreaker = executionContext.getCircuitBreaker();
+        frameMemoryPool.setCircuitBreaker(circuitBreaker);
         rows.setMemoryTracker(executionContext.getMemoryTracker());
         rows.reopen();
         remainingKeys.clear();
@@ -130,17 +132,32 @@ class LatestByValuesIndexedFilteredRecordCursor extends AbstractPageFrameRecordC
         filter.toTop();
     }
 
-    private boolean addFoundKey(int symbolKey, IndexReader indexReader, int frameIndex, long partitionLo, long partitionHi) {
-        try (RowCursor cursor = indexReader.getCursor(symbolKey, partitionLo, partitionHi)) {
+    private boolean addFoundKey(
+            int symbolKey,
+            IndexReader indexReader,
+            int invertedFrameIndex,
+            long indexRowLo,
+            long indexRowHi,
+            PageFrameMemory frameMemory
+    ) {
+        try (RowCursor cursor = indexReader.getCursor(
+                symbolKey,
+                indexRowLo,
+                indexRowHi,
+                null,
+                frameMemory.getSourceRowResolver()
+        )) {
             while (cursor.hasNext()) {
                 // Per the IndexReader.getCursor(key, minValue, maxValue) contract, returned rows are
-                // already relative to minValue == partitionLo here, so cursor.next() is already
-                // frame-relative. Do not subtract partitionLo again, or the record is positioned
-                // partitionLo rows too early when partitionLo > 0.
+                // already relative to minValue == indexRowLo here, so cursor.next() is already
+                // frame-relative. Do not subtract indexRowLo again, or the record is positioned
+                // indexRowLo rows too early when indexRowLo > 0. For a COMPOSITE partition indexRowLo
+                // carries the piece's file-row shift, which is exactly the shift the frame's page
+                // addresses carry, so the un-subtracted row lines up there too.
                 final long row = cursor.next();
                 recordA.setRowIndex(row);
                 if (filter.getBool(recordA)) {
-                    rows.add(Rows.toRowID(frameIndex, row));
+                    rows.add(Rows.toRowID(invertedFrameIndex, row));
                     return true;
                 }
             }
@@ -159,11 +176,12 @@ class LatestByValuesIndexedFilteredRecordCursor extends AbstractPageFrameRecordC
             circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             final int frameIndex = frameCount;
             final IndexReader indexReader = frame.getIndexReader(columnIndex, IndexReader.DIR_BACKWARD);
-            final long partitionLo = frame.getPartitionLo();
-            final long partitionHi = frame.getPartitionHi() - 1;
+            final long indexRowLo = frame.getIndexRowLo();
+            final long indexRowHi = frame.getIndexRowHi() - 1;
 
-            frameAddressCache.add(frameCount, frame);
-            frameMemoryPool.navigateTo(frameCount++, recordA);
+            frameAddressCache.add(frameIndex, frame);
+            final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameCount++);
+            recordA.init(frameMemory);
 
             // Invert page frame indexes, so that they grow asc in time order.
             // That's to be able to do post-processing (sorting) of the result set.
@@ -172,7 +190,14 @@ class LatestByValuesIndexedFilteredRecordCursor extends AbstractPageFrameRecordC
             // the list shrinks, so the next (older) frame only probes keys that are still unresolved.
             for (int i = remainingKeys.size() - 1; i >= 0; i--) {
                 int symbolKey = remainingKeys.getQuick(i);
-                if (addFoundKey(symbolKey, indexReader, invertedFrameIndex, partitionLo, partitionHi)) {
+                if (addFoundKey(
+                        symbolKey,
+                        indexReader,
+                        invertedFrameIndex,
+                        indexRowLo,
+                        indexRowHi,
+                        frameMemory
+                )) {
                     int last = remainingKeys.size() - 1;
                     remainingKeys.setQuick(i, remainingKeys.getQuick(last));
                     remainingKeys.setPos(last);

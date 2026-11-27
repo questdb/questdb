@@ -38,11 +38,11 @@ public class IODispatcherWindows<C extends IOContext<C>> extends AbstractIODispa
     public IODispatcherWindows(
             IODispatcherConfiguration configuration,
             IOContextFactory<C> ioContextFactory,
-            boolean reusePort,
+            boolean isPortShared,
             @Nullable ConnectionSteering steering,
             int group
     ) {
-        super(configuration, ioContextFactory, reusePort, steering, group);
+        super(configuration, ioContextFactory, isPortShared, steering, group);
         this.sf = configuration.getSelectFacade();
         this.readFdSet = new FDSet(configuration.getEventCapacity());
         this.writeFdSet = new FDSet(configuration.getEventCapacity());

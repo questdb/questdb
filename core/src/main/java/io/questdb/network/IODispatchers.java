@@ -67,33 +67,33 @@ public class IODispatchers {
     }
 
     /**
-     * Creates a dispatcher whose listener, when {@code reusePort} is set, joins the SO_REUSEPORT
+     * Creates a dispatcher whose listener, when {@code isPortShared} is set, joins the SO_REUSEPORT
      * group of its port.
      */
     public static <C extends IOContext<C>> IODispatcher<C> create(
             IODispatcherConfiguration configuration,
             IOContextFactory<C> ioContextFactory,
-            boolean reusePort
+            boolean isPortShared
     ) {
-        return create(configuration, ioContextFactory, reusePort, null, 0);
+        return create(configuration, ioContextFactory, isPortShared, null, 0);
     }
 
     /**
-     * Creates the dispatcher of worker group {@code group}, whose listener, when {@code reusePort}
+     * Creates the dispatcher of worker group {@code group}, whose listener, when {@code isPortShared}
      * is set, joins the SO_REUSEPORT group of its port, and opens and closes through the port's
      * {@code steering} when there is one.
      */
     public static <C extends IOContext<C>> IODispatcher<C> create(
             IODispatcherConfiguration configuration,
             IOContextFactory<C> ioContextFactory,
-            boolean reusePort,
+            boolean isPortShared,
             @Nullable ConnectionSteering steering,
             int group
     ) {
         return switch (Os.type) {
-            case Os.LINUX -> new IODispatcherLinux<>(configuration, ioContextFactory, reusePort, steering, group);
-            case Os.DARWIN, Os.FREEBSD -> new IODispatcherOsx<>(configuration, ioContextFactory, reusePort, steering, group);
-            case Os.WINDOWS -> new IODispatcherWindows<>(configuration, ioContextFactory, reusePort, steering, group);
+            case Os.LINUX -> new IODispatcherLinux<>(configuration, ioContextFactory, isPortShared, steering, group);
+            case Os.DARWIN, Os.FREEBSD -> new IODispatcherOsx<>(configuration, ioContextFactory, isPortShared, steering, group);
+            case Os.WINDOWS -> new IODispatcherWindows<>(configuration, ioContextFactory, isPortShared, steering, group);
             default -> throw new RuntimeException();
         };
     }
@@ -125,17 +125,7 @@ public class IODispatchers {
             int groupCount,
             ObjList<IODispatcher<C>> dispatchers
     ) {
-        int[][] groupCpus = null;
-        if (groupCount > 1 && groupCount == pool.getGroupCount()) {
-            groupCpus = new int[groupCount][];
-            for (int g = 0; g < groupCount; g++) {
-                groupCpus[g] = pool.getGroupCpus(g);
-                if (groupCpus[g] == null) {
-                    groupCpus = null;
-                    break;
-                }
-            }
-        }
+        final int[][] groupCpus = groupCount > 1 && groupCount == pool.getGroupCount() ? pool.getGroupCpus() : null;
         createGroups(configuration, ioContextFactory, groupCount, groupCpus, dispatchers);
     }
 
@@ -190,7 +180,7 @@ public class IODispatchers {
     public static int getGroupCount(IODispatcherConfiguration configuration, WorkerPool pool) {
         final int groupCount = pool.getGroupCount();
         if (groupCount > 1 && configuration.getBindPort() == 0) {
-            LOG.advisory().$("not split by CPU socket, the server binds to port 0 [who=")
+            LOG.advisory().$("not split into worker groups, the server binds to port 0 [who=")
                     .$(configuration.getDispatcherLogName())
                     .$(", groups=").$(groupCount)
                     .I$();

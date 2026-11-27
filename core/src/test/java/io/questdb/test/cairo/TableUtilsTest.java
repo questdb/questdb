@@ -26,14 +26,19 @@ package io.questdb.test.cairo;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnVersionReader;
+import io.questdb.cairo.ColumnVersionWriter;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.TxReader;
+import io.questdb.cairo.pool.AbstractMultiTenantPool;
+import io.questdb.cairo.pool.WriterPool;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.Files;
@@ -56,6 +61,8 @@ import org.junit.Test;
 import java.io.File;
 
 import static io.questdb.cairo.TableUtils.TABLE_RESERVED;
+import static io.questdb.tasks.TableWriterTask.CMD_COMPOSITE_PARTITION_SWAP;
+import static io.questdb.tasks.TableWriterTask.CMD_PARQUET_PARTITION_SWAP;
 import static io.questdb.tasks.TableWriterTask.CMD_STORAGE_POLICY;
 import static io.questdb.tasks.TableWriterTask.getCommandName;
 
@@ -236,15 +243,169 @@ public class TableUtilsTest extends AbstractTest {
     }
 
     @Test
+    public void testIsSupersededIndexFile() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            // Writer indexes differ from the positions, as in a reader's metadata after DROP COLUMN: the _cv records at
+            // writer indexes 1 and 3 stand where a lookup by position would find the versions of sym and c
+            final GenericRecordMetadata metadata = new GenericRecordMetadata();
+            metadata.add(new TableColumnMetadata("ts", ColumnType.TIMESTAMP, IndexType.NONE, 0, false, null, 0, false))
+                    .add(new TableColumnMetadata("sym", ColumnType.SYMBOL, IndexType.BITMAP, 256, true, null, 2, false))
+                    .add(new TableColumnMetadata("p", ColumnType.SYMBOL, IndexType.POSTING, 256, true, null, 4, false))
+                    .add(new TableColumnMetadata("c", ColumnType.SYMBOL, IndexType.POSTING, 256, true, null, 6, false))
+                    .add(new TableColumnMetadata("u", ColumnType.SYMBOL, IndexType.NONE, 256, true, null, 7, false))
+                    .add(new TableColumnMetadata("v", ColumnType.LONG, IndexType.NONE, 0, false, null, 8, false))
+                    .add(new TableColumnMetadata("s2", ColumnType.SYMBOL, IndexType.BITMAP, 256, true, null, 9, false));
+            final long day1 = MicrosTimestampDriver.INSTANCE.fromDays(19_723);
+            final long day2 = MicrosTimestampDriver.INSTANCE.fromDays(19_724);
+            try (
+                    Path cvPath = new Path().of(temp.newFolder().getAbsolutePath()).concat(TableUtils.COLUMN_VERSION_FILE_NAME);
+                    ColumnVersionWriter writer = new ColumnVersionWriter(new DefaultTestCairoConfiguration(root), cvPath.$(), true);
+                    ColumnVersionReader columnVersionReader = new ColumnVersionReader()
+            ) {
+                writer.upsert(day1, 2, 5, 0);
+                writer.upsert(day1, 4, 6, 0);
+                writer.upsert(day1, 6, 7, 0);
+                writer.upsert(day1, 1, 9, 0);
+                writer.upsert(day1, 3, 9, 0);
+                // s2 has no partition record, its default record names txn 7
+                writer.upsertDefaultTxnName(9, 7, day1);
+                writer.commit();
+                columnVersionReader.ofRO(FF, cvPath.$());
+                Assert.assertTrue(columnVersionReader.readSafe());
+                // 2024-01-01: sym is live at txn 5, p at 6, c at 7, s2 at its default 7. The txn segment follows the
+                // kind and is left out for txn -1; a .pv file ends with a seal txn, and a .pc<N> file has the host
+                // token instead, 0 for txn -1 and txn 0 alike, and may name the covered column's txn before the seal.
+                final String[][] day1Cases = {
+                        {"sym.k", "true"},
+                        {"sym.v", "true"},
+                        {"sym.pk", "true"},
+                        {"sym.pci", "true"},
+                        {"sym.k.5", "false"},
+                        {"sym.v.5", "false"},
+                        {"sym.k.4", "true"},
+                        {"sym.v.9223372036854775807", "true"},
+                        {"SYM.k", "true"},
+                        {"SYM.k.5", "false"},
+                        {"sym.k.", "false"},
+                        {"sym.k.x", "false"},
+                        {"sym.k.5.1", "false"},
+                        {"sym.d.4", "false"},
+                        {"sym.kk.4", "false"},
+                        {"sym.", "false"},
+                        {"sym", "false"},
+                        {"p.pk", "true"},
+                        {"p.pk.5", "true"},
+                        {"p.pk.6", "false"},
+                        {"p.pv.0", "true"},
+                        {"p.pv.6.0", "false"},
+                        {"p.pv.6.12", "false"},
+                        {"p.pv.5.1", "true"},
+                        {"p.pv.", "false"},
+                        {"p.pv.x.1", "false"},
+                        {"c.pci.7", "false"},
+                        {"c.pci.6", "true"},
+                        {"c.pc0.0.0", "true"},
+                        {"c.pc0.0.3.1", "true"},
+                        {"c.pc0.7.1", "false"},
+                        {"c.pc12.7.5.2", "false"},
+                        {"c.pc0.6.1", "true"},
+                        {"c.pc.1", "false"},
+                        {"c.pc0.1", "false"},
+                        {"c.pcx.7.1", "false"},
+                        {"s2.k", "true"},
+                        {"s2.k.7", "false"},
+                        {"s2.v.7", "false"},
+                        {"u.k.4", "false"},
+                        {"v.k.4", "false"},
+                        {"zz.k.4", "false"},
+                        {".k", "false"},
+                        {"k", "false"},
+                        {"_pm", "false"},
+                        {"data.parquet", "false"},
+                        {"", "false"}
+                };
+                assertSupersededIndexFiles(day1Cases, metadata, columnVersionReader, day1);
+                // 2024-01-02 has no record: sym, p and c are live at txn -1, whose .pc host token is 0, s2 at its
+                // default 7. A .pv name, unlike the .pc host token, spells txn 0 apart from txn -1: p.pv.0.3 is txn 0,
+                // seal 3.
+                final String[][] day2Cases = {
+                        {"sym.k", "false"},
+                        {"sym.v", "false"},
+                        {"sym.k.5", "true"},
+                        {"p.pk", "false"},
+                        {"p.pv.3", "false"},
+                        {"p.pv.0.3", "true"},
+                        {"p.pk.6", "true"},
+                        {"p.pv.6.0", "true"},
+                        {"c.pci", "false"},
+                        {"c.pc0.0.3", "false"},
+                        {"c.pc0.5.1", "true"},
+                        {"s2.k", "true"},
+                        {"s2.k.7", "false"}
+                };
+                assertSupersededIndexFiles(day2Cases, metadata, columnVersionReader, day2);
+            }
+        });
+    }
+
+    @Test
+    public void testIsSupersededIndexFileKeepsParquetFilesOfColumnNamedData() throws Exception {
+        // The name of an indexed column data starts the names of the parquet partition's own files, data.parquet and
+        // data.parquet.staging, so the column resolves. Their kind, parquet, is no index kind: neither is superseded,
+        // while the column's index files are classified against its live txn 5.
+        TestUtils.assertMemoryLeak(() -> {
+            final GenericRecordMetadata metadata = new GenericRecordMetadata();
+            metadata.add(new TableColumnMetadata("ts", ColumnType.TIMESTAMP, IndexType.NONE, 0, false, null, 0, false))
+                    .add(new TableColumnMetadata("data", ColumnType.SYMBOL, IndexType.BITMAP, 256, true, null, 1, false));
+            final long day = MicrosTimestampDriver.INSTANCE.fromDays(19_723);
+            try (
+                    Path cvPath = new Path().of(temp.newFolder().getAbsolutePath()).concat(TableUtils.COLUMN_VERSION_FILE_NAME);
+                    ColumnVersionWriter writer = new ColumnVersionWriter(new DefaultTestCairoConfiguration(root), cvPath.$(), true);
+                    ColumnVersionReader columnVersionReader = new ColumnVersionReader()
+            ) {
+                writer.upsert(day, 1, 5, 0);
+                writer.commit();
+                columnVersionReader.ofRO(FF, cvPath.$());
+                Assert.assertTrue(columnVersionReader.readSafe());
+                final String[][] cases = {
+                        {"data.parquet", "false"},
+                        {"data.parquet.staging", "false"},
+                        {"data.k", "true"},
+                        {"data.v", "true"},
+                        {"data.k.4", "true"},
+                        {"data.k.5", "false"},
+                        {"data.v.5", "false"}
+                };
+                assertSupersededIndexFiles(cases, metadata, columnVersionReader, day);
+            }
+        });
+    }
+
+    @Test
     public void testIsUnsolicitedTableLock() {
         // Internal background job reasons are NOT unsolicited
         Assert.assertFalse(TableUtils.isUnsolicitedTableLock(TableUtils.WAL_2_TABLE_WRITE_REASON));
         Assert.assertFalse(TableUtils.isUnsolicitedTableLock(TableUtils.WAL_2_TABLE_RESUME_REASON));
         Assert.assertFalse(TableUtils.isUnsolicitedTableLock(getCommandName(CMD_STORAGE_POLICY)));
+        // The partition compaction sweep holds the writer to land its swap, exactly as
+        // STORAGE POLICY does; apply must not log its own scheduled work as an intruder.
+        Assert.assertFalse(TableUtils.isUnsolicitedTableLock(getCommandName(CMD_COMPOSITE_PARTITION_SWAP)));
+        Assert.assertFalse(TableUtils.isUnsolicitedTableLock(getCommandName(CMD_PARQUET_PARTITION_SWAP)));
+        // A publisher that finds the writer back in the pool ticks the queue under the pool's own reason.
+        Assert.assertFalse(TableUtils.isUnsolicitedTableLock(WriterPool.OWNERSHIP_REASON_ASYNC_COMMAND));
 
         // Any other reason IS unsolicited
         Assert.assertTrue(TableUtils.isUnsolicitedTableLock("ALTER TABLE"));
         Assert.assertTrue(TableUtils.isUnsolicitedTableLock("test"));
+
+        // The pool reports OWNERSHIP_REASON_UNKNOWN while a holder is still constructing the
+        // writer and has not stamped its reason yet. That string interns to the same reference
+        // as AbstractMultiTenantPool.NO_LOCK_REASON ("unknown"), which a reference-equality
+        // escape used to misread as "no reason, treat as solicited" - silently dropping the
+        // in-flight WAL apply notification with no recovery. An unidentified holder must be
+        // unsolicited so ApplyWal2TableJob re-arms notification delivery.
+        Assert.assertTrue(TableUtils.isUnsolicitedTableLock(WriterPool.OWNERSHIP_REASON_UNKNOWN));
+        Assert.assertTrue(TableUtils.isUnsolicitedTableLock(AbstractMultiTenantPool.NO_LOCK_REASON));
     }
 
     @Test
@@ -266,6 +427,13 @@ public class TableUtilsTest extends AbstractTest {
         testIsValidColumnName('%', false);
         testIsValidColumnName('~', false);
         testIsValidColumnName('\n', false);
+        // 0x10-0x1f stay legal, including 0x1f and 0x1e, which RowExpiryUtil uses as the EXPIRE ROWS
+        // policy separator and escape character. The policy encoding escapes them in its fields, so a
+        // name an earlier release accepted keeps working.
+        testIsValidColumnName((char) 0x10, true);
+        testIsValidColumnName((char) 0x1b, true);
+        testIsValidColumnName((char) 0x1e, true);
+        testIsValidColumnName((char) 0x1f, true);
         Assert.assertFalse(TableUtils.isValidColumnName("..", 127));
         Assert.assertFalse(TableUtils.isValidColumnName(".", 127));
         Assert.assertFalse(TableUtils.isValidColumnName("t\u007Ftcsv", 127));
@@ -283,6 +451,10 @@ public class TableUtilsTest extends AbstractTest {
     @Test
     public void testIsValidTableName() {
         Assert.assertFalse(TableUtils.isValidTableName("?abcd", 127));
+        // 0x10-0x1f stay legal in a table name too (see testIsValidColumnName).
+        Assert.assertTrue(TableUtils.isValidTableName("t" + (char) 0x1f + "t", 127));
+        Assert.assertTrue(TableUtils.isValidTableName("t" + (char) 0x1e + "t", 127));
+        Assert.assertTrue(TableUtils.isValidTableName("t" + (char) 0x10 + "t", 127));
         Assert.assertFalse(TableUtils.isValidTableName("", 127));
         Assert.assertFalse(TableUtils.isValidTableName(" ", 127));
         Assert.assertFalse(TableUtils.isValidTableName("./", 127));
@@ -568,6 +740,16 @@ public class TableUtilsTest extends AbstractTest {
             Assert.assertEquals(2, indexes.size());
             Assert.assertEquals(0, indexes.get(0));
             Assert.assertEquals(1, indexes.get(1));
+        }
+    }
+
+    private static void assertSupersededIndexFiles(String[][] cases, GenericRecordMetadata metadata, ColumnVersionReader columnVersionReader, long partitionTimestamp) {
+        for (String[] c : cases) {
+            Assert.assertEquals(
+                    c[0],
+                    Boolean.parseBoolean(c[1]),
+                    TableUtils.isSupersededIndexFile(c[0], metadata, columnVersionReader, partitionTimestamp)
+            );
         }
     }
 

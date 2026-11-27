@@ -26,6 +26,7 @@ package io.questdb.cutlass.qwp.codec;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
@@ -38,6 +39,9 @@ import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.protocol.QwpGorillaEncoder;
 import io.questdb.cutlass.qwp.protocol.QwpVarint;
 import io.questdb.griffin.engine.functions.SymbolFunction;
+import io.questdb.griffin.engine.table.AsyncFilterAtom;
+import io.questdb.std.Decimals;
+import io.questdb.std.Files;
 import io.questdb.std.IntIntHashMap;
 import io.questdb.std.Long256;
 import io.questdb.std.Misc;
@@ -82,9 +86,10 @@ public class QwpResultBatchBuffer implements QuietCloseable {
     // Reused Gorilla encoder. One instance per batch buffer (i.e. per connection).
     private final QwpGorillaEncoder gorillaEncoder = new QwpGorillaEncoder();
     private final ObjList<QwpColumnScratch> scratches = new ObjList<>();
-    // Snapshot of connection-scoped dict size taken at {@link #beginBatch}. Any conn
-    // ids allocated by this batch's SYMBOL rows sit in [batchDeltaStart..connDict.size()),
-    // which is exactly what {@link #emitDeltaSection} needs to ship.
+    // Connection-scoped dict size the client already holds. beginBatch snapshots it,
+    // and advanceStartRow moves it after every shipped frame. Any conn ids allocated
+    // by unshipped SYMBOL rows sit in [batchDeltaStart..connDict.size()), which is
+    // exactly what {@link #emitDeltaSection} needs to ship.
     private int batchDeltaStart;
     private long batchDeltaWireBytesAtStart;
     private int columnCount;
@@ -113,25 +118,20 @@ public class QwpResultBatchBuffer implements QuietCloseable {
     }
 
     /**
-     * Advances {@code batchDeltaStart} to {@code connDict.size()}. Called from
-     * inside the send functions after a successful partial-emit frame so the
-     * subsequent emit's delta section ships no overlap with the bytes already
-     * sent.
+     * Advances the logical start past {@code k} just-shipped rows. Every frame
+     * ships the whole delta section, so {@code batchDeltaStart} also moves to
+     * {@code connDict.size()}: the next emit ships no overlap, and
+     * {@link #rollbackCurrentBatch} never drops entries the client already
+     * holds. When the advance drains the live row count to zero, scratch
+     * positions reset in place so the next batch reuses the native heap from
+     * byte 0.
      */
-    public void advanceDeltaStart() {
+    public void advanceStartRow(int k) {
+        assert startRow <= Integer.MAX_VALUE - k : "startRow int overflow";
         if (connDict != null) {
             batchDeltaStart = connDict.size();
             batchDeltaWireBytesAtStart = connDict.getTotalWireBytes();
         }
-    }
-
-    /**
-     * Advances the logical start past {@code k} just-shipped rows. When the
-     * advance drains the live row count to zero, scratch positions reset in
-     * place so the next batch reuses the native heap from byte 0.
-     */
-    public void advanceStartRow(int k) {
-        assert startRow <= Integer.MAX_VALUE - k : "startRow int overflow";
         startRow += k;
         if (startRow == physicalRowCount) {
             for (int i = 0; i < columnCount; i++) {
@@ -151,28 +151,45 @@ public class QwpResultBatchBuffer implements QuietCloseable {
      * back to per-row iteration over {@code record}, touching only the columns
      * that need it.
      * <p>
-     * The parquet-format fallback iterates rows through {@code record} /
-     * {@link #appendRow}, preserving correctness without the columnar speedup.
+     * A frame stores its rows in ascending order. With {@code isDescending} this
+     * appends them last to first, from {@code hi - 1} down to {@code lo}: a
+     * backward scan hands out its frames last first, and streams each one's rows
+     * last first too. The columnar copies then take the {@code Reversed} bulk
+     * appends of {@link QwpColumnScratch}, which read each column's rows from
+     * the top down.
+     * <p>
+     * The fallback for parquet-format and custom (Delta) frames iterates rows
+     * through {@code record} / {@link #appendRow}, preserving correctness
+     * without the columnar speedup.
      * Replace with a parquet-specific columnar decoder as a follow-up.
      */
-    public void appendPageFrame(PageFrame frame, PageFrameMemoryRecord record, long lo, long hi) {
+    public void appendPageFrame(PageFrame frame, PageFrameMemoryRecord record, long lo, long hi, boolean isDescending) {
         final int rows = (int) (hi - lo);
         if (rows <= 0) {
             return;
         }
-        if (frame.getFormat() != PartitionFormat.NATIVE) {
-            // Parquet frame: no contiguous column addresses we can memcpy from.
-            // Fall back to per-row using the existing single-row path. Row count
-            // advances via appendRow itself.
-            for (long r = lo; r < hi; r++) {
-                record.setRowIndex(r);
-                appendRow(record);
+        if (frame.getFormat() != PartitionFormat.NATIVE || frame.getPartitionFrameState() != 0) {
+            // Parquet or custom (Delta) frame: no contiguous column addresses we can
+            // memcpy from; a custom frame reports NATIVE but its addresses point at
+            // the base. Fall back to per-row using the existing single-row path, which
+            // reads the pool-materialized record. Row count advances via appendRow itself.
+            if (isDescending) {
+                for (long r = hi - 1; r >= lo; r--) {
+                    record.setRowIndex(r);
+                    appendRow(record);
+                }
+            } else {
+                for (long r = lo; r < hi; r++) {
+                    record.setRowIndex(r);
+                    appendRow(record);
+                }
             }
             return;
         }
         final int n = columnCount;
         final QwpColumnScratch[] scs = scratchesArr;
         final byte[] wts = wireTypesArr;
+        final int[] qts = qdbTypesArr;
         final SymbolTable[] sts = symbolTablesArr;
         for (int ci = 0; ci < n; ci++) {
             final QwpColumnScratch scratch = scs[ci];
@@ -184,14 +201,22 @@ public class QwpResultBatchBuffer implements QuietCloseable {
             // vector. Those types take the per-row fallback which uses
             // {@code record.getX} to distinguish correctly.
             switch (wt) {
+                case QwpConstants.TYPE_DECIMAL64:
+                    if (ColumnType.tagOf(qts[ci]) != ColumnType.DECIMAL64) {
+                        // DECIMAL8/16/32 store 1/2/4 bytes per row; widen them per row.
+                        perColumnRowLoop(record, lo, hi, isDescending, ci);
+                        break;
+                    }
+                    // fall through: DECIMAL64 storage is 8 bytes per row, like LONG
                 case QwpConstants.TYPE_LONG:
                 case QwpConstants.TYPE_DATE:
                 case QwpConstants.TYPE_TIMESTAMP:
-                case QwpConstants.TYPE_TIMESTAMP_NANOS:
-                case QwpConstants.TYPE_DECIMAL64: {
+                case QwpConstants.TYPE_TIMESTAMP_NANOS: {
                     long base = frame.getPageAddress(ci);
                     if (base == 0) {
                         fillNulls(scratch, rows);
+                    } else if (isDescending) {
+                        scratch.appendColumnLong8WithSentinelReversed(base + lo * 8L, rows);
                     } else {
                         scratch.appendColumnLong8WithSentinel(base + lo * 8L, rows);
                     }
@@ -201,6 +226,8 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                     long base = frame.getPageAddress(ci);
                     if (base == 0) {
                         fillNulls(scratch, rows);
+                    } else if (isDescending) {
+                        scratch.appendColumnDouble8Reversed(base + lo * 8L, rows);
                     } else {
                         scratch.appendColumnDouble8(base + lo * 8L, rows);
                     }
@@ -210,6 +237,8 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                     long base = frame.getPageAddress(ci);
                     if (base == 0) {
                         fillNulls(scratch, rows);
+                    } else if (isDescending) {
+                        scratch.appendColumnInt4WithSentinelReversed(base + lo * 4L, rows, Numbers.INT_NULL);
                     } else {
                         scratch.appendColumnInt4WithSentinel(base + lo * 4L, rows, Numbers.INT_NULL);
                     }
@@ -220,6 +249,8 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                     long base = frame.getPageAddress(ci);
                     if (base == 0) {
                         fillNulls(scratch, rows);
+                    } else if (isDescending) {
+                        scratch.appendColumnInt4WithSentinelReversed(base + lo * 4L, rows, Numbers.IPv4_NULL);
                     } else {
                         scratch.appendColumnInt4WithSentinel(base + lo * 4L, rows, Numbers.IPv4_NULL);
                     }
@@ -229,6 +260,8 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                     long base = frame.getPageAddress(ci);
                     if (base == 0) {
                         fillNulls(scratch, rows);
+                    } else if (isDescending) {
+                        scratch.appendColumnFloat4Reversed(base + lo * 4L, rows);
                     } else {
                         scratch.appendColumnFloat4(base + lo * 4L, rows);
                     }
@@ -244,6 +277,8 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                         // zero values rather than driving fillNulls (which would
                         // set bits in the null bitmap that the client rejects).
                         scratch.appendColumnFixedZero(rows, 2);
+                    } else if (isDescending) {
+                        scratch.appendColumnFixedNoNullReversed(base + lo * 2L, rows, 2);
                     } else {
                         scratch.appendColumnFixedNoNull(base + lo * 2L, rows, 2);
                     }
@@ -255,6 +290,8 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                         // Wire spec sec 11.5: BYTE cannot carry NULL. See the
                         // SHORT / CHAR case above for the column-top rationale.
                         scratch.appendColumnFixedZero(rows, 1);
+                    } else if (isDescending) {
+                        scratch.appendColumnFixedNoNullReversed(base + lo, rows, 1);
                     } else {
                         scratch.appendColumnFixedNoNull(base + lo, rows, 1);
                     }
@@ -267,6 +304,8 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                         // column-top fill is n bit-packed false values; the
                         // null bitmap stays clear.
                         scratch.appendColumnBooleanZero(rows);
+                    } else if (isDescending) {
+                        scratch.appendColumnBooleanReversed(base + lo, rows);
                     } else {
                         scratch.appendColumnBoolean(base + lo, rows);
                     }
@@ -278,11 +317,15 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                     if (base == 0) {
                         fillNulls(scratch, rows);
                     } else if (st != null) {
-                        scratch.appendColumnSymbolKeys(base + lo * 4L, rows, st, connDict);
+                        if (isDescending) {
+                            scratch.appendColumnSymbolKeysReversed(base + lo * 4L, rows, st, connDict);
+                        } else {
+                            scratch.appendColumnSymbolKeys(base + lo * 4L, rows, st, connDict);
+                        }
                     } else {
                         // No per-column symbol table (synthetic records): per-row fallback
                         // through record.getSymA + bytes-keyed dedup in the conn dict.
-                        perColumnRowLoop(record, lo, hi, ci);
+                        perColumnRowLoop(record, lo, hi, isDescending, ci);
                     }
                     break;
                 }
@@ -291,7 +334,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                     // ARRAYS: columnar path not implemented yet -- fall back to per-row
                     // for this one column. Other columns on this frame still took the
                     // columnar path above.
-                    perColumnRowLoop(record, lo, hi, ci);
+                    perColumnRowLoop(record, lo, hi, isDescending, ci);
             }
         }
         assert physicalRowCount <= Integer.MAX_VALUE - rows : "physicalRowCount int overflow";
@@ -394,14 +437,19 @@ public class QwpResultBatchBuffer implements QuietCloseable {
     }
 
     /**
-     * Like {@link #resetForNewQuery} but without the buffer-size shrink pass, so a
-     * following {@code beginStreaming} owns the single shrink and the previous
-     * query's sizing isn't discarded.
+     * Called after the connection dict is cleared. Like {@link #resetForNewQuery}
+     * but without the buffer-size shrink pass, so a following
+     * {@code beginStreaming} owns the single shrink and the previous query's
+     * sizing isn't discarded. Also rewinds the delta start to the empty dict;
+     * otherwise {@link #rollbackCurrentBatch} on an error before the next
+     * {@link #beginBatch} would target entries the dict no longer has, and throw.
      */
     public void clearConnKeyMaps() {
         for (int i = 0, n = scratches.size(); i < n; i++) {
             scratches.getQuick(i).clearConnKeyMap();
         }
+        batchDeltaStart = 0;
+        batchDeltaWireBytesAtStart = 0;
     }
 
     @Override
@@ -545,8 +593,8 @@ public class QwpResultBatchBuffer implements QuietCloseable {
 
     /**
      * Undoes any dict entries committed by the current batch and discards any
-     * un-shipped scratch rows. Called from the server's error path before
-     * {@code endStreaming}: a batch that called
+     * un-shipped scratch rows. Called from the server's error and cancel paths
+     * before {@code endStreaming}: a batch that called
      * {@link QwpEgressConnSymbolDict#addEntry} but never shipped its
      * {@code RESULT_BATCH} frame must not leave orphan entries in the connection
      * dict, because a subsequent query could hit the dedup map on the same bytes,
@@ -565,6 +613,59 @@ public class QwpResultBatchBuffer implements QuietCloseable {
         }
         physicalRowCount = 0;
         startRow = 0;
+    }
+
+    /**
+     * Reads one byte of every OS page that holds rows [{@code lo}, {@code hi})
+     * of a base-only NATIVE page frame, column by column, each column in
+     * ascending address order, and returns the number of pages read. A custom
+     * (Delta) frame has no raw page addresses to read: its addresses point at
+     * the base, see {@link io.questdb.cairo.sql.PageFrameCursor#hasCustomFrames}.
+     * A var-size column reads its aux vector and then its data vector; a column
+     * top reads nothing.
+     * <p>
+     * A descending page-frame stream calls this ahead of the rows it copies last
+     * to first. Kernel readahead follows a page fault upwards only, and only
+     * upwards on the partitions QWP scans, which TableReader maps with
+     * MADV_SEQUENTIAL: copying column data that is not in the page cache
+     * downwards faults it in one page at a time. Reading the pages upwards first
+     * brings them in at readahead size, so the copy finds them cached.
+     */
+    public long touchPageFrameRows(PageFrame frame, long lo, long hi) {
+        assert frame.getFormat() == PartitionFormat.NATIVE && frame.getPartitionFrameState() == 0
+                : "parquet and custom frames are decoded into memory";
+        if (lo >= hi) {
+            return 0;
+        }
+        long pages = 0;
+        for (int ci = 0; ci < columnCount; ci++) {
+            final int columnType = qdbTypesArr[ci];
+            if (ColumnType.isVarSize(columnType)) {
+                final long auxAddress = frame.getAuxPageAddress(ci);
+                if (auxAddress == 0) {
+                    continue;
+                }
+                final ColumnTypeDriver driver = ColumnType.getDriver(columnType);
+                pages += touchPages(auxAddress + driver.getAuxVectorOffset(lo), auxAddress + driver.getAuxVectorOffset(hi));
+                // The data vector is mapped from its start: the aux entries hold the
+                // offsets of the rows' data. A frame whose values are all inlined has none.
+                final long dataAddress = frame.getPageAddress(ci);
+                if (dataAddress != 0) {
+                    pages += touchPages(
+                            dataAddress + driver.getDataVectorOffset(auxAddress, lo),
+                            dataAddress + driver.getDataVectorSizeAt(auxAddress, hi - 1)
+                    );
+                }
+            } else {
+                final long address = frame.getPageAddress(ci);
+                if (address != 0) {
+                    final int sizeShift = ColumnType.pow2SizeOf(columnType);
+                    assert sizeShift > -1 : "fixed-size column without a size [type=" + columnType + ']';
+                    pages += touchPages(address + (lo << sizeShift), address + (hi << sizeShift));
+                }
+            }
+        }
+        return pages;
     }
 
     /**
@@ -766,11 +867,54 @@ public class QwpResultBatchBuffer implements QuietCloseable {
         return count;
     }
 
+    /**
+     * Reads a DECIMAL8/16/32/64 cell as a DECIMAL64 mantissa, mapping each narrow
+     * type's NULL sentinel to {@link Decimals#DECIMAL64_NULL}. The narrow sentinels
+     * (the type's MIN_VALUE) lie outside the type's precision, so no real value
+     * collides with them.
+     */
+    private static long readDecimal64(Record record, int col, int questdbColumnType) {
+        return switch (ColumnType.tagOf(questdbColumnType)) {
+            case ColumnType.DECIMAL8 -> {
+                byte v = record.getDecimal8(col);
+                yield v == Decimals.DECIMAL8_NULL ? Decimals.DECIMAL64_NULL : v;
+            }
+            case ColumnType.DECIMAL16 -> {
+                short v = record.getDecimal16(col);
+                yield v == Decimals.DECIMAL16_NULL ? Decimals.DECIMAL64_NULL : v;
+            }
+            case ColumnType.DECIMAL32 -> {
+                int v = record.getDecimal32(col);
+                yield v == Decimals.DECIMAL32_NULL ? Decimals.DECIMAL64_NULL : v;
+            }
+            default -> record.getDecimal64(col);
+        };
+    }
+
     private static long readGeoBits(Record record, int col, int precisionBits) {
         if (precisionBits <= 7) return record.getGeoByte(col);
         if (precisionBits <= 15) return record.getGeoShort(col);
         if (precisionBits <= 31) return record.getGeoInt(col);
         return record.getGeoLong(col);
+    }
+
+    // Reads one byte of every OS page in [lo, hi), from the page that holds lo
+    // upwards, and returns the number of pages read.
+    private static long touchPages(long lo, long hi) {
+        if (lo >= hi) {
+            return 0;
+        }
+        final long pageSize = Files.PAGE_SIZE;
+        long sum = Unsafe.getByte(lo);
+        long pages = 1;
+        for (long p = (lo | (pageSize - 1)) + 1; p < hi; p += pageSize) {
+            sum += Unsafe.getByte(p);
+            pages++;
+        }
+        // The loads exist only to fault the pages in; the black hole keeps the
+        // JIT from dropping them, as it does for the async filter's pre-touch.
+        AsyncFilterAtom.PRE_TOUCH_BLACK_HOLE.add(sum);
+        return pages;
     }
 
     /**
@@ -937,7 +1081,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                 break;
             }
             case QwpConstants.TYPE_DECIMAL64:
-                scratch.appendLongOrNull(record.getDecimal64(ci));
+                scratch.appendLongOrNull(readDecimal64(record, ci, qt));
                 break;
             case QwpConstants.TYPE_DECIMAL128: {
                 record.getDecimal128(ci, scratch.decimal128Sink);
@@ -1252,18 +1396,26 @@ public class QwpResultBatchBuffer implements QuietCloseable {
     /**
      * Per-column fallback used by {@link #appendPageFrame} for wire types that
      * don't have a columnar fast path yet (VARCHAR, STRING, BINARY, UUID, etc.).
-     * Walks rows in {@code [lo, hi)} and writes only column {@code ci}; other
-     * columns of the same frame are handled by the columnar dispatch.
+     * Walks rows in {@code [lo, hi)}, last to first when {@code isDescending},
+     * and writes only column {@code ci}; other columns of the same frame are
+     * handled by the columnar dispatch.
      */
-    private void perColumnRowLoop(PageFrameMemoryRecord record, long lo, long hi, int ci) {
+    private void perColumnRowLoop(PageFrameMemoryRecord record, long lo, long hi, boolean isDescending, int ci) {
         final QwpColumnScratch scratch = scratchesArr[ci];
         final byte wt = wireTypesArr[ci];
         final int qt = qdbTypesArr[ci];
         final QwpEgressColumnDef def = defsArr[ci];
         final SymbolTable st = symbolTablesArr[ci];
-        for (long r = lo; r < hi; r++) {
-            record.setRowIndex(r);
-            appendCell(record, ci, scratch, wt, qt, def, st);
+        if (isDescending) {
+            for (long r = hi - 1; r >= lo; r--) {
+                record.setRowIndex(r);
+                appendCell(record, ci, scratch, wt, qt, def, st);
+            }
+        } else {
+            for (long r = lo; r < hi; r++) {
+                record.setRowIndex(r);
+                appendCell(record, ci, scratch, wt, qt, def, st);
+            }
         }
     }
 

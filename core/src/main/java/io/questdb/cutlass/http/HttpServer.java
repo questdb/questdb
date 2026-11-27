@@ -164,7 +164,7 @@ public class HttpServer implements Closeable {
                 groupCount = IODispatchers.getGroupCount(configuration, networkSharedPool);
             } else {
                 if (networkSharedPool.getGroupCount() > 1) {
-                    LOG.advisory().$("not split by CPU socket, the min HTTP server has a single dispatcher [groups=")
+                    LOG.advisory().$("not split into worker groups, the min HTTP server has a single dispatcher [groups=")
                             .$(networkSharedPool.getGroupCount())
                             .I$();
                 }

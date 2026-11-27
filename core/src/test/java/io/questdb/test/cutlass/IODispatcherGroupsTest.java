@@ -40,11 +40,15 @@ import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.network.PlainSocketFactory;
 import io.questdb.std.CpuTopology;
+import io.questdb.std.IntList;
+import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
+import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 import io.questdb.test.network.SysfsFixture;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -59,6 +63,7 @@ import java.net.ServerSocket;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
@@ -290,6 +295,108 @@ public class IODispatcherGroupsTest {
     }
 
     @Test
+    public void testListenerClosedAtLimitReopensOnSharedPort() throws Exception {
+        Assume.assumeFalse("Windows has no SO_REUSEPORT", Os.isWindows());
+        assertMemoryLeak(() -> {
+            final int port = pickFreePort();
+            final long queueTimeout = 200;
+            final AtomicLong now = new AtomicLong(1_000_000);
+            // the dispatchers run on this thread only, so plain lists are enough
+            final LongList boundFds = new LongList();
+            final IntList bindResults = new IntList();
+            final LongList closedFds = new LongList();
+            final NetworkFacade nf = new NetworkFacadeImpl() {
+                @Override
+                public boolean bindTcp(long fd, int address, int port) {
+                    final boolean isBound = super.bindTcp(fd, address, port);
+                    boundFds.add(fd);
+                    bindResults.add(isBound ? 1 : 0);
+                    return isBound;
+                }
+
+                @Override
+                public int close(long fd) {
+                    closedFds.add(fd);
+                    return super.close(fd);
+                }
+            };
+            final ObjList<IODispatcher<TestContext>> dispatchers = new ObjList<>();
+            IODispatchers.createGroups(configuration(port, 1, nf, queueTimeout, now::get), TestContext::new, 2, dispatchers);
+            try {
+                // the port check binds first, then group 0, then group 1
+                Assert.assertEquals(3, boundFds.size());
+                final long client = connect(port, 1)[0];
+                final int full;
+                try {
+                    final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
+                    while (dispatchers.getQuick(0).getConnectionCount() + dispatchers.getQuick(1).getConnectionCount() < 1) {
+                        Assert.assertTrue("connection not accepted", System.nanoTime() < deadline);
+                        runOnce(dispatchers);
+                    }
+                    // the group that took the connection is at its limit and stops accepting
+                    full = dispatchers.getQuick(0).getConnectionCount() == 1 ? 0 : 1;
+                    Assert.assertFalse(dispatchers.getQuick(full).isListening());
+                    Assert.assertTrue(dispatchers.getQuick(1 - full).isListening());
+                    // past the queue timeout, the full group closes its listener, and the other
+                    // group's listener keeps the port
+                    now.addAndGet(queueTimeout);
+                    runOnce(dispatchers);
+                    Assert.assertTrue(closedFds.indexOf(boundFds.getQuick(1 + full)) >= 0);
+                    Assert.assertEquals(-1, closedFds.indexOf(boundFds.getQuick(2 - full)));
+                } finally {
+                    Net.close(client);
+                }
+                // the disconnect takes the full group below its limit, and it binds a new listener
+                // to the port the other group's listener holds
+                awaitConnectionCounts(dispatchers, 0, 0);
+                Assert.assertEquals(4, boundFds.size());
+                Assert.assertEquals(1, bindResults.getQuick(3));
+                Assert.assertTrue(dispatchers.getQuick(full).isListening());
+                Assert.assertEquals(port, dispatchers.getQuick(full).getPort());
+                // The reopened listener accepts. The kernel can keep sending new connections to the
+                // other group's listener (macOS sends it all of them), so once that group is at its
+                // limit, the test lets its queue timeout pass as well. With that listener closed,
+                // new connections reach only the reopened one.
+                final IODispatcher<TestContext> other = dispatchers.getQuick(1 - full);
+                boolean isOtherTimedOut = false;
+                final long[] fds = new long[SPREAD_CONNECTIONS];
+                int clientCount = 0;
+                final long sockAddr = Net.sockaddr("127.0.0.1", port);
+                try {
+                    final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
+                    while (dispatchers.getQuick(full).getConnectionCount() < 1) {
+                        Assert.assertTrue(
+                                "reopened listener accepted no connection [clients=" + clientCount + ']',
+                                System.nanoTime() < deadline
+                        );
+                        if (clientCount < fds.length) {
+                            // non-blocking, because a connection queued at the other group's full
+                            // listener may not complete its handshake
+                            fds[clientCount] = Net.socketTcp(false);
+                            Net.connect(fds[clientCount], sockAddr);
+                            clientCount++;
+                        }
+                        for (int i = 0; i < 10; i++) {
+                            runOnce(dispatchers);
+                        }
+                        if (!isOtherTimedOut && !other.isListening()) {
+                            now.addAndGet(queueTimeout);
+                            isOtherTimedOut = true;
+                        }
+                    }
+                } finally {
+                    Net.freeSockAddr(sockAddr);
+                    for (int i = 0; i < clientCount; i++) {
+                        Net.close(fds[i]);
+                    }
+                }
+            } finally {
+                free(dispatchers);
+            }
+        });
+    }
+
+    @Test
     public void testOneGroupDoesNotReusePort() throws Exception {
         // Windows calls setReusePort() on every listener, to release the port sooner
         Assume.assumeFalse(Os.isWindows());
@@ -475,10 +582,19 @@ public class IODispatcherGroupsTest {
     }
 
     private static IODispatcherConfiguration configuration(int port, int limit, NetworkFacade nf) {
+        return configuration(port, limit, nf, DefaultIODispatcherConfiguration.INSTANCE.getQueueTimeout(), MillisecondClockImpl.INSTANCE);
+    }
+
+    private static IODispatcherConfiguration configuration(int port, int limit, NetworkFacade nf, long queueTimeout, MillisecondClock clock) {
         return new DefaultIODispatcherConfiguration() {
             @Override
             public int getBindPort() {
                 return port;
+            }
+
+            @Override
+            public MillisecondClock getClock() {
+                return clock;
             }
 
             @Override
@@ -489,6 +605,11 @@ public class IODispatcherGroupsTest {
             @Override
             public NetworkFacade getNetworkFacade() {
                 return nf;
+            }
+
+            @Override
+            public long getQueueTimeout() {
+                return queueTimeout;
             }
         };
     }

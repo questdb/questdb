@@ -409,6 +409,70 @@ public class CopyImportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelCopyWithExtraArrayFieldAbort() throws Exception {
+        testCopyWithExtraMissingColumnValue("DOUBLE[]", "ABORT", false);
+    }
+
+    @Test
+    public void testParallelCopyWithExtraArrayFieldInSamePartition() throws Exception {
+        testCopyWithExtraMissingColumnValue("DOUBLE[]", "ABORT", true);
+    }
+
+    @Test
+    public void testParallelCopyWithExtraArrayFieldSkipColumn() throws Exception {
+        testCopyWithExtraMissingColumnValue("DOUBLE[]", "SKIP_COLUMN", false);
+    }
+
+    @Test
+    public void testParallelCopyWithExtraArrayFieldSkipRow() throws Exception {
+        testCopyWithExtraMissingColumnValue("DOUBLE[]", "SKIP_ROW", false);
+    }
+
+    @Test
+    public void testParallelCopyWithExtraBinaryFieldAbort() throws Exception {
+        testCopyWithExtraMissingColumnValue("BINARY", "ABORT", false);
+    }
+
+    @Test
+    public void testParallelCopyWithExtraBinaryFieldInSamePartition() throws Exception {
+        testCopyWithExtraMissingColumnValue("BINARY", "ABORT", true);
+    }
+
+    @Test
+    public void testParallelCopyWithExtraBinaryFieldSkipColumn() throws Exception {
+        testCopyWithExtraMissingColumnValue("BINARY", "SKIP_COLUMN", false);
+    }
+
+    @Test
+    public void testParallelCopyWithExtraBinaryFieldSkipRow() throws Exception {
+        testCopyWithExtraMissingColumnValue("BINARY", "SKIP_ROW", false);
+    }
+
+    @Test
+    public void testParallelCopyWithMissingArrayColumn() throws Exception {
+        final String oldInputRoot = inputRoot;
+        try {
+            File dir = temp.newFolder("missing-array");
+            TestUtils.writeStringToFile(new File(dir, "no-array.csv"), "k,ts\n1,2024-01-01T00:00:00.000000Z\n2,2024-01-02T00:00:00.000000Z\n");
+            inputRoot = dir.getAbsolutePath();
+            testCopy(
+                    () -> {
+                        execute("CREATE TABLE t (k INT, a DOUBLE[], ts TIMESTAMP, aa DOUBLE[][], b BINARY, s VARCHAR) TIMESTAMP(ts) PARTITION BY DAY");
+                        runAndFetchCopyID("COPY t FROM 'no-array.csv' WITH HEADER true TIMESTAMP 'ts' PARTITION BY DAY", sqlExecutionContext);
+                    },
+                    () -> {
+                        assertQuery("SELECT status, rows_imported FROM " + configuration.getSystemTableNamePrefix() + "text_import_log LIMIT -1")
+                                .noLeakCheck().expectSize().returns("status\trows_imported\nfinished\t2\n");
+                        assertQuery("SELECT k, a, aa, b IS NULL AS b_null, s FROM t")
+                                .noLeakCheck().expectSize().returns("k\ta\taa\tb_null\ts\n1\tnull\tnull\ttrue\t\n2\tnull\tnull\ttrue\t\n");
+                    }
+            );
+        } finally {
+            inputRoot = oldInputRoot;
+        }
+    }
+
+    @Test
     public void testParallelCopyIntoExistingTable() throws Exception {
         CopyRunnable stmt = () -> {
             execute("create table x ( ts timestamp, line symbol, description symbol, d double ) timestamp(ts) partition by MONTH;");
@@ -419,6 +483,76 @@ public class CopyImportTest extends AbstractCairoTest {
         CopyRunnable test = this::assertQuotesTableContentExisting;
 
         testCopy(stmt, test);
+    }
+
+    @Test
+    public void testParallelCopyIntoExistingTableSubHourPartitions() throws Exception {
+        // Several 5-minute partitions share an hour. The indexer must keep their rows apart,
+        // otherwise the hour's rows all land in its first partition and attach rejects it.
+        final String csvRoot = inputRoot;
+        try {
+            final File dir = temp.newFolder("sub-hour-existing" + System.nanoTime());
+            TestUtils.writeStringToFile(
+                    new File(dir, "sub-hour.csv"),
+                    """
+                            ts,v
+                            2024-01-01T09:58:00.000000Z,4
+                            2024-01-01T09:01:00.000000Z,1
+                            2024-01-01T10:03:00.000000Z,5
+                            2024-01-01T09:06:00.000000Z,2
+                            2024-01-01T09:12:00.000000Z,3
+                            2024-01-01T09:07:00.000000Z,6
+                            """
+            );
+            inputRoot = dir.getAbsolutePath();
+
+            CopyRunnable stmt = () -> {
+                execute("CREATE TABLE x (ts TIMESTAMP_NS, v INT) TIMESTAMP(ts) PARTITION BY 5 MINUTES");
+                runAndFetchCopyID(
+                        "COPY x FROM 'sub-hour.csv' WITH HEADER true TIMESTAMP 'ts' ON ERROR ABORT;",
+                        sqlExecutionContext
+                );
+            };
+
+            CopyRunnable test = () -> {
+                assertQuery("SELECT status, message, rows_handled, rows_imported, errors FROM " + configuration.getSystemTableNamePrefix() + "text_import_log WHERE phase IS NULL")
+                        .noLeakCheck()
+                        .returns("""
+                                status\tmessage\trows_handled\trows_imported\terrors
+                                started\t\tnull\tnull\t0
+                                finished\t\t6\t6\t0
+                                """);
+                assertQuery("SELECT name, numRows FROM table_partitions('x')")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                name\tnumRows
+                                2024-01-01T0900\t1
+                                2024-01-01T0905\t2
+                                2024-01-01T0910\t1
+                                2024-01-01T0955\t1
+                                2024-01-01T1000\t1
+                                """);
+                assertQuery("SELECT ts, v FROM x")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                ts\tv
+                                2024-01-01T09:01:00.000000000Z\t1
+                                2024-01-01T09:06:00.000000000Z\t2
+                                2024-01-01T09:07:00.000000000Z\t6
+                                2024-01-01T09:12:00.000000000Z\t3
+                                2024-01-01T09:58:00.000000000Z\t4
+                                2024-01-01T10:03:00.000000000Z\t5
+                                """);
+            };
+
+            testCopy(stmt, test);
+        } finally {
+            inputRoot = csvRoot;
+        }
     }
 
     @Test
@@ -482,6 +616,29 @@ public class CopyImportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelCopyIntoNewTableIsNonWal() throws Exception {
+        CopyRunnable stmt = () -> runAndFetchCopyID(
+                "copy x from 'test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
+                        "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT;",
+                sqlExecutionContext
+        );
+
+        // Parallel COPY attaches partitions outside the WAL, so the target must be non-WAL even when
+        // cairo.wal.enabled.default is on. Otherwise replication registers the table and ships none of
+        // the imported rows. tables() reads _meta, verifyTableName() reads the registry: both must agree.
+        CopyRunnable test = () -> {
+            Assert.assertFalse(engine.verifyTableName("x").isWal());
+            assertQuery("SELECT walEnabled FROM tables() WHERE table_name = 'x'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("walEnabled\nfalse\n");
+            assertQuotesTableContent();
+        };
+
+        testCopy(stmt, test);
+    }
+
+    @Test
     public void testParallelCopyIntoNewTableNoTsFormat() throws Exception {
         CopyRunnable stmt = () -> runAndFetchCopyID(
                 "copy x from 'test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
@@ -492,6 +649,71 @@ public class CopyImportTest extends AbstractCairoTest {
         CopyRunnable test = this::assertQuotesTableContent;
 
         testCopy(stmt, test);
+    }
+
+    @Test
+    public void testParallelCopyIntoNewTableSubHourPartitions() throws Exception {
+        // Several 15-minute partitions share an hour. The indexer must keep their rows apart,
+        // otherwise the hour's rows all land in its first partition and attach rejects it.
+        final String csvRoot = inputRoot;
+        try {
+            final File dir = temp.newFolder("sub-hour-new" + System.nanoTime());
+            TestUtils.writeStringToFile(
+                    new File(dir, "sub-hour.csv"),
+                    """
+                            ts,v
+                            2024-01-01T09:40:00.000000Z,3
+                            2024-01-01T09:05:00.000000Z,1
+                            2024-01-01T10:10:00.000000Z,4
+                            2024-01-01T09:20:00.000000Z,2
+                            2024-01-01T09:07:00.000000Z,5
+                            """
+            );
+            inputRoot = dir.getAbsolutePath();
+
+            CopyRunnable stmt = () -> runAndFetchCopyID(
+                    "COPY x FROM 'sub-hour.csv' WITH HEADER true TIMESTAMP 'ts' FORMAT 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' " +
+                            "PARTITION BY 15 MINUTES ON ERROR ABORT;",
+                    sqlExecutionContext
+            );
+
+            CopyRunnable test = () -> {
+                assertQuery("SELECT status, message, rows_handled, rows_imported, errors FROM " + configuration.getSystemTableNamePrefix() + "text_import_log WHERE phase IS NULL")
+                        .noLeakCheck()
+                        .returns("""
+                                status\tmessage\trows_handled\trows_imported\terrors
+                                started\t\tnull\tnull\t0
+                                finished\t\t5\t5\t0
+                                """);
+                assertQuery("SELECT name, numRows FROM table_partitions('x')")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                name\tnumRows
+                                2024-01-01T0900\t2
+                                2024-01-01T0915\t1
+                                2024-01-01T0930\t1
+                                2024-01-01T1000\t1
+                                """);
+                assertQuery("SELECT ts, v FROM x")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                ts\tv
+                                2024-01-01T09:05:00.000000Z\t1
+                                2024-01-01T09:07:00.000000Z\t5
+                                2024-01-01T09:20:00.000000Z\t2
+                                2024-01-01T09:40:00.000000Z\t3
+                                2024-01-01T10:10:00.000000Z\t4
+                                """);
+            };
+
+            testCopy(stmt, test);
+        } finally {
+            inputRoot = csvRoot;
+        }
     }
 
     @Test
@@ -596,7 +818,7 @@ public class CopyImportTest extends AbstractCairoTest {
                 runAndFetchCopyID("copy dbRoot from 'test-quotes-big.csv' with partition by jiffy;", sqlExecutionContext);
                 Assert.fail();
             } catch (Exception e) {
-                TestUtils.assertContains(e.getMessage(), "'NONE', 'HOUR', 'DAY', 'WEEK', 'MONTH' or 'YEAR' expected");
+                TestUtils.assertContains(e.getMessage(), "'NONE', 'HOUR', 'DAY', 'WEEK', 'MONTH', 'YEAR' or '<n> MINUTES' expected");
             }
         });
     }
@@ -1336,6 +1558,44 @@ public class CopyImportTest extends AbstractCairoTest {
                 .returns("cnt\n" + expectedCount + "\n");
 
         testCopy(stmt, test);
+    }
+
+    private void testCopyWithExtraMissingColumnValue(String columnType, String atomicity, boolean isSamePartition) throws Exception {
+        final String oldInputRoot = inputRoot;
+        final boolean isAbort = "ABORT".equals(atomicity) && !isSamePartition;
+        final int expectedCount = isAbort ? 0 : "SKIP_ROW".equals(atomicity) ? 1 : 2;
+        final boolean isBinary = "BINARY".equals(columnType);
+        final String nullValue = isBinary ? "true" : "null";
+        final String query = "SELECT k, " + (isBinary ? "a IS NULL AS a" : "a") + " FROM t";
+        final String expectedRows = "k\ta\n" + (expectedCount > 0 ? "1\t" + nullValue + "\n" : "") + (expectedCount > 1 ? "2\t" + nullValue + "\n" : "");
+        try {
+            File dir = temp.newFolder();
+            TestUtils.writeStringToFile(new File(dir, "extra.csv"), "k,ts\n1,2024-01-01T00:00:00.000000Z\n2,2024-01-0" + (isSamePartition ? "1" : "2") + "T01:00:00.000000Z,junk\n");
+            inputRoot = dir.getAbsolutePath();
+            testCopy(
+                    () -> {
+                        execute("CREATE TABLE t (k INT, a " + columnType + ", ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+                        runAndFetchCopyID("COPY t FROM 'extra.csv' WITH HEADER true TIMESTAMP 'ts' ON ERROR " + atomicity, sqlExecutionContext);
+                    },
+                    () -> {
+                        assertQuery("SELECT status, rows_imported, errors FROM " + configuration.getSystemTableNamePrefix() + "text_import_log LIMIT -1")
+                                .noLeakCheck().expectSize().returns("status\trows_imported\terrors\n" + (isAbort ? "failed" : "finished") + "\t" + expectedCount + "\t" + (isAbort || isSamePartition ? 0 : 1) + "\n");
+                        assertQuery(query).noLeakCheck().expectSize().returns(expectedRows);
+                        if (isAbort) {
+                            assertQuery("SELECT message FROM " + configuration.getSystemTableNamePrefix() + "text_import_log LIMIT -1")
+                                    .noLeakCheck().expectSize().returns("message\nimport failed [phase=partition_import, msg=`bad syntax [line offset=35,column=2]`]\n");
+                        }
+                        String[] files = new File(inputWorkRoot).list();
+                        Assert.assertTrue(files == null || files.length == 0);
+                        // The importer must release the table writer on both success and failure.
+                        execute("INSERT INTO t (k, ts) VALUES (3, '2024-01-03T00:00:00.000000Z')");
+                        drainWalQueue();
+                        assertQuery(query).noLeakCheck().expectSize().returns(expectedRows + "3\t" + nullValue + "\n");
+                    }
+            );
+        } finally {
+            inputRoot = oldInputRoot;
+        }
     }
 
     protected static String runAndFetchCopyID(String copySql, SqlExecutionContext sqlExecutionContext) throws SqlException {

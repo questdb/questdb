@@ -41,7 +41,6 @@ import io.questdb.mp.continuation.FiberRuntime;
 import io.questdb.mp.continuation.FiberRuntimeState;
 import io.questdb.mp.continuation.FiberTask;
 import io.questdb.mp.continuation.LaunchResult;
-import io.questdb.std.CpuTopology;
 import io.questdb.std.Os;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.test.tools.TestUtils;
@@ -51,8 +50,6 @@ import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Test;
 
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -309,6 +306,70 @@ public class WorkerPoolGroupTest {
     }
 
     @Test
+    public void testIdleWorkersOfEveryGroupPark() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            // 7 workers over 3 groups are 0-2, 3-4 and 5-6. A worker parks under its index within
+            // its group's wake controller, which rejects the pool-wide index of a worker outside
+            // group 0, and a worker that can't register as ready spins instead of parking.
+            final int workerCount = 7;
+            final WorkerPool pool = new TestWorkerPool(new WorkerPoolConfiguration() {
+                @Override
+                public int getGroupCount() {
+                    return 3;
+                }
+
+                @Override
+                public Metrics getMetrics() {
+                    return Metrics.DISABLED;
+                }
+
+                @Override
+                public String getPoolName() {
+                    return "idle";
+                }
+
+                @Override
+                public long getSleepThreshold() {
+                    return 0;
+                }
+
+                @Override
+                public long getSleepTimeout() {
+                    // long enough that a parked worker stays ready until the check below sees it
+                    return TimeUnit.SECONDS.toMillis(60);
+                }
+
+                @Override
+                public int getWorkerCount() {
+                    return workerCount;
+                }
+
+                @Override
+                public WorkerPoolMode getWorkerPoolMode() {
+                    return WorkerPoolMode.FIBER_HOST;
+                }
+            });
+            pool.start();
+            try {
+                // A spurious wakeup clears a worker's ready bit until the worker parks again, so the
+                // check repeats until one pass sees every worker's bit set.
+                final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
+                int notReadyWorker;
+                while ((notReadyWorker = findNotReadyWorker(pool, workerCount)) >= 0) {
+                    Assert.assertTrue(
+                            "idle worker did not park [worker=" + notReadyWorker
+                                    + ", ready=" + pool.getReadyWorkerCountForTesting() + ']',
+                            System.nanoTime() < deadline
+                    );
+                    Os.pause();
+                }
+            } finally {
+                pool.halt();
+            }
+        });
+    }
+
+    @Test
     public void testRejectsAffinityWithGroupCpus() {
         final int[] affinity = new int[4];
         Arrays.fill(affinity, -1);
@@ -330,7 +391,7 @@ public class WorkerPoolGroupTest {
     @Test
     public void testWorkersRunOnTheirGroupCpus() throws Exception {
         Assume.assumeTrue("thread CPU sets apply on Linux only", Os.isLinux());
-        final int[] allowed = threadAllowedCpus();
+        final int[] allowed = TestUtils.getThreadAllowedCpus();
         Assume.assumeTrue("needs at least 2 allowed CPUs", allowed.length > 1);
         // split the allowed CPUs into two halves, as two sockets would be
         final int half = allowed.length / 2;
@@ -350,7 +411,7 @@ public class WorkerPoolGroupTest {
                     public boolean run(@NotNull WorkerContext workerContext) {
                         if (seen.get(worker) == null) {
                             try {
-                                seen.set(worker, threadAllowedCpus());
+                                seen.set(worker, TestUtils.getThreadAllowedCpus());
                             } catch (Exception e) {
                                 seen.set(worker, new int[0]);
                             }
@@ -369,7 +430,7 @@ public class WorkerPoolGroupTest {
             Assert.assertArrayEquals("worker " + i, groupCpus[i < 3 ? 0 : 1], seen.get(i));
         }
         // the restriction applies to the workers only
-        Assert.assertArrayEquals(allowed, threadAllowedCpus());
+        Assert.assertArrayEquals(allowed, TestUtils.getThreadAllowedCpus());
     }
 
     @Test
@@ -477,14 +538,14 @@ public class WorkerPoolGroupTest {
         };
     }
 
-    // the calling thread's allowed CPUs, as the kernel reports them
-    private static int[] threadAllowedCpus() throws Exception {
-        for (String line : Files.readAllLines(Path.of("/proc/thread-self/status"))) {
-            if (line.startsWith("Cpus_allowed_list:")) {
-                return CpuTopology.parseCpuList(line.substring("Cpus_allowed_list:".length()));
+    // the first worker whose ready bit is clear, or -1 when every worker's bit is set
+    private static int findNotReadyWorker(WorkerPool pool, int workerCount) {
+        for (int i = 0; i < workerCount; i++) {
+            if (!pool.isWorkerReadyForTesting(i)) {
+                return i;
             }
         }
-        throw new AssertionError("no Cpus_allowed_list in /proc/thread-self/status");
+        return -1;
     }
 
     // a session that never receives a dispatch and is always quiesced

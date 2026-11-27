@@ -96,6 +96,16 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
             FROM long_sequence(480)
             ) timestamp(ts)""";
     private static final Log LOG = LogFactory.getLog(SampleByNanoTimestampTest.class);
+    // America/New_York moves the clock forward from 02:00 EST to 03:00 EDT at 2021-03-14T07:00Z
+    private static final String NEW_YORK_SPRING_FORWARD_DDL = "CREATE TABLE ny (ts TIMESTAMP_NS, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY";
+    private static final String NEW_YORK_SPRING_FORWARD_ROWS = """
+            INSERT INTO ny VALUES
+                ('2021-03-14T06:45:00.000000000Z', 1.0),
+                ('2021-03-14T07:02:00.000000000Z', 2.0),
+                ('2021-03-14T07:06:00.000000000Z', 4.0),
+                ('2021-03-14T07:50:00.000000000Z', 8.0),
+                ('2021-03-14T08:20:00.000000000Z', 16.0)
+            """;
 
     @Test
     public void testBadFunction() throws Exception {
@@ -137,6 +147,35 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillNullBucketRenameKeepsConcatKeyNano() throws Exception {
+        // Nanosecond variant of the chained alias rename: avg(val) claims avg, the bucket
+        // is renamed avg1 and the concat key avg1 is renamed avg11. The fill must key on
+        // the bucket and print the TIMESTAMP_NS grid with nine fractional digits.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tn (k SYMBOL, val DOUBLE, ets TIMESTAMP_NS, ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO tn VALUES
+                        ('a', 1.0, '2024-01-01T05:00:00.000000000Z', '2024-01-01T00:00:00.000000000Z'),
+                        ('b', 2.0, '2024-01-01T04:00:00.000000000Z', '2024-01-01T01:15:00.000000000Z'),
+                        ('a', 3.0, '2024-01-01T03:00:00.000000000Z', '2024-01-01T03:00:00.000000000Z'),
+                        ('b', 4.0, '2024-01-01T02:00:00.000000000Z', '2024-01-01T03:30:00.000000000Z')""");
+            assertQuery("SELECT avg(val) * 2 AS v, ts AS avg, concat(k, 'x') AS avg1 FROM tn SAMPLE BY 1h FILL(NULL) ORDER BY v")
+                    .noLeakCheck()
+                    .returns("""
+                            v\tavg1\tavg11
+                            2.0\t2024-01-01T00:00:00.000000000Z\tax
+                            4.0\t2024-01-01T01:00:00.000000000Z\tbx
+                            6.0\t2024-01-01T03:00:00.000000000Z\tax
+                            8.0\t2024-01-01T03:00:00.000000000Z\tbx
+                            null\t2024-01-01T00:00:00.000000000Z\tbx
+                            null\t2024-01-01T01:00:00.000000000Z\tax
+                            null\t2024-01-01T02:00:00.000000000Z\tax
+                            null\t2024-01-01T02:00:00.000000000Z\tbx
+                            """);
+        });
+    }
+
+    @Test
     public void testFillPrevConsistency() throws Exception {
         execute("create table telem (created timestamp_ns, event_type int, table_id int, latency double) timestamp(created) partition by DAY");
 
@@ -147,6 +186,8 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                 " rnd_int() % 100," +
                 " abs(rnd_double())" +
                 " from long_sequence(100_000)");
+        // Before the first row, the FILL(PREV) column shows NULL, as on the GROUP BY path, see
+        // testSampleFillValueNotKeyedFromBeforeFirstRow()
         assertQuery("""
                 select created, avg(latency) avg, last(latency) latency
                   from telem
@@ -159,18 +200,18 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                 .noRandomAccess()
                 .returns("""
                         created\tavg\tlatency
-                        2025-01-20T13:56:50.000000000Z\t0.0\t0.0
-                        2025-01-20T13:56:52.000000000Z\t0.0\t0.0
-                        2025-01-20T13:56:54.000000000Z\t0.0\t0.0
-                        2025-01-20T13:56:56.000000000Z\t0.0\t0.0
-                        2025-01-20T13:56:58.000000000Z\t0.0\t0.0
-                        2025-01-20T13:57:00.000000000Z\t0.0\t0.0
-                        2025-01-20T13:57:02.000000000Z\t0.0\t0.0
-                        2025-01-20T13:57:04.000000000Z\t0.0\t0.0
-                        2025-01-20T13:57:06.000000000Z\t0.0\t0.0
-                        2025-01-20T13:57:08.000000000Z\t0.0\t0.0
-                        2025-01-20T13:57:10.000000000Z\t0.0\t0.0
-                        2025-01-20T13:57:12.000000000Z\t0.0\t0.0
+                        2025-01-20T13:56:50.000000000Z\t0.0\tnull
+                        2025-01-20T13:56:52.000000000Z\t0.0\tnull
+                        2025-01-20T13:56:54.000000000Z\t0.0\tnull
+                        2025-01-20T13:56:56.000000000Z\t0.0\tnull
+                        2025-01-20T13:56:58.000000000Z\t0.0\tnull
+                        2025-01-20T13:57:00.000000000Z\t0.0\tnull
+                        2025-01-20T13:57:02.000000000Z\t0.0\tnull
+                        2025-01-20T13:57:04.000000000Z\t0.0\tnull
+                        2025-01-20T13:57:06.000000000Z\t0.0\tnull
+                        2025-01-20T13:57:08.000000000Z\t0.0\tnull
+                        2025-01-20T13:57:10.000000000Z\t0.0\tnull
+                        2025-01-20T13:57:12.000000000Z\t0.0\tnull
                         2025-01-20T13:57:14.000000000Z\t0.4851638802935891\t0.4846019644078461
                         2025-01-20T13:57:16.000000000Z\t0.5040684715238979\t0.0014510055926236776
                         2025-01-20T13:57:18.000000000Z\t0.4855058436740148\t0.760595244599882
@@ -767,7 +808,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         " long_sequence(5)" +
                         ") timestamp(k)")
                 .timestamp("k")
-                .expectSize()
+                .noRandomAccess()
                 .returns("""
                         k\tsum\tsum1\tsum2\tsum3\tsum4\tsum5
                         1970-01-03T00:00:00.000000000Z\t11.42798\t42.17768841969397\t426455968\t42\t4924\t4086802474270249591
@@ -2773,7 +2814,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     where s = null or s = 'none'
                     sample by 1h""")
                     .noLeakCheck()
-                    .expectSize()
+                    .noRandomAccess()
                     .timestamp("k")
                     .returns(expected);
 
@@ -3241,7 +3282,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     "SAMPLE BY 27m FROM '2021-03-01' ALIGN TO CALENDAR WITH OFFSET '+00:15';")
                     .noLeakCheck()
                     .timestamp("ts")
-                    .expectSize()
+                    .noRandomAccess()
                     .returns("""
                             min\tmax\tcount\tts
                             1\t5\t5\t2021-03-01T00:15:00.000000000Z
@@ -3284,7 +3325,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     "SAMPLE BY 27m FROM '2021-03-01' ALIGN TO CALENDAR TIME ZONE 'America/Anchorage' WITH OFFSET '-00:20';")
                     .noLeakCheck()
                     .timestamp("ts")
-                    .expectSize()
+                    .noRandomAccess()
                     .returns("""
                             min\tmax\tcount\tts
                             1\t3\t3\t2021-03-14T08:58:00.000000000Z
@@ -3756,7 +3797,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     "sample by 17m from '2021-03-27' align to calendar time zone 'Europe/Berlin';")
                     .noLeakCheck()
                     .timestamp("ts")
-                    .expectSize()
+                    .noRandomAccess()
                     .returns("""
                             min\tmax\tts
                             2821\t2825\t2021-03-27T22:48:00.000000000Z
@@ -3779,7 +3820,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     "sample by 17m from '2021-03-28' align to calendar time zone 'Europe/Berlin';")
                     .noLeakCheck()
                     .timestamp("ts")
-                    .expectSize()
+                    .noRandomAccess()
                     .returns("""
                             min\tmax\tts
                             2984\t2990\t2021-03-28T01:33:00.000000000Z
@@ -3930,7 +3971,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE")
                 .timestamp("k")
-                .expectSize()
+                .noRandomAccess()
                 .returns("""
                         k\tcount
                         1970-01-03T00:00:00.000000000Z\t6
@@ -3992,7 +4033,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE")
                 .timestamp("k")
-                .expectSize()
+                .noRandomAccess()
                 .returns("""
                         k\tcount
                         1970-01-03T00:00:00.000000000Z\t6
@@ -4012,7 +4053,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE")
                 .timestamp("k")
-                .expectSize()
+                .noRandomAccess()
                 .returns("""
                         k\tcount
                         1970-01-03T00:00:00.000000000Z\t6
@@ -4129,8 +4170,23 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                                 Frame forward scan on: #TABLE#
                 """;
 
-        testSampleByPushdown("", "align to calendar", plan);
-        testSampleByPushdown("none", "align to calendar", plan);
+        String streamPlan = """
+                Filter filter: (tstmp>=2022-12-01T00:00:00.000000000Z and 0<length(sym)*tstmp::long)
+                    Async JIT Stream Group By workers: 1
+                      segmentKey: timestamp_floor_utc('1m',ts)
+                      keys: [tstmp,sym]
+                      keyFunctions: [timestamp_floor_utc('1m',ts)]
+                      values: [first(val),avg(val),last(val),max(val)]
+                      filter: sym='B'
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: #TABLE#
+                """;
+
+        for (String fill : new String[]{"", "none"}) {
+            testSampleByPushdownWithDesignatedTs(fill, "align to calendar", streamPlan);
+            testSampleByPushdownWithoutDesignatedTs(fill, "align to calendar", plan);
+        }
     }
 
     @Test
@@ -4145,16 +4201,15 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                Encode sort light
-                                  keys: [ts1]
-                                    Async Group By workers: 1
-                                      keys: [tstmp,sym,ts1]
-                                      keyFunctions: [timestamp_floor_utc('1m',ts1)]
-                                      values: [first(val),avg(val),last(val),max(val)]
-                                      filter: (ts2>=2022-12-01T00:00:00.000000000Z and sym='B' and 0<length(sym)*ts2::long)
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: x
+                                Async Stream Group By workers: 1
+                                  segmentKey: timestamp_floor_utc('1m',ts1)
+                                  keys: [tstmp,sym,ts1]
+                                  keyFunctions: [timestamp_floor_utc('1m',ts1)]
+                                  values: [first(val),avg(val),last(val),max(val)]
+                                  filter: (ts2>=2022-12-01T00:00:00.000000000Z and sym='B' and 0<length(sym)*ts2::long)
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: x
                             """);
         });
     }
@@ -4203,6 +4258,45 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         300
                         100
                         """);
+    }
+
+    @Test
+    public void testSampleByDayDstFallBackRowInLastLocalHour() throws Exception {
+        // GitHub issue #7752. America/New_York moves the clock back at 2021-11-07T06:00Z, so the local day
+        // of Nov 7 lasts 25 hours, from 04:00Z to 05:00Z on Nov 8, and the row at 04:30Z on Nov 8 falls in
+        // its last local hour. The keyed FILL cursors used to emit that day without end, and the other
+        // cursors dropped or split its rows. See SampleByTest.testSampleByDayDstFallBackRowInLastLocalHour().
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP_NS, sym SYMBOL, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2021-11-06T22:00:00.000000000Z', 'A', 1.0),
+                        ('2021-11-07T17:00:00.000000000Z', 'A', 2.0),
+                        ('2021-11-08T04:30:00.000000000Z', 'A', 4.0),
+                        ('2021-11-08T17:00:00.000000000Z', 'A', 8.0)
+                    """);
+            final String keyed = "SELECT ts, sym, count() c, sum(v) s FROM (SELECT ts, sym, v FROM t WHERE v > 0) SAMPLE BY 1d";
+            final String notKeyed = "SELECT ts, count() c, sum(v) s FROM (SELECT ts, sym, v FROM t WHERE v > 0) SAMPLE BY 1d";
+            final String timeZone = " ALIGN TO CALENDAR TIME ZONE 'America/New_York'";
+            final String keyedRows = """
+                    ts\tsym\tc\ts
+                    2021-11-06T04:00:00.000000000Z\tA\t1\t1.0
+                    2021-11-07T04:00:00.000000000Z\tA\t2\t6.0
+                    2021-11-08T05:00:00.000000000Z\tA\t1\t8.0
+                    """;
+            final String notKeyedRows = """
+                    ts\tc\ts
+                    2021-11-06T04:00:00.000000000Z\t1\t1.0
+                    2021-11-07T04:00:00.000000000Z\t2\t6.0
+                    2021-11-08T05:00:00.000000000Z\t1\t8.0
+                    """;
+            assertSampleByCursorDst(keyed + " FILL(NULL)" + timeZone, "fill: null\n", keyedRows);
+            assertSampleByCursorDst(keyed + " FILL(PREV)" + timeZone, "fill: prev\n", keyedRows);
+            assertSampleByCursorDst(keyed + " FILL(0, 0)" + timeZone, "fill: value\n", keyedRows);
+            assertSampleByCursorDst(keyed + timeZone, null, keyedRows);
+            assertSampleByCursorDst(notKeyed + " FILL(NULL)" + timeZone, "fill: null\n", notKeyedRows);
+            assertSampleByCursorDst(notKeyed + timeZone, null, notKeyedRows);
+        });
     }
 
     @Test
@@ -4314,13 +4408,13 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
             if (isNone(fill)) {
                 continue;
             }
-            testSampleByPushdown(fill, align, sampleByPushdownPlan(fill, align));
+            testSampleByPushdown(fill, align);
         }
 
         align = "align to first observation";
 
         for (String fill : Arrays.asList("", "none", "null", "linear", "prev")) {
-            testSampleByPushdown(fill, align, sampleByPushdownPlan(fill, align));
+            testSampleByPushdown(fill, align);
         }
 
         align = "align to calendar";
@@ -4329,7 +4423,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
             if (isNone(fill)) {
                 continue;
             }
-            testSampleByPushdown(fill, align, sampleByPushdownPlan(fill, align));
+            testSampleByPushdown(fill, align);
         }
 
     }
@@ -4409,6 +4503,197 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     .returns("""
                             ts\tfirst
                             2022-12-01T01:40:00.000000000Z\t4
+                            """);
+        });
+    }
+
+    @Test
+    public void testSampleByDstFallBackEndFillAfterGap() throws Exception {
+        // TIMESTAMP_NS twin of SampleByTest.testSampleByDstFallBackEndFillAfterGap(). The last bucket with rows holds
+        // a fall-back and rows on both sides of it, and a gap precedes it. The end fill steps from the start of that
+        // bucket and labels its buckets at local midnight in standard time. Stepping from an hour earlier, where
+        // kludge() moves the point, the month sampler would fill November a second time at 05:00Z, and the day sampler
+        // would fill at 22:00Z in Berlin. The rows equal those of an independent time zone calculation. The sub-query
+        // keeps each statement on the SAMPLE BY cursor.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ny (ts TIMESTAMP_NS, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO ny VALUES
+                        ('2021-08-15T09:00:00.000000000Z', 1.0),
+                        ('2021-11-03T09:00:00.000000000Z', 4.0),
+                        ('2021-11-20T15:00:00.000000000Z', 8.0)
+                    """);
+            final String monthly = "SELECT ts, count() c, sum(v) s FROM (SELECT ts, v FROM ny WHERE v > 0) SAMPLE BY 1M FROM '2021-08-01' TO ";
+            final String newYork = " ALIGN TO CALENDAR TIME ZONE 'America/New_York'";
+            assertSampleByCursorFrom(
+                    monthly + "'2021-12-01' FILL(NULL)" + newYork,
+                    "fill: null\n",
+                    """
+                            ts\tc\ts
+                            2021-08-01T04:00:00.000000000Z\t1\t1.0
+                            2021-09-01T04:00:00.000000000Z\tnull\tnull
+                            2021-10-01T04:00:00.000000000Z\tnull\tnull
+                            2021-11-01T04:00:00.000000000Z\t2\t12.0
+                            """
+            );
+            assertSampleByCursorFrom(
+                    monthly + "'2022-02-01' FILL(0, 0)" + newYork,
+                    "fill: value\n",
+                    """
+                            ts\tc\ts
+                            2021-08-01T04:00:00.000000000Z\t1\t1.0
+                            2021-09-01T04:00:00.000000000Z\t0\t0.0
+                            2021-10-01T04:00:00.000000000Z\t0\t0.0
+                            2021-11-01T04:00:00.000000000Z\t2\t12.0
+                            2021-12-01T05:00:00.000000000Z\t0\t0.0
+                            2022-01-01T05:00:00.000000000Z\t0\t0.0
+                            """
+            );
+
+            execute("CREATE TABLE berlin (ts TIMESTAMP_NS, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO berlin VALUES
+                        ('2021-10-26T09:00:00.000000000Z', 1.0),
+                        ('2021-10-27T09:00:00.000000000Z', 2.0),
+                        ('2021-10-30T23:30:00.000000000Z', 4.0),
+                        ('2021-10-31T15:00:00.000000000Z', 8.0)
+                    """);
+            final String daily = "SELECT ts, count() c, sum(v) s FROM (SELECT ts, v FROM berlin WHERE v > 0) SAMPLE BY 1d FROM '2021-10-25' TO ";
+            final String berlin = " ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'";
+            assertSampleByCursorFrom(
+                    daily + "'2021-11-01' FILL(NULL)" + berlin,
+                    "fill: null\n",
+                    """
+                            ts\tc\ts
+                            2021-10-24T22:00:00.000000000Z\tnull\tnull
+                            2021-10-25T22:00:00.000000000Z\t1\t1.0
+                            2021-10-26T22:00:00.000000000Z\t1\t2.0
+                            2021-10-27T22:00:00.000000000Z\tnull\tnull
+                            2021-10-28T22:00:00.000000000Z\tnull\tnull
+                            2021-10-29T22:00:00.000000000Z\tnull\tnull
+                            2021-10-30T22:00:00.000000000Z\t2\t12.0
+                            """
+            );
+            assertSampleByCursorFrom(
+                    daily + "'2021-11-03' FILL(PREV, 0)" + berlin,
+                    "fill: value\n",
+                    """
+                            ts\tc\ts
+                            2021-10-24T22:00:00.000000000Z\tnull\t0.0
+                            2021-10-25T22:00:00.000000000Z\t1\t1.0
+                            2021-10-26T22:00:00.000000000Z\t1\t2.0
+                            2021-10-27T22:00:00.000000000Z\t1\t0.0
+                            2021-10-28T22:00:00.000000000Z\t1\t0.0
+                            2021-10-29T22:00:00.000000000Z\t1\t0.0
+                            2021-10-30T22:00:00.000000000Z\t2\t12.0
+                            2021-10-31T23:00:00.000000000Z\t2\t0.0
+                            2021-11-01T23:00:00.000000000Z\t2\t0.0
+                            """
+            );
+            assertSampleByCursorLimit(
+                    daily + "'2021-11-03' FILL(PREV, 0)" + berlin,
+                    """
+                            ts\tc\ts
+                            2021-10-24T22:00:00.000000000Z\tnull\t0.0
+                            2021-10-25T22:00:00.000000000Z\t1\t1.0
+                            2021-10-26T22:00:00.000000000Z\t1\t2.0
+                            """,
+                    """
+                            ts\tc\ts
+                            2021-10-30T22:00:00.000000000Z\t2\t12.0
+                            2021-10-31T23:00:00.000000000Z\t2\t0.0
+                            2021-11-01T23:00:00.000000000Z\t2\t0.0
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByDstFallBackFirstRowAfterClockMovesBack() throws Exception {
+        // The Europe/Berlin clock moves back at 2021-10-31T01:00Z, where 03:00 CEST becomes 02:00 CET. On
+        // the SAMPLE BY cursors the first row after that, S3 at 01:14Z (02:14 CET), joins the bucket in
+        // progress at 00:00Z, and so does S4 at 01:51Z. Key A has S1 at 00:00Z before S3; key B has S2 at
+        // 00:37Z before S4, and S0 at 02:28Z in the next bucket. See SampleByTest.DST_FALL_BACK_ROWS.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE trades AS (
+                        SELECT ('S' || (x % 5))::SYMBOL sym,
+                               (100 + (x % 7))::DOUBLE price,
+                               timestamp_sequence('2021-10-29T20:15:00', 37 * 60_000_000L)::TIMESTAMP_NS ts
+                        FROM long_sequence(240)
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            final String rows = """
+                    (
+                        SELECT ts, CASE WHEN sym IN ('S1', 'S3') THEN 'A' ELSE 'B' END k, price
+                        FROM trades
+                        WHERE ts >= '2021-10-30T22:00' AND ts < '2021-10-31T03:30'
+                    )""";
+            final String select = "SELECT ts, k, count() c, first(price) f, last(price) l FROM " + rows + " SAMPLE BY 1h";
+            final String timeZone = " ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'";
+            assertQuery(select + timeZone)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("Sample By\n  keys: [ts,k]\n")
+                    .returns("""
+                            ts\tk\tc\tf\tl
+                            2021-10-30T22:00:00.000000000Z\tA\t1\t101.0\t101.0
+                            2021-10-30T22:00:00.000000000Z\tB\t1\t102.0\t102.0
+                            2021-10-30T23:00:00.000000000Z\tB\t1\t103.0\t103.0
+                            2021-10-31T00:00:00.000000000Z\tA\t2\t104.0\t106.0
+                            2021-10-31T00:00:00.000000000Z\tB\t2\t105.0\t100.0
+                            2021-10-31T02:00:00.000000000Z\tB\t1\t101.0\t101.0
+                            2021-10-31T03:00:00.000000000Z\tA\t1\t102.0\t102.0
+                            """);
+            assertQuery(select + " FILL(PREV)" + timeZone)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("Sample By\n  fill: prev\n  keys: [ts,k]\n")
+                    .returns("""
+                            ts\tk\tc\tf\tl
+                            2021-10-30T22:00:00.000000000Z\tA\t1\t101.0\t101.0
+                            2021-10-30T22:00:00.000000000Z\tB\t1\t102.0\t102.0
+                            2021-10-30T23:00:00.000000000Z\tA\t1\t101.0\t101.0
+                            2021-10-30T23:00:00.000000000Z\tB\t1\t103.0\t103.0
+                            2021-10-31T00:00:00.000000000Z\tA\t2\t104.0\t106.0
+                            2021-10-31T00:00:00.000000000Z\tB\t2\t105.0\t100.0
+                            2021-10-31T02:00:00.000000000Z\tA\t2\t104.0\t106.0
+                            2021-10-31T02:00:00.000000000Z\tB\t1\t101.0\t101.0
+                            2021-10-31T03:00:00.000000000Z\tA\t1\t102.0\t102.0
+                            2021-10-31T03:00:00.000000000Z\tB\t1\t101.0\t101.0
+                            """);
+            assertQuery(select + " FILL(NULL)" + timeZone)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("Sample By\n  fill: null\n  keys: [ts,k]\n")
+                    .returns("""
+                            ts\tk\tc\tf\tl
+                            2021-10-30T22:00:00.000000000Z\tA\t1\t101.0\t101.0
+                            2021-10-30T22:00:00.000000000Z\tB\t1\t102.0\t102.0
+                            2021-10-30T23:00:00.000000000Z\tA\tnull\tnull\tnull
+                            2021-10-30T23:00:00.000000000Z\tB\t1\t103.0\t103.0
+                            2021-10-31T00:00:00.000000000Z\tA\t2\t104.0\t106.0
+                            2021-10-31T00:00:00.000000000Z\tB\t2\t105.0\t100.0
+                            2021-10-31T02:00:00.000000000Z\tA\tnull\tnull\tnull
+                            2021-10-31T02:00:00.000000000Z\tB\t1\t101.0\t101.0
+                            2021-10-31T03:00:00.000000000Z\tA\t1\t102.0\t102.0
+                            2021-10-31T03:00:00.000000000Z\tB\tnull\tnull\tnull
+                            """);
+            assertQuery("SELECT ts, count() c, first(price) f, last(price) l FROM " + rows + " SAMPLE BY 1h" + timeZone)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("Sample By\n  fill: none\n", "values: [count(*),first(price),last(price)]")
+                    .returns("""
+                            ts\tc\tf\tl
+                            2021-10-30T22:00:00.000000000Z\t2\t101.0\t102.0
+                            2021-10-30T23:00:00.000000000Z\t1\t103.0\t103.0
+                            2021-10-31T00:00:00.000000000Z\t4\t104.0\t100.0
+                            2021-10-31T02:00:00.000000000Z\t1\t101.0\t101.0
+                            2021-10-31T03:00:00.000000000Z\t1\t102.0\t102.0
                             """);
         });
     }
@@ -4727,7 +5012,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
             assertQuery("select ts, avg(x) from fromto\n" +
                     "sample by 5d")
                     .noLeakCheck()
-                    .expectSize()
+                    .noRandomAccess()
                     .timestamp("ts")
                     .returns("""
                             ts\tavg
@@ -4791,7 +5076,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     ORDER BY ts""")
                     .noLeakCheck()
                     .timestamp("ts")
-                    .noRandomAccess()
+                    .expectSize()
                     .returns("""
                             ts\trows\tkeys
                             2017-12-20T00:00:00.000000000Z\t479\t479
@@ -4815,7 +5100,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
             assertQuery("select ts, avg(x) from fromto\n" +
                     "sample by 5d")
                     .noLeakCheck()
-                    .expectSize()
+                    .noRandomAccess()
                     .timestamp("ts")
                     .returns("""
                             ts\tavg
@@ -4826,7 +5111,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
             assertQuery("select ts, avg(x) from fromto\n" +
                     "sample by 5d from '2017-12-20'")
                     .noLeakCheck()
-                    .expectSize()
+                    .noRandomAccess()
                     .timestamp("ts")
                     .returns("""
                             ts\tavg
@@ -4837,7 +5122,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
             assertQuery("select ts, avg(x) from fromto\n" +
                     "sample by 5d from '2018-01-01'")
                     .noLeakCheck()
-                    .expectSize()
+                    .noRandomAccess()
                     .timestamp("ts")
                     .returns("""
                             ts\tavg
@@ -4847,7 +5132,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
             assertQuery("select ts, avg(x) from fromto\n" +
                     "sample by 5d from '2018-01-01' to '2018-01-31'")
                     .noLeakCheck()
-                    .expectSize()
+                    .noRandomAccess()
                     .timestamp("ts")
                     .returns("""
                             ts\tavg
@@ -4872,64 +5157,52 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
             assertQuery("select ts, avg(price) from tbl sample by 5m from '2018-01-01' to '2019-01-01' align to calendar with offset '10:00'")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort light
+                            Async Stream Group By workers: 1
                               keys: [ts]
-                                Async Group By workers: 1
-                                  keys: [ts]
-                                  keyFunctions: [timestamp_floor_utc('5m',ts,'2018-01-01T10:00:00.000Z')]
-                                  values: [avg(price)]
-                                  filter: null
-                                    PageFrame
-                                        Row forward scan
-                                        Interval forward scan on: tbl
-                                          intervals: [("2018-01-01T00:00:00.000000000Z","2018-12-31T23:59:59.999999999Z")]
+                              keyFunctions: [timestamp_floor_utc('5m',ts,'2018-01-01T10:00:00.000Z')]
+                              values: [avg(price)]
+                                PageFrame
+                                    Row forward scan
+                                    Interval forward scan on: tbl
+                                      intervals: [("2018-01-01T00:00:00.000000000Z","2018-12-31T23:59:59.999999999Z")]
                             """);
 
             assertQuery("select ts, avg(price) from tbl sample by 5m from '2018-01-01' align to calendar with offset '10:00'")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort light
+                            Async Stream Group By workers: 1
                               keys: [ts]
-                                Async Group By workers: 1
-                                  keys: [ts]
-                                  keyFunctions: [timestamp_floor_utc('5m',ts,'2018-01-01T10:00:00.000Z')]
-                                  values: [avg(price)]
-                                  filter: null
-                                    PageFrame
-                                        Row forward scan
-                                        Interval forward scan on: tbl
-                                          intervals: [("2018-01-01T00:00:00.000000000Z","MAX")]
+                              keyFunctions: [timestamp_floor_utc('5m',ts,'2018-01-01T10:00:00.000Z')]
+                              values: [avg(price)]
+                                PageFrame
+                                    Row forward scan
+                                    Interval forward scan on: tbl
+                                      intervals: [("2018-01-01T00:00:00.000000000Z","MAX")]
                             """);
 
             assertQuery("select ts, avg(price) from tbl sample by 5m to '2019-01-01' align to calendar with offset '10:00'")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort light
+                            Async Stream Group By workers: 1
                               keys: [ts]
-                                Async Group By workers: 1
-                                  keys: [ts]
-                                  keyFunctions: [timestamp_floor_utc('5m',ts,'1970-01-01T10:00:00.000Z')]
-                                  values: [avg(price)]
-                                  filter: null
-                                    PageFrame
-                                        Row forward scan
-                                        Interval forward scan on: tbl
-                                          intervals: [("MIN","2018-12-31T23:59:59.999999999Z")]
+                              keyFunctions: [timestamp_floor_utc('5m',ts,'1970-01-01T10:00:00.000Z')]
+                              values: [avg(price)]
+                                PageFrame
+                                    Row forward scan
+                                    Interval forward scan on: tbl
+                                      intervals: [("MIN","2018-12-31T23:59:59.999999999Z")]
                             """);
 
             assertQuery("select ts, avg(price) from tbl sample by 5m align to calendar with offset '10:00'")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort light
+                            Async Stream Group By workers: 1
                               keys: [ts]
-                                Async Group By workers: 1
-                                  keys: [ts]
-                                  keyFunctions: [timestamp_floor_utc('5m',ts,'1970-01-01T10:00:00.000Z')]
-                                  values: [avg(price)]
-                                  filter: null
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: tbl
+                              keyFunctions: [timestamp_floor_utc('5m',ts,'1970-01-01T10:00:00.000Z')]
+                              values: [avg(price)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tbl
                             """);
         });
     }
@@ -4980,6 +5253,44 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                             2044-01-01T00:00:00.000000000Z\tnull
                             2048-01-01T00:00:00.000000000Z\tnull
                             """);
+        });
+    }
+
+    @Test
+    public void testSampleByFromToSubDayTimeZoneLimit() throws Exception {
+        // For a sub-day stride with a time zone, code generation converts FROM and TO to UTC, and the
+        // SAMPLE BY cursor then samples in UTC, as the GROUP BY path does. LIMIT rewinds the cursor before
+        // the first read. This test pins the rows that each '+02:00' statement below returns under LIMIT;
+        // it does not run the statements without LIMIT. testSampleBySubDayFromDstSpringForwardWestOfUtcLimit()
+        // is the test that fails when the cursor does not stay in UTC across that rewind.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE trades AS (
+                        SELECT (100 + (x % 7))::DOUBLE price,
+                               timestamp_sequence('2021-10-29T20:15:00', 37 * 60_000_000L)::TIMESTAMP_NS ts
+                        FROM long_sequence(240)
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            // the sub-query keeps the statements on the SAMPLE BY cursor
+            final String sql = """
+                    SELECT ts, count() c FROM (SELECT ts, price FROM trades WHERE price > 0)
+                    SAMPLE BY 5h FROM '2021-10-29' TO '2021-10-31' ALIGN TO CALENDAR TIME ZONE '+02:00'
+                    """;
+            assertSampleByCursorLimit(
+                    sql,
+                    """
+                            ts\tc
+                            2021-10-29T18:00:00.000000000Z\t5
+                            2021-10-29T23:00:00.000000000Z\t8
+                            2021-10-30T04:00:00.000000000Z\t8
+                            """,
+                    """
+                            ts\tc
+                            2021-10-30T09:00:00.000000000Z\t8
+                            2021-10-30T14:00:00.000000000Z\t8
+                            2021-10-30T19:00:00.000000000Z\t5
+                            """
+            );
         });
     }
 
@@ -5066,7 +5377,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
 
         assertQuery("select sum(a), k from x sample by 100U fill(none) align to calendar")
                 .timestamp("k")
-                .expectSize()
+                .noRandomAccess()
                 .returns("""
                         sum\tk
                         11.427984775756228\t1970-01-04T05:00:00.000000000Z
@@ -5165,7 +5476,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
 
         assertQuery("select sum(a), k from x sample by 100T fill(none) align to calendar")
                 .timestamp("k")
-                .expectSize()
+                .noRandomAccess()
                 .returns("""
                         sum\tk
                         0.35983672154330515\t1970-01-04T05:00:00.000000000Z
@@ -5199,6 +5510,144 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         62.5966045857722\t1970-01-04T05:00:02.800000000Z
                         94.55893004802432\t1970-01-04T05:00:02.900000000Z
                         """);
+    }
+
+    @Test
+    public void testSampleByMonthNegativeOffset() throws Exception {
+        // GitHub issue #7760 with TIMESTAMP_NS: the month and year samplers returned the bucket start itself as the
+        // next bucket start for a negative offset. See SampleByTest.testSampleByMonthNegativeOffset().
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP_NS, sym SYMBOL, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2024-01-15T10:00:00.000000000Z', 'A', 1.0),
+                        ('2024-01-20T10:00:00.000000000Z', 'B', 2.0),
+                        ('2024-01-31T23:55:00.000000000Z', 'A', 16.0),
+                        ('2024-02-10T10:00:00.000000000Z', 'A', 4.0),
+                        ('2024-04-20T10:00:00.000000000Z', 'B', 8.0)
+                    """);
+            final String notKeyed = "SELECT ts, count() c, sum(v) s";
+            final String keyed = "SELECT ts, sym, count() c, sum(v) s";
+            final String offset = " ALIGN TO CALENDAR WITH OFFSET '-00:10'";
+            assertSampleByNegativeOffset(
+                    notKeyed,
+                    " SAMPLE BY 1M" + offset,
+                    "timestamp_floor_utc(",
+                    """
+                            ts\tc\ts
+                            2023-12-31T23:50:00.000000000Z\t2\t3.0
+                            2024-01-31T23:50:00.000000000Z\t2\t20.0
+                            2024-03-31T23:50:00.000000000Z\t1\t8.0
+                            """
+            );
+            assertSampleByNegativeOffset(
+                    notKeyed,
+                    " SAMPLE BY 1M FILL(NULL)" + offset,
+                    "Sample By Fill\n",
+                    """
+                            ts\tc\ts
+                            2023-12-31T23:50:00.000000000Z\t2\t3.0
+                            2024-01-31T23:50:00.000000000Z\t2\t20.0
+                            2024-02-29T23:50:00.000000000Z\tnull\tnull
+                            2024-03-31T23:50:00.000000000Z\t1\t8.0
+                            """
+            );
+            assertSampleByNegativeOffset(
+                    keyed,
+                    " SAMPLE BY 1M" + offset,
+                    "timestamp_floor_utc(",
+                    """
+                            ts\tsym\tc\ts
+                            2023-12-31T23:50:00.000000000Z\tA\t1\t1.0
+                            2023-12-31T23:50:00.000000000Z\tB\t1\t2.0
+                            2024-01-31T23:50:00.000000000Z\tA\t2\t20.0
+                            2024-03-31T23:50:00.000000000Z\tB\t1\t8.0
+                            """
+            );
+            assertSampleByNegativeOffset(
+                    keyed,
+                    " SAMPLE BY 1M FILL(PREV)" + offset,
+                    "Sample By Fill\n",
+                    """
+                            ts\tsym\tc\ts
+                            2023-12-31T23:50:00.000000000Z\tA\t1\t1.0
+                            2023-12-31T23:50:00.000000000Z\tB\t1\t2.0
+                            2024-01-31T23:50:00.000000000Z\tA\t2\t20.0
+                            2024-01-31T23:50:00.000000000Z\tB\t1\t2.0
+                            2024-02-29T23:50:00.000000000Z\tA\t2\t20.0
+                            2024-02-29T23:50:00.000000000Z\tB\t1\t2.0
+                            2024-03-31T23:50:00.000000000Z\tB\t1\t8.0
+                            2024-03-31T23:50:00.000000000Z\tA\t2\t20.0
+                            """,
+                    """
+                            ts\tsym\tc\ts
+                            2023-12-31T23:50:00.000000000Z\tA\t1\t1.0
+                            2023-12-31T23:50:00.000000000Z\tB\t1\t2.0
+                            2024-01-31T23:50:00.000000000Z\tA\t2\t20.0
+                            2024-01-31T23:50:00.000000000Z\tB\t1\t2.0
+                            2024-02-29T23:50:00.000000000Z\tA\t2\t20.0
+                            2024-02-29T23:50:00.000000000Z\tB\t1\t2.0
+                            2024-03-31T23:50:00.000000000Z\tA\t2\t20.0
+                            2024-03-31T23:50:00.000000000Z\tB\t1\t8.0
+                            """
+            );
+            assertSampleByNegativeOffset(
+                    notKeyed,
+                    " SAMPLE BY 3M FILL(NULL)" + offset,
+                    "Sample By Fill\n",
+                    """
+                            ts\tc\ts
+                            2023-12-31T23:50:00.000000000Z\t4\t23.0
+                            2024-03-31T23:50:00.000000000Z\t1\t8.0
+                            """
+            );
+            assertSampleByNegativeOffset(
+                    keyed,
+                    " SAMPLE BY 1y FILL(NULL)" + offset,
+                    "Sample By Fill\n",
+                    """
+                            ts\tsym\tc\ts
+                            2023-12-31T23:50:00.000000000Z\tA\t3\t21.0
+                            2023-12-31T23:50:00.000000000Z\tB\t2\t10.0
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByMonthNegativeOffsetFillLinear() throws Exception {
+        // GitHub issue #7760 with TIMESTAMP_NS and FILL(LINEAR), see
+        // SampleByTest.testSampleByMonthNegativeOffsetFillLinear().
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP_NS, sym SYMBOL, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2024-01-15T10:00:00.000000000Z', 'A', 1.0),
+                        ('2024-01-20T10:00:00.000000000Z', 'B', 2.0),
+                        ('2024-01-31T23:55:00.000000000Z', 'A', 16.0),
+                        ('2024-02-10T10:00:00.000000000Z', 'A', 4.0),
+                        ('2024-04-20T10:00:00.000000000Z', 'B', 8.0),
+                        ('2024-10-05T10:00:00.000000000Z', 'A', 32.0)
+                    """);
+            assertSampleByNegativeOffset(
+                    "SELECT ts, count() c, sum(v) s",
+                    " SAMPLE BY 1M FILL(LINEAR) ALIGN TO CALENDAR WITH OFFSET '-00:10'",
+                    "fill: linear\n",
+                    """
+                            ts\tc\ts
+                            2023-12-31T23:50:00.000000000Z\t2\t3.0
+                            2024-01-31T23:50:00.000000000Z\t2\t20.0
+                            2024-02-29T23:50:00.000000000Z\t1\t14.2
+                            2024-03-31T23:50:00.000000000Z\t1\t8.0
+                            2024-04-30T23:50:00.000000000Z\t1\t11.934426229508198
+                            2024-05-31T23:50:00.000000000Z\t1\t16.0
+                            2024-06-30T23:50:00.000000000Z\t1\t19.934426229508198
+                            2024-07-31T23:50:00.000000000Z\t1\t24.0
+                            2024-08-31T23:50:00.000000000Z\t1\t28.065573770491802
+                            2024-09-30T23:50:00.000000000Z\t1\t32.0
+                            """
+            );
+        });
     }
 
     @Test
@@ -5264,6 +5713,222 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         1969-12-31T02:00:00.000000000Z\t10.0
                         1970-01-01T02:00:00.000000000Z\t22.5
                         """);
+    }
+
+    @Test
+    public void testSampleByNegativeTimestampFirstObservationFillLinear() throws Exception {
+        // A first row before 1970 gives the grid of ALIGN TO FIRST OBSERVATION a negative start, and the keyed
+        // FILL(LINEAR) cursor emitted a row from a map value that no row wrote. See
+        // SampleByTest.testSampleByNegativeTimestampFirstObservationFillLinear().
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE before_1970 (ts TIMESTAMP_NS, sym SYMBOL, v DOUBLE)");
+            execute("""
+                    INSERT INTO before_1970 VALUES
+                        ('1969-12-31T20:00:00.000000000Z', 'a', 1.0),
+                        ('1969-12-31T20:30:00.000000000Z', 'b', 2.0),
+                        ('1969-12-31T21:00:00.000000000Z', 'a', 3.0),
+                        ('1969-12-31T22:00:00.000000000Z', 'b', 4.0),
+                        ('1969-12-31T23:00:00.000000000Z', 'a', 5.0),
+                        ('1969-12-31T23:00:00.000000000Z', 'b', 6.0)
+                    """);
+            // the sub-query designates the column, since a table rejects designated timestamps before 1970
+            final String before1970 = " FROM (SELECT * FROM before_1970 ORDER BY ts) TIMESTAMP(ts)"
+                    + " SAMPLE BY 1h FILL(LINEAR) ALIGN TO FIRST OBSERVATION";
+            assertQuery("SELECT ts, sym, count() c, sum(v) s" + before1970)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .withPlanContaining("Sample By\n", "fill: linear\n")
+                    .returns("""
+                            ts\tsym\tc\ts
+                            1969-12-31T20:00:00.000000000Z\ta\t1\t1.0
+                            1969-12-31T20:00:00.000000000Z\tb\t1\t2.0
+                            1969-12-31T21:00:00.000000000Z\ta\t1\t3.0
+                            1969-12-31T21:00:00.000000000Z\tb\t1\t3.0
+                            1969-12-31T22:00:00.000000000Z\ta\t1\t4.0
+                            1969-12-31T22:00:00.000000000Z\tb\t1\t4.0
+                            1969-12-31T23:00:00.000000000Z\ta\t1\t5.0
+                            1969-12-31T23:00:00.000000000Z\tb\t1\t6.0
+                            """);
+            assertQuery("SELECT ts, count() c, sum(v) s" + before1970)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .withPlanContaining("Sample By\n", "fill: linear\n")
+                    .returns("""
+                            ts\tc\ts
+                            1969-12-31T20:00:00.000000000Z\t2\t3.0
+                            1969-12-31T21:00:00.000000000Z\t1\t3.0
+                            1969-12-31T22:00:00.000000000Z\t1\t4.0
+                            1969-12-31T23:00:00.000000000Z\t2\t11.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testSampleByNegativeTimestampFirstObservationOffGrid() throws Exception {
+        // Rows before 1970 that open a bucket off the grid of a negative grid start landed one bucket low. See
+        // SampleByTest.testSampleByNegativeTimestampFirstObservationOffGrid().
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE before_1970 (ts TIMESTAMP_NS, sym SYMBOL, v DOUBLE)");
+            execute("""
+                    INSERT INTO before_1970 VALUES
+                        ('1969-12-31T20:00:00.000000000Z', 'a', 1.0),
+                        ('1969-12-31T21:30:00.000000000Z', 'b', 2.0),
+                        ('1969-12-31T23:15:00.000000000Z', 'a', 4.0)
+                    """);
+            // the sub-query designates the column, since a table rejects designated timestamps before 1970
+            final String before1970 = " FROM (SELECT * FROM before_1970 ORDER BY ts) TIMESTAMP(ts) SAMPLE BY 1h";
+            final String firstObservation = " ALIGN TO FIRST OBSERVATION";
+            assertSampleByCursorDst(
+                    "SELECT ts, sym, count() c, sum(v) s" + before1970 + " FILL(NULL)" + firstObservation,
+                    "fill: null\n",
+                    """
+                            ts\tsym\tc\ts
+                            1969-12-31T20:00:00.000000000Z\ta\t1\t1.0
+                            1969-12-31T20:00:00.000000000Z\tb\tnull\tnull
+                            1969-12-31T21:00:00.000000000Z\ta\tnull\tnull
+                            1969-12-31T21:00:00.000000000Z\tb\t1\t2.0
+                            1969-12-31T22:00:00.000000000Z\ta\tnull\tnull
+                            1969-12-31T22:00:00.000000000Z\tb\tnull\tnull
+                            1969-12-31T23:00:00.000000000Z\ta\t1\t4.0
+                            1969-12-31T23:00:00.000000000Z\tb\tnull\tnull
+                            """
+            );
+            assertSampleByCursorDst(
+                    "SELECT ts, sym, count() c, sum(v) s" + before1970 + " FILL(PREV)" + firstObservation,
+                    "fill: prev\n",
+                    """
+                            ts\tsym\tc\ts
+                            1969-12-31T20:00:00.000000000Z\ta\t1\t1.0
+                            1969-12-31T20:00:00.000000000Z\tb\tnull\tnull
+                            1969-12-31T21:00:00.000000000Z\ta\t1\t1.0
+                            1969-12-31T21:00:00.000000000Z\tb\t1\t2.0
+                            1969-12-31T22:00:00.000000000Z\ta\t1\t1.0
+                            1969-12-31T22:00:00.000000000Z\tb\t1\t2.0
+                            1969-12-31T23:00:00.000000000Z\ta\t1\t4.0
+                            1969-12-31T23:00:00.000000000Z\tb\t1\t2.0
+                            """
+            );
+            assertSampleByCursorDst(
+                    "SELECT ts, sym, count() c, sum(v) s" + before1970 + " FILL(NONE)" + firstObservation,
+                    "keys: [ts,sym]",
+                    """
+                            ts\tsym\tc\ts
+                            1969-12-31T20:00:00.000000000Z\ta\t1\t1.0
+                            1969-12-31T21:00:00.000000000Z\tb\t1\t2.0
+                            1969-12-31T23:00:00.000000000Z\ta\t1\t4.0
+                            """
+            );
+            assertQuery("SELECT ts, sym, count() c, sum(v) s" + before1970 + " FILL(LINEAR)" + firstObservation)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .withPlanContaining("Sample By\n", "fill: linear\n")
+                    .returns("""
+                            ts\tsym\tc\ts
+                            1969-12-31T20:00:00.000000000Z\ta\t1\t1.0
+                            1969-12-31T20:00:00.000000000Z\tb\tnull\tnull
+                            1969-12-31T21:00:00.000000000Z\ta\t1\t2.0
+                            1969-12-31T21:00:00.000000000Z\tb\t1\t2.0
+                            1969-12-31T22:00:00.000000000Z\ta\t1\t3.0
+                            1969-12-31T22:00:00.000000000Z\tb\tnull\tnull
+                            1969-12-31T23:00:00.000000000Z\ta\t1\t4.0
+                            1969-12-31T23:00:00.000000000Z\tb\tnull\tnull
+                            """);
+            assertSampleByCursorDst(
+                    "SELECT ts, count() c, sum(v) s" + before1970 + " FILL(NULL)" + firstObservation,
+                    "fill: null\n",
+                    """
+                            ts\tc\ts
+                            1969-12-31T20:00:00.000000000Z\t1\t1.0
+                            1969-12-31T21:00:00.000000000Z\t1\t2.0
+                            1969-12-31T22:00:00.000000000Z\tnull\tnull
+                            1969-12-31T23:00:00.000000000Z\t1\t4.0
+                            """
+            );
+            assertSampleByCursorDst(
+                    "SELECT ts, count() c, sum(v) s" + before1970 + " FILL(PREV)" + firstObservation,
+                    "fill: prev\n",
+                    """
+                            ts\tc\ts
+                            1969-12-31T20:00:00.000000000Z\t1\t1.0
+                            1969-12-31T21:00:00.000000000Z\t1\t2.0
+                            1969-12-31T22:00:00.000000000Z\t1\t2.0
+                            1969-12-31T23:00:00.000000000Z\t1\t4.0
+                            """
+            );
+            assertSampleByCursorDst(
+                    "SELECT ts, count() c, sum(v) s" + before1970 + " FILL(NONE)" + firstObservation,
+                    "fill: none\n",
+                    """
+                            ts\tc\ts
+                            1969-12-31T20:00:00.000000000Z\t1\t1.0
+                            1969-12-31T21:00:00.000000000Z\t1\t2.0
+                            1969-12-31T23:00:00.000000000Z\t1\t4.0
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByNegativeTimestampOnBucketBoundary() throws Exception {
+        // A timestamp before 1970 exactly on a bucket boundary of a grid with an offset used to round one bucket
+        // down. See SampleByTest.testSampleByNegativeTimestampOnBucketBoundary().
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE before_1970 (ts TIMESTAMP_NS, sym SYMBOL, v DOUBLE)");
+            execute("""
+                    INSERT INTO before_1970 VALUES
+                        ('1969-06-01T09:40:00.000000000Z', 'a', 1.0),
+                        ('1969-06-01T10:10:00.000000000Z', 'b', 2.0),
+                        ('1969-06-01T10:40:00.000000000Z', 'a', 4.0),
+                        ('1969-06-01T12:10:00.000000000Z', 'b', 8.0)
+                    """);
+            execute("CREATE TABLE spring_forward (ts TIMESTAMP_NS, sym SYMBOL, v DOUBLE)");
+            execute("""
+                    INSERT INTO spring_forward VALUES
+                        ('1969-04-27T06:30:00.000000000Z', 'a', 1.0),
+                        ('1969-04-27T07:10:00.000000000Z', 'b', 2.0),
+                        ('1969-04-27T07:40:00.000000000Z', 'a', 3.0)
+                    """);
+            // the sub-queries designate the column and keep the statements on the SAMPLE BY cursor
+            assertSampleByCursorDst(
+                    "SELECT ts, count() c, sum(v) s FROM (SELECT ts, sym, v FROM before_1970 WHERE v > 0 ORDER BY ts) TIMESTAMP(ts)"
+                            + " SAMPLE BY 30m FILL(NULL) ALIGN TO CALENDAR WITH OFFSET '00:10'",
+                    "fill: null\n",
+                    """
+                            ts\tc\ts
+                            1969-06-01T09:40:00.000000000Z\t1\t1.0
+                            1969-06-01T10:10:00.000000000Z\t1\t2.0
+                            1969-06-01T10:40:00.000000000Z\t1\t4.0
+                            1969-06-01T11:10:00.000000000Z\tnull\tnull
+                            1969-06-01T11:40:00.000000000Z\tnull\tnull
+                            1969-06-01T12:10:00.000000000Z\t1\t8.0
+                            """
+            );
+            final String springForward = " FROM (SELECT ts, sym, v FROM spring_forward WHERE v > 0 ORDER BY ts) TIMESTAMP(ts) SAMPLE BY 1h";
+            final String newYork = " ALIGN TO CALENDAR TIME ZONE 'America/New_York' WITH OFFSET '00:10'";
+            assertSampleByCursorDst(
+                    "SELECT ts, count() c, sum(v) s" + springForward + " FILL(PREV)" + newYork,
+                    "fill: prev\n",
+                    """
+                            ts\tc\ts
+                            1969-04-27T06:10:00.000000000Z\t1\t1.0
+                            1969-04-27T07:10:00.000000000Z\t2\t5.0
+                            """
+            );
+            assertSampleByCursorDst(
+                    "SELECT ts, sym, count() c, sum(v) s" + springForward + " FILL(NULL)" + newYork,
+                    "fill: null\n",
+                    """
+                            ts\tsym\tc\ts
+                            1969-04-27T06:10:00.000000000Z\ta\t1\t1.0
+                            1969-04-27T06:10:00.000000000Z\tb\tnull\tnull
+                            1969-04-27T07:10:00.000000000Z\ta\t1\t3.0
+                            1969-04-27T07:10:00.000000000Z\tb\t1\t2.0
+                            """
+            );
+        });
     }
 
     @Test
@@ -5563,7 +6228,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         " long_sequence(100)" +
                         ") timestamp(k) partition by NONE")
                 .timestamp("k")
-                .expectSize()
+                .noRandomAccess()
                 .returns("""
                         k\tcount
                         1970-01-03T00:00:00.000000000Z\t18
@@ -5588,7 +6253,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         " long_sequence(100)" +
                         ") timestamp(k) partition by NONE")
                 .timestamp("k")
-                .expectSize()
+                .noRandomAccess()
                 .returns("""
                         k\tcount
                         1970-01-02T23:12:00.000000000Z\t9
@@ -5599,6 +6264,261 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         1970-01-03T06:42:00.000000000Z\t18
                         1970-01-03T08:12:00.000000000Z\t1
                         """);
+    }
+
+    @Test
+    public void testSampleByNullDesignatedTimestampCursor() throws Exception {
+        // The SAMPLE BY cursor over a nanosecond designated timestamp that holds NULL, which the sort puts first. The
+        // cursor now fails with FILL(NULL), FILL(PREV) and FILL(value), and gives the row with the NULL a bucket of
+        // its own with FILL(NONE). See SampleByTest.testSampleByNullDesignatedTimestampCursor().
+        assertMemoryLeak(() -> {
+            createNullTimestampTable();
+            final String source = " FROM ((SELECT * FROM n ORDER BY ts) TIMESTAMP(ts)) SAMPLE BY ";
+            for (String select : new String[]{"SELECT ts, count() c, sum(v) s", "SELECT ts, sym, count() c, sum(v) s"}) {
+                for (String fill : new String[]{"FILL(NULL)", "FILL(PREV)", "FILL(0, 0)"}) {
+                    assertSampleByNullTimestampFails(select + source + "1h " + fill + " ALIGN TO FIRST OBSERVATION", "Sample By\n");
+                    assertSampleByNullTimestampFails(select + source + "1h " + fill, "Sample By\n");
+                    assertSampleByNullTimestampFails(select + source + "1h " + fill + " ALIGN TO CALENDAR WITH OFFSET '00:10'", "Sample By\n");
+                    assertSampleByNullTimestampFails(select + source + "1h " + fill + " ALIGN TO CALENDAR TIME ZONE 'Europe/London'", "Sample By\n");
+                    assertSampleByNullTimestampFails(select + source + "1M " + fill + " ALIGN TO CALENDAR TIME ZONE 'America/New_York'", "Sample By\n");
+                }
+            }
+            // FILL(NONE) emits the bucket of the NULL first, and the grid starts at the first row that has a timestamp
+            final String[] noFillSampleBy = {
+                    "1h FILL(NONE) ALIGN TO FIRST OBSERVATION",
+                    "1h FILL(NONE)",
+                    "1h FILL(NONE) ALIGN TO CALENDAR WITH OFFSET '00:10'",
+                    "1h FILL(NONE) ALIGN TO CALENDAR TIME ZONE 'Europe/London'",
+                    "1M FILL(NONE) ALIGN TO CALENDAR TIME ZONE 'America/New_York'"
+            };
+            final String[] noFillBuckets = {
+                    "2024-01-01T00:00:00.000000000Z#1\t1.0\n2024-01-01T02:00:00.000000000Z#1\t4.0\n",
+                    "2024-01-01T00:00:00.000000000Z#1\t1.0\n2024-01-01T02:00:00.000000000Z#1\t4.0\n",
+                    "2023-12-31T23:10:00.000000000Z#1\t1.0\n2024-01-01T02:10:00.000000000Z#1\t4.0\n",
+                    "2024-01-01T00:00:00.000000000Z#1\t1.0\n2024-01-01T02:00:00.000000000Z#1\t4.0\n",
+                    "2023-12-01T05:00:00.000000000Z#2\t5.0\n"
+            };
+            for (int i = 0; i < noFillSampleBy.length; i++) {
+                // '#' stands for the tab before the count, and for the key of the bucket in the keyed statement
+                assertSampleByCursorFrom(
+                        "SELECT ts, count() c, sum(v) s" + source + noFillSampleBy[i],
+                        "fill: none\n",
+                        "ts\tc\ts\n\t1\t2.0\n" + noFillBuckets[i].replace("#", "\t")
+                );
+                assertSampleByCursorFrom(
+                        "SELECT ts, sym, count() c, sum(v) s" + source + noFillSampleBy[i],
+                        "keys: [ts,sym]\n",
+                        "ts\tsym\tc\ts\n\tb\t1\t2.0\n" + noFillBuckets[i].replace("#", "\ta\t")
+                );
+            }
+            // a filter that drops the NULL gives the rows
+            assertSampleByCursorFrom(
+                    "SELECT ts, count() c, sum(v) s FROM ((SELECT * FROM n WHERE ts IS NOT NULL ORDER BY ts) TIMESTAMP(ts))"
+                            + " SAMPLE BY 1h FILL(NULL) ALIGN TO FIRST OBSERVATION",
+                    "fill: null\n",
+                    """
+                            ts\tc\ts
+                            2024-01-01T00:00:00.000000000Z\t1\t1.0
+                            2024-01-01T01:00:00.000000000Z\tnull\tnull
+                            2024-01-01T02:00:00.000000000Z\t1\t4.0
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByNullDesignatedTimestampFillLinear() throws Exception {
+        // FILL(LINEAR) over a designated timestamp that holds NULL. See
+        // SampleByTest.testSampleByNullDesignatedTimestampFillLinear().
+        assertMemoryLeak(() -> {
+            createNullTimestampTable();
+            final String source = " FROM ((SELECT * FROM n ORDER BY ts) TIMESTAMP(ts)) SAMPLE BY ";
+            for (String select : new String[]{"SELECT ts, count() c, sum(v) s", "SELECT ts, sym, count() c, sum(v) s"}) {
+                assertSampleByNullTimestampFails(select + source + "1000d FILL(LINEAR) ALIGN TO FIRST OBSERVATION", "fill: linear\n");
+                assertSampleByNullTimestampFails(select + source + "1h FILL(LINEAR)", "fill: linear\n");
+                assertSampleByNullTimestampFails(select + source + "1h FILL(LINEAR) ALIGN TO CALENDAR WITH OFFSET '00:10'", "fill: linear\n");
+                assertSampleByNullTimestampFails(select + source + "1h FILL(LINEAR) ALIGN TO CALENDAR TIME ZONE 'Europe/London'", "fill: linear\n");
+                assertSampleByNullTimestampFails(select + source + "1M FILL(LINEAR) ALIGN TO CALENDAR TIME ZONE 'America/New_York'", "fill: linear\n");
+            }
+            // a filter that drops the NULL gives the rows
+            assertQuery("SELECT ts, count() c, sum(v) s FROM ((SELECT * FROM n WHERE ts IS NOT NULL ORDER BY ts) TIMESTAMP(ts))"
+                    + " SAMPLE BY 1h FILL(LINEAR) ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .withPlanContaining("Sample By\n", "fill: linear\n")
+                    .returns("""
+                            ts\tc\ts
+                            2024-01-01T00:00:00.000000000Z\t1\t1.0
+                            2024-01-01T01:00:00.000000000Z\t1\t2.5
+                            2024-01-01T02:00:00.000000000Z\t1\t4.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testSampleByNullDesignatedTimestampGroupByFill() throws Exception {
+        // The GROUP BY path sorts the bucket of a NULL timestamp first, and the fill cursor anchored its grid there,
+        // at Long.MIN_VALUE. See SampleByTest.testSampleByNullDesignatedTimestampGroupByFill().
+        assertMemoryLeak(() -> {
+            createNullTimestampTable();
+            final String source = " FROM n TIMESTAMP(ts) SAMPLE BY ";
+            for (String select : new String[]{"SELECT ts, count() c, sum(v) s", "SELECT ts, sym, count() c, sum(v) s"}) {
+                for (String fill : new String[]{"FILL(NULL)", "FILL(PREV)", "FILL(0, 0)"}) {
+                    assertSampleByNullTimestampFails(select + source + "1h " + fill, "Sample By Fill\n");
+                    assertSampleByNullTimestampFails(select + source + "1h " + fill + " ALIGN TO CALENDAR WITH OFFSET '00:10'", "Sample By Fill\n");
+                    assertSampleByNullTimestampFails(select + source + "1h " + fill + " ALIGN TO CALENDAR TIME ZONE 'Europe/London'", "Sample By Fill\n");
+                    assertSampleByNullTimestampFails(select + source + "1d " + fill + " ALIGN TO CALENDAR TIME ZONE 'America/New_York'", "Sample By Fill\n");
+                }
+            }
+            // without FILL, the GROUP BY path keeps the NULL in a bucket of its own
+            assertQuery("SELECT ts, count() c, sum(v) s FROM n TIMESTAMP(ts) SAMPLE BY 1h")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .withPlanContaining("keyFunctions: [timestamp_floor_utc('1h',ts)]")
+                    .returns("""
+                            ts\tc\ts
+                            \t1\t2.0
+                            2024-01-01T00:00:00.000000000Z\t1\t1.0
+                            2024-01-01T02:00:00.000000000Z\t1\t4.0
+                            """);
+            // FROM and a filter that drops the NULL give the rows
+            final String expected = """
+                    ts\tc\ts
+                    2024-01-01T00:00:00.000000000Z\t1\t1.0
+                    2024-01-01T01:00:00.000000000Z\tnull\tnull
+                    2024-01-01T02:00:00.000000000Z\t1\t4.0
+                    """;
+            assertQuery("SELECT ts, count() c, sum(v) s FROM n TIMESTAMP(ts) SAMPLE BY 1h FROM '2024-01-01' FILL(NULL)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("Sample By Fill\n")
+                    .returns(expected);
+            assertQuery("SELECT ts, count() c, sum(v) s FROM n TIMESTAMP(ts) WHERE ts IS NOT NULL SAMPLE BY 1h FILL(NULL)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("Sample By Fill\n")
+                    .returns(expected);
+        });
+    }
+
+    @Test
+    public void testSampleByNullDesignatedTimestampNoFillAlignments() throws Exception {
+        // Without FILL, the SAMPLE BY cursor gives the rows with a NULL designated timestamp a bucket of their own,
+        // as the GROUP BY path does. See SampleByTest.testSampleByNullDesignatedTimestampNoFillAlignments().
+        assertMemoryLeak(() -> {
+            createNullBucketTable();
+            final String[] alignments = {
+                    " ALIGN TO FIRST OBSERVATION",
+                    "",
+                    " ALIGN TO CALENDAR WITH OFFSET '00:10'",
+                    " ALIGN TO CALENDAR TIME ZONE 'America/New_York'",
+                    " ALIGN TO CALENDAR TIME ZONE 'Europe/London'",
+                    " ALIGN TO CALENDAR TIME ZONE 'America/New_York' WITH OFFSET '00:10'"
+            };
+            for (String stride : new String[]{"1T", "1h", "1d", "3w", "1M", "1y"}) {
+                for (String alignment : alignments) {
+                    final String sampleBy = stride + alignment;
+                    assertSampleByNullBucket("SELECT ts, count() c, sum(v) s", "ts", sampleBy, "\t3\t146.0\n");
+                    assertSampleByNullBucket("SELECT ts, sym, count() c, sum(v) s", "ts, sym", sampleBy, "\tb\t2\t130.0\n\ta\t1\t16.0\n");
+                    assertSampleByNullBucket("SELECT count() c, sum(v) s", "c, s", sampleBy, "3\t146.0\n");
+                    assertSampleByNullBucket("SELECT sym, count() c, sum(v) s", "sym, c, s", sampleBy, "b\t2\t130.0\na\t1\t16.0\n");
+                }
+            }
+            // two of the statements above in full
+            assertSampleByCursorFrom(
+                    "SELECT ts, count() c, sum(v) s FROM ((SELECT * FROM nb ORDER BY ts) TIMESTAMP(ts))"
+                            + " SAMPLE BY 1h ALIGN TO FIRST OBSERVATION",
+                    "fill: none\n",
+                    """
+                            ts\tc\ts
+                            \t3\t146.0
+                            2024-01-01T00:15:00.000000000Z\t1\t1.0
+                            2024-01-01T02:15:00.000000000Z\t1\t4.0
+                            2024-01-03T09:15:00.000000000Z\t1\t8.0
+                            2024-02-10T09:15:00.000000000Z\t1\t32.0
+                            2024-03-20T09:15:00.000000000Z\t1\t64.0
+                            2024-04-05T09:15:00.000000000Z\t1\t256.0
+                            2025-01-15T11:15:00.000000000Z\t1\t512.0
+                            """
+            );
+            assertSampleByCursorFrom(
+                    "SELECT ts, sym, count() c, sum(v) s FROM ((SELECT * FROM nb ORDER BY ts) TIMESTAMP(ts))"
+                            + " SAMPLE BY 1M ALIGN TO CALENDAR TIME ZONE 'America/New_York'",
+                    "keys: [ts,sym]\n",
+                    """
+                            ts\tsym\tc\ts
+                            \tb\t2\t130.0
+                            \ta\t1\t16.0
+                            2023-12-01T05:00:00.000000000Z\ta\t2\t5.0
+                            2024-01-01T05:00:00.000000000Z\tb\t1\t8.0
+                            2024-02-01T05:00:00.000000000Z\ta\t1\t32.0
+                            2024-03-01T05:00:00.000000000Z\tb\t1\t64.0
+                            2024-04-01T04:00:00.000000000Z\ta\t1\t256.0
+                            2025-01-01T05:00:00.000000000Z\tb\t1\t512.0
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByNullDesignatedTimestampNoFillAllNull() throws Exception {
+        // Every row has a NULL designated timestamp, so the NULL bucket is the only bucket. See
+        // SampleByTest.testSampleByNullDesignatedTimestampNoFillAllNull().
+        assertMemoryLeak(() -> {
+            createAllNullTimestampTable();
+            // the table alone stays on the SAMPLE BY cursor path when the statement aligns to the first observation
+            assertQuery("SELECT count() c, sum(v) s FROM an TIMESTAMP(ts) SAMPLE BY 1h ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Sample By\n", "fill: none\n")
+                    .returns("""
+                            c\ts
+                            2\t3.0
+                            """);
+            final String source = " FROM ((SELECT * FROM an ORDER BY ts) TIMESTAMP(ts)) SAMPLE BY ";
+            final String[] sampleBys = {
+                    "1h ALIGN TO FIRST OBSERVATION",
+                    "1h",
+                    "1M",
+                    "1y ALIGN TO CALENDAR WITH OFFSET '00:10'",
+                    "1M ALIGN TO CALENDAR TIME ZONE 'America/New_York'",
+                    "1h ALIGN TO CALENDAR TIME ZONE 'Europe/London' WITH OFFSET '00:10'",
+                    "1y ALIGN TO CALENDAR TIME ZONE '+03:00'"
+            };
+            for (String sampleBy : sampleBys) {
+                assertSampleByCursorFrom(
+                        "SELECT ts, count() c, sum(v) s" + source + sampleBy,
+                        "fill: none\n",
+                        """
+                                ts\tc\ts
+                                \t2\t3.0
+                                """
+                );
+                assertSampleByCursorFrom(
+                        "SELECT ts, sym, count() c, sum(v) s" + source + sampleBy,
+                        "keys: [ts,sym]\n",
+                        """
+                                ts\tsym\tc\ts
+                                \ta\t1\t1.0
+                                \tb\t1\t2.0
+                                """
+                );
+            }
+            // the GROUP BY path returns the same bucket
+            assertQuery("SELECT ts, count() c, sum(v) s FROM an TIMESTAMP(ts) SAMPLE BY 1h")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .withPlanContaining("keyFunctions: [timestamp_floor_utc('1h',ts)]")
+                    .returns("""
+                            ts\tc\ts
+                            \t2\t3.0
+                            """);
+        });
     }
 
     @Test
@@ -5620,25 +6540,22 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                                   condition: b.sym=a.sym
                                   symbolKeyJoin: true
                                     SelectedRecord
-                                        Encode sort light
-                                          keys: [ts1]
-                                            Async Group By workers: 1
-                                              keys: [sym,ts1]
-                                              keyFunctions: [timestamp_floor_utc('1m',ts1)]
-                                              values: [first(val),avg(val),last(val),max(val)]
-                                              filter: null
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: x
+                                        Async Stream Group By workers: 1
+                                          segmentKey: timestamp_floor_utc('1m',ts1)
+                                          keys: [sym,ts1]
+                                          keyFunctions: [timestamp_floor_utc('1m',ts1)]
+                                          values: [first(val),avg(val),last(val),max(val)]
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: x
                                     Hash
-                                        SelectedRecord
-                                            Encode sort light
-                                              keys: [ts1]
-                                                Async Group By workers: 1
+                                        Materialize
+                                            SelectedRecord
+                                                Async Stream Group By workers: 1
+                                                  segmentKey: timestamp_floor_utc('1m',ts1)
                                                   keys: [sym,ts1]
                                                   keyFunctions: [timestamp_floor_utc('1m',ts1)]
                                                   values: [first(val),avg(val),last(val),max(val)]
-                                                  filter: null
                                                     PageFrame
                                                         Row forward scan
                                                         Frame forward scan on: x
@@ -5662,33 +6579,30 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     .assertsPlan("""
                             SelectedRecord
                                 AsOf Join
-                                    Encode sort light
-                                      keys: [ts1]
-                                        Async Group By workers: 1
-                                          keys: [ts1,sym]
-                                          keyFunctions: [timestamp_floor_utc('1m',ts1)]
-                                          values: [first(val),avg(val),last(val),max(val)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: x
-                                    Encode sort light
-                                      keys: [ts1]
-                                        Async Group By workers: 1
-                                          keys: [ts1,sym]
-                                          keyFunctions: [timestamp_floor_utc('1m',ts1)]
-                                          values: [first(val),avg(val),last(val),max(val)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: x
+                                  condition:\s
+                                    Async Stream Group By workers: 1
+                                      segmentKey: timestamp_floor_utc('1m',ts1)
+                                      keys: [ts1,sym]
+                                      keyFunctions: [timestamp_floor_utc('1m',ts1)]
+                                      values: [first(val),avg(val),last(val),max(val)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: x
+                                    Async Stream Group By workers: 1
+                                      segmentKey: timestamp_floor_utc('1m',ts1)
+                                      keys: [ts1,sym]
+                                      keyFunctions: [timestamp_floor_utc('1m',ts1)]
+                                      values: [first(val),avg(val),last(val),max(val)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: x
                             """);
         });
     }
 
     @Test
     public void testSampleByRewriteMaintainTimestamp() throws Exception {
-        assertQuery("select k, sum(lat) from x sample by 6h  align to calendar order by k")
+        assertQuery("select k, round(sum(lat), 8) sum from x sample by 6h  align to calendar order by k")
                 .ddl("create table x as " +
                         "(" +
                         "select" +
@@ -5700,27 +6614,27 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "   long_sequence(120)" +
                         ") timestamp(k)")
                 .timestamp("k")
-                .expectSize()
+                .noRandomAccess()
                 .returns("""
                         k\tsum
-                        2021-03-25T18:00:00.000000000Z\t144.77803379943109
-                        2021-03-26T00:00:00.000000000Z\t698.7189685053112
-                        2021-03-26T06:00:00.000000000Z\t421.5252426971489
-                        2021-03-26T12:00:00.000000000Z\t857.8810676038881
-                        2021-03-26T18:00:00.000000000Z\t524.368651615222
-                        2021-03-27T00:00:00.000000000Z\t288.92342312668086
-                        2021-03-27T06:00:00.000000000Z\t678.7325602767398
-                        2021-03-27T12:00:00.000000000Z\t58.67828100564961
-                        2021-03-27T18:00:00.000000000Z\t762.6041348070386
-                        2021-03-28T00:00:00.000000000Z\t573.4016951272048
-                        2021-03-28T06:00:00.000000000Z\t410.12198091384363
-                        2021-03-28T12:00:00.000000000Z\t271.0334715592426
-                        2021-03-28T18:00:00.000000000Z\t315.30154566415314
-                        2021-03-29T00:00:00.000000000Z\t344.7845399344325
-                        2021-03-29T06:00:00.000000000Z\t736.152959556984
-                        2021-03-29T12:00:00.000000000Z\t620.835997838767
-                        2021-03-29T18:00:00.000000000Z\t464.7487719927086
-                        2021-03-30T00:00:00.000000000Z\t200.4147829883567
+                        2021-03-25T18:00:00.000000000Z\t144.7780338
+                        2021-03-26T00:00:00.000000000Z\t698.71896851
+                        2021-03-26T06:00:00.000000000Z\t421.52524270000004
+                        2021-03-26T12:00:00.000000000Z\t857.8810676
+                        2021-03-26T18:00:00.000000000Z\t524.36865162
+                        2021-03-27T00:00:00.000000000Z\t288.92342313
+                        2021-03-27T06:00:00.000000000Z\t678.73256028
+                        2021-03-27T12:00:00.000000000Z\t58.67828101
+                        2021-03-27T18:00:00.000000000Z\t762.60413481
+                        2021-03-28T00:00:00.000000000Z\t573.40169513
+                        2021-03-28T06:00:00.000000000Z\t410.12198091
+                        2021-03-28T12:00:00.000000000Z\t271.03347156
+                        2021-03-28T18:00:00.000000000Z\t315.30154566
+                        2021-03-29T00:00:00.000000000Z\t344.78453993
+                        2021-03-29T06:00:00.000000000Z\t736.15295956
+                        2021-03-29T12:00:00.000000000Z\t620.83599784
+                        2021-03-29T18:00:00.000000000Z\t464.74877199
+                        2021-03-30T00:00:00.000000000Z\t200.41478299
                         """);
     }
 
@@ -5733,17 +6647,15 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     "sample by 1m align to calendar ")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort light
-                              keys: [b]
-                                SelectedRecord
-                                    Async Group By workers: 1
-                                      keys: [b,sym]
-                                      keyFunctions: [timestamp_floor_utc('1m',ts1)]
-                                      values: [first(val),avg(val),last(val),max(val)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: x
+                            SelectedRecord
+                                Async Stream Group By workers: 1
+                                  segmentKey: timestamp_floor_utc('1m',ts1)
+                                  keys: [b,sym]
+                                  keyFunctions: [timestamp_floor_utc('1m',ts1)]
+                                  values: [first(val),avg(val),last(val),max(val)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: x
                             """);
         });
     }
@@ -5757,17 +6669,14 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     "sample by 1m align to calendar ")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort light
-                              keys: [b]
-                                SelectedRecord
-                                    Async Group By workers: 1
-                                      keys: [b]
-                                      keyFunctions: [timestamp_floor_utc('1m',ts1)]
-                                      values: [first(val),avg(val),last(val),max(val)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: x
+                            SelectedRecord
+                                Async Stream Group By workers: 1
+                                  keys: [b]
+                                  keyFunctions: [timestamp_floor_utc('1m',ts1)]
+                                  values: [first(val),avg(val),last(val),max(val)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: x
                             """);
         });
     }
@@ -5781,17 +6690,15 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     "sample by 1m align to calendar ")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort light
-                              keys: [d]
-                                SelectedRecord
-                                    Async Group By workers: 1
-                                      keys: [d,sym]
-                                      keyFunctions: [timestamp_floor_utc('1m',ts1)]
-                                      values: [first(val),avg(val),last(val),max(val)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: x
+                            SelectedRecord
+                                Async Stream Group By workers: 1
+                                  segmentKey: timestamp_floor_utc('1m',ts1)
+                                  keys: [d,sym]
+                                  keyFunctions: [timestamp_floor_utc('1m',ts1)]
+                                  values: [first(val),avg(val),last(val),max(val)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: x
                             """);
         });
     }
@@ -5805,16 +6712,14 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     "sample by 1m align to calendar time zone 'UTC'")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort light
-                              keys: [ts1]
-                                Async Group By workers: 1
-                                  keys: [ts1,sym]
-                                  keyFunctions: [timestamp_floor_utc('1m',ts1)]
-                                  values: [min(val),avg(val),max(val)]
-                                  filter: null
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: x
+                            Async Stream Group By workers: 1
+                              segmentKey: timestamp_floor_utc('1m',ts1)
+                              keys: [ts1,sym]
+                              keyFunctions: [timestamp_floor_utc('1m',ts1)]
+                              values: [min(val),avg(val),max(val)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: x
                             """);
         });
     }
@@ -5836,27 +6741,23 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                               functions: [sym::symbol,first,avg,last,max]
                                 Union All
                                     SelectedRecord
-                                        Encode sort light
-                                          keys: [ts1]
-                                            Async Group By workers: 1
-                                              keys: [sym,ts1]
-                                              keyFunctions: [timestamp_floor_utc('1m',ts1)]
-                                              values: [first(val),avg(val),last(val),max(val)]
-                                              filter: null
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: x
+                                        Async Stream Group By workers: 1
+                                          segmentKey: timestamp_floor_utc('1m',ts1)
+                                          keys: [sym,ts1]
+                                          keyFunctions: [timestamp_floor_utc('1m',ts1)]
+                                          values: [first(val),avg(val),last(val),max(val)]
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: x
                                     SelectedRecord
-                                        Encode sort light
-                                          keys: [ts1]
-                                            Async Group By workers: 1
-                                              keys: [sym,ts1]
-                                              keyFunctions: [timestamp_floor_utc('1m',ts1)]
-                                              values: [first(val),avg(val),last(val),max(val)]
-                                              filter: null
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: x
+                                        Async Stream Group By workers: 1
+                                          segmentKey: timestamp_floor_utc('1m',ts1)
+                                          keys: [sym,ts1]
+                                          keyFunctions: [timestamp_floor_utc('1m',ts1)]
+                                          values: [first(val),avg(val),last(val),max(val)]
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: x
                             """);
         });
     }
@@ -5877,26 +6778,22 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                             UnionSymbolCast
                               functions: [tstmp,sym::symbol,first,avg,last,max]
                                 Union All
-                                    Encode sort light
-                                      keys: [tstmp]
-                                        Async Group By workers: 1
-                                          keys: [tstmp,sym]
-                                          keyFunctions: [timestamp_floor_utc('1m',ts1)]
-                                          values: [first(val),avg(val),last(val),max(val)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: x
-                                    Encode sort light
-                                      keys: [tstmp]
-                                        Async Group By workers: 1
-                                          keys: [tstmp,sym]
-                                          keyFunctions: [timestamp_floor_utc('1m',ts1)]
-                                          values: [first(val),avg(val),last(val),max(val)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: x
+                                    Async Stream Group By workers: 1
+                                      segmentKey: timestamp_floor_utc('1m',ts1)
+                                      keys: [tstmp,sym]
+                                      keyFunctions: [timestamp_floor_utc('1m',ts1)]
+                                      values: [first(val),avg(val),last(val),max(val)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: x
+                                    Async Stream Group By workers: 1
+                                      segmentKey: timestamp_floor_utc('1m',ts1)
+                                      keys: [tstmp,sym]
+                                      keyFunctions: [timestamp_floor_utc('1m',ts1)]
+                                      values: [first(val),avg(val),last(val),max(val)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: x
                             """);
         });
     }
@@ -5910,17 +6807,15 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     "sample by 1m align to calendar) select * from y ")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort light
-                              keys: [d]
-                                SelectedRecord
-                                    Async Group By workers: 1
-                                      keys: [d,sym]
-                                      keyFunctions: [timestamp_floor_utc('1m',ts1)]
-                                      values: [first(val),avg(val),last(val),max(val)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: x
+                            SelectedRecord
+                                Async Stream Group By workers: 1
+                                  segmentKey: timestamp_floor_utc('1m',ts1)
+                                  keys: [d,sym]
+                                  keyFunctions: [timestamp_floor_utc('1m',ts1)]
+                                  values: [first(val),avg(val),last(val),max(val)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: x
                             """);
         });
     }
@@ -5949,7 +6844,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("Sample By\n" +
                             "  fill: null\n" +
-                            "  range: (timestamp_floor('day',now()),)\n" +
+                            "  range: (timestamp_floor('day',now()),null)\n" +
                             "  values: [count(*)]\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
@@ -5961,6 +6856,1610 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .timestamp("timestamp")
                     .returns("timestamp\tcount\n");
+        });
+    }
+
+    @Test
+    public void testSampleBySubDayDstBucketStartInSkippedHour() throws Exception {
+        // Europe/Berlin moves the clock forward at 2021-03-28T01:00Z and skips the 40m grid points 02:00 and
+        // 02:40 local. The bucket from 02:40 to 03:20 local, 01:00Z to 01:20Z, used to come out at 01:40Z, after
+        // the next bucket at 01:20Z. See SampleByTest.testSampleBySubDayDstBucketStartInSkippedHour().
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE berlin (ts TIMESTAMP_NS, sym SYMBOL, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO berlin VALUES
+                        ('2021-03-28T00:30:00.000000000Z', 'a', 1.0),
+                        ('2021-03-28T00:50:00.000000000Z', 'b', 2.0),
+                        ('2021-03-28T01:10:00.000000000Z', 'a', 3.0),
+                        ('2021-03-28T01:30:00.000000000Z', 'b', 4.0),
+                        ('2021-03-28T02:00:00.000000000Z', 'a', 5.0),
+                        ('2021-03-28T02:30:00.000000000Z', 'b', 6.0),
+                        ('2021-03-28T04:00:00.000000000Z', 'a', 7.0)
+                    """);
+            final String berlinNotKeyed = "SELECT ts, count() c, sum(v) s FROM (SELECT ts, sym, v FROM berlin WHERE v > 0) SAMPLE BY 40m";
+            final String berlin = " ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'";
+            assertSampleByCursorDst(
+                    berlinNotKeyed + berlin,
+                    null,
+                    """
+                            ts\tc\ts
+                            2021-03-28T00:20:00.000000000Z\t2\t3.0
+                            2021-03-28T01:00:00.000000000Z\t1\t3.0
+                            2021-03-28T01:20:00.000000000Z\t1\t4.0
+                            2021-03-28T02:00:00.000000000Z\t2\t11.0
+                            2021-03-28T04:00:00.000000000Z\t1\t7.0
+                            """
+            );
+            assertSampleByCursorDst(
+                    berlinNotKeyed + " FILL(NULL)" + berlin,
+                    "fill: null\n",
+                    """
+                            ts\tc\ts
+                            2021-03-28T00:20:00.000000000Z\t2\t3.0
+                            2021-03-28T01:00:00.000000000Z\t1\t3.0
+                            2021-03-28T01:20:00.000000000Z\t1\t4.0
+                            2021-03-28T02:00:00.000000000Z\t2\t11.0
+                            2021-03-28T02:40:00.000000000Z\tnull\tnull
+                            2021-03-28T03:20:00.000000000Z\tnull\tnull
+                            2021-03-28T04:00:00.000000000Z\t1\t7.0
+                            """
+            );
+            assertSampleByCursorDst(
+                    "SELECT ts, sym, count() c, sum(v) s FROM (SELECT ts, sym, v FROM berlin WHERE v > 0) SAMPLE BY 40m FILL(NULL)" + berlin,
+                    "fill: null\n",
+                    """
+                            ts\tsym\tc\ts
+                            2021-03-28T00:20:00.000000000Z\ta\t1\t1.0
+                            2021-03-28T00:20:00.000000000Z\tb\t1\t2.0
+                            2021-03-28T01:00:00.000000000Z\ta\t1\t3.0
+                            2021-03-28T01:00:00.000000000Z\tb\tnull\tnull
+                            2021-03-28T01:20:00.000000000Z\ta\tnull\tnull
+                            2021-03-28T01:20:00.000000000Z\tb\t1\t4.0
+                            2021-03-28T02:00:00.000000000Z\ta\t1\t5.0
+                            2021-03-28T02:00:00.000000000Z\tb\t1\t6.0
+                            2021-03-28T02:40:00.000000000Z\ta\tnull\tnull
+                            2021-03-28T02:40:00.000000000Z\tb\tnull\tnull
+                            2021-03-28T03:20:00.000000000Z\ta\tnull\tnull
+                            2021-03-28T03:20:00.000000000Z\tb\tnull\tnull
+                            2021-03-28T04:00:00.000000000Z\ta\t1\t7.0
+                            2021-03-28T04:00:00.000000000Z\tb\tnull\tnull
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testSampleBySubDayDstGapBeforeFallBackMultiHour() throws Exception {
+        // GitHub issue #7753 at a fall-back, with a stride that the change of the offset moves off the grid.
+        // America/New_York moves the clock back at 2021-11-07T06:00Z. The 6h bucket at 04:00Z follows a
+        // gap and holds rows on both sides of the change, so crossing the change moves the gap chain back by
+        // an hour, off the 6h grid. The bucket of the row at 20:00Z starts at 17:00Z. Labelled from the
+        // chain, it would come 5h late, at 22:00Z. See SampleByTest.testSampleBySubDayDstGapBeforeFallBackMultiHour().
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP_NS, id LONG, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2021-11-06T16:30:00.000000000Z', 1, 'S0'),
+                        ('2021-11-07T04:30:00.000000000Z', 2, 'S1'),
+                        ('2021-11-07T07:00:00.000000000Z', 3, 'S0'),
+                        ('2021-11-07T20:00:00.000000000Z', 4, 'S1'),
+                        ('2021-11-08T14:00:00.000000000Z', 5, 'S0')
+                    """);
+            // the sub-queries keep the statements on the SAMPLE BY cursor
+            final String notKeyed = "SELECT ts, count() c, min(id) mn FROM (SELECT ts, id, sym FROM t WHERE id > 0) SAMPLE BY 6h";
+            final String timeZone = " ALIGN TO CALENDAR TIME ZONE 'America/New_York'";
+            // The fills at 10:00Z and 16:00Z are off the local 6h grid, which has a single fill at 11:00Z.
+            // They are the cursor path's existing off-grid fills: kludge() moves the gap chain by the offset
+            // delta at the change, in every fill mode. See GitHub issue #7439 for the same defect with a
+            // stride of a day.
+            assertSampleByCursorDst(
+                    notKeyed + " FILL(NULL)" + timeZone,
+                    "fill: null\n",
+                    """
+                            ts\tc\tmn
+                            2021-11-06T16:00:00.000000000Z\t1\t1
+                            2021-11-06T22:00:00.000000000Z\tnull\tnull
+                            2021-11-07T04:00:00.000000000Z\t2\t2
+                            2021-11-07T10:00:00.000000000Z\tnull\tnull
+                            2021-11-07T16:00:00.000000000Z\tnull\tnull
+                            2021-11-07T17:00:00.000000000Z\t1\t4
+                            2021-11-07T23:00:00.000000000Z\tnull\tnull
+                            2021-11-08T05:00:00.000000000Z\tnull\tnull
+                            2021-11-08T11:00:00.000000000Z\t1\t5
+                            """
+            );
+            // the same off-grid fills at 10:00Z and 16:00Z, GitHub issue #7439
+            assertSampleByCursorDst(
+                    notKeyed + " FILL(0, 0)" + timeZone,
+                    "fill: value\n",
+                    """
+                            ts\tc\tmn
+                            2021-11-06T16:00:00.000000000Z\t1\t1
+                            2021-11-06T22:00:00.000000000Z\t0\t0
+                            2021-11-07T04:00:00.000000000Z\t2\t2
+                            2021-11-07T10:00:00.000000000Z\t0\t0
+                            2021-11-07T16:00:00.000000000Z\t0\t0
+                            2021-11-07T17:00:00.000000000Z\t1\t4
+                            2021-11-07T23:00:00.000000000Z\t0\t0
+                            2021-11-08T05:00:00.000000000Z\t0\t0
+                            2021-11-08T11:00:00.000000000Z\t1\t5
+                            """
+            );
+            assertSampleByCursorDst(
+                    notKeyed + timeZone,
+                    null,
+                    """
+                            ts\tc\tmn
+                            2021-11-06T16:00:00.000000000Z\t1\t1
+                            2021-11-07T04:00:00.000000000Z\t2\t2
+                            2021-11-07T17:00:00.000000000Z\t1\t4
+                            2021-11-08T11:00:00.000000000Z\t1\t5
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testSampleBySubDayDstGapBeforeSpringForward() throws Exception {
+        // GitHub issue #7753. Europe/Berlin moves the clock forward at 2021-03-28T01:00Z. The 15-minute
+        // bucket at 00:30Z has no row, and the row at 01:10Z, the first after the change, ends the bucket
+        // after it. The not-keyed FILL(NULL) and FILL(value) cursor used to label the gap and that bucket
+        // with the offset after the change, so the timestamps went back from 00:15Z to 23:30Z. See
+        // SampleByTest.testSampleBySubDayDstGapBeforeSpringForward().
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t AS (
+                        SELECT x id, ('S' || (x % 2))::SYMBOL sym, (100 + (x % 7))::DOUBLE price,
+                               timestamp_sequence_ns('2021-03-28T00:01:00', 23 * 60_000_000_000L) ts
+                        FROM long_sequence(5)
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            // the sub-queries keep the statements on the SAMPLE BY cursor
+            final String notKeyed = "SELECT ts, count() c, min(id) mn FROM (SELECT ts, id, sym, price FROM t WHERE price > 0) SAMPLE BY 15m";
+            final String timeZone = " ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'";
+            assertSampleByCursorDst(
+                    notKeyed + " FILL(NULL)" + timeZone,
+                    "fill: null\n",
+                    """
+                            ts\tc\tmn
+                            2021-03-28T00:00:00.000000000Z\t1\t1
+                            2021-03-28T00:15:00.000000000Z\t1\t2
+                            2021-03-28T00:30:00.000000000Z\tnull\tnull
+                            2021-03-28T00:45:00.000000000Z\t1\t3
+                            2021-03-28T01:00:00.000000000Z\t1\t4
+                            2021-03-28T01:15:00.000000000Z\tnull\tnull
+                            2021-03-28T01:30:00.000000000Z\t1\t5
+                            """
+            );
+            assertSampleByCursorDst(
+                    notKeyed + " FILL(0, 0)" + timeZone,
+                    "fill: value\n",
+                    """
+                            ts\tc\tmn
+                            2021-03-28T00:00:00.000000000Z\t1\t1
+                            2021-03-28T00:15:00.000000000Z\t1\t2
+                            2021-03-28T00:30:00.000000000Z\t0\t0
+                            2021-03-28T00:45:00.000000000Z\t1\t3
+                            2021-03-28T01:00:00.000000000Z\t1\t4
+                            2021-03-28T01:15:00.000000000Z\t0\t0
+                            2021-03-28T01:30:00.000000000Z\t1\t5
+                            """
+            );
+            assertSampleByCursorDst(
+                    "SELECT ts, sym, count() c, min(id) mn FROM (SELECT ts, id, sym, price FROM t WHERE price > 0) SAMPLE BY 15m FILL(NULL)" + timeZone,
+                    "fill: null\n",
+                    """
+                            ts\tsym\tc\tmn
+                            2021-03-28T00:00:00.000000000Z\tS1\t1\t1
+                            2021-03-28T00:00:00.000000000Z\tS0\tnull\tnull
+                            2021-03-28T00:15:00.000000000Z\tS1\tnull\tnull
+                            2021-03-28T00:15:00.000000000Z\tS0\t1\t2
+                            2021-03-28T00:30:00.000000000Z\tS1\tnull\tnull
+                            2021-03-28T00:30:00.000000000Z\tS0\tnull\tnull
+                            2021-03-28T00:45:00.000000000Z\tS1\t1\t3
+                            2021-03-28T00:45:00.000000000Z\tS0\tnull\tnull
+                            2021-03-28T01:00:00.000000000Z\tS1\tnull\tnull
+                            2021-03-28T01:00:00.000000000Z\tS0\t1\t4
+                            2021-03-28T01:15:00.000000000Z\tS1\tnull\tnull
+                            2021-03-28T01:15:00.000000000Z\tS0\tnull\tnull
+                            2021-03-28T01:30:00.000000000Z\tS1\t1\t5
+                            2021-03-28T01:30:00.000000000Z\tS0\tnull\tnull
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testSampleBySubDayFromConvertedToRuntimeConstant() throws Exception {
+        // TIMESTAMP_NS twin of SampleByTest.testSampleBySubDayFromConvertedToRuntimeConstant(). TO is a TIMESTAMP
+        // expression, which the cursor reads in nanoseconds before it converts it to UTC.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP_NS, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2021-01-14T07:15:00.000000000Z', 1.0),
+                        ('2021-01-14T07:45:00.000000000Z', 2.0),
+                        ('2021-01-14T08:15:00.000000000Z', 3.0),
+                        ('2021-01-14T09:45:00.000000000Z', 4.0)
+                    """);
+            // Europe/Berlin falls back from +02:00 to +01:00 at 2021-10-31T01:00Z
+            execute("CREATE TABLE d (ts TIMESTAMP_NS, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO d VALUES
+                        ('2021-10-30T22:15:00.000000000Z', 1.0),
+                        ('2021-10-30T22:45:00.000000000Z', 2.0),
+                        ('2021-10-30T23:15:00.000000000Z', 3.0),
+                        ('2021-10-31T00:45:00.000000000Z', 4.0)
+                    """);
+            setCurrentMicros(MicrosTimestampDriver.floor("2021-01-15"));
+            try {
+                final String berlin = " ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'";
+                final String berlinFrom = " SAMPLE BY 30m FROM '2021-01-14T08:10:00'";
+                final String berlinRows = """
+                        ts\tc\ts
+                        2021-01-14T07:10:00.000000000Z\t1\t1.0
+                        2021-01-14T07:40:00.000000000Z\t1\t2.0
+                        2021-01-14T08:10:00.000000000Z\t1\t3.0
+                        2021-01-14T08:40:00.000000000Z\tnull\tnull
+                        2021-01-14T09:10:00.000000000Z\tnull\tnull
+                        2021-01-14T09:40:00.000000000Z\t1\t4.0
+                        2021-01-14T10:10:00.000000000Z\tnull\tnull
+                        """;
+                // TO, 11:40 in Europe/Berlin, is 10:40Z
+                assertSampleByRuntimeToMatchesGroupBy("t", berlinFrom, "2021-01-14T11:40:00", " FILL(NULL)" + berlin, "fill: null\n", berlinRows);
+                // LIMIT -3 rewinds the cursor before the first read
+                assertSampleByCursorLimit(
+                        "SELECT ts, count() c, sum(v) s FROM (SELECT ts, v FROM t WHERE v > 0)"
+                                + berlinFrom + toOverNow("2021-01-14T11:40:00") + " FILL(NULL)" + berlin,
+                        """
+                                ts\tc\ts
+                                2021-01-14T07:10:00.000000000Z\t1\t1.0
+                                2021-01-14T07:40:00.000000000Z\t1\t2.0
+                                2021-01-14T08:10:00.000000000Z\t1\t3.0
+                                """,
+                        """
+                                ts\tc\ts
+                                2021-01-14T09:10:00.000000000Z\tnull\tnull
+                                2021-01-14T09:40:00.000000000Z\t1\t4.0
+                                2021-01-14T10:10:00.000000000Z\tnull\tnull
+                                """
+                );
+                // TO, 06:40 in America/New_York, is 11:40Z
+                assertSampleByRuntimeToMatchesGroupBy(
+                        "t",
+                        " SAMPLE BY 30m FROM '2021-01-14T01:40:00'",
+                        "2021-01-14T06:40:00",
+                        " FILL(0, 0) ALIGN TO CALENDAR TIME ZONE 'America/New_York'",
+                        "fill: value\n",
+                        """
+                                ts\tc\ts
+                                2021-01-14T06:40:00.000000000Z\t0\t0.0
+                                2021-01-14T07:10:00.000000000Z\t1\t1.0
+                                2021-01-14T07:40:00.000000000Z\t1\t2.0
+                                2021-01-14T08:10:00.000000000Z\t1\t3.0
+                                2021-01-14T08:40:00.000000000Z\t0\t0.0
+                                2021-01-14T09:10:00.000000000Z\t0\t0.0
+                                2021-01-14T09:40:00.000000000Z\t1\t4.0
+                                2021-01-14T10:10:00.000000000Z\t0\t0.0
+                                2021-01-14T10:40:00.000000000Z\t0\t0.0
+                                2021-01-14T11:10:00.000000000Z\t0\t0.0
+                                """
+                );
+                // A numeric offset that is not a multiple of the stride: TO, 16:30 at +05:30, is 11:00Z
+                assertSampleByRuntimeToMatchesGroupBy(
+                        "t",
+                        " SAMPLE BY 1h FROM '2021-01-14T12:30:00'",
+                        "2021-01-14T16:30:00",
+                        " FILL(NULL) ALIGN TO CALENDAR TIME ZONE '+05:30'",
+                        "fill: null\n",
+                        """
+                                ts\tc\ts
+                                2021-01-14T07:00:00.000000000Z\t2\t3.0
+                                2021-01-14T08:00:00.000000000Z\t1\t3.0
+                                2021-01-14T09:00:00.000000000Z\t1\t4.0
+                                2021-01-14T10:00:00.000000000Z\tnull\tnull
+                                """
+                );
+                // FROM, 00:10 in Europe/Berlin before the fall-back, is 22:10Z, and TO, 04:40 after it, is 03:40Z
+                assertSampleByRuntimeToMatchesGroupBy(
+                        "d",
+                        " SAMPLE BY 30m FROM '2021-10-31T00:10:00'",
+                        "2021-10-31T04:40:00",
+                        " FILL(NULL)" + berlin,
+                        "fill: null\n",
+                        """
+                                ts\tc\ts
+                                2021-10-30T22:10:00.000000000Z\t1\t1.0
+                                2021-10-30T22:40:00.000000000Z\t1\t2.0
+                                2021-10-30T23:10:00.000000000Z\t1\t3.0
+                                2021-10-30T23:40:00.000000000Z\tnull\tnull
+                                2021-10-31T00:10:00.000000000Z\tnull\tnull
+                                2021-10-31T00:40:00.000000000Z\t1\t4.0
+                                2021-10-31T01:10:00.000000000Z\tnull\tnull
+                                2021-10-31T01:40:00.000000000Z\tnull\tnull
+                                2021-10-31T02:10:00.000000000Z\tnull\tnull
+                                2021-10-31T02:40:00.000000000Z\tnull\tnull
+                                2021-10-31T03:10:00.000000000Z\tnull\tnull
+                                """
+                );
+                // TO, 01:30 in Europe/Berlin before the fall-back, is 23:30Z: the offset in force at that local time
+                // applies, and not the one in force at 01:30Z, after the fall-back
+                assertSampleByRuntimeToMatchesGroupBy(
+                        "d",
+                        " SAMPLE BY 30m FROM '2021-10-31T00:10:00'",
+                        "2021-10-31T01:30:00",
+                        " FILL(NULL)" + berlin,
+                        "fill: null\n",
+                        """
+                                ts\tc\ts
+                                2021-10-30T22:10:00.000000000Z\t1\t1.0
+                                2021-10-30T22:40:00.000000000Z\t1\t2.0
+                                2021-10-30T23:10:00.000000000Z\t1\t3.0
+                                """
+                );
+                // FILL(LINEAR) keeps the table alone on the cursor, and the rows equal those of the cursor with the
+                // same TO as a constant. The end fill shows the value of the last bucket with rows.
+                final String linearRows = """
+                        ts\tc\ts
+                        2021-01-14T07:10:00.000000000Z\t1\t1.0
+                        2021-01-14T07:40:00.000000000Z\t1\t2.0
+                        2021-01-14T08:10:00.000000000Z\t1\t3.0
+                        2021-01-14T08:40:00.000000000Z\tnull\t3.3333333333333335
+                        2021-01-14T09:10:00.000000000Z\tnull\t3.6666666666666665
+                        2021-01-14T09:40:00.000000000Z\t1\t4.0
+                        2021-01-14T10:10:00.000000000Z\tnull\t4.0
+                        """;
+                for (String to : new String[]{" TO '2021-01-14T11:40:00'", toOverNow("2021-01-14T11:40:00")}) {
+                    assertSampleByCursorFrom(
+                            "SELECT ts, count() c, sum(v) s FROM t" + berlinFrom + to + " FILL(NULL, LINEAR)" + berlin,
+                            "fill: value\n",
+                            linearRows
+                    );
+                }
+                // With FROM also a CASE over now() that reads NULL during code generation, code generation converts
+                // neither bound, and the cursor samples in the time zone, which TO is in. The rows equal those of the
+                // GROUP BY path above.
+                assertSampleByCursorFrom(
+                        "SELECT ts, count() c, sum(v) s FROM (SELECT ts, v FROM t WHERE v > 0)"
+                                + " SAMPLE BY 30m FROM CASE WHEN now() > '1971-01-01' THEN '2021-01-14T08:10:00'::timestamp END"
+                                + toOverNow("2021-01-14T11:40:00") + " FILL(NULL)" + berlin,
+                        "fill: null\n",
+                        berlinRows
+                );
+            } finally {
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
+    public void testSampleBySubDayFromDstSpringForwardWestOfUtc() throws Exception {
+        // TIMESTAMP_NS twin of SampleByTest.testSampleBySubDayFromDstSpringForwardWestOfUtc()
+        assertMemoryLeak(() -> {
+            execute(NEW_YORK_SPRING_FORWARD_DDL);
+            execute(NEW_YORK_SPRING_FORWARD_ROWS);
+            final String from30m = " SAMPLE BY 30m FROM '2021-03-13T21:10:00'";
+            final String from40m = " SAMPLE BY 40m FROM '2021-03-13T21:20:00'";
+            final String newYork = " ALIGN TO CALENDAR TIME ZONE 'America/New_York'";
+            assertSampleByCursorMatchesGroupBy(
+                    "ny",
+                    from30m + newYork,
+                    null,
+                    """
+                            ts\tc\ts
+                            2021-03-14T06:40:00.000000000Z\t3\t7.0
+                            2021-03-14T07:40:00.000000000Z\t1\t8.0
+                            2021-03-14T08:10:00.000000000Z\t1\t16.0
+                            """
+            );
+            // the calendar grid reads a NULL offset as zero, and FROM keeps anchoring it
+            assertSampleByCursorMatchesGroupBy(
+                    "ny",
+                    from30m + newYork + " WITH OFFSET NULL",
+                    null,
+                    """
+                            ts\tc\ts
+                            2021-03-14T06:40:00.000000000Z\t3\t7.0
+                            2021-03-14T07:40:00.000000000Z\t1\t8.0
+                            2021-03-14T08:10:00.000000000Z\t1\t16.0
+                            """
+            );
+            assertSampleByCursorMatchesGroupBy(
+                    "ny",
+                    from30m + " FILL(NULL)" + newYork,
+                    "fill: null\n",
+                    """
+                            ts\tc\ts
+                            2021-03-14T02:10:00.000000000Z\tnull\tnull
+                            2021-03-14T02:40:00.000000000Z\tnull\tnull
+                            2021-03-14T03:10:00.000000000Z\tnull\tnull
+                            2021-03-14T03:40:00.000000000Z\tnull\tnull
+                            2021-03-14T04:10:00.000000000Z\tnull\tnull
+                            2021-03-14T04:40:00.000000000Z\tnull\tnull
+                            2021-03-14T05:10:00.000000000Z\tnull\tnull
+                            2021-03-14T05:40:00.000000000Z\tnull\tnull
+                            2021-03-14T06:10:00.000000000Z\tnull\tnull
+                            2021-03-14T06:40:00.000000000Z\t3\t7.0
+                            2021-03-14T07:10:00.000000000Z\tnull\tnull
+                            2021-03-14T07:40:00.000000000Z\t1\t8.0
+                            2021-03-14T08:10:00.000000000Z\t1\t16.0
+                            """
+            );
+            assertSampleByCursorMatchesGroupBy(
+                    "ny",
+                    from30m + " FILL(PREV)" + newYork,
+                    "fill: prev\n",
+                    """
+                            ts\tc\ts
+                            2021-03-14T02:10:00.000000000Z\tnull\tnull
+                            2021-03-14T02:40:00.000000000Z\tnull\tnull
+                            2021-03-14T03:10:00.000000000Z\tnull\tnull
+                            2021-03-14T03:40:00.000000000Z\tnull\tnull
+                            2021-03-14T04:10:00.000000000Z\tnull\tnull
+                            2021-03-14T04:40:00.000000000Z\tnull\tnull
+                            2021-03-14T05:10:00.000000000Z\tnull\tnull
+                            2021-03-14T05:40:00.000000000Z\tnull\tnull
+                            2021-03-14T06:10:00.000000000Z\tnull\tnull
+                            2021-03-14T06:40:00.000000000Z\t3\t7.0
+                            2021-03-14T07:10:00.000000000Z\t3\t7.0
+                            2021-03-14T07:40:00.000000000Z\t1\t8.0
+                            2021-03-14T08:10:00.000000000Z\t1\t16.0
+                            """
+            );
+            assertSampleByCursorMatchesGroupBy(
+                    "ny",
+                    from30m + " FILL(0, 0)" + newYork,
+                    "fill: value\n",
+                    """
+                            ts\tc\ts
+                            2021-03-14T02:10:00.000000000Z\t0\t0.0
+                            2021-03-14T02:40:00.000000000Z\t0\t0.0
+                            2021-03-14T03:10:00.000000000Z\t0\t0.0
+                            2021-03-14T03:40:00.000000000Z\t0\t0.0
+                            2021-03-14T04:10:00.000000000Z\t0\t0.0
+                            2021-03-14T04:40:00.000000000Z\t0\t0.0
+                            2021-03-14T05:10:00.000000000Z\t0\t0.0
+                            2021-03-14T05:40:00.000000000Z\t0\t0.0
+                            2021-03-14T06:10:00.000000000Z\t0\t0.0
+                            2021-03-14T06:40:00.000000000Z\t3\t7.0
+                            2021-03-14T07:10:00.000000000Z\t0\t0.0
+                            2021-03-14T07:40:00.000000000Z\t1\t8.0
+                            2021-03-14T08:10:00.000000000Z\t1\t16.0
+                            """
+            );
+            assertSampleByCursorMatchesGroupBy(
+                    "ny",
+                    from40m + newYork,
+                    null,
+                    """
+                            ts\tc\ts
+                            2021-03-14T06:20:00.000000000Z\t1\t1.0
+                            2021-03-14T07:00:00.000000000Z\t2\t6.0
+                            2021-03-14T07:40:00.000000000Z\t1\t8.0
+                            2021-03-14T08:20:00.000000000Z\t1\t16.0
+                            """
+            );
+            // no bucket of the 40m grid between the first and the last row is empty, so FILL(PREV) fills only the
+            // buckets before the first row, as FILL(NULL) does
+            final String fill40mNull = """
+                    ts\tc\ts
+                    2021-03-14T02:20:00.000000000Z\tnull\tnull
+                    2021-03-14T03:00:00.000000000Z\tnull\tnull
+                    2021-03-14T03:40:00.000000000Z\tnull\tnull
+                    2021-03-14T04:20:00.000000000Z\tnull\tnull
+                    2021-03-14T05:00:00.000000000Z\tnull\tnull
+                    2021-03-14T05:40:00.000000000Z\tnull\tnull
+                    2021-03-14T06:20:00.000000000Z\t1\t1.0
+                    2021-03-14T07:00:00.000000000Z\t2\t6.0
+                    2021-03-14T07:40:00.000000000Z\t1\t8.0
+                    2021-03-14T08:20:00.000000000Z\t1\t16.0
+                    """;
+            assertSampleByCursorMatchesGroupBy("ny", from40m + " FILL(NULL)" + newYork, "fill: null\n", fill40mNull);
+            assertSampleByCursorMatchesGroupBy("ny", from40m + " FILL(PREV)" + newYork, "fill: prev\n", fill40mNull);
+            assertSampleByCursorMatchesGroupBy(
+                    "ny",
+                    from40m + " FILL(0, 0)" + newYork,
+                    "fill: value\n",
+                    """
+                            ts\tc\ts
+                            2021-03-14T02:20:00.000000000Z\t0\t0.0
+                            2021-03-14T03:00:00.000000000Z\t0\t0.0
+                            2021-03-14T03:40:00.000000000Z\t0\t0.0
+                            2021-03-14T04:20:00.000000000Z\t0\t0.0
+                            2021-03-14T05:00:00.000000000Z\t0\t0.0
+                            2021-03-14T05:40:00.000000000Z\t0\t0.0
+                            2021-03-14T06:20:00.000000000Z\t1\t1.0
+                            2021-03-14T07:00:00.000000000Z\t2\t6.0
+                            2021-03-14T07:40:00.000000000Z\t1\t8.0
+                            2021-03-14T08:20:00.000000000Z\t1\t16.0
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testSampleBySubDayFromDstSpringForwardWestOfUtcLimit() throws Exception {
+        // TIMESTAMP_NS twin of SampleByTest.testSampleBySubDayFromDstSpringForwardWestOfUtcLimit()
+        assertMemoryLeak(() -> {
+            execute(NEW_YORK_SPRING_FORWARD_DDL);
+            execute(NEW_YORK_SPRING_FORWARD_ROWS);
+            final String select = "SELECT ts, count() c, sum(v) s FROM (SELECT ts, v FROM ny WHERE v > 0) SAMPLE BY 30m FROM '2021-03-13T21:10:00'";
+            final String newYork = " ALIGN TO CALENDAR TIME ZONE 'America/New_York'";
+            final String noFillRows = """
+                    ts\tc\ts
+                    2021-03-14T06:40:00.000000000Z\t3\t7.0
+                    2021-03-14T07:40:00.000000000Z\t1\t8.0
+                    2021-03-14T08:10:00.000000000Z\t1\t16.0
+                    """;
+            assertSampleByCursorLimit(select + newYork, noFillRows, noFillRows);
+            final String fillNull = select + " TO '2021-03-14T05:00:00' FILL(NULL)" + newYork;
+            assertSampleByCursorLimit(
+                    fillNull,
+                    """
+                            ts\tc\ts
+                            2021-03-14T02:10:00.000000000Z\tnull\tnull
+                            2021-03-14T02:40:00.000000000Z\tnull\tnull
+                            2021-03-14T03:10:00.000000000Z\tnull\tnull
+                            """,
+                    """
+                            ts\tc\ts
+                            2021-03-14T07:40:00.000000000Z\t1\t8.0
+                            2021-03-14T08:10:00.000000000Z\t1\t16.0
+                            2021-03-14T08:40:00.000000000Z\tnull\tnull
+                            """
+            );
+            assertQuery(fillNull + " LIMIT 9, 12")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("Sample By\n", "fill: null\n")
+                    .returns("""
+                            ts\tc\ts
+                            2021-03-14T06:40:00.000000000Z\t3\t7.0
+                            2021-03-14T07:10:00.000000000Z\tnull\tnull
+                            2021-03-14T07:40:00.000000000Z\t1\t8.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testSampleBySubDayFromDstSpringForwardWestOfUtcOrderByAndCtas() throws Exception {
+        // TIMESTAMP_NS twin of SampleByTest.testSampleBySubDayFromDstSpringForwardWestOfUtcOrderByAndCtas()
+        assertMemoryLeak(() -> {
+            execute(NEW_YORK_SPRING_FORWARD_DDL);
+            execute(NEW_YORK_SPRING_FORWARD_ROWS);
+            final String select = "SELECT ts, count() c, sum(v) s FROM (SELECT ts, v FROM ny WHERE v > 0) SAMPLE BY 30m FROM '2021-03-13T21:10:00'";
+            final String newYork = " ALIGN TO CALENDAR TIME ZONE 'America/New_York'";
+            final String noFillRows = """
+                    ts\tc\ts
+                    2021-03-14T06:40:00.000000000Z\t3\t7.0
+                    2021-03-14T07:40:00.000000000Z\t1\t8.0
+                    2021-03-14T08:10:00.000000000Z\t1\t16.0
+                    """;
+            assertQuery("SELECT * FROM (" + select + newYork + ") ORDER BY ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("Sample By\n")
+                    .returns(noFillRows);
+
+            execute("CREATE TABLE ny_no_fill AS (" + select + newYork + ") TIMESTAMP(ts)");
+            assertQuery("SELECT * FROM ny_no_fill")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns(noFillRows);
+
+            execute("CREATE TABLE ny_fill_null AS (" + select + " FILL(NULL)" + newYork + ") TIMESTAMP(ts)");
+            assertQuery("SELECT * FROM ny_fill_null")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tc\ts
+                            2021-03-14T02:10:00.000000000Z\tnull\tnull
+                            2021-03-14T02:40:00.000000000Z\tnull\tnull
+                            2021-03-14T03:10:00.000000000Z\tnull\tnull
+                            2021-03-14T03:40:00.000000000Z\tnull\tnull
+                            2021-03-14T04:10:00.000000000Z\tnull\tnull
+                            2021-03-14T04:40:00.000000000Z\tnull\tnull
+                            2021-03-14T05:10:00.000000000Z\tnull\tnull
+                            2021-03-14T05:40:00.000000000Z\tnull\tnull
+                            2021-03-14T06:10:00.000000000Z\tnull\tnull
+                            2021-03-14T06:40:00.000000000Z\t3\t7.0
+                            2021-03-14T07:10:00.000000000Z\tnull\tnull
+                            2021-03-14T07:40:00.000000000Z\t1\t8.0
+                            2021-03-14T08:10:00.000000000Z\t1\t16.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testSampleBySubDayFromRuntimeConstantEarlierAtExecution() throws Exception {
+        // For a stride shorter than a day, code generation converts FROM from the time zone to UTC, and it replaces a
+        // FROM that reads non-NULL with the value that it reads before execution initializes it. The WHERE clause that
+        // bounds the rows reads FROM at execution. A FROM that is not a constant can read a later instant during code
+        // generation: now() reads 0 then, so overNow below reads '02:00', and current_user() reads NULL, so overUser
+        // reads '02:00' as well. At execution, both read '01:00', which is 00:00Z in Europe/Berlin, and the rows from
+        // 00:00Z on reach the cursor. On the UTC grid of the conversion, which starts at 01:00Z, the cursor would put
+        // the rows before 01:00Z into the first bucket: the bucket at 01:00Z would take the rows at 00:10Z and 01:10Z.
+        // The cursor samples on that grid only when code generation converted a FROM that is a constant. For any other
+        // FROM, it samples in the time zone, as it did before it sampled on that grid. For the statements below, that
+        // returns the rows of the GROUP BY path with FROM as the constant that the execution reads.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP_NS, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2024-01-10T00:10:00.000000000Z', 1.0),
+                        ('2024-01-10T01:10:00.000000000Z', 2.0),
+                        ('2024-01-10T02:10:00.000000000Z', 4.0),
+                        ('2024-01-10T04:10:00.000000000Z', 16.0),
+                        ('2024-01-10T05:10:00.000000000Z', 32.0),
+                        ('2024-01-10T07:10:00.000000000Z', 128.0)
+                    """);
+            final String to = " TO '2024-01-10T10:00'";
+            final String zone = " ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'";
+            final String expected = """
+                    ts\tc\ts
+                    2024-01-10T00:00:00.000000000Z\t1\t1.0
+                    2024-01-10T01:00:00.000000000Z\t1\t2.0
+                    2024-01-10T02:00:00.000000000Z\t1\t4.0
+                    2024-01-10T04:00:00.000000000Z\t1\t16.0
+                    2024-01-10T05:00:00.000000000Z\t1\t32.0
+                    2024-01-10T07:00:00.000000000Z\t1\t128.0
+                    """;
+            final String expectedNull = """
+                    ts\tc\ts
+                    2024-01-10T00:00:00.000000000Z\t1\t1.0
+                    2024-01-10T01:00:00.000000000Z\t1\t2.0
+                    2024-01-10T02:00:00.000000000Z\t1\t4.0
+                    2024-01-10T03:00:00.000000000Z\tnull\tnull
+                    2024-01-10T04:00:00.000000000Z\t1\t16.0
+                    2024-01-10T05:00:00.000000000Z\t1\t32.0
+                    2024-01-10T06:00:00.000000000Z\tnull\tnull
+                    2024-01-10T07:00:00.000000000Z\t1\t128.0
+                    """;
+            final String expectedPrev = """
+                    ts\tc\ts
+                    2024-01-10T00:00:00.000000000Z\t1\t1.0
+                    2024-01-10T01:00:00.000000000Z\t1\t2.0
+                    2024-01-10T02:00:00.000000000Z\t1\t4.0
+                    2024-01-10T03:00:00.000000000Z\t1\t4.0
+                    2024-01-10T04:00:00.000000000Z\t1\t16.0
+                    2024-01-10T05:00:00.000000000Z\t1\t32.0
+                    2024-01-10T06:00:00.000000000Z\t1\t32.0
+                    2024-01-10T07:00:00.000000000Z\t1\t128.0
+                    """;
+            final String expectedValue = """
+                    ts\tc\ts
+                    2024-01-10T00:00:00.000000000Z\t1\t1.0
+                    2024-01-10T01:00:00.000000000Z\t1\t2.0
+                    2024-01-10T02:00:00.000000000Z\t1\t4.0
+                    2024-01-10T03:00:00.000000000Z\t0\t0.0
+                    2024-01-10T04:00:00.000000000Z\t1\t16.0
+                    2024-01-10T05:00:00.000000000Z\t1\t32.0
+                    2024-01-10T06:00:00.000000000Z\t0\t0.0
+                    2024-01-10T07:00:00.000000000Z\t1\t128.0
+                    """;
+            final String groupBy = "SELECT ts, count() c, sum(v) s FROM t SAMPLE BY 1h FROM '2024-01-10T01:00'";
+            assertQuery(groupBy + to + zone)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .withPlanNotContaining("Sample By\n")
+                    .returns(expected);
+            assertQuery(groupBy + " FILL(NULL)" + zone)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .withPlanNotContaining("Sample By\n")
+                    .returns(expectedNull);
+            assertQuery(groupBy + " FILL(PREV)" + zone)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .withPlanNotContaining("Sample By\n")
+                    .returns(expectedPrev);
+            assertQuery(groupBy + " FILL(0, 0)" + zone)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .withPlanNotContaining("Sample By\n")
+                    .returns(expectedValue);
+            setCurrentMicros(MicrosTimestampDriver.floor("2024-01-15"));
+            try {
+                // FROM that is not a constant keeps the table alone on the cursor
+                final String sampleBy = "SELECT ts, count() c, sum(v) s FROM t SAMPLE BY 1h FROM ";
+                final String overNow = "CASE WHEN now() < '2024-01-01' THEN '2024-01-10T02:00' ELSE '2024-01-10T01:00' END";
+                final String overUser = "CASE WHEN current_user() = 'admin' THEN '2024-01-10T01:00' ELSE '2024-01-10T02:00' END";
+                assertSampleByCursorFrom(sampleBy + overNow + to + zone, "fill: none\n", expected);
+                assertSampleByCursorFrom(sampleBy + overUser + to + zone, "fill: none\n", expected);
+                assertSampleByCursorFrom("DECLARE @from := " + overNow + ' ' + sampleBy + "@from" + to + zone, "fill: none\n", expected);
+                // over 15m, the first bucket took the rows of five strides, from 00:00Z to 01:15Z
+                assertSampleByCursorFrom(
+                        "SELECT ts, count() c, sum(v) s FROM t SAMPLE BY 15m FROM " + overUser + to + zone,
+                        "fill: none\n",
+                        expected
+                );
+                // LIMIT -3 rewinds the cursor before the first read
+                assertSampleByCursorLimit(
+                        sampleBy + overNow + to + zone,
+                        """
+                                ts\tc\ts
+                                2024-01-10T00:00:00.000000000Z\t1\t1.0
+                                2024-01-10T01:00:00.000000000Z\t1\t2.0
+                                2024-01-10T02:00:00.000000000Z\t1\t4.0
+                                """,
+                        """
+                                ts\tc\ts
+                                2024-01-10T04:00:00.000000000Z\t1\t16.0
+                                2024-01-10T05:00:00.000000000Z\t1\t32.0
+                                2024-01-10T07:00:00.000000000Z\t1\t128.0
+                                """
+                );
+                assertSampleByCursorFrom(sampleBy + overNow + " FILL(NULL)" + zone, "fill: null\n", expectedNull);
+                assertSampleByCursorFrom(sampleBy + overNow + " FILL(PREV)" + zone, "fill: prev\n", expectedPrev);
+                assertSampleByCursorFrom(sampleBy + overUser + " FILL(0, 0)" + zone, "fill: value\n", expectedValue);
+            } finally {
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
+    public void testSampleBySubDayFromRuntimeConstantInDstGap() throws Exception {
+        // TIMESTAMP_NS twin of SampleByTest#testSampleBySubDayFromRuntimeConstantInDstGap
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE be_sp (ts TIMESTAMP_NS, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            // rows 13 minutes apart, from 2021-03-27T17:00Z to 2021-03-28T08:49Z
+            execute("""
+                    INSERT INTO be_sp
+                    SELECT dateadd('m', 13 * (x::int - 1), '2021-03-27T17:00:00.000000000Z'::timestamp_ns), x::double
+                    FROM long_sequence(74)
+                    """);
+            final String zone = " ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'";
+            final String to = " TO '2021-03-28T08:00:00'";
+            final String expectedTo = """
+                    ts\ts\tn
+                    2021-03-28T01:30:00.000000000Z\t83.0\t2
+                    2021-03-28T02:00:00.000000000Z\t87.0\t2
+                    2021-03-28T02:30:00.000000000Z\t138.0\t3
+                    2021-03-28T03:00:00.000000000Z\t97.0\t2
+                    2021-03-28T03:30:00.000000000Z\t101.0\t2
+                    2021-03-28T04:00:00.000000000Z\t159.0\t3
+                    2021-03-28T04:30:00.000000000Z\t111.0\t2
+                    2021-03-28T05:00:00.000000000Z\t115.0\t2
+                    2021-03-28T05:30:00.000000000Z\t119.0\t2
+                    """;
+            final String expectedNoTo = """
+                    ts\ts\tn
+                    2021-03-28T01:30:00.000000000Z\t83.0\t2
+                    2021-03-28T02:00:00.000000000Z\t87.0\t2
+                    2021-03-28T02:30:00.000000000Z\t138.0\t3
+                    2021-03-28T03:00:00.000000000Z\t97.0\t2
+                    2021-03-28T03:30:00.000000000Z\t101.0\t2
+                    2021-03-28T04:00:00.000000000Z\t159.0\t3
+                    2021-03-28T04:30:00.000000000Z\t111.0\t2
+                    2021-03-28T05:00:00.000000000Z\t115.0\t2
+                    2021-03-28T05:30:00.000000000Z\t119.0\t2
+                    2021-03-28T06:00:00.000000000Z\t186.0\t3
+                    2021-03-28T06:30:00.000000000Z\t129.0\t2
+                    2021-03-28T07:00:00.000000000Z\t133.0\t2
+                    2021-03-28T07:30:00.000000000Z\t207.0\t3
+                    2021-03-28T08:00:00.000000000Z\t143.0\t2
+                    2021-03-28T08:30:00.000000000Z\t147.0\t2
+                    """;
+            assertQuery("SELECT ts, sum(v) s, count() n FROM be_sp SAMPLE BY 30m FROM '2021-03-28T02:30:00'" + to + " FILL(NULL)" + zone)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .withPlanContaining("Sample By Fill\n")
+                    .returns(expectedTo);
+            assertQuery("SELECT ts, sum(v) s, count() n FROM be_sp SAMPLE BY 30m FROM '2021-03-28T02:30:00' FILL(NULL)" + zone)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .withPlanContaining("Sample By Fill\n")
+                    .returns(expectedNoTo);
+            setCurrentMicros(MicrosTimestampDriver.floor("2021-03-29"));
+            try {
+                final String from = " SAMPLE BY 30m FROM CASE WHEN now() > '1971-01-01' THEN '2021-03-28T02:30:00'::timestamp_ns END";
+                // FROM that is not a constant keeps the table alone on the cursor as well
+                for (String source : new String[]{"be_sp", "(SELECT ts, v FROM be_sp WHERE v > 0)"}) {
+                    final String select = "SELECT ts, sum(v) s, count() n FROM " + source + from;
+                    assertSampleByCursorFrom(select + to + " FILL(NULL)" + zone, "fill: null\n", expectedTo);
+                    assertSampleByCursorFrom(select + " FILL(NULL)" + zone, "fill: null\n", expectedNoTo);
+                    assertSampleByCursorFrom(select + " FILL(PREV)" + zone, "fill: prev\n", expectedNoTo);
+                }
+            } finally {
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
+    public void testSampleBySubDayFromTimeZoneRuntimeConstant() throws Exception {
+        // For a stride shorter than a day, code generation converts FROM and TO from the time zone to UTC with the
+        // zone that it reads before execution initializes the time zone. A time zone that is not a constant can read
+        // another zone then: now() reads 0 and current_user() reads NULL, so overNow and the CASE over current_user()
+        // below read 'UTC' during code generation, which leaves FROM and TO as they are, and 'Asia/Kolkata' at
+        // execution. The cursor samples on the UTC grid of that conversion only when the execution reads the zone
+        // that code generation converted FROM with. Otherwise, it samples in the zone of the execution, as it did
+        // before it sampled on that grid. For the statements below, without FILL, that returns the rows of the GROUP
+        // BY path with the zone as a constant.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP_NS, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2021-03-13T18:00:00.000000000Z', 100.0),
+                        ('2021-03-13T19:40:00.000000000Z', 1.0),
+                        ('2021-03-13T20:50:00.000000000Z', 2.0),
+                        ('2021-03-14T00:10:00.000000000Z', 3.0),
+                        ('2021-03-14T02:45:00.000000000Z', 4.0),
+                        ('2021-03-14T05:20:00.000000000Z', 5.0),
+                        ('2021-03-14T07:00:00.000000000Z', 200.0)
+                    """);
+            // FROM, 00:00 in Asia/Kolkata, is 2021-03-13T18:30Z, and TO, 12:00, is 2021-03-14T06:30Z
+            final String fromTo = " SAMPLE BY 1h FROM '2021-03-14T00:00' TO '2021-03-14T12:00'";
+            final String noneZone = " FILL(NONE) ALIGN TO CALENDAR TIME ZONE ";
+            final String expected = """
+                    ts\tc\ts
+                    2021-03-13T19:30:00.000000000Z\t1\t1.0
+                    2021-03-13T20:30:00.000000000Z\t1\t2.0
+                    2021-03-13T23:30:00.000000000Z\t1\t3.0
+                    2021-03-14T02:30:00.000000000Z\t1\t4.0
+                    2021-03-14T04:30:00.000000000Z\t1\t5.0
+                    """;
+            assertSampleByCursorMatchesGroupBy("t", fromTo + noneZone + "'Asia/Kolkata'", "fill: none\n", expected);
+            final String nullZone = " FILL(NULL) ALIGN TO CALENDAR TIME ZONE ";
+            final String expectedNull = """
+                    ts\tc\ts
+                    2021-03-13T18:30:00.000000000Z\tnull\tnull
+                    2021-03-13T19:30:00.000000000Z\t1\t1.0
+                    2021-03-13T20:30:00.000000000Z\t1\t2.0
+                    2021-03-13T21:30:00.000000000Z\tnull\tnull
+                    2021-03-13T22:30:00.000000000Z\tnull\tnull
+                    2021-03-13T23:30:00.000000000Z\t1\t3.0
+                    2021-03-14T00:30:00.000000000Z\tnull\tnull
+                    2021-03-14T01:30:00.000000000Z\tnull\tnull
+                    2021-03-14T02:30:00.000000000Z\t1\t4.0
+                    2021-03-14T03:30:00.000000000Z\tnull\tnull
+                    2021-03-14T04:30:00.000000000Z\t1\t5.0
+                    2021-03-14T05:30:00.000000000Z\tnull\tnull
+                    """;
+            assertSampleByCursorMatchesGroupBy("t", fromTo + nullZone + "'Asia/Kolkata'", "fill: null\n", expectedNull);
+            setCurrentMicros(MicrosTimestampDriver.floor("2021-03-15"));
+            try {
+                final String filtered = "SELECT ts, count() c, sum(v) s FROM (SELECT ts, v FROM t WHERE v > 0)";
+                final String overNow = "CASE WHEN now() > '1971-01-01' THEN 'Asia/Kolkata' ELSE 'UTC' END";
+                assertSampleByCursorFrom(filtered + fromTo + noneZone + overNow, "fill: none\n", expected);
+                assertSampleByCursorFrom(
+                        filtered + fromTo + noneZone + "CASE WHEN current_user() = 'admin' THEN 'Asia/Kolkata' ELSE 'UTC' END",
+                        "fill: none\n",
+                        expected
+                );
+                assertSampleByCursorFrom("DECLARE @tz := " + overNow + ' ' + filtered + fromTo + noneZone + "@tz", "fill: none\n", expected);
+                // FROM that is not a constant keeps the table alone on the cursor
+                assertSampleByCursorFrom(
+                        "SELECT ts, count() c, sum(v) s FROM t SAMPLE BY 1h FROM dateadd('h', 0, '2021-03-14T00:00'::timestamp)"
+                                + " TO '2021-03-14T12:00'" + noneZone + overNow,
+                        "fill: none\n",
+                        expected
+                );
+                // LIMIT -3 rewinds the cursor before the first read
+                assertSampleByCursorLimit(
+                        filtered + fromTo + noneZone + overNow,
+                        """
+                                ts\tc\ts
+                                2021-03-13T19:30:00.000000000Z\t1\t1.0
+                                2021-03-13T20:30:00.000000000Z\t1\t2.0
+                                2021-03-13T23:30:00.000000000Z\t1\t3.0
+                                """,
+                        """
+                                ts\tc\ts
+                                2021-03-13T23:30:00.000000000Z\t1\t3.0
+                                2021-03-14T02:30:00.000000000Z\t1\t4.0
+                                2021-03-14T04:30:00.000000000Z\t1\t5.0
+                                """
+                );
+                // Code generation left FROM as it is, and the cursor anchors the grid of the execution there, in
+                // Asia/Kolkata. It starts the fill at the bucket that holds FROM plus the offset of the execution, 05:30,
+                // as it did before it sampled on the UTC grid. The buckets before that one come out from the first row
+                // on, with the fill between them: over 1h, FILL(NULL) leaves out the empty bucket at FROM that
+                // expectedNull starts with, and it ends without the end fill, because the last bucket with rows follows
+                // a gap. No statement below asserts those rows.
+                // Over 90m, the first row falls in the bucket at FROM, and the rows equal those of the GROUP BY path:
+                // with TO as a constant, without TO, and with TO as an expression over now(), which the cursor reads
+                // in the zone of the execution.
+                final String expectedNull90 = """
+                        ts\tc\ts
+                        2021-03-13T18:30:00.000000000Z\t1\t1.0
+                        2021-03-13T20:00:00.000000000Z\t1\t2.0
+                        2021-03-13T21:30:00.000000000Z\tnull\tnull
+                        2021-03-13T23:00:00.000000000Z\t1\t3.0
+                        2021-03-14T00:30:00.000000000Z\tnull\tnull
+                        2021-03-14T02:00:00.000000000Z\t1\t4.0
+                        2021-03-14T03:30:00.000000000Z\tnull\tnull
+                        2021-03-14T05:00:00.000000000Z\t1\t5.0
+                        """;
+                final String from90 = " SAMPLE BY 90m FROM '2021-03-14T00:00'";
+                assertSampleByCursorMatchesGroupBy("t", from90 + " TO '2021-03-14T12:00'" + nullZone + "'Asia/Kolkata'", "fill: null\n", expectedNull90);
+                assertSampleByCursorFrom(filtered + from90 + " TO '2021-03-14T12:00'" + nullZone + overNow, "fill: null\n", expectedNull90);
+                // without TO, the row at 12:30 in Asia/Kolkata gets a bucket as well
+                final String expectedNull90NoTo = expectedNull90 + "2021-03-14T06:30:00.000000000Z\t1\t200.0\n";
+                assertSampleByCursorMatchesGroupBy("t", from90 + nullZone + "'Asia/Kolkata'", "fill: null\n", expectedNull90NoTo);
+                assertSampleByCursorFrom(filtered + from90 + nullZone + overNow, "fill: null\n", expectedNull90NoTo);
+                // TO, 15:00 in Asia/Kolkata, ends the fill after the bucket at 13:30
+                final String expectedNull90To = expectedNull90NoTo + "2021-03-14T08:00:00.000000000Z\tnull\tnull\n";
+                assertSampleByCursorMatchesGroupBy("t", from90 + " TO '2021-03-14T15:00'" + nullZone + "'Asia/Kolkata'", "fill: null\n", expectedNull90To);
+                assertSampleByCursorFrom(filtered + from90 + toOverNow("2021-03-14T15:00") + nullZone + overNow, "fill: null\n", expectedNull90To);
+                // current_user() reads NULL during code generation, so this CASE reads 'Asia/Kolkata' then as well as
+                // at execution. The cursor keeps the UTC grid of the conversion, and its rows equal those of the GROUP
+                // BY path for FILL(NULL) too.
+                final String sameZone = "CASE WHEN current_user() = 'nobody' THEN 'UTC' ELSE 'Asia/Kolkata' END";
+                assertSampleByCursorFrom(filtered + fromTo + noneZone + sameZone, "fill: none\n", expected);
+                assertSampleByCursorFrom(filtered + fromTo + nullZone + sameZone, "fill: null\n", expectedNull);
+            } finally {
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
+    public void testSampleBySubDayFromTimeZoneWithOffset() throws Exception {
+        // TIMESTAMP_NS twin of SampleByTest.testSampleBySubDayFromTimeZoneWithOffset()
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP_NS, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2021-01-14T03:10:00.000000000Z', 1.0),
+                        ('2021-01-14T03:50:00.000000000Z', 2.0),
+                        ('2021-01-14T05:20:00.000000000Z', 4.0)
+                    """);
+            final String from = " SAMPLE BY 1h FROM '2021-01-14T06:00:00'";
+            // TO, 2021-01-14T12:00 in Asia/Kolkata, converts to 06:30Z, inside the bucket from 06:00Z
+            final String fromTo = from + " TO '2021-01-14T12:00:00'";
+            final String kolkata = " ALIGN TO CALENDAR TIME ZONE 'Asia/Kolkata' WITH OFFSET '00:30'";
+            assertSampleByCursorMatchesGroupBy(
+                    "t",
+                    from + kolkata,
+                    null,
+                    """
+                            ts\tc\ts
+                            2021-01-14T03:00:00.000000000Z\t2\t3.0
+                            2021-01-14T05:00:00.000000000Z\t1\t4.0
+                            """
+            );
+            assertSampleByCursorMatchesGroupBy(
+                    "t",
+                    fromTo + " FILL(NULL)" + kolkata,
+                    "fill: null\n",
+                    """
+                            ts\tc\ts
+                            2021-01-14T01:00:00.000000000Z\tnull\tnull
+                            2021-01-14T02:00:00.000000000Z\tnull\tnull
+                            2021-01-14T03:00:00.000000000Z\t2\t3.0
+                            2021-01-14T04:00:00.000000000Z\tnull\tnull
+                            2021-01-14T05:00:00.000000000Z\t1\t4.0
+                            2021-01-14T06:00:00.000000000Z\tnull\tnull
+                            """
+            );
+            assertSampleByCursorMatchesGroupBy(
+                    "t",
+                    from + " FILL(PREV)" + kolkata,
+                    "fill: prev\n",
+                    """
+                            ts\tc\ts
+                            2021-01-14T01:00:00.000000000Z\tnull\tnull
+                            2021-01-14T02:00:00.000000000Z\tnull\tnull
+                            2021-01-14T03:00:00.000000000Z\t2\t3.0
+                            2021-01-14T04:00:00.000000000Z\t2\t3.0
+                            2021-01-14T05:00:00.000000000Z\t1\t4.0
+                            """
+            );
+            assertSampleByCursorMatchesGroupBy(
+                    "t",
+                    fromTo + " FILL(0, 0)" + kolkata,
+                    "fill: value\n",
+                    """
+                            ts\tc\ts
+                            2021-01-14T01:00:00.000000000Z\t0\t0.0
+                            2021-01-14T02:00:00.000000000Z\t0\t0.0
+                            2021-01-14T03:00:00.000000000Z\t2\t3.0
+                            2021-01-14T04:00:00.000000000Z\t0\t0.0
+                            2021-01-14T05:00:00.000000000Z\t1\t4.0
+                            2021-01-14T06:00:00.000000000Z\t0\t0.0
+                            """
+            );
+            assertSampleByCursorMatchesGroupBy(
+                    "t",
+                    fromTo + " FILL(PREV, NULL)" + kolkata,
+                    "fill: value\n",
+                    """
+                            ts\tc\ts
+                            2021-01-14T01:00:00.000000000Z\tnull\tnull
+                            2021-01-14T02:00:00.000000000Z\tnull\tnull
+                            2021-01-14T03:00:00.000000000Z\t2\t3.0
+                            2021-01-14T04:00:00.000000000Z\t2\tnull
+                            2021-01-14T05:00:00.000000000Z\t1\t4.0
+                            2021-01-14T06:00:00.000000000Z\t1\tnull
+                            """
+            );
+            // LIMIT rewinds the cursor before the first read
+            assertSampleByCursorLimit(
+                    "SELECT ts, count() c, sum(v) s FROM (SELECT ts, v FROM t WHERE v > 0)" + fromTo + " FILL(NULL)" + kolkata,
+                    """
+                            ts\tc\ts
+                            2021-01-14T01:00:00.000000000Z\tnull\tnull
+                            2021-01-14T02:00:00.000000000Z\tnull\tnull
+                            2021-01-14T03:00:00.000000000Z\t2\t3.0
+                            """,
+                    """
+                            ts\tc\ts
+                            2021-01-14T04:00:00.000000000Z\tnull\tnull
+                            2021-01-14T05:00:00.000000000Z\t1\t4.0
+                            2021-01-14T06:00:00.000000000Z\tnull\tnull
+                            """
+            );
+            // FROM, 2021-01-14T08:30 in Asia/Kolkata, converts to 03:00Z, and WITH OFFSET '00:45' anchors the 30m grid
+            // at 03:45Z, more than a stride after FROM. The rows at 03:10Z and 03:50Z share the bucket at 03:45Z.
+            final String from30m = " SAMPLE BY 30m FROM '2021-01-14T08:30:00'";
+            final String kolkata45m = " ALIGN TO CALENDAR TIME ZONE 'Asia/Kolkata' WITH OFFSET '00:45'";
+            assertSampleByCursorMatchesGroupBy(
+                    "t",
+                    from30m + kolkata45m,
+                    null,
+                    """
+                            ts\tc\ts
+                            2021-01-14T03:45:00.000000000Z\t2\t3.0
+                            2021-01-14T05:15:00.000000000Z\t1\t4.0
+                            """
+            );
+            assertSampleByCursorMatchesGroupBy(
+                    "t",
+                    from30m + " FILL(NULL)" + kolkata45m,
+                    "fill: null\n",
+                    """
+                            ts\tc\ts
+                            2021-01-14T03:45:00.000000000Z\t2\t3.0
+                            2021-01-14T04:15:00.000000000Z\tnull\tnull
+                            2021-01-14T04:45:00.000000000Z\tnull\tnull
+                            2021-01-14T05:15:00.000000000Z\t1\t4.0
+                            """
+            );
+            // WITH OFFSET '-00:15' anchors the grid at 00:15Z, before FROM at 00:30Z
+            assertSampleByCursorMatchesGroupBy(
+                    "t",
+                    from + " FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Asia/Kolkata' WITH OFFSET '-00:15'",
+                    "fill: null\n",
+                    """
+                            ts\tc\ts
+                            2021-01-14T00:15:00.000000000Z\tnull\tnull
+                            2021-01-14T01:15:00.000000000Z\tnull\tnull
+                            2021-01-14T02:15:00.000000000Z\t1\t1.0
+                            2021-01-14T03:15:00.000000000Z\t1\t2.0
+                            2021-01-14T04:15:00.000000000Z\tnull\tnull
+                            2021-01-14T05:15:00.000000000Z\t1\t4.0
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testSampleBySubDayFromTimeZoneWithOffsetBindVariable() throws Exception {
+        // TIMESTAMP_NS twin of SampleByTest.testSampleBySubDayFromTimeZoneWithOffsetBindVariable()
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP_NS, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2021-01-14T03:10:00.000000000Z', 1.0),
+                        ('2021-01-14T03:50:00.000000000Z', 2.0),
+                        ('2021-01-14T05:20:00.000000000Z', 4.0)
+                    """);
+            final String sql = """
+                    SELECT ts, count() c, sum(v) s FROM (SELECT ts, v FROM t WHERE v > 0)
+                    SAMPLE BY 1h FROM '2021-01-14T06:00:00' FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Asia/Kolkata' WITH OFFSET $1
+                    """;
+            final String expected0030 = """
+                    ts\tc\ts
+                    2021-01-14T01:00:00.000000000Z\tnull\tnull
+                    2021-01-14T02:00:00.000000000Z\tnull\tnull
+                    2021-01-14T03:00:00.000000000Z\t2\t3.0
+                    2021-01-14T04:00:00.000000000Z\tnull\tnull
+                    2021-01-14T05:00:00.000000000Z\t1\t4.0
+                    """;
+            sqlExecutionContext.getBindVariableService().setStr(0, "00:30");
+            assertSampleByCursorFrom(sql, "fill: null\n", expected0030);
+            try (RecordCursorFactory factory = select(sql)) {
+                sqlExecutionContext.getBindVariableService().setStr(0, "-00:15");
+                assertFactory(factory)
+                        .withContext(sqlExecutionContext)
+                        .timestamp("ts")
+                        .noRandomAccess()
+                        .returns("""
+                                ts\tc\ts
+                                2021-01-14T00:15:00.000000000Z\tnull\tnull
+                                2021-01-14T01:15:00.000000000Z\tnull\tnull
+                                2021-01-14T02:15:00.000000000Z\t1\t1.0
+                                2021-01-14T03:15:00.000000000Z\t1\t2.0
+                                2021-01-14T04:15:00.000000000Z\tnull\tnull
+                                2021-01-14T05:15:00.000000000Z\t1\t4.0
+                                """);
+                sqlExecutionContext.getBindVariableService().setStr(0, "00:30");
+                assertFactory(factory)
+                        .withContext(sqlExecutionContext)
+                        .timestamp("ts")
+                        .noRandomAccess()
+                        .returns(expected0030);
+            }
+        });
+    }
+
+    @Test
+    public void testSampleBySubDayFromToDstSpringForwardWestOfUtcEndFill() throws Exception {
+        // TIMESTAMP_NS twin of SampleByTest.testSampleBySubDayFromToDstSpringForwardWestOfUtcEndFill()
+        assertMemoryLeak(() -> {
+            execute(NEW_YORK_SPRING_FORWARD_DDL);
+            execute(NEW_YORK_SPRING_FORWARD_ROWS);
+            final String from30m = " SAMPLE BY 30m FROM '2021-03-13T21:10:00'";
+            final String newYork = " ALIGN TO CALENDAR TIME ZONE 'America/New_York'";
+            // TO at 09:00Z ends the bucket from 08:40Z, which follows the last bucket with rows without a gap
+            assertSampleByCursorMatchesGroupBy(
+                    "ny",
+                    from30m + " TO '2021-03-14T05:00:00' FILL(NULL)" + newYork,
+                    "fill: null\n",
+                    """
+                            ts\tc\ts
+                            2021-03-14T02:10:00.000000000Z\tnull\tnull
+                            2021-03-14T02:40:00.000000000Z\tnull\tnull
+                            2021-03-14T03:10:00.000000000Z\tnull\tnull
+                            2021-03-14T03:40:00.000000000Z\tnull\tnull
+                            2021-03-14T04:10:00.000000000Z\tnull\tnull
+                            2021-03-14T04:40:00.000000000Z\tnull\tnull
+                            2021-03-14T05:10:00.000000000Z\tnull\tnull
+                            2021-03-14T05:40:00.000000000Z\tnull\tnull
+                            2021-03-14T06:10:00.000000000Z\tnull\tnull
+                            2021-03-14T06:40:00.000000000Z\t3\t7.0
+                            2021-03-14T07:10:00.000000000Z\tnull\tnull
+                            2021-03-14T07:40:00.000000000Z\t1\t8.0
+                            2021-03-14T08:10:00.000000000Z\t1\t16.0
+                            2021-03-14T08:40:00.000000000Z\tnull\tnull
+                            """
+            );
+            assertSampleByCursorMatchesGroupBy(
+                    "ny",
+                    from30m + " TO '2021-03-14T05:00:00' FILL(PREV, NULL)" + newYork,
+                    "fill: value\n",
+                    """
+                            ts\tc\ts
+                            2021-03-14T02:10:00.000000000Z\tnull\tnull
+                            2021-03-14T02:40:00.000000000Z\tnull\tnull
+                            2021-03-14T03:10:00.000000000Z\tnull\tnull
+                            2021-03-14T03:40:00.000000000Z\tnull\tnull
+                            2021-03-14T04:10:00.000000000Z\tnull\tnull
+                            2021-03-14T04:40:00.000000000Z\tnull\tnull
+                            2021-03-14T05:10:00.000000000Z\tnull\tnull
+                            2021-03-14T05:40:00.000000000Z\tnull\tnull
+                            2021-03-14T06:10:00.000000000Z\tnull\tnull
+                            2021-03-14T06:40:00.000000000Z\t3\t7.0
+                            2021-03-14T07:10:00.000000000Z\t3\tnull
+                            2021-03-14T07:40:00.000000000Z\t1\t8.0
+                            2021-03-14T08:10:00.000000000Z\t1\t16.0
+                            2021-03-14T08:40:00.000000000Z\t1\tnull
+                            """
+            );
+            // TO at 07:40Z falls on the grid, and a gap precedes the only bucket with rows
+            assertSampleByCursorMatchesGroupBy(
+                    "ny",
+                    from30m + " TO '2021-03-14T03:40:00' FILL(NULL)" + newYork,
+                    "fill: null\n",
+                    """
+                            ts\tc\ts
+                            2021-03-14T02:10:00.000000000Z\tnull\tnull
+                            2021-03-14T02:40:00.000000000Z\tnull\tnull
+                            2021-03-14T03:10:00.000000000Z\tnull\tnull
+                            2021-03-14T03:40:00.000000000Z\tnull\tnull
+                            2021-03-14T04:10:00.000000000Z\tnull\tnull
+                            2021-03-14T04:40:00.000000000Z\tnull\tnull
+                            2021-03-14T05:10:00.000000000Z\tnull\tnull
+                            2021-03-14T05:40:00.000000000Z\tnull\tnull
+                            2021-03-14T06:10:00.000000000Z\tnull\tnull
+                            2021-03-14T06:40:00.000000000Z\t3\t7.0
+                            2021-03-14T07:10:00.000000000Z\tnull\tnull
+                            """
+            );
+            // TO at 08:20Z ends the bucket from 08:10Z, and a gap precedes the last bucket with rows
+            assertSampleByCursorMatchesGroupBy(
+                    "ny",
+                    from30m + " TO '2021-03-14T04:20:00' FILL(0, 0)" + newYork,
+                    "fill: value\n",
+                    """
+                            ts\tc\ts
+                            2021-03-14T02:10:00.000000000Z\t0\t0.0
+                            2021-03-14T02:40:00.000000000Z\t0\t0.0
+                            2021-03-14T03:10:00.000000000Z\t0\t0.0
+                            2021-03-14T03:40:00.000000000Z\t0\t0.0
+                            2021-03-14T04:10:00.000000000Z\t0\t0.0
+                            2021-03-14T04:40:00.000000000Z\t0\t0.0
+                            2021-03-14T05:10:00.000000000Z\t0\t0.0
+                            2021-03-14T05:40:00.000000000Z\t0\t0.0
+                            2021-03-14T06:10:00.000000000Z\t0\t0.0
+                            2021-03-14T06:40:00.000000000Z\t3\t7.0
+                            2021-03-14T07:10:00.000000000Z\t0\t0.0
+                            2021-03-14T07:40:00.000000000Z\t1\t8.0
+                            2021-03-14T08:10:00.000000000Z\t0\t0.0
+                            """
+            );
+            // TO at 08:21Z falls inside the last bucket with rows, from 08:20Z
+            assertSampleByCursorMatchesGroupBy(
+                    "ny",
+                    " SAMPLE BY 40m FROM '2021-03-13T21:20:00' TO '2021-03-14T04:21:00' FILL(NULL)" + newYork,
+                    "fill: null\n",
+                    """
+                            ts\tc\ts
+                            2021-03-14T02:20:00.000000000Z\tnull\tnull
+                            2021-03-14T03:00:00.000000000Z\tnull\tnull
+                            2021-03-14T03:40:00.000000000Z\tnull\tnull
+                            2021-03-14T04:20:00.000000000Z\tnull\tnull
+                            2021-03-14T05:00:00.000000000Z\tnull\tnull
+                            2021-03-14T05:40:00.000000000Z\tnull\tnull
+                            2021-03-14T06:20:00.000000000Z\t1\t1.0
+                            2021-03-14T07:00:00.000000000Z\t2\t6.0
+                            2021-03-14T07:40:00.000000000Z\t1\t8.0
+                            2021-03-14T08:20:00.000000000Z\t1\t16.0
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testSampleBySubDayToRuntimeConstantEarlierAtExecution() throws Exception {
+        // For a stride shorter than a day, code generation converts TO from the time zone to UTC, and it replaces a TO
+        // that reads non-NULL with the value that it reads before execution initializes it. The WHERE clause that
+        // bounds the rows reads TO at execution. A TO that is not a constant can read a later instant during code
+        // generation: now() reads 0 then, so overNow below reads '10:00', and current_user() reads NULL, so overUser
+        // reads '10:00' as well. At execution, both read '09:00', which is 08:00Z in Europe/Berlin. On the UTC grid of
+        // the conversion, the FILL(NULL) and FILL(value) cursor would run the end fill on to 09:00Z and add a bucket at
+        // 08:00Z, after TO. That cursor keeps that grid only when the TO that code generation converted, if any, is a
+        // constant. For a TO that code generation converted from a runtime constant, it samples in the time zone, as
+        // it did before it sampled on that grid. For the statements below, that returns the rows of the GROUP BY path
+        // with TO as the constant that the execution reads.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP_NS, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2024-01-10T00:10:00.000000000Z', 1.0),
+                        ('2024-01-10T01:10:00.000000000Z', 2.0),
+                        ('2024-01-10T02:10:00.000000000Z', 4.0),
+                        ('2024-01-10T04:10:00.000000000Z', 16.0),
+                        ('2024-01-10T05:10:00.000000000Z', 32.0),
+                        ('2024-01-10T07:10:00.000000000Z', 128.0)
+                    """);
+            final String zone = " ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'";
+            final String expectedNull = """
+                    ts\tc\ts
+                    2024-01-10T00:00:00.000000000Z\t1\t1.0
+                    2024-01-10T01:00:00.000000000Z\t1\t2.0
+                    2024-01-10T02:00:00.000000000Z\t1\t4.0
+                    2024-01-10T03:00:00.000000000Z\tnull\tnull
+                    2024-01-10T04:00:00.000000000Z\t1\t16.0
+                    2024-01-10T05:00:00.000000000Z\t1\t32.0
+                    2024-01-10T06:00:00.000000000Z\tnull\tnull
+                    2024-01-10T07:00:00.000000000Z\t1\t128.0
+                    """;
+            final String expectedValue = """
+                    ts\tc\ts
+                    2024-01-10T00:00:00.000000000Z\t1\t1.0
+                    2024-01-10T01:00:00.000000000Z\t1\t2.0
+                    2024-01-10T02:00:00.000000000Z\t1\t4.0
+                    2024-01-10T03:00:00.000000000Z\t0\t0.0
+                    2024-01-10T04:00:00.000000000Z\t1\t16.0
+                    2024-01-10T05:00:00.000000000Z\t1\t32.0
+                    2024-01-10T06:00:00.000000000Z\t0\t0.0
+                    2024-01-10T07:00:00.000000000Z\t1\t128.0
+                    """;
+            final String groupBy = "SELECT ts, count() c, sum(v) s FROM t SAMPLE BY 1h FROM '2024-01-10T01:00' TO '2024-01-10T09:00'";
+            assertQuery(groupBy + " FILL(NULL)" + zone)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .withPlanNotContaining("Sample By\n")
+                    .returns(expectedNull);
+            assertQuery(groupBy + " FILL(0, 0)" + zone)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .withPlanNotContaining("Sample By\n")
+                    .returns(expectedValue);
+            setCurrentMicros(MicrosTimestampDriver.floor("2024-01-15"));
+            try {
+                // the filtered sub-query keeps the statement on the cursor
+                final String sampleBy = "SELECT ts, count() c, sum(v) s FROM (SELECT ts, v FROM t WHERE v > 0) SAMPLE BY 1h FROM '2024-01-10T01:00' TO ";
+                final String overNow = "CASE WHEN now() < '2024-01-01' THEN '2024-01-10T10:00' ELSE '2024-01-10T09:00' END";
+                final String overUser = "CASE WHEN current_user() = 'admin' THEN '2024-01-10T09:00' ELSE '2024-01-10T10:00' END";
+                assertSampleByCursorFrom(sampleBy + overNow + " FILL(NULL)" + zone, "fill: null\n", expectedNull);
+                assertSampleByCursorFrom(sampleBy + overUser + " FILL(NULL)" + zone, "fill: null\n", expectedNull);
+                assertSampleByCursorFrom("DECLARE @to := " + overNow + ' ' + sampleBy + "@to FILL(NULL)" + zone, "fill: null\n", expectedNull);
+                assertSampleByCursorFrom(sampleBy + overUser + " FILL(0, 0)" + zone, "fill: value\n", expectedValue);
+                // The FILL(NONE) cursor does not read TO, and it keeps the UTC grid: in Asia/Kolkata, the buckets start
+                // on the half hour in UTC, as on the GROUP BY path.
+                final String expectedKolkata = """
+                        ts\tc\ts
+                        2024-01-10T00:30:00.000000000Z\t1\t2.0
+                        2024-01-10T01:30:00.000000000Z\t1\t4.0
+                        2024-01-10T03:30:00.000000000Z\t1\t16.0
+                        2024-01-10T04:30:00.000000000Z\t1\t32.0
+                        2024-01-10T06:30:00.000000000Z\t1\t128.0
+                        """;
+                final String kolkata = " SAMPLE BY 1h FROM '2024-01-10T06:00' TO ";
+                final String kolkataZone = " ALIGN TO CALENDAR TIME ZONE 'Asia/Kolkata'";
+                assertQuery("SELECT ts, count() c, sum(v) s FROM t" + kolkata + "'2024-01-10T14:00'" + kolkataZone)
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .inferRandomAccess()
+                        .sizeMayVary()
+                        .withPlanNotContaining("Sample By\n")
+                        .returns(expectedKolkata);
+                assertSampleByCursorFrom(
+                        "SELECT ts, count() c, sum(v) s FROM (SELECT ts, v FROM t WHERE v > 0)" + kolkata
+                                + "CASE WHEN current_user() = 'admin' THEN '2024-01-10T14:00' ELSE '2024-01-10T15:00' END" + kolkataZone,
+                        "fill: none\n",
+                        expectedKolkata
+                );
+                // LIMIT -3 rewinds the cursor before the first read
+                assertSampleByCursorLimit(
+                        sampleBy + overNow + " FILL(NULL)" + zone,
+                        """
+                                ts\tc\ts
+                                2024-01-10T00:00:00.000000000Z\t1\t1.0
+                                2024-01-10T01:00:00.000000000Z\t1\t2.0
+                                2024-01-10T02:00:00.000000000Z\t1\t4.0
+                                """,
+                        """
+                                ts\tc\ts
+                                2024-01-10T05:00:00.000000000Z\t1\t32.0
+                                2024-01-10T06:00:00.000000000Z\tnull\tnull
+                                2024-01-10T07:00:00.000000000Z\t1\t128.0
+                                """
+                );
+            } finally {
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
+    public void testSampleBySubDayUnitDayLongStrideDstEndFillRuntimeBounds() throws Exception {
+        // TIMESTAMP_NS twin of SampleByTest.testSampleBySubDayUnitDayLongStrideDstEndFillRuntimeBounds(). FROM and TO
+        // read NULL during code generation, so the not-keyed FILL(NULL) and FILL(value) cursor samples the 24h and
+        // 48h strides in the time zone. Its end fill steps from the label that kludge() moved, as for any stride in
+        // hours, and its rows equal those of the GROUP BY path with constant bounds.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ny (ts TIMESTAMP_NS, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            // Mar 11 to Mar 13 have no rows, and the last bucket holds rows at 01:45 EST and 03:30 EDT
+            execute("""
+                    INSERT INTO ny VALUES
+                        ('2021-03-10T12:00:00.000000000Z', 1.0),
+                        ('2021-03-14T06:45:00.000000000Z', 4.0),
+                        ('2021-03-14T07:30:00.000000000Z', 8.0)
+                    """);
+            final String newYork = " ALIGN TO CALENDAR TIME ZONE 'America/New_York'";
+            // TO, 04:30Z, falls inside the last bucket with rows, so no end fill follows it
+            assertSampleByRuntimeBoundsMatchesGroupBy(
+                    "ny",
+                    "24h",
+                    "2021-03-08",
+                    "2021-03-15T00:30",
+                    " FILL(NULL)" + newYork,
+                    "fill: null\n",
+                    """
+                            ts\tc\ts
+                            2021-03-08T05:00:00.000000000Z\tnull\tnull
+                            2021-03-09T05:00:00.000000000Z\tnull\tnull
+                            2021-03-10T05:00:00.000000000Z\t1\t1.0
+                            2021-03-11T05:00:00.000000000Z\tnull\tnull
+                            2021-03-12T05:00:00.000000000Z\tnull\tnull
+                            2021-03-13T05:00:00.000000000Z\tnull\tnull
+                            2021-03-14T05:00:00.000000000Z\t2\t12.0
+                            """
+            );
+            assertSampleByRuntimeBoundsMatchesGroupBy(
+                    "ny",
+                    "48h",
+                    "2021-03-08",
+                    "2021-03-18T12:00",
+                    " FILL(0, 0)" + newYork,
+                    "fill: value\n",
+                    """
+                            ts\tc\ts
+                            2021-03-08T05:00:00.000000000Z\t0\t0.0
+                            2021-03-10T05:00:00.000000000Z\t1\t1.0
+                            2021-03-12T05:00:00.000000000Z\t0\t0.0
+                            2021-03-14T05:00:00.000000000Z\t2\t12.0
+                            2021-03-16T05:00:00.000000000Z\t0\t0.0
+                            2021-03-18T05:00:00.000000000Z\t0\t0.0
+                            """
+            );
+
+            execute("CREATE TABLE berlin (ts TIMESTAMP_NS, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            // the last bucket holds rows at 01:30 CEST and 16:00 CET, and the bucket before it holds rows too, with
+            // either stride
+            execute("""
+                    INSERT INTO berlin VALUES
+                        ('2021-10-26T09:00:00.000000000Z', 1.0),
+                        ('2021-10-27T09:00:00.000000000Z', 2.0),
+                        ('2021-10-29T09:00:00.000000000Z', 16.0),
+                        ('2021-10-30T09:00:00.000000000Z', 32.0),
+                        ('2021-10-30T23:30:00.000000000Z', 4.0),
+                        ('2021-10-31T15:00:00.000000000Z', 8.0)
+                    """);
+            final String berlin = " ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'";
+            assertSampleByRuntimeBoundsMatchesGroupBy(
+                    "berlin",
+                    "24h",
+                    "2021-10-25",
+                    "2021-11-04",
+                    " FILL(NULL)" + berlin,
+                    "fill: null\n",
+                    """
+                            ts\tc\ts
+                            2021-10-24T22:00:00.000000000Z\tnull\tnull
+                            2021-10-25T22:00:00.000000000Z\t1\t1.0
+                            2021-10-26T22:00:00.000000000Z\t1\t2.0
+                            2021-10-27T22:00:00.000000000Z\tnull\tnull
+                            2021-10-28T22:00:00.000000000Z\t1\t16.0
+                            2021-10-29T22:00:00.000000000Z\t1\t32.0
+                            2021-10-30T22:00:00.000000000Z\t2\t12.0
+                            2021-10-31T22:00:00.000000000Z\tnull\tnull
+                            2021-11-01T22:00:00.000000000Z\tnull\tnull
+                            2021-11-02T22:00:00.000000000Z\tnull\tnull
+                            2021-11-03T22:00:00.000000000Z\tnull\tnull
+                            """
+            );
+            assertSampleByRuntimeBoundsMatchesGroupBy(
+                    "berlin",
+                    "48h",
+                    "2021-10-25",
+                    "2021-11-04",
+                    " FILL(0, 0)" + berlin,
+                    "fill: value\n",
+                    """
+                            ts\tc\ts
+                            2021-10-24T22:00:00.000000000Z\t1\t1.0
+                            2021-10-26T22:00:00.000000000Z\t1\t2.0
+                            2021-10-28T22:00:00.000000000Z\t2\t48.0
+                            2021-10-30T22:00:00.000000000Z\t2\t12.0
+                            2021-11-01T22:00:00.000000000Z\t0\t0.0
+                            2021-11-03T22:00:00.000000000Z\t0\t0.0
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByToNullNoEndFill() throws Exception {
+        // A TO that reads NULL sets no upper bound, so the not-keyed FILL(NULL) and FILL(value) cursor fills no
+        // bucket after the last bucket with rows, see SampleByTest.testSampleByToNullNoEndFill(). The optimiser
+        // adds a filter on the NULL TO, which keeps no rows, to the first branch of the UNION ALL only. That branch
+        // selects no rows here anyway, so the rows of the second branch reach the cursor. LIMIT bounds each
+        // statement. Table t has a gap before its last bucket of 30 minutes, and table u has none.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP_NS, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2021-01-14T07:15:00.000000000Z', 1.0),
+                        ('2021-01-14T07:45:00.000000000Z', 2.0),
+                        ('2021-01-14T09:15:00.000000000Z', 8.0)
+                    """);
+            execute("CREATE TABLE u (ts TIMESTAMP_NS, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO u VALUES
+                        ('2021-01-14T07:15:00.000000000Z', 1.0),
+                        ('2021-01-14T07:45:00.000000000Z', 2.0),
+                        ('2021-01-14T08:15:00.000000000Z', 8.0)
+                    """);
+            final String selectT = "SELECT ts, count() c, sum(v) s FROM"
+                    + " ((SELECT ts, v FROM t WHERE v < 0 UNION ALL SELECT ts, v FROM t WHERE v > 0) TIMESTAMP(ts))";
+            final String selectU = "SELECT ts, count() c, sum(v) s FROM"
+                    + " ((SELECT ts, v FROM u WHERE v < 0 UNION ALL SELECT ts, v FROM u WHERE v > 0) TIMESTAMP(ts))";
+
+            // a gap from FROM precedes the only bucket of a day with rows
+            assertSampleByCursorFrom(
+                    selectT + " SAMPLE BY 1d FROM '2021-01-10' TO NULL FILL(NULL) ALIGN TO CALENDAR LIMIT 100",
+                    "fill: null\n",
+                    """
+                            ts\tc\ts
+                            2021-01-10T00:00:00.000000000Z\tnull\tnull
+                            2021-01-11T00:00:00.000000000Z\tnull\tnull
+                            2021-01-12T00:00:00.000000000Z\tnull\tnull
+                            2021-01-13T00:00:00.000000000Z\tnull\tnull
+                            2021-01-14T00:00:00.000000000Z\t3\t11.0
+                            """
+            );
+            assertSampleByCursorFrom(
+                    "DECLARE @to := NULL " + selectT + " SAMPLE BY 1d FROM '2021-01-10' TO @to FILL(0, 0) ALIGN TO CALENDAR LIMIT 100",
+                    "fill: value\n",
+                    """
+                            ts\tc\ts
+                            2021-01-10T00:00:00.000000000Z\t0\t0.0
+                            2021-01-11T00:00:00.000000000Z\t0\t0.0
+                            2021-01-12T00:00:00.000000000Z\t0\t0.0
+                            2021-01-13T00:00:00.000000000Z\t0\t0.0
+                            2021-01-14T00:00:00.000000000Z\t3\t11.0
+                            """
+            );
+            // no gap precedes the only bucket of a day with rows
+            assertSampleByCursorFrom(
+                    selectU + " SAMPLE BY 1d TO NULL FILL(NULL) ALIGN TO CALENDAR LIMIT 100",
+                    "fill: null\n",
+                    """
+                            ts\tc\ts
+                            2021-01-14T00:00:00.000000000Z\t3\t11.0
+                            """
+            );
+
+            // a gap precedes the last bucket of 30 minutes with rows of t
+            final String subDayNull = """
+                    ts\tc\ts
+                    2021-01-14T07:00:00.000000000Z\t1\t1.0
+                    2021-01-14T07:30:00.000000000Z\t1\t2.0
+                    2021-01-14T08:00:00.000000000Z\tnull\tnull
+                    2021-01-14T08:30:00.000000000Z\tnull\tnull
+                    2021-01-14T09:00:00.000000000Z\t1\t8.0
+                    """;
+            assertSampleByCursorFrom(
+                    selectT + " SAMPLE BY 30m TO NULL FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'UTC' LIMIT 100",
+                    "fill: null\n",
+                    subDayNull
+            );
+            assertSampleByCursorFrom(
+                    selectT + " SAMPLE BY 30m TO NULL FILL(0, LINEAR) ALIGN TO CALENDAR LIMIT 100",
+                    "fill: value\n",
+                    """
+                            ts\tc\ts
+                            2021-01-14T07:00:00.000000000Z\t1\t1.0
+                            2021-01-14T07:30:00.000000000Z\t1\t2.0
+                            2021-01-14T08:00:00.000000000Z\t0\t4.0
+                            2021-01-14T08:30:00.000000000Z\t0\t6.0
+                            2021-01-14T09:00:00.000000000Z\t1\t8.0
+                            """
+            );
+            // LIMIT -3 rewinds the cursor
+            assertSampleByCursorLimit(
+                    selectT + " SAMPLE BY 30m TO NULL FILL(NULL) ALIGN TO CALENDAR",
+                    """
+                            ts\tc\ts
+                            2021-01-14T07:00:00.000000000Z\t1\t1.0
+                            2021-01-14T07:30:00.000000000Z\t1\t2.0
+                            2021-01-14T08:00:00.000000000Z\tnull\tnull
+                            """,
+                    """
+                            ts\tc\ts
+                            2021-01-14T08:00:00.000000000Z\tnull\tnull
+                            2021-01-14T08:30:00.000000000Z\tnull\tnull
+                            2021-01-14T09:00:00.000000000Z\t1\t8.0
+                            """
+            );
+            // no gap precedes the last bucket of 30 minutes with rows of u, and TO is a NULL of the other
+            // timestamp type
+            assertSampleByCursorFrom(
+                    selectU + " SAMPLE BY 30m TO NULL::timestamp FILL(NULL) ALIGN TO CALENDAR LIMIT 100",
+                    "fill: null\n",
+                    """
+                            ts\tc\ts
+                            2021-01-14T07:00:00.000000000Z\t1\t1.0
+                            2021-01-14T07:30:00.000000000Z\t1\t2.0
+                            2021-01-14T08:00:00.000000000Z\t1\t8.0
+                            """
+            );
         });
     }
 
@@ -6183,6 +8682,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         " from long_sequence(20)" +
                         ") timestamp(created_at) partition by day")
                 .timestampDesc("timestamp")
+                .expectSize()
                 .returns("""
                         open\thigh\tlow\tclose\tvolume\ttimestamp
                         22.463013424972587\t90.75843364017028\t16.381374773748515\t75.88175403454873\t440.2232295756601\t1970-01-03T00:00:00.000000000Z
@@ -6211,6 +8711,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         " from long_sequence(20)" +
                         ") timestamp(created_at) partition by day")
                 .timestampDesc("timestamp")
+                .expectSize()
                 .returns("""
                         open\thigh\tlow\tclose\tvolume\ttimestamp
                         65.51335839796312\t94.55893004802432\t18.336217509438512\t77.0079809007092\t519.2795145577336\t1970-01-03T00:00:00.000000000Z
@@ -6461,6 +8962,44 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByYearFromTimeZoneNearMaxTimestamp() throws Exception {
+        // Pacific/Kiritimati stays at UTC+14, so every bucket starts on Aug 31 at local midnight, which is
+        // Aug 30T10:00Z. The last row is 2262-01-01T10:00 local time and belongs to the bucket that starts on
+        // 2261-08-31 local time. The bucket of its own year would start on 2262-08-31, after the last
+        // TIMESTAMP_NS value (2262-04-11), and floorYYYY() must not build it. FILL(NULL) without TO adds no rows,
+        // because every bucket from FROM to the last row holds data.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP_NS, x DOUBLE) TIMESTAMP(ts) PARTITION BY YEAR");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2259-09-01T00:00:00.000000000Z', 1.0),
+                    ('2260-09-01T00:00:00.000000000Z', 2.0),
+                    ('2261-12-31T20:00:00.000000000Z', 4.0)
+                    """);
+            assertQuery("SELECT ts, sum(x) FROM t SAMPLE BY 1y FROM '2021-08-31' ALIGN TO CALENDAR TIME ZONE 'Pacific/Kiritimati'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tsum
+                            2259-08-30T10:00:00.000000000Z\t1.0
+                            2260-08-30T10:00:00.000000000Z\t2.0
+                            2261-08-30T10:00:00.000000000Z\t4.0
+                            """);
+            assertQuery("SELECT ts, sum(x) FROM t SAMPLE BY 1y FROM '2259-08-31' FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Pacific/Kiritimati'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tsum
+                            2259-08-30T10:00:00.000000000Z\t1.0
+                            2260-08-30T10:00:00.000000000Z\t2.0
+                            2261-08-30T10:00:00.000000000Z\t4.0
+                            """);
+        });
+    }
+
+    @Test
     public void testSampleCountFillLinear() throws Exception {
         assertQuery("select b, count(), k from x sample by 3h fill(linear) align to first observation")
                 .ddl("create table x as " +
@@ -6492,19 +9031,19 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         CPSW\t2\t1970-01-03T02:00:00.000000000Z
                         \t14\t1970-01-03T05:00:00.000000000Z
                         VTJW\t4\t1970-01-03T05:00:00.000000000Z
-                        CPSW\t5\t1970-01-03T05:00:00.000000000Z
-                        HYRX\t4\t1970-01-03T05:00:00.000000000Z
                         RXGZ\t2\t1970-01-03T05:00:00.000000000Z
                         PEHN\t1\t1970-01-03T05:00:00.000000000Z
+                        HYRX\t4\t1970-01-03T05:00:00.000000000Z
+                        CPSW\t5\t1970-01-03T05:00:00.000000000Z
                         \t17\t1970-01-03T08:00:00.000000000Z
                         VTJW\t4\t1970-01-03T08:00:00.000000000Z
-                        HYRX\t3\t1970-01-03T08:00:00.000000000Z
                         RXGZ\t4\t1970-01-03T08:00:00.000000000Z
                         PEHN\t2\t1970-01-03T08:00:00.000000000Z
+                        HYRX\t3\t1970-01-03T08:00:00.000000000Z
                         CPSW\t8\t1970-01-03T08:00:00.000000000Z
                         \t4\t1970-01-03T11:00:00.000000000Z
-                        RXGZ\t3\t1970-01-03T11:00:00.000000000Z
                         VTJW\t3\t1970-01-03T11:00:00.000000000Z
+                        RXGZ\t3\t1970-01-03T11:00:00.000000000Z
                         PEHN\t3\t1970-01-03T11:00:00.000000000Z
                         HYRX\t2\t1970-01-03T11:00:00.000000000Z
                         CPSW\t11\t1970-01-03T11:00:00.000000000Z
@@ -6523,10 +9062,10 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         ZNFK\tnull\t1970-01-03T02:00:00.000000000Z
                         \t14\t1970-01-03T05:00:00.000000000Z
                         VTJW\t4\t1970-01-03T05:00:00.000000000Z
-                        CPSW\t5\t1970-01-03T05:00:00.000000000Z
-                        HYRX\t4\t1970-01-03T05:00:00.000000000Z
                         RXGZ\t2\t1970-01-03T05:00:00.000000000Z
                         PEHN\t1\t1970-01-03T05:00:00.000000000Z
+                        HYRX\t4\t1970-01-03T05:00:00.000000000Z
+                        CPSW\t5\t1970-01-03T05:00:00.000000000Z
                         CGFN\t-1\t1970-01-03T05:00:00.000000000Z
                         NPIW\t1\t1970-01-03T05:00:00.000000000Z
                         PEVM\t-1\t1970-01-03T05:00:00.000000000Z
@@ -6534,9 +9073,9 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         ZNFK\tnull\t1970-01-03T05:00:00.000000000Z
                         \t17\t1970-01-03T08:00:00.000000000Z
                         VTJW\t4\t1970-01-03T08:00:00.000000000Z
-                        HYRX\t3\t1970-01-03T08:00:00.000000000Z
                         RXGZ\t4\t1970-01-03T08:00:00.000000000Z
                         PEHN\t2\t1970-01-03T08:00:00.000000000Z
+                        HYRX\t3\t1970-01-03T08:00:00.000000000Z
                         CPSW\t8\t1970-01-03T08:00:00.000000000Z
                         CGFN\t0\t1970-01-03T08:00:00.000000000Z
                         NPIW\t1\t1970-01-03T08:00:00.000000000Z
@@ -6544,32 +9083,32 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         WGRM\tnull\t1970-01-03T08:00:00.000000000Z
                         ZNFK\tnull\t1970-01-03T08:00:00.000000000Z
                         \t10\t1970-01-03T11:00:00.000000000Z
-                        RXGZ\t3\t1970-01-03T11:00:00.000000000Z
                         VTJW\t3\t1970-01-03T11:00:00.000000000Z
-                        CGFN\t1\t1970-01-03T11:00:00.000000000Z
-                        NPIW\t1\t1970-01-03T11:00:00.000000000Z
-                        PEVM\t1\t1970-01-03T11:00:00.000000000Z
+                        RXGZ\t3\t1970-01-03T11:00:00.000000000Z
                         PEHN\t3\t1970-01-03T11:00:00.000000000Z
                         HYRX\t2\t1970-01-03T11:00:00.000000000Z
                         CPSW\t11\t1970-01-03T11:00:00.000000000Z
+                        CGFN\t1\t1970-01-03T11:00:00.000000000Z
+                        NPIW\t1\t1970-01-03T11:00:00.000000000Z
+                        PEVM\t1\t1970-01-03T11:00:00.000000000Z
                         WGRM\tnull\t1970-01-03T11:00:00.000000000Z
                         ZNFK\tnull\t1970-01-03T11:00:00.000000000Z
                         \t15\t1970-01-03T14:00:00.000000000Z
-                        WGRM\t3\t1970-01-03T14:00:00.000000000Z
-                        CGFN\t2\t1970-01-03T14:00:00.000000000Z
-                        PEVM\t2\t1970-01-03T14:00:00.000000000Z
-                        ZNFK\t3\t1970-01-03T14:00:00.000000000Z
-                        NPIW\t1\t1970-01-03T14:00:00.000000000Z
                         VTJW\t2\t1970-01-03T14:00:00.000000000Z
                         RXGZ\t2\t1970-01-03T14:00:00.000000000Z
                         PEHN\t4\t1970-01-03T14:00:00.000000000Z
                         HYRX\t1\t1970-01-03T14:00:00.000000000Z
                         CPSW\t14\t1970-01-03T14:00:00.000000000Z
+                        CGFN\t2\t1970-01-03T14:00:00.000000000Z
+                        NPIW\t1\t1970-01-03T14:00:00.000000000Z
+                        PEVM\t2\t1970-01-03T14:00:00.000000000Z
+                        WGRM\t3\t1970-01-03T14:00:00.000000000Z
+                        ZNFK\t3\t1970-01-03T14:00:00.000000000Z
                         """);
 
         execute("drop table x");
 
-        assertQuery("select b, count(), k from x sample by 3h fill(linear) align to calendar")
+        assertQuery("select b, count(), k from x sample by 3h fill(linear) align to calendar order by k, b")
                 .ddl("create table x as " +
                         "(" +
                         "select" +
@@ -6592,97 +9131,97 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                 .returns("""
                         b\tcount\tk
                         \t6\t1970-01-03T00:00:00.000000000Z
+                        CBWL\t2\t1970-01-03T00:00:00.000000000Z
                         NLRH\t2\t1970-01-03T00:00:00.000000000Z
                         PFYX\t1\t1970-01-03T00:00:00.000000000Z
-                        WQXY\t1\t1970-01-03T00:00:00.000000000Z
                         PVKN\t1\t1970-01-03T00:00:00.000000000Z
-                        CBWL\t2\t1970-01-03T00:00:00.000000000Z
-                        NLRH\t4\t1970-01-03T03:00:00.000000000Z
+                        WQXY\t1\t1970-01-03T00:00:00.000000000Z
                         \t14\t1970-01-03T03:00:00.000000000Z
-                        PVKN\t3\t1970-01-03T03:00:00.000000000Z
                         CBWL\t4\t1970-01-03T03:00:00.000000000Z
-                        WQXY\t3\t1970-01-03T03:00:00.000000000Z
+                        NLRH\t4\t1970-01-03T03:00:00.000000000Z
                         PFYX\t2\t1970-01-03T03:00:00.000000000Z
+                        PVKN\t3\t1970-01-03T03:00:00.000000000Z
+                        WQXY\t3\t1970-01-03T03:00:00.000000000Z
                         \t13\t1970-01-03T06:00:00.000000000Z
-                        NLRH\t4\t1970-01-03T06:00:00.000000000Z
-                        PVKN\t5\t1970-01-03T06:00:00.000000000Z
-                        PFYX\t4\t1970-01-03T06:00:00.000000000Z
-                        WQXY\t4\t1970-01-03T06:00:00.000000000Z
                         CBWL\t5\t1970-01-03T06:00:00.000000000Z
+                        NLRH\t4\t1970-01-03T06:00:00.000000000Z
+                        PFYX\t4\t1970-01-03T06:00:00.000000000Z
+                        PVKN\t5\t1970-01-03T06:00:00.000000000Z
+                        WQXY\t4\t1970-01-03T06:00:00.000000000Z
                         \t15\t1970-01-03T09:00:00.000000000Z
-                        PFYX\t4\t1970-01-03T09:00:00.000000000Z
-                        WQXY\t2\t1970-01-03T09:00:00.000000000Z
                         CBWL\t7\t1970-01-03T09:00:00.000000000Z
                         NLRH\t2\t1970-01-03T09:00:00.000000000Z
+                        PFYX\t4\t1970-01-03T09:00:00.000000000Z
                         PVKN\t7\t1970-01-03T09:00:00.000000000Z
+                        WQXY\t2\t1970-01-03T09:00:00.000000000Z
                         """, """
                         b\tcount\tk
                         \t6\t1970-01-03T00:00:00.000000000Z
-                        NLRH\t2\t1970-01-03T00:00:00.000000000Z
-                        PFYX\t1\t1970-01-03T00:00:00.000000000Z
-                        WQXY\t1\t1970-01-03T00:00:00.000000000Z
-                        PVKN\t1\t1970-01-03T00:00:00.000000000Z
                         CBWL\t2\t1970-01-03T00:00:00.000000000Z
-                        QWPK\tnull\t1970-01-03T00:00:00.000000000Z
-                        ONNL\t2\t1970-01-03T00:00:00.000000000Z
                         ITWG\t7\t1970-01-03T00:00:00.000000000Z
                         LFCY\t1\t1970-01-03T00:00:00.000000000Z
                         LHTI\tnull\t1970-01-03T00:00:00.000000000Z
-                        NLRH\t4\t1970-01-03T03:00:00.000000000Z
+                        NLRH\t2\t1970-01-03T00:00:00.000000000Z
+                        ONNL\t2\t1970-01-03T00:00:00.000000000Z
+                        PFYX\t1\t1970-01-03T00:00:00.000000000Z
+                        PVKN\t1\t1970-01-03T00:00:00.000000000Z
+                        QWPK\tnull\t1970-01-03T00:00:00.000000000Z
+                        WQXY\t1\t1970-01-03T00:00:00.000000000Z
                         \t14\t1970-01-03T03:00:00.000000000Z
-                        PVKN\t3\t1970-01-03T03:00:00.000000000Z
                         CBWL\t4\t1970-01-03T03:00:00.000000000Z
-                        WQXY\t3\t1970-01-03T03:00:00.000000000Z
-                        PFYX\t2\t1970-01-03T03:00:00.000000000Z
-                        QWPK\tnull\t1970-01-03T03:00:00.000000000Z
-                        ONNL\t2\t1970-01-03T03:00:00.000000000Z
                         ITWG\t6\t1970-01-03T03:00:00.000000000Z
                         LFCY\t1\t1970-01-03T03:00:00.000000000Z
                         LHTI\tnull\t1970-01-03T03:00:00.000000000Z
+                        NLRH\t4\t1970-01-03T03:00:00.000000000Z
+                        ONNL\t2\t1970-01-03T03:00:00.000000000Z
+                        PFYX\t2\t1970-01-03T03:00:00.000000000Z
+                        PVKN\t3\t1970-01-03T03:00:00.000000000Z
+                        QWPK\tnull\t1970-01-03T03:00:00.000000000Z
+                        WQXY\t3\t1970-01-03T03:00:00.000000000Z
                         \t13\t1970-01-03T06:00:00.000000000Z
-                        NLRH\t4\t1970-01-03T06:00:00.000000000Z
-                        PVKN\t5\t1970-01-03T06:00:00.000000000Z
-                        PFYX\t4\t1970-01-03T06:00:00.000000000Z
-                        WQXY\t4\t1970-01-03T06:00:00.000000000Z
                         CBWL\t5\t1970-01-03T06:00:00.000000000Z
-                        QWPK\tnull\t1970-01-03T06:00:00.000000000Z
-                        ONNL\t2\t1970-01-03T06:00:00.000000000Z
                         ITWG\t5\t1970-01-03T06:00:00.000000000Z
                         LFCY\t1\t1970-01-03T06:00:00.000000000Z
                         LHTI\tnull\t1970-01-03T06:00:00.000000000Z
+                        NLRH\t4\t1970-01-03T06:00:00.000000000Z
+                        ONNL\t2\t1970-01-03T06:00:00.000000000Z
+                        PFYX\t4\t1970-01-03T06:00:00.000000000Z
+                        PVKN\t5\t1970-01-03T06:00:00.000000000Z
+                        QWPK\tnull\t1970-01-03T06:00:00.000000000Z
+                        WQXY\t4\t1970-01-03T06:00:00.000000000Z
                         \t15\t1970-01-03T09:00:00.000000000Z
-                        PFYX\t4\t1970-01-03T09:00:00.000000000Z
-                        WQXY\t2\t1970-01-03T09:00:00.000000000Z
                         CBWL\t7\t1970-01-03T09:00:00.000000000Z
-                        NLRH\t2\t1970-01-03T09:00:00.000000000Z
-                        PVKN\t7\t1970-01-03T09:00:00.000000000Z
-                        QWPK\tnull\t1970-01-03T09:00:00.000000000Z
-                        ONNL\t2\t1970-01-03T09:00:00.000000000Z
                         ITWG\t4\t1970-01-03T09:00:00.000000000Z
                         LFCY\t1\t1970-01-03T09:00:00.000000000Z
                         LHTI\tnull\t1970-01-03T09:00:00.000000000Z
-                        QWPK\t1\t1970-01-03T12:00:00.000000000Z
+                        NLRH\t2\t1970-01-03T09:00:00.000000000Z
+                        ONNL\t2\t1970-01-03T09:00:00.000000000Z
+                        PFYX\t4\t1970-01-03T09:00:00.000000000Z
+                        PVKN\t7\t1970-01-03T09:00:00.000000000Z
+                        QWPK\tnull\t1970-01-03T09:00:00.000000000Z
+                        WQXY\t2\t1970-01-03T09:00:00.000000000Z
                         \t12\t1970-01-03T12:00:00.000000000Z
-                        ONNL\t2\t1970-01-03T12:00:00.000000000Z
+                        CBWL\t9\t1970-01-03T12:00:00.000000000Z
                         ITWG\t3\t1970-01-03T12:00:00.000000000Z
                         LFCY\t1\t1970-01-03T12:00:00.000000000Z
-                        NLRH\t0\t1970-01-03T12:00:00.000000000Z
-                        PFYX\t4\t1970-01-03T12:00:00.000000000Z
-                        WQXY\t0\t1970-01-03T12:00:00.000000000Z
-                        PVKN\t9\t1970-01-03T12:00:00.000000000Z
-                        CBWL\t9\t1970-01-03T12:00:00.000000000Z
                         LHTI\tnull\t1970-01-03T12:00:00.000000000Z
+                        NLRH\t0\t1970-01-03T12:00:00.000000000Z
+                        ONNL\t2\t1970-01-03T12:00:00.000000000Z
+                        PFYX\t4\t1970-01-03T12:00:00.000000000Z
+                        PVKN\t9\t1970-01-03T12:00:00.000000000Z
+                        QWPK\t1\t1970-01-03T12:00:00.000000000Z
+                        WQXY\t0\t1970-01-03T12:00:00.000000000Z
                         \t10\t1970-01-03T15:00:00.000000000Z
-                        ONNL\t2\t1970-01-03T15:00:00.000000000Z
-                        LHTI\t1\t1970-01-03T15:00:00.000000000Z
-                        LFCY\t1\t1970-01-03T15:00:00.000000000Z
-                        ITWG\t2\t1970-01-03T15:00:00.000000000Z
-                        NLRH\t-2\t1970-01-03T15:00:00.000000000Z
-                        PFYX\t4\t1970-01-03T15:00:00.000000000Z
-                        WQXY\t-2\t1970-01-03T15:00:00.000000000Z
-                        PVKN\t11\t1970-01-03T15:00:00.000000000Z
                         CBWL\t11\t1970-01-03T15:00:00.000000000Z
+                        ITWG\t2\t1970-01-03T15:00:00.000000000Z
+                        LFCY\t1\t1970-01-03T15:00:00.000000000Z
+                        LHTI\t1\t1970-01-03T15:00:00.000000000Z
+                        NLRH\t-2\t1970-01-03T15:00:00.000000000Z
+                        ONNL\t2\t1970-01-03T15:00:00.000000000Z
+                        PFYX\t4\t1970-01-03T15:00:00.000000000Z
+                        PVKN\t11\t1970-01-03T15:00:00.000000000Z
                         QWPK\tnull\t1970-01-03T15:00:00.000000000Z
+                        WQXY\t-2\t1970-01-03T15:00:00.000000000Z
                         """);
     }
 
@@ -6716,12 +9255,12 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         VTJW\tnull\t1970-01-03T05:24:00.000000000Z
                         RXGZ\tnull\t1970-01-03T05:24:00.000000000Z
                         \tnull\t1970-01-03T05:24:00.000000000Z
-                        VTJW\t1\t1970-01-03T08:24:00.000000000Z
-                        RXGZ\t1\t1970-01-03T08:24:00.000000000Z
-                        \t1\t1970-01-03T08:24:00.000000000Z
                         CPSW\tnull\t1970-01-03T08:24:00.000000000Z
                         PEHN\tnull\t1970-01-03T08:24:00.000000000Z
                         HYRX\tnull\t1970-01-03T08:24:00.000000000Z
+                        VTJW\t1\t1970-01-03T08:24:00.000000000Z
+                        RXGZ\t1\t1970-01-03T08:24:00.000000000Z
+                        \t1\t1970-01-03T08:24:00.000000000Z
                         """, """
                         b\tcount\tk
                         CPSW\t1\t1970-01-03T05:24:00.000000000Z
@@ -6735,11 +9274,11 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         ZNFK\tnull\t1970-01-03T05:24:00.000000000Z
                         PEVM\tnull\t1970-01-03T05:24:00.000000000Z
                         \tnull\t1970-01-03T05:24:00.000000000Z
-                        VTJW\t1\t1970-01-03T08:24:00.000000000Z
-                        RXGZ\t1\t1970-01-03T08:24:00.000000000Z
                         CPSW\tnull\t1970-01-03T08:24:00.000000000Z
                         PEHN\tnull\t1970-01-03T08:24:00.000000000Z
                         HYRX\tnull\t1970-01-03T08:24:00.000000000Z
+                        VTJW\t1\t1970-01-03T08:24:00.000000000Z
+                        RXGZ\t1\t1970-01-03T08:24:00.000000000Z
                         WGRM\tnull\t1970-01-03T08:24:00.000000000Z
                         NPIW\tnull\t1970-01-03T08:24:00.000000000Z
                         CGFN\tnull\t1970-01-03T08:24:00.000000000Z
@@ -6812,18 +9351,17 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         ZNFK\tnull\t1970-01-04T02:24:00.000000000Z
                         PEVM\tnull\t1970-01-04T02:24:00.000000000Z
                         \tnull\t1970-01-04T02:24:00.000000000Z
-                        WGRM\t1\t1970-01-04T05:24:00.000000000Z
-                        NPIW\t1\t1970-01-04T05:24:00.000000000Z
-                        CGFN\t1\t1970-01-04T05:24:00.000000000Z
-                        ZNFK\t1\t1970-01-04T05:24:00.000000000Z
-                        PEVM\t1\t1970-01-04T05:24:00.000000000Z
                         CPSW\tnull\t1970-01-04T05:24:00.000000000Z
                         PEHN\tnull\t1970-01-04T05:24:00.000000000Z
                         HYRX\tnull\t1970-01-04T05:24:00.000000000Z
                         VTJW\tnull\t1970-01-04T05:24:00.000000000Z
                         RXGZ\tnull\t1970-01-04T05:24:00.000000000Z
+                        WGRM\t1\t1970-01-04T05:24:00.000000000Z
+                        NPIW\t1\t1970-01-04T05:24:00.000000000Z
+                        CGFN\t1\t1970-01-04T05:24:00.000000000Z
+                        ZNFK\t1\t1970-01-04T05:24:00.000000000Z
+                        PEVM\t1\t1970-01-04T05:24:00.000000000Z
                         \tnull\t1970-01-04T05:24:00.000000000Z
-                        \t1\t1970-01-04T08:24:00.000000000Z
                         CPSW\tnull\t1970-01-04T08:24:00.000000000Z
                         PEHN\tnull\t1970-01-04T08:24:00.000000000Z
                         HYRX\tnull\t1970-01-04T08:24:00.000000000Z
@@ -6834,6 +9372,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         CGFN\tnull\t1970-01-04T08:24:00.000000000Z
                         ZNFK\tnull\t1970-01-04T08:24:00.000000000Z
                         PEVM\tnull\t1970-01-04T08:24:00.000000000Z
+                        \t1\t1970-01-04T08:24:00.000000000Z
                         """);
 
         execute("drop table x");
@@ -6866,12 +9405,12 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         CBWL\tnull\t1970-01-03T06:00:00.000000000Z
                         PFYX\tnull\t1970-01-03T06:00:00.000000000Z
                         \tnull\t1970-01-03T06:00:00.000000000Z
+                        PVKN\tnull\t1970-01-03T09:00:00.000000000Z
+                        WQXY\tnull\t1970-01-03T09:00:00.000000000Z
                         NLRH\t1\t1970-01-03T09:00:00.000000000Z
                         CBWL\t1\t1970-01-03T09:00:00.000000000Z
                         PFYX\t1\t1970-01-03T09:00:00.000000000Z
                         \t1\t1970-01-03T09:00:00.000000000Z
-                        PVKN\tnull\t1970-01-03T09:00:00.000000000Z
-                        WQXY\tnull\t1970-01-03T09:00:00.000000000Z
                         """, """
                         b\tcount\tk
                         PVKN\t1\t1970-01-03T06:00:00.000000000Z
@@ -6885,11 +9424,11 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         LFCY\tnull\t1970-01-03T06:00:00.000000000Z
                         \tnull\t1970-01-03T06:00:00.000000000Z
                         ITWG\tnull\t1970-01-03T06:00:00.000000000Z
+                        PVKN\tnull\t1970-01-03T09:00:00.000000000Z
+                        WQXY\tnull\t1970-01-03T09:00:00.000000000Z
                         NLRH\t1\t1970-01-03T09:00:00.000000000Z
                         CBWL\t1\t1970-01-03T09:00:00.000000000Z
                         PFYX\t1\t1970-01-03T09:00:00.000000000Z
-                        PVKN\tnull\t1970-01-03T09:00:00.000000000Z
-                        WQXY\tnull\t1970-01-03T09:00:00.000000000Z
                         QWPK\tnull\t1970-01-03T09:00:00.000000000Z
                         ONNL\tnull\t1970-01-03T09:00:00.000000000Z
                         LHTI\tnull\t1970-01-03T09:00:00.000000000Z
@@ -6951,28 +9490,28 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         LFCY\tnull\t1970-01-04T00:00:00.000000000Z
                         \tnull\t1970-01-04T00:00:00.000000000Z
                         ITWG\tnull\t1970-01-04T00:00:00.000000000Z
-                        QWPK\t1\t1970-01-04T03:00:00.000000000Z
                         PVKN\tnull\t1970-01-04T03:00:00.000000000Z
                         WQXY\tnull\t1970-01-04T03:00:00.000000000Z
                         NLRH\tnull\t1970-01-04T03:00:00.000000000Z
                         CBWL\tnull\t1970-01-04T03:00:00.000000000Z
                         PFYX\tnull\t1970-01-04T03:00:00.000000000Z
+                        QWPK\t1\t1970-01-04T03:00:00.000000000Z
                         ONNL\tnull\t1970-01-04T03:00:00.000000000Z
                         LHTI\tnull\t1970-01-04T03:00:00.000000000Z
                         LFCY\tnull\t1970-01-04T03:00:00.000000000Z
                         \tnull\t1970-01-04T03:00:00.000000000Z
                         ITWG\tnull\t1970-01-04T03:00:00.000000000Z
-                        ONNL\t1\t1970-01-04T06:00:00.000000000Z
-                        LHTI\t1\t1970-01-04T06:00:00.000000000Z
-                        LFCY\t1\t1970-01-04T06:00:00.000000000Z
-                        \t1\t1970-01-04T06:00:00.000000000Z
-                        ITWG\t1\t1970-01-04T06:00:00.000000000Z
                         PVKN\tnull\t1970-01-04T06:00:00.000000000Z
                         WQXY\tnull\t1970-01-04T06:00:00.000000000Z
                         NLRH\tnull\t1970-01-04T06:00:00.000000000Z
                         CBWL\tnull\t1970-01-04T06:00:00.000000000Z
                         PFYX\tnull\t1970-01-04T06:00:00.000000000Z
                         QWPK\tnull\t1970-01-04T06:00:00.000000000Z
+                        ONNL\t1\t1970-01-04T06:00:00.000000000Z
+                        LHTI\t1\t1970-01-04T06:00:00.000000000Z
+                        LFCY\t1\t1970-01-04T06:00:00.000000000Z
+                        \t1\t1970-01-04T06:00:00.000000000Z
+                        ITWG\t1\t1970-01-04T06:00:00.000000000Z
                         """);
     }
 
@@ -7007,22 +9546,22 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         HYRX\t2\t1970-01-03T00:45:00.000000000Z
                         CPSW\t5\t1970-01-03T00:45:00.000000000Z
                         \t15\t1970-01-03T03:45:00.000000000Z
+                        VTJW\t5\t1970-01-03T03:45:00.000000000Z
                         RXGZ\t2\t1970-01-03T03:45:00.000000000Z
                         PEHN\t1\t1970-01-03T03:45:00.000000000Z
-                        VTJW\t5\t1970-01-03T03:45:00.000000000Z
-                        CPSW\t4\t1970-01-03T03:45:00.000000000Z
                         HYRX\t3\t1970-01-03T03:45:00.000000000Z
+                        CPSW\t4\t1970-01-03T03:45:00.000000000Z
                         \t15\t1970-01-03T06:45:00.000000000Z
-                        CPSW\t3\t1970-01-03T06:45:00.000000000Z
+                        VTJW\t3\t1970-01-03T06:45:00.000000000Z
+                        RXGZ\t3\t1970-01-03T06:45:00.000000000Z
                         PEHN\t2\t1970-01-03T06:45:00.000000000Z
                         HYRX\t4\t1970-01-03T06:45:00.000000000Z
-                        RXGZ\t3\t1970-01-03T06:45:00.000000000Z
-                        VTJW\t3\t1970-01-03T06:45:00.000000000Z
+                        CPSW\t3\t1970-01-03T06:45:00.000000000Z
                         \t11\t1970-01-03T09:45:00.000000000Z
+                        VTJW\t4\t1970-01-03T09:45:00.000000000Z
                         RXGZ\t5\t1970-01-03T09:45:00.000000000Z
                         PEHN\t1\t1970-01-03T09:45:00.000000000Z
                         HYRX\t1\t1970-01-03T09:45:00.000000000Z
-                        VTJW\t4\t1970-01-03T09:45:00.000000000Z
                         CPSW\t2\t1970-01-03T09:45:00.000000000Z
                         """, """
                         b\tcount\tk
@@ -7038,32 +9577,32 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         WGRM\tnull\t1970-01-03T00:45:00.000000000Z
                         ZNFK\t6\t1970-01-03T00:45:00.000000000Z
                         \t15\t1970-01-03T03:45:00.000000000Z
+                        VTJW\t5\t1970-01-03T03:45:00.000000000Z
                         RXGZ\t2\t1970-01-03T03:45:00.000000000Z
                         PEHN\t1\t1970-01-03T03:45:00.000000000Z
-                        VTJW\t5\t1970-01-03T03:45:00.000000000Z
-                        CPSW\t4\t1970-01-03T03:45:00.000000000Z
                         HYRX\t3\t1970-01-03T03:45:00.000000000Z
+                        CPSW\t4\t1970-01-03T03:45:00.000000000Z
                         CGFN\tnull\t1970-01-03T03:45:00.000000000Z
                         NPIW\tnull\t1970-01-03T03:45:00.000000000Z
                         PEVM\t5\t1970-01-03T03:45:00.000000000Z
                         WGRM\tnull\t1970-01-03T03:45:00.000000000Z
                         ZNFK\t5\t1970-01-03T03:45:00.000000000Z
                         \t15\t1970-01-03T06:45:00.000000000Z
-                        CPSW\t3\t1970-01-03T06:45:00.000000000Z
+                        VTJW\t3\t1970-01-03T06:45:00.000000000Z
+                        RXGZ\t3\t1970-01-03T06:45:00.000000000Z
                         PEHN\t2\t1970-01-03T06:45:00.000000000Z
                         HYRX\t4\t1970-01-03T06:45:00.000000000Z
-                        RXGZ\t3\t1970-01-03T06:45:00.000000000Z
-                        VTJW\t3\t1970-01-03T06:45:00.000000000Z
+                        CPSW\t3\t1970-01-03T06:45:00.000000000Z
                         CGFN\tnull\t1970-01-03T06:45:00.000000000Z
                         NPIW\tnull\t1970-01-03T06:45:00.000000000Z
                         PEVM\t4\t1970-01-03T06:45:00.000000000Z
                         WGRM\tnull\t1970-01-03T06:45:00.000000000Z
                         ZNFK\t4\t1970-01-03T06:45:00.000000000Z
                         \t11\t1970-01-03T09:45:00.000000000Z
+                        VTJW\t4\t1970-01-03T09:45:00.000000000Z
                         RXGZ\t5\t1970-01-03T09:45:00.000000000Z
                         PEHN\t1\t1970-01-03T09:45:00.000000000Z
                         HYRX\t1\t1970-01-03T09:45:00.000000000Z
-                        VTJW\t4\t1970-01-03T09:45:00.000000000Z
                         CPSW\t2\t1970-01-03T09:45:00.000000000Z
                         CGFN\tnull\t1970-01-03T09:45:00.000000000Z
                         NPIW\tnull\t1970-01-03T09:45:00.000000000Z
@@ -7071,19 +9610,17 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         WGRM\tnull\t1970-01-03T09:45:00.000000000Z
                         ZNFK\t3\t1970-01-03T09:45:00.000000000Z
                         \t14\t1970-01-03T12:45:00.000000000Z
-                        CGFN\t3\t1970-01-03T12:45:00.000000000Z
-                        NPIW\t2\t1970-01-03T12:45:00.000000000Z
-                        PEVM\t2\t1970-01-03T12:45:00.000000000Z
-                        WGRM\t3\t1970-01-03T12:45:00.000000000Z
-                        ZNFK\t2\t1970-01-03T12:45:00.000000000Z
                         VTJW\t5\t1970-01-03T12:45:00.000000000Z
                         RXGZ\t7\t1970-01-03T12:45:00.000000000Z
                         PEHN\t0\t1970-01-03T12:45:00.000000000Z
                         HYRX\t-2\t1970-01-03T12:45:00.000000000Z
                         CPSW\t1\t1970-01-03T12:45:00.000000000Z
+                        CGFN\t3\t1970-01-03T12:45:00.000000000Z
+                        NPIW\t2\t1970-01-03T12:45:00.000000000Z
+                        PEVM\t2\t1970-01-03T12:45:00.000000000Z
+                        WGRM\t3\t1970-01-03T12:45:00.000000000Z
+                        ZNFK\t2\t1970-01-03T12:45:00.000000000Z
                         \t7\t1970-01-03T15:45:00.000000000Z
-                        ZNFK\t1\t1970-01-03T15:45:00.000000000Z
-                        PEVM\t1\t1970-01-03T15:45:00.000000000Z
                         VTJW\t6\t1970-01-03T15:45:00.000000000Z
                         RXGZ\t9\t1970-01-03T15:45:00.000000000Z
                         PEHN\t-1\t1970-01-03T15:45:00.000000000Z
@@ -7091,7 +9628,9 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         CPSW\t0\t1970-01-03T15:45:00.000000000Z
                         CGFN\tnull\t1970-01-03T15:45:00.000000000Z
                         NPIW\tnull\t1970-01-03T15:45:00.000000000Z
+                        PEVM\t1\t1970-01-03T15:45:00.000000000Z
                         WGRM\tnull\t1970-01-03T15:45:00.000000000Z
+                        ZNFK\t1\t1970-01-03T15:45:00.000000000Z
                         """);
     }
 
@@ -7133,9 +9672,9 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         \t25.168644428253174\t96.69784438858017\t1715501826\t97\t28323\t-3537127814486931722\t1970-01-04T05:00:00.000000000Z
                         DEYY\t96.87422943115234\t67.00476391801053\t44173540\t34\t3282\t6794405451419334859\t1970-01-04T05:00:00.000000000Z
                         SXUX\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-04T05:00:00.000000000Z
-                        SXUX\t26.922100067138672\t52.98405941762054\t936627841\t16\t5741\t7153335833712179123\t1970-01-04T08:00:00.000000000Z
-                        DEYY\t29.313718795776367\t16.47436916993191\t66297136\t4\t3428\t9036423629723776443\t1970-01-04T08:00:00.000000000Z
                         \tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-04T08:00:00.000000000Z
+                        DEYY\t29.313718795776367\t16.47436916993191\t66297136\t4\t3428\t9036423629723776443\t1970-01-04T08:00:00.000000000Z
+                        SXUX\t26.922100067138672\t52.98405941762054\t936627841\t16\t5741\t7153335833712179123\t1970-01-04T08:00:00.000000000Z
                         """);
 
         execute("drop table x");
@@ -7175,18 +9714,18 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         UVSD\t76.92382049560547\t49.42890511958454\t2075675260\t27\t1756\t6190031864817509934\t1970-01-04T03:00:00.000000000Z
                         \t96.74316048622131\t93.12424109486786\t1636133449\t-32\t50923\t7035175691104559104\t1970-01-04T03:00:00.000000000Z
                         KGHV\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-04T03:00:00.000000000Z
+                        UVSD\t24.008358001708984\t94.55893004802432\t2111250190\t24\t5869\t7973684666911773753\t1970-01-04T06:00:00.000000000Z
                         \t49.71342086791992\t48.55868295807066\t876466531\t5\t29572\t5710210982977201267\t1970-01-04T06:00:00.000000000Z
                         KGHV\t34.947265625\t28.799739396819312\t2124174232\t11\t25974\t7103100524321179064\t1970-01-04T06:00:00.000000000Z
-                        UVSD\t24.008358001708984\t94.55893004802432\t2111250190\t24\t5869\t7973684666911773753\t1970-01-04T06:00:00.000000000Z
-                        \t2.6836812496185303\t3.993124821273464\t116799613\t42\t8221\t4385246274849842834\t1970-01-04T09:00:00.000000000Z
                         UVSD\t-28.907104492187493\t139.6889549764641\t2146825120\t21\t9982\t9223372036854775807\t1970-01-04T09:00:00.000000000Z
+                        \t2.6836812496185303\t3.993124821273464\t116799613\t42\t8221\t4385246274849842834\t1970-01-04T09:00:00.000000000Z
                         KGHV\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-04T09:00:00.000000000Z
                         """);
     }
 
     @Test
     public void testSampleFillLinear() throws Exception {
-        assertQuery("select b, sum(a), k from x sample by 3h fill(linear)")
+        assertQuery("select b, sum(a), k from x sample by 3h fill(linear) order by k, b")
                 .ddl("create table x as " +
                         "(" +
                         "select" +
@@ -7209,126 +9748,126 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                 .returns("""
                         b\tsum\tk
                         \t11.427984775756228\t1970-01-03T00:00:00.000000000Z
-                        VTJW\t42.17768841969397\t1970-01-03T00:00:00.000000000Z
-                        RXGZ\t23.90529010846525\t1970-01-03T00:00:00.000000000Z
-                        PEHN\t60.41913029841844\t1970-01-03T00:00:00.000000000Z
                         HYRX\t269.08084955586986\t1970-01-03T00:00:00.000000000Z
-                        PEHN\t70.94360487171201\t1970-01-03T03:00:00.000000000Z
+                        PEHN\t60.41913029841844\t1970-01-03T00:00:00.000000000Z
+                        RXGZ\t23.90529010846525\t1970-01-03T00:00:00.000000000Z
+                        VTJW\t42.17768841969397\t1970-01-03T00:00:00.000000000Z
                         \t120.87811633071126\t1970-01-03T03:00:00.000000000Z
-                        VTJW\t44.39196261932496\t1970-01-03T03:00:00.000000000Z
-                        RXGZ\tnull\t1970-01-03T03:00:00.000000000Z
                         HYRX\t183.39594050819096\t1970-01-03T03:00:00.000000000Z
+                        PEHN\t70.94360487171201\t1970-01-03T03:00:00.000000000Z
+                        RXGZ\tnull\t1970-01-03T03:00:00.000000000Z
+                        VTJW\t44.39196261932496\t1970-01-03T03:00:00.000000000Z
+                        \t57.93466326862211\t1970-01-03T06:00:00.000000000Z
                         HYRX\t97.71103146051203\t1970-01-03T06:00:00.000000000Z
                         PEHN\t81.46807944500559\t1970-01-03T06:00:00.000000000Z
-                        \t57.93466326862211\t1970-01-03T06:00:00.000000000Z
-                        VTJW\t46.60623681895594\t1970-01-03T06:00:00.000000000Z
                         RXGZ\tnull\t1970-01-03T06:00:00.000000000Z
-                        HYRX\t12.026122412833129\t1970-01-03T09:00:00.000000000Z
-                        VTJW\t48.820511018586934\t1970-01-03T09:00:00.000000000Z
+                        VTJW\t46.60623681895594\t1970-01-03T06:00:00.000000000Z
                         \t26.922103479744898\t1970-01-03T09:00:00.000000000Z
-                        RXGZ\tnull\t1970-01-03T09:00:00.000000000Z
+                        HYRX\t12.026122412833129\t1970-01-03T09:00:00.000000000Z
                         PEHN\t82.96033060855811\t1970-01-03T09:00:00.000000000Z
+                        RXGZ\tnull\t1970-01-03T09:00:00.000000000Z
+                        VTJW\t48.820511018586934\t1970-01-03T09:00:00.000000000Z
                         \t150.48604795487125\t1970-01-03T12:00:00.000000000Z
-                        PEHN\t84.45258177211063\t1970-01-03T12:00:00.000000000Z
-                        VTJW\t51.03478521821792\t1970-01-03T12:00:00.000000000Z
-                        RXGZ\tnull\t1970-01-03T12:00:00.000000000Z
                         HYRX\t-73.65878663484578\t1970-01-03T12:00:00.000000000Z
-                        PEHN\t49.00510449885239\t1970-01-03T15:00:00.000000000Z
+                        PEHN\t84.45258177211063\t1970-01-03T12:00:00.000000000Z
+                        RXGZ\tnull\t1970-01-03T12:00:00.000000000Z
+                        VTJW\t51.03478521821792\t1970-01-03T12:00:00.000000000Z
                         \t172.06125086724973\t1970-01-03T15:00:00.000000000Z
-                        VTJW\t53.249059417848926\t1970-01-03T15:00:00.000000000Z
-                        RXGZ\tnull\t1970-01-03T15:00:00.000000000Z
                         HYRX\t-159.34369568252467\t1970-01-03T15:00:00.000000000Z
+                        PEHN\t49.00510449885239\t1970-01-03T15:00:00.000000000Z
+                        RXGZ\tnull\t1970-01-03T15:00:00.000000000Z
+                        VTJW\t53.249059417848926\t1970-01-03T15:00:00.000000000Z
                         \t86.08992670884706\t1970-01-03T18:00:00.000000000Z
-                        VTJW\t55.463333617479904\t1970-01-03T18:00:00.000000000Z
-                        RXGZ\tnull\t1970-01-03T18:00:00.000000000Z
-                        PEHN\t13.557627225594144\t1970-01-03T18:00:00.000000000Z
                         HYRX\t-245.02860473020363\t1970-01-03T18:00:00.000000000Z
+                        PEHN\t13.557627225594144\t1970-01-03T18:00:00.000000000Z
+                        RXGZ\tnull\t1970-01-03T18:00:00.000000000Z
+                        VTJW\t55.463333617479904\t1970-01-03T18:00:00.000000000Z
                         """, """
                         b\tsum\tk
                         \t11.427984775756228\t1970-01-03T00:00:00.000000000Z
-                        VTJW\t42.17768841969397\t1970-01-03T00:00:00.000000000Z
-                        RXGZ\t23.90529010846525\t1970-01-03T00:00:00.000000000Z
-                        PEHN\t60.41913029841844\t1970-01-03T00:00:00.000000000Z
                         HYRX\t269.08084955586986\t1970-01-03T00:00:00.000000000Z
-                        UVSD\tnull\t1970-01-03T00:00:00.000000000Z
                         KGHV\tnull\t1970-01-03T00:00:00.000000000Z
-                        PEHN\t70.94360487171201\t1970-01-03T03:00:00.000000000Z
+                        PEHN\t60.41913029841844\t1970-01-03T00:00:00.000000000Z
+                        RXGZ\t23.90529010846525\t1970-01-03T00:00:00.000000000Z
+                        UVSD\tnull\t1970-01-03T00:00:00.000000000Z
+                        VTJW\t42.17768841969397\t1970-01-03T00:00:00.000000000Z
                         \t120.87811633071126\t1970-01-03T03:00:00.000000000Z
-                        VTJW\t44.39196261932496\t1970-01-03T03:00:00.000000000Z
-                        RXGZ\tnull\t1970-01-03T03:00:00.000000000Z
                         HYRX\t183.39594050819096\t1970-01-03T03:00:00.000000000Z
-                        UVSD\tnull\t1970-01-03T03:00:00.000000000Z
                         KGHV\tnull\t1970-01-03T03:00:00.000000000Z
-                        HYRX\t97.71103146051203\t1970-01-03T06:00:00.000000000Z
-                        PEHN\t81.46807944500559\t1970-01-03T06:00:00.000000000Z
+                        PEHN\t70.94360487171201\t1970-01-03T03:00:00.000000000Z
+                        RXGZ\tnull\t1970-01-03T03:00:00.000000000Z
+                        UVSD\tnull\t1970-01-03T03:00:00.000000000Z
+                        VTJW\t44.39196261932496\t1970-01-03T03:00:00.000000000Z
                         \t57.93466326862211\t1970-01-03T06:00:00.000000000Z
-                        VTJW\t46.60623681895594\t1970-01-03T06:00:00.000000000Z
+                        HYRX\t97.71103146051203\t1970-01-03T06:00:00.000000000Z
+                        KGHV\tnull\t1970-01-03T06:00:00.000000000Z
+                        PEHN\t81.46807944500559\t1970-01-03T06:00:00.000000000Z
                         RXGZ\tnull\t1970-01-03T06:00:00.000000000Z
                         UVSD\tnull\t1970-01-03T06:00:00.000000000Z
-                        KGHV\tnull\t1970-01-03T06:00:00.000000000Z
-                        HYRX\t12.026122412833129\t1970-01-03T09:00:00.000000000Z
-                        VTJW\t48.820511018586934\t1970-01-03T09:00:00.000000000Z
+                        VTJW\t46.60623681895594\t1970-01-03T06:00:00.000000000Z
                         \t26.922103479744898\t1970-01-03T09:00:00.000000000Z
-                        RXGZ\tnull\t1970-01-03T09:00:00.000000000Z
-                        PEHN\t82.96033060855811\t1970-01-03T09:00:00.000000000Z
-                        UVSD\tnull\t1970-01-03T09:00:00.000000000Z
+                        HYRX\t12.026122412833129\t1970-01-03T09:00:00.000000000Z
                         KGHV\tnull\t1970-01-03T09:00:00.000000000Z
+                        PEHN\t82.96033060855811\t1970-01-03T09:00:00.000000000Z
+                        RXGZ\tnull\t1970-01-03T09:00:00.000000000Z
+                        UVSD\tnull\t1970-01-03T09:00:00.000000000Z
+                        VTJW\t48.820511018586934\t1970-01-03T09:00:00.000000000Z
                         \t150.48604795487125\t1970-01-03T12:00:00.000000000Z
-                        PEHN\t84.45258177211063\t1970-01-03T12:00:00.000000000Z
-                        VTJW\t51.03478521821792\t1970-01-03T12:00:00.000000000Z
-                        RXGZ\tnull\t1970-01-03T12:00:00.000000000Z
                         HYRX\t-73.65878663484578\t1970-01-03T12:00:00.000000000Z
-                        UVSD\tnull\t1970-01-03T12:00:00.000000000Z
                         KGHV\tnull\t1970-01-03T12:00:00.000000000Z
-                        PEHN\t49.00510449885239\t1970-01-03T15:00:00.000000000Z
+                        PEHN\t84.45258177211063\t1970-01-03T12:00:00.000000000Z
+                        RXGZ\tnull\t1970-01-03T12:00:00.000000000Z
+                        UVSD\tnull\t1970-01-03T12:00:00.000000000Z
+                        VTJW\t51.03478521821792\t1970-01-03T12:00:00.000000000Z
                         \t172.06125086724973\t1970-01-03T15:00:00.000000000Z
-                        VTJW\t53.249059417848926\t1970-01-03T15:00:00.000000000Z
-                        RXGZ\tnull\t1970-01-03T15:00:00.000000000Z
                         HYRX\t-159.34369568252467\t1970-01-03T15:00:00.000000000Z
-                        UVSD\tnull\t1970-01-03T15:00:00.000000000Z
                         KGHV\tnull\t1970-01-03T15:00:00.000000000Z
+                        PEHN\t49.00510449885239\t1970-01-03T15:00:00.000000000Z
+                        RXGZ\tnull\t1970-01-03T15:00:00.000000000Z
+                        UVSD\tnull\t1970-01-03T15:00:00.000000000Z
+                        VTJW\t53.249059417848926\t1970-01-03T15:00:00.000000000Z
                         \t86.08992670884706\t1970-01-03T18:00:00.000000000Z
-                        VTJW\t55.463333617479904\t1970-01-03T18:00:00.000000000Z
-                        RXGZ\tnull\t1970-01-03T18:00:00.000000000Z
-                        PEHN\t13.557627225594144\t1970-01-03T18:00:00.000000000Z
                         HYRX\t-245.02860473020363\t1970-01-03T18:00:00.000000000Z
-                        UVSD\tnull\t1970-01-03T18:00:00.000000000Z
                         KGHV\tnull\t1970-01-03T18:00:00.000000000Z
+                        PEHN\t13.557627225594144\t1970-01-03T18:00:00.000000000Z
+                        RXGZ\tnull\t1970-01-03T18:00:00.000000000Z
+                        UVSD\tnull\t1970-01-03T18:00:00.000000000Z
+                        VTJW\t55.463333617479904\t1970-01-03T18:00:00.000000000Z
                         \t75.55713454429454\t1970-01-03T21:00:00.000000000Z
-                        VTJW\t57.6776078171109\t1970-01-03T21:00:00.000000000Z
-                        RXGZ\tnull\t1970-01-03T21:00:00.000000000Z
-                        PEHN\t-21.889850047664098\t1970-01-03T21:00:00.000000000Z
                         HYRX\t-330.7135137778825\t1970-01-03T21:00:00.000000000Z
-                        UVSD\tnull\t1970-01-03T21:00:00.000000000Z
                         KGHV\tnull\t1970-01-03T21:00:00.000000000Z
+                        PEHN\t-21.889850047664098\t1970-01-03T21:00:00.000000000Z
+                        RXGZ\tnull\t1970-01-03T21:00:00.000000000Z
+                        UVSD\tnull\t1970-01-03T21:00:00.000000000Z
+                        VTJW\t57.6776078171109\t1970-01-03T21:00:00.000000000Z
                         \t65.02434237974201\t1970-01-04T00:00:00.000000000Z
-                        VTJW\t59.891882016741896\t1970-01-04T00:00:00.000000000Z
-                        RXGZ\tnull\t1970-01-04T00:00:00.000000000Z
-                        PEHN\t-57.33732732092234\t1970-01-04T00:00:00.000000000Z
                         HYRX\t-416.3984228255614\t1970-01-04T00:00:00.000000000Z
-                        UVSD\tnull\t1970-01-04T00:00:00.000000000Z
                         KGHV\tnull\t1970-01-04T00:00:00.000000000Z
+                        PEHN\t-57.33732732092234\t1970-01-04T00:00:00.000000000Z
+                        RXGZ\tnull\t1970-01-04T00:00:00.000000000Z
+                        UVSD\tnull\t1970-01-04T00:00:00.000000000Z
+                        VTJW\t59.891882016741896\t1970-01-04T00:00:00.000000000Z
                         \t54.49155021518948\t1970-01-04T03:00:00.000000000Z
-                        VTJW\t62.106156216372874\t1970-01-04T03:00:00.000000000Z
-                        RXGZ\tnull\t1970-01-04T03:00:00.000000000Z
-                        PEHN\t-92.7848045941806\t1970-01-04T03:00:00.000000000Z
                         HYRX\t-502.08333187324035\t1970-01-04T03:00:00.000000000Z
-                        UVSD\tnull\t1970-01-04T03:00:00.000000000Z
                         KGHV\tnull\t1970-01-04T03:00:00.000000000Z
+                        PEHN\t-92.7848045941806\t1970-01-04T03:00:00.000000000Z
+                        RXGZ\tnull\t1970-01-04T03:00:00.000000000Z
+                        UVSD\tnull\t1970-01-04T03:00:00.000000000Z
+                        VTJW\t62.106156216372874\t1970-01-04T03:00:00.000000000Z
                         \t135.835983782176\t1970-01-04T06:00:00.000000000Z
-                        UVSD\t49.42890511958454\t1970-01-04T06:00:00.000000000Z
-                        VTJW\t64.32043041600389\t1970-01-04T06:00:00.000000000Z
-                        RXGZ\tnull\t1970-01-04T06:00:00.000000000Z
-                        PEHN\t-128.2322818674388\t1970-01-04T06:00:00.000000000Z
                         HYRX\t-587.7682409209193\t1970-01-04T06:00:00.000000000Z
                         KGHV\tnull\t1970-01-04T06:00:00.000000000Z
-                        KGHV\t67.52509547112409\t1970-01-04T09:00:00.000000000Z
+                        PEHN\t-128.2322818674388\t1970-01-04T06:00:00.000000000Z
+                        RXGZ\tnull\t1970-01-04T06:00:00.000000000Z
+                        UVSD\t49.42890511958454\t1970-01-04T06:00:00.000000000Z
+                        VTJW\t64.32043041600389\t1970-01-04T06:00:00.000000000Z
                         \t217.1804173491625\t1970-01-04T09:00:00.000000000Z
-                        VTJW\t66.53470461563487\t1970-01-04T09:00:00.000000000Z
-                        RXGZ\tnull\t1970-01-04T09:00:00.000000000Z
-                        PEHN\t-163.6797591406971\t1970-01-04T09:00:00.000000000Z
                         HYRX\t-673.4531499685982\t1970-01-04T09:00:00.000000000Z
+                        KGHV\t67.52509547112409\t1970-01-04T09:00:00.000000000Z
+                        PEHN\t-163.6797591406971\t1970-01-04T09:00:00.000000000Z
+                        RXGZ\tnull\t1970-01-04T09:00:00.000000000Z
                         UVSD\tnull\t1970-01-04T09:00:00.000000000Z
+                        VTJW\t66.53470461563487\t1970-01-04T09:00:00.000000000Z
                         """);
     }
 
@@ -7350,6 +9889,8 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFillLinearByMonth() throws Exception {
+        // Buckets start on the 3rd of every third month, so rows on the 1st and the 2nd belong to the previous
+        // bucket, unlike with ALIGN TO CALENDAR below (#7769)
         assertQuery("select b, sum_t(a), k from x sample by 3M fill(linear) align to first observation")
                 .ddl("create table x as " +
                         "(" +
@@ -7364,36 +9905,36 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                 .expectSize()
                 .returns("""
                         b\tsum_t\tk
-                        \t54112.40405938657\t1970-01-03T00:00:00.000000000Z
-                        VTJW\t11209.880434660998\t1970-01-03T00:00:00.000000000Z
-                        RXGZ\t9939.438287132381\t1970-01-03T00:00:00.000000000Z
-                        PEHN\t11042.882403279875\t1970-01-03T00:00:00.000000000Z
-                        HYRX\t11080.174817969955\t1970-01-03T00:00:00.000000000Z
-                        CPSW\t9310.397369439\t1970-01-03T00:00:00.000000000Z
-                        \t53936.039113863764\t1970-04-03T00:00:00.000000000Z
-                        HYRX\t10382.092656987053\t1970-04-03T00:00:00.000000000Z
-                        CPSW\t11677.451781387846\t1970-04-03T00:00:00.000000000Z
-                        RXGZ\t12082.97398092452\t1970-04-03T00:00:00.000000000Z
-                        VTJW\t11574.354700279142\t1970-04-03T00:00:00.000000000Z
-                        PEHN\t11225.427167029598\t1970-04-03T00:00:00.000000000Z
-                        \t53719.38559836983\t1970-07-03T00:00:00.000000000Z
-                        VTJW\t10645.216313875992\t1970-07-03T00:00:00.000000000Z
-                        RXGZ\t12441.881371617534\t1970-07-03T00:00:00.000000000Z
-                        HYRX\t10478.918039106036\t1970-07-03T00:00:00.000000000Z
-                        CPSW\t11215.534064219255\t1970-07-03T00:00:00.000000000Z
-                        PEHN\t12053.625707887684\t1970-07-03T00:00:00.000000000Z
-                        \t54106.362147164444\t1970-10-03T00:00:00.000000000Z
-                        HYRX\t11883.354138407445\t1970-10-03T00:00:00.000000000Z
-                        RXGZ\t11608.715762809448\t1970-10-03T00:00:00.000000000Z
-                        CPSW\t11623.362686708584\t1970-10-03T00:00:00.000000000Z
-                        PEHN\t11258.550294609915\t1970-10-03T00:00:00.000000000Z
-                        VTJW\t10865.136275604094\t1970-10-03T00:00:00.000000000Z
-                        \t33152.56289929654\t1971-01-03T00:00:00.000000000Z
-                        PEHN\t7219.25966062438\t1971-01-03T00:00:00.000000000Z
-                        CPSW\t6038.83487182006\t1971-01-03T00:00:00.000000000Z
-                        RXGZ\t5862.505042201944\t1971-01-03T00:00:00.000000000Z
-                        VTJW\t6677.581919995402\t1971-01-03T00:00:00.000000000Z
-                        HYRX\t5998.730211949621\t1971-01-03T00:00:00.000000000Z
+                        \t55342.35808049189\t1970-01-03T00:00:00.000000000Z
+                        VTJW\t11567.037431069954\t1970-01-03T00:00:00.000000000Z
+                        RXGZ\t10201.524212064816\t1970-01-03T00:00:00.000000000Z
+                        PEHN\t11202.70624166601\t1970-01-03T00:00:00.000000000Z
+                        HYRX\t11272.942252172881\t1970-01-03T00:00:00.000000000Z
+                        CPSW\t9549.728356483236\t1970-01-03T00:00:00.000000000Z
+                        \t53480.15115633946\t1970-04-03T00:00:00.000000000Z
+                        VTJW\t11390.234559637041\t1970-04-03T00:00:00.000000000Z
+                        RXGZ\t12440.107683784532\t1970-04-03T00:00:00.000000000Z
+                        PEHN\t11450.78558033701\t1970-04-03T00:00:00.000000000Z
+                        HYRX\t10356.509551414398\t1970-04-03T00:00:00.000000000Z
+                        CPSW\t11636.209302114898\t1970-04-03T00:00:00.000000000Z
+                        \t54114.54355982458\t1970-07-03T00:00:00.000000000Z
+                        VTJW\t10511.596334423533\t1970-07-03T00:00:00.000000000Z
+                        RXGZ\t11949.011789400207\t1970-07-03T00:00:00.000000000Z
+                        PEHN\t11989.334543549547\t1970-07-03T00:00:00.000000000Z
+                        HYRX\t10581.79116275676\t1970-07-03T00:00:00.000000000Z
+                        CPSW\t11160.449030359112\t1970-07-03T00:00:00.000000000Z
+                        \t53746.717765655616\t1970-10-03T00:00:00.000000000Z
+                        VTJW\t10933.352039216545\t1970-10-03T00:00:00.000000000Z
+                        RXGZ\t11675.396635775045\t1970-10-03T00:00:00.000000000Z
+                        PEHN\t11547.526370144547\t1970-10-03T00:00:00.000000000Z
+                        HYRX\t11615.62616490242\t1970-10-03T00:00:00.000000000Z
+                        CPSW\t11749.28339631865\t1970-10-03T00:00:00.000000000Z
+                        \t32342.983255769585\t1971-01-03T00:00:00.000000000Z
+                        VTJW\t6569.949280068554\t1971-01-03T00:00:00.000000000Z
+                        RXGZ\t5669.474123661225\t1971-01-03T00:00:00.000000000Z
+                        PEHN\t6609.39249773434\t1971-01-03T00:00:00.000000000Z
+                        HYRX\t5996.400733173654\t1971-01-03T00:00:00.000000000Z
+                        CPSW\t5769.910688298849\t1971-01-03T00:00:00.000000000Z
                         """);
 
         assertQuery("select b, sum_t(a), k from x sample by 3M fill(linear) align to calendar")
@@ -7408,29 +9949,29 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         HYRX\t11080.174817969955\t1970-01-01T00:00:00.000000000Z
                         CPSW\t9310.397369439\t1970-01-01T00:00:00.000000000Z
                         \t53936.039113863764\t1970-04-01T00:00:00.000000000Z
+                        VTJW\t11574.354700279142\t1970-04-01T00:00:00.000000000Z
+                        RXGZ\t12082.97398092452\t1970-04-01T00:00:00.000000000Z
+                        PEHN\t11225.427167029598\t1970-04-01T00:00:00.000000000Z
                         HYRX\t10382.092656987053\t1970-04-01T00:00:00.000000000Z
                         CPSW\t11677.451781387846\t1970-04-01T00:00:00.000000000Z
-                        RXGZ\t12082.97398092452\t1970-04-01T00:00:00.000000000Z
-                        VTJW\t11574.354700279142\t1970-04-01T00:00:00.000000000Z
-                        PEHN\t11225.427167029598\t1970-04-01T00:00:00.000000000Z
                         \t53719.38559836983\t1970-07-01T00:00:00.000000000Z
                         VTJW\t10645.216313875992\t1970-07-01T00:00:00.000000000Z
                         RXGZ\t12441.881371617534\t1970-07-01T00:00:00.000000000Z
+                        PEHN\t12053.625707887684\t1970-07-01T00:00:00.000000000Z
                         HYRX\t10478.918039106036\t1970-07-01T00:00:00.000000000Z
                         CPSW\t11215.534064219255\t1970-07-01T00:00:00.000000000Z
-                        PEHN\t12053.625707887684\t1970-07-01T00:00:00.000000000Z
                         \t54106.362147164444\t1970-10-01T00:00:00.000000000Z
-                        HYRX\t11883.354138407445\t1970-10-01T00:00:00.000000000Z
-                        RXGZ\t11608.715762809448\t1970-10-01T00:00:00.000000000Z
-                        CPSW\t11623.362686708584\t1970-10-01T00:00:00.000000000Z
-                        PEHN\t11258.550294609915\t1970-10-01T00:00:00.000000000Z
                         VTJW\t10865.136275604094\t1970-10-01T00:00:00.000000000Z
+                        RXGZ\t11608.715762809448\t1970-10-01T00:00:00.000000000Z
+                        PEHN\t11258.550294609915\t1970-10-01T00:00:00.000000000Z
+                        HYRX\t11883.354138407445\t1970-10-01T00:00:00.000000000Z
+                        CPSW\t11623.362686708584\t1970-10-01T00:00:00.000000000Z
                         \t33152.56289929654\t1971-01-01T00:00:00.000000000Z
-                        PEHN\t7219.25966062438\t1971-01-01T00:00:00.000000000Z
-                        CPSW\t6038.83487182006\t1971-01-01T00:00:00.000000000Z
-                        RXGZ\t5862.505042201944\t1971-01-01T00:00:00.000000000Z
                         VTJW\t6677.581919995402\t1971-01-01T00:00:00.000000000Z
+                        RXGZ\t5862.505042201944\t1971-01-01T00:00:00.000000000Z
+                        PEHN\t7219.25966062438\t1971-01-01T00:00:00.000000000Z
                         HYRX\t5998.730211949621\t1971-01-01T00:00:00.000000000Z
+                        CPSW\t6038.83487182006\t1971-01-01T00:00:00.000000000Z
                         """);
     }
 
@@ -7665,7 +10206,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
             assertQuery("select ts, count() from x sample by 5m align to calendar\n")
                     .noLeakCheck()
                     .timestamp("ts")
-                    .expectSize()
+                    .noRandomAccess()
                     .returns("""
                             ts\tcount
                             2024-03-30T12:20:00.000000000Z\t2
@@ -8093,7 +10634,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         " long_sequence(5)" +
                         ") timestamp(k)")
                 .timestamp("k")
-                .expectSize()
+                .noRandomAccess()
                 .returns("""
                         b\tsum\tk
                         \t11.427984775756228\t1970-01-03T01:00:00.000000000Z
@@ -8292,7 +10833,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFillNull() throws Exception {
-        assertQuery("select b, sum(a), k from x sample by 3h fill(null)")
+        assertQuery("select b, sum(a), k from x sample by 3h fill(null) order by k, b")
                 .ddl("create table x as " +
                         "(" +
                         "select" +
@@ -8311,130 +10852,129 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         " long_sequence(5)" +
                         ") timestamp(k)")
                 .timestamp("k")
-                .noRandomAccess()
                 .returns("""
                         b\tsum\tk
                         \t11.427984775756228\t1970-01-03T00:00:00.000000000Z
-                        VTJW\t42.17768841969397\t1970-01-03T00:00:00.000000000Z
-                        RXGZ\t23.90529010846525\t1970-01-03T00:00:00.000000000Z
-                        PEHN\tnull\t1970-01-03T00:00:00.000000000Z
                         HYRX\tnull\t1970-01-03T00:00:00.000000000Z
-                        PEHN\t70.94360487171201\t1970-01-03T03:00:00.000000000Z
+                        PEHN\tnull\t1970-01-03T00:00:00.000000000Z
+                        RXGZ\t23.90529010846525\t1970-01-03T00:00:00.000000000Z
+                        VTJW\t42.17768841969397\t1970-01-03T00:00:00.000000000Z
                         \t120.87811633071126\t1970-01-03T03:00:00.000000000Z
-                        VTJW\tnull\t1970-01-03T03:00:00.000000000Z
-                        RXGZ\tnull\t1970-01-03T03:00:00.000000000Z
                         HYRX\tnull\t1970-01-03T03:00:00.000000000Z
+                        PEHN\t70.94360487171201\t1970-01-03T03:00:00.000000000Z
+                        RXGZ\tnull\t1970-01-03T03:00:00.000000000Z
+                        VTJW\tnull\t1970-01-03T03:00:00.000000000Z
+                        \t57.93466326862211\t1970-01-03T06:00:00.000000000Z
                         HYRX\t97.71103146051203\t1970-01-03T06:00:00.000000000Z
                         PEHN\t81.46807944500559\t1970-01-03T06:00:00.000000000Z
-                        \t57.93466326862211\t1970-01-03T06:00:00.000000000Z
-                        VTJW\tnull\t1970-01-03T06:00:00.000000000Z
                         RXGZ\tnull\t1970-01-03T06:00:00.000000000Z
-                        HYRX\t12.026122412833129\t1970-01-03T09:00:00.000000000Z
-                        VTJW\t48.820511018586934\t1970-01-03T09:00:00.000000000Z
+                        VTJW\tnull\t1970-01-03T06:00:00.000000000Z
                         \t26.922103479744898\t1970-01-03T09:00:00.000000000Z
-                        RXGZ\tnull\t1970-01-03T09:00:00.000000000Z
+                        HYRX\t12.026122412833129\t1970-01-03T09:00:00.000000000Z
                         PEHN\tnull\t1970-01-03T09:00:00.000000000Z
+                        RXGZ\tnull\t1970-01-03T09:00:00.000000000Z
+                        VTJW\t48.820511018586934\t1970-01-03T09:00:00.000000000Z
                         \t150.48604795487125\t1970-01-03T12:00:00.000000000Z
-                        PEHN\t84.45258177211063\t1970-01-03T12:00:00.000000000Z
-                        VTJW\tnull\t1970-01-03T12:00:00.000000000Z
-                        RXGZ\tnull\t1970-01-03T12:00:00.000000000Z
                         HYRX\tnull\t1970-01-03T12:00:00.000000000Z
-                        PEHN\t49.00510449885239\t1970-01-03T15:00:00.000000000Z
+                        PEHN\t84.45258177211063\t1970-01-03T12:00:00.000000000Z
+                        RXGZ\tnull\t1970-01-03T12:00:00.000000000Z
+                        VTJW\tnull\t1970-01-03T12:00:00.000000000Z
                         \t172.06125086724973\t1970-01-03T15:00:00.000000000Z
-                        VTJW\tnull\t1970-01-03T15:00:00.000000000Z
-                        RXGZ\tnull\t1970-01-03T15:00:00.000000000Z
                         HYRX\tnull\t1970-01-03T15:00:00.000000000Z
+                        PEHN\t49.00510449885239\t1970-01-03T15:00:00.000000000Z
+                        RXGZ\tnull\t1970-01-03T15:00:00.000000000Z
+                        VTJW\tnull\t1970-01-03T15:00:00.000000000Z
                         \t86.08992670884706\t1970-01-03T18:00:00.000000000Z
-                        VTJW\tnull\t1970-01-03T18:00:00.000000000Z
-                        RXGZ\tnull\t1970-01-03T18:00:00.000000000Z
-                        PEHN\tnull\t1970-01-03T18:00:00.000000000Z
                         HYRX\tnull\t1970-01-03T18:00:00.000000000Z
+                        PEHN\tnull\t1970-01-03T18:00:00.000000000Z
+                        RXGZ\tnull\t1970-01-03T18:00:00.000000000Z
+                        VTJW\tnull\t1970-01-03T18:00:00.000000000Z
                         """, """
                         b\tsum\tk
                         \t11.427984775756228\t1970-01-03T00:00:00.000000000Z
-                        VTJW\t42.17768841969397\t1970-01-03T00:00:00.000000000Z
-                        RXGZ\t23.90529010846525\t1970-01-03T00:00:00.000000000Z
-                        PEHN\tnull\t1970-01-03T00:00:00.000000000Z
                         HYRX\tnull\t1970-01-03T00:00:00.000000000Z
-                        UVSD\tnull\t1970-01-03T00:00:00.000000000Z
                         KGHV\tnull\t1970-01-03T00:00:00.000000000Z
-                        PEHN\t70.94360487171201\t1970-01-03T03:00:00.000000000Z
+                        PEHN\tnull\t1970-01-03T00:00:00.000000000Z
+                        RXGZ\t23.90529010846525\t1970-01-03T00:00:00.000000000Z
+                        UVSD\tnull\t1970-01-03T00:00:00.000000000Z
+                        VTJW\t42.17768841969397\t1970-01-03T00:00:00.000000000Z
                         \t120.87811633071126\t1970-01-03T03:00:00.000000000Z
-                        VTJW\tnull\t1970-01-03T03:00:00.000000000Z
-                        RXGZ\tnull\t1970-01-03T03:00:00.000000000Z
                         HYRX\tnull\t1970-01-03T03:00:00.000000000Z
-                        UVSD\tnull\t1970-01-03T03:00:00.000000000Z
                         KGHV\tnull\t1970-01-03T03:00:00.000000000Z
-                        HYRX\t97.71103146051203\t1970-01-03T06:00:00.000000000Z
-                        PEHN\t81.46807944500559\t1970-01-03T06:00:00.000000000Z
+                        PEHN\t70.94360487171201\t1970-01-03T03:00:00.000000000Z
+                        RXGZ\tnull\t1970-01-03T03:00:00.000000000Z
+                        UVSD\tnull\t1970-01-03T03:00:00.000000000Z
+                        VTJW\tnull\t1970-01-03T03:00:00.000000000Z
                         \t57.93466326862211\t1970-01-03T06:00:00.000000000Z
-                        VTJW\tnull\t1970-01-03T06:00:00.000000000Z
+                        HYRX\t97.71103146051203\t1970-01-03T06:00:00.000000000Z
+                        KGHV\tnull\t1970-01-03T06:00:00.000000000Z
+                        PEHN\t81.46807944500559\t1970-01-03T06:00:00.000000000Z
                         RXGZ\tnull\t1970-01-03T06:00:00.000000000Z
                         UVSD\tnull\t1970-01-03T06:00:00.000000000Z
-                        KGHV\tnull\t1970-01-03T06:00:00.000000000Z
-                        HYRX\t12.026122412833129\t1970-01-03T09:00:00.000000000Z
-                        VTJW\t48.820511018586934\t1970-01-03T09:00:00.000000000Z
+                        VTJW\tnull\t1970-01-03T06:00:00.000000000Z
                         \t26.922103479744898\t1970-01-03T09:00:00.000000000Z
-                        RXGZ\tnull\t1970-01-03T09:00:00.000000000Z
-                        PEHN\tnull\t1970-01-03T09:00:00.000000000Z
-                        UVSD\tnull\t1970-01-03T09:00:00.000000000Z
+                        HYRX\t12.026122412833129\t1970-01-03T09:00:00.000000000Z
                         KGHV\tnull\t1970-01-03T09:00:00.000000000Z
+                        PEHN\tnull\t1970-01-03T09:00:00.000000000Z
+                        RXGZ\tnull\t1970-01-03T09:00:00.000000000Z
+                        UVSD\tnull\t1970-01-03T09:00:00.000000000Z
+                        VTJW\t48.820511018586934\t1970-01-03T09:00:00.000000000Z
                         \t150.48604795487125\t1970-01-03T12:00:00.000000000Z
-                        PEHN\t84.45258177211063\t1970-01-03T12:00:00.000000000Z
-                        VTJW\tnull\t1970-01-03T12:00:00.000000000Z
-                        RXGZ\tnull\t1970-01-03T12:00:00.000000000Z
                         HYRX\tnull\t1970-01-03T12:00:00.000000000Z
-                        UVSD\tnull\t1970-01-03T12:00:00.000000000Z
                         KGHV\tnull\t1970-01-03T12:00:00.000000000Z
-                        PEHN\t49.00510449885239\t1970-01-03T15:00:00.000000000Z
+                        PEHN\t84.45258177211063\t1970-01-03T12:00:00.000000000Z
+                        RXGZ\tnull\t1970-01-03T12:00:00.000000000Z
+                        UVSD\tnull\t1970-01-03T12:00:00.000000000Z
+                        VTJW\tnull\t1970-01-03T12:00:00.000000000Z
                         \t172.06125086724973\t1970-01-03T15:00:00.000000000Z
-                        VTJW\tnull\t1970-01-03T15:00:00.000000000Z
-                        RXGZ\tnull\t1970-01-03T15:00:00.000000000Z
                         HYRX\tnull\t1970-01-03T15:00:00.000000000Z
-                        UVSD\tnull\t1970-01-03T15:00:00.000000000Z
                         KGHV\tnull\t1970-01-03T15:00:00.000000000Z
+                        PEHN\t49.00510449885239\t1970-01-03T15:00:00.000000000Z
+                        RXGZ\tnull\t1970-01-03T15:00:00.000000000Z
+                        UVSD\tnull\t1970-01-03T15:00:00.000000000Z
+                        VTJW\tnull\t1970-01-03T15:00:00.000000000Z
                         \t86.08992670884706\t1970-01-03T18:00:00.000000000Z
-                        VTJW\tnull\t1970-01-03T18:00:00.000000000Z
-                        RXGZ\tnull\t1970-01-03T18:00:00.000000000Z
-                        PEHN\tnull\t1970-01-03T18:00:00.000000000Z
                         HYRX\tnull\t1970-01-03T18:00:00.000000000Z
-                        UVSD\tnull\t1970-01-03T18:00:00.000000000Z
                         KGHV\tnull\t1970-01-03T18:00:00.000000000Z
+                        PEHN\tnull\t1970-01-03T18:00:00.000000000Z
+                        RXGZ\tnull\t1970-01-03T18:00:00.000000000Z
+                        UVSD\tnull\t1970-01-03T18:00:00.000000000Z
+                        VTJW\tnull\t1970-01-03T18:00:00.000000000Z
                         \tnull\t1970-01-03T21:00:00.000000000Z
-                        VTJW\tnull\t1970-01-03T21:00:00.000000000Z
-                        RXGZ\tnull\t1970-01-03T21:00:00.000000000Z
-                        PEHN\tnull\t1970-01-03T21:00:00.000000000Z
                         HYRX\tnull\t1970-01-03T21:00:00.000000000Z
-                        UVSD\tnull\t1970-01-03T21:00:00.000000000Z
                         KGHV\tnull\t1970-01-03T21:00:00.000000000Z
+                        PEHN\tnull\t1970-01-03T21:00:00.000000000Z
+                        RXGZ\tnull\t1970-01-03T21:00:00.000000000Z
+                        UVSD\tnull\t1970-01-03T21:00:00.000000000Z
+                        VTJW\tnull\t1970-01-03T21:00:00.000000000Z
                         \tnull\t1970-01-04T00:00:00.000000000Z
-                        VTJW\tnull\t1970-01-04T00:00:00.000000000Z
-                        RXGZ\tnull\t1970-01-04T00:00:00.000000000Z
-                        PEHN\tnull\t1970-01-04T00:00:00.000000000Z
                         HYRX\tnull\t1970-01-04T00:00:00.000000000Z
-                        UVSD\tnull\t1970-01-04T00:00:00.000000000Z
                         KGHV\tnull\t1970-01-04T00:00:00.000000000Z
+                        PEHN\tnull\t1970-01-04T00:00:00.000000000Z
+                        RXGZ\tnull\t1970-01-04T00:00:00.000000000Z
+                        UVSD\tnull\t1970-01-04T00:00:00.000000000Z
+                        VTJW\tnull\t1970-01-04T00:00:00.000000000Z
                         \t54.49155021518948\t1970-01-04T03:00:00.000000000Z
-                        VTJW\tnull\t1970-01-04T03:00:00.000000000Z
-                        RXGZ\tnull\t1970-01-04T03:00:00.000000000Z
-                        PEHN\tnull\t1970-01-04T03:00:00.000000000Z
                         HYRX\tnull\t1970-01-04T03:00:00.000000000Z
-                        UVSD\tnull\t1970-01-04T03:00:00.000000000Z
                         KGHV\tnull\t1970-01-04T03:00:00.000000000Z
+                        PEHN\tnull\t1970-01-04T03:00:00.000000000Z
+                        RXGZ\tnull\t1970-01-04T03:00:00.000000000Z
+                        UVSD\tnull\t1970-01-04T03:00:00.000000000Z
+                        VTJW\tnull\t1970-01-04T03:00:00.000000000Z
                         \t135.835983782176\t1970-01-04T06:00:00.000000000Z
-                        UVSD\t49.42890511958454\t1970-01-04T06:00:00.000000000Z
-                        VTJW\tnull\t1970-01-04T06:00:00.000000000Z
-                        RXGZ\tnull\t1970-01-04T06:00:00.000000000Z
-                        PEHN\tnull\t1970-01-04T06:00:00.000000000Z
                         HYRX\tnull\t1970-01-04T06:00:00.000000000Z
                         KGHV\tnull\t1970-01-04T06:00:00.000000000Z
-                        KGHV\t67.52509547112409\t1970-01-04T09:00:00.000000000Z
+                        PEHN\tnull\t1970-01-04T06:00:00.000000000Z
+                        RXGZ\tnull\t1970-01-04T06:00:00.000000000Z
+                        UVSD\t49.42890511958454\t1970-01-04T06:00:00.000000000Z
+                        VTJW\tnull\t1970-01-04T06:00:00.000000000Z
                         \tnull\t1970-01-04T09:00:00.000000000Z
-                        VTJW\tnull\t1970-01-04T09:00:00.000000000Z
-                        RXGZ\tnull\t1970-01-04T09:00:00.000000000Z
-                        PEHN\tnull\t1970-01-04T09:00:00.000000000Z
                         HYRX\tnull\t1970-01-04T09:00:00.000000000Z
+                        KGHV\t67.52509547112409\t1970-01-04T09:00:00.000000000Z
+                        PEHN\tnull\t1970-01-04T09:00:00.000000000Z
+                        RXGZ\tnull\t1970-01-04T09:00:00.000000000Z
                         UVSD\tnull\t1970-01-04T09:00:00.000000000Z
+                        VTJW\tnull\t1970-01-04T09:00:00.000000000Z
                         """);
     }
 
@@ -8443,7 +10983,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
         // EST timezone has clock go back on 7 Nov. From -4 UTC to -5 UTC
         // at 6am UTC EST time is 2am (DTS), when clock goes back 7am also becomes 2am UTC
         // hence 6am UTC is duplicate timestamp and is expected to be compounded
-        assertQuery("select b, s, to_timezone(k, 'EST') k from (select b, sum(a) s, k from x sample by 1h fill(null) align to calendar time zone 'EST')")
+        assertQuery("select b, s, to_timezone(k, 'EST') k from (select b, sum(a) s, k from x sample by 1h fill(null) align to calendar time zone 'EST' order by k, b)")
                 .ddl("create table x as " +
                         "(" +
                         "select" +
@@ -8453,94 +10993,93 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE")
-                .noRandomAccess()
                 .returns("""
                         b\ts\tk
                         \t11.427984775756228\t2021-11-06T18:00:00.000000000Z
-                        VTJW\tnull\t2021-11-06T18:00:00.000000000Z
-                        RXGZ\tnull\t2021-11-06T18:00:00.000000000Z
-                        PEHN\tnull\t2021-11-06T18:00:00.000000000Z
                         HYRX\tnull\t2021-11-06T18:00:00.000000000Z
-                        VTJW\t42.17768841969397\t2021-11-06T19:00:00.000000000Z
-                        RXGZ\t23.90529010846525\t2021-11-06T19:00:00.000000000Z
+                        PEHN\tnull\t2021-11-06T18:00:00.000000000Z
+                        RXGZ\tnull\t2021-11-06T18:00:00.000000000Z
+                        VTJW\tnull\t2021-11-06T18:00:00.000000000Z
                         \tnull\t2021-11-06T19:00:00.000000000Z
-                        PEHN\tnull\t2021-11-06T19:00:00.000000000Z
                         HYRX\tnull\t2021-11-06T19:00:00.000000000Z
-                        PEHN\t70.94360487171201\t2021-11-06T20:00:00.000000000Z
+                        PEHN\tnull\t2021-11-06T19:00:00.000000000Z
+                        RXGZ\t23.90529010846525\t2021-11-06T19:00:00.000000000Z
+                        VTJW\t42.17768841969397\t2021-11-06T19:00:00.000000000Z
                         \tnull\t2021-11-06T20:00:00.000000000Z
-                        VTJW\tnull\t2021-11-06T20:00:00.000000000Z
-                        RXGZ\tnull\t2021-11-06T20:00:00.000000000Z
                         HYRX\tnull\t2021-11-06T20:00:00.000000000Z
+                        PEHN\t70.94360487171201\t2021-11-06T20:00:00.000000000Z
+                        RXGZ\tnull\t2021-11-06T20:00:00.000000000Z
+                        VTJW\tnull\t2021-11-06T20:00:00.000000000Z
                         \t87.99634725391621\t2021-11-06T21:00:00.000000000Z
-                        VTJW\tnull\t2021-11-06T21:00:00.000000000Z
-                        RXGZ\tnull\t2021-11-06T21:00:00.000000000Z
-                        PEHN\tnull\t2021-11-06T21:00:00.000000000Z
                         HYRX\tnull\t2021-11-06T21:00:00.000000000Z
+                        PEHN\tnull\t2021-11-06T21:00:00.000000000Z
+                        RXGZ\tnull\t2021-11-06T21:00:00.000000000Z
+                        VTJW\tnull\t2021-11-06T21:00:00.000000000Z
                         \t32.881769076795045\t2021-11-06T22:00:00.000000000Z
-                        VTJW\tnull\t2021-11-06T22:00:00.000000000Z
-                        RXGZ\tnull\t2021-11-06T22:00:00.000000000Z
-                        PEHN\tnull\t2021-11-06T22:00:00.000000000Z
                         HYRX\tnull\t2021-11-06T22:00:00.000000000Z
-                        HYRX\t97.71103146051203\t2021-11-06T23:00:00.000000000Z
+                        PEHN\tnull\t2021-11-06T22:00:00.000000000Z
+                        RXGZ\tnull\t2021-11-06T22:00:00.000000000Z
+                        VTJW\tnull\t2021-11-06T22:00:00.000000000Z
                         \tnull\t2021-11-06T23:00:00.000000000Z
-                        VTJW\tnull\t2021-11-06T23:00:00.000000000Z
-                        RXGZ\tnull\t2021-11-06T23:00:00.000000000Z
+                        HYRX\t97.71103146051203\t2021-11-06T23:00:00.000000000Z
                         PEHN\tnull\t2021-11-06T23:00:00.000000000Z
-                        PEHN\t81.46807944500559\t2021-11-07T00:00:00.000000000Z
+                        RXGZ\tnull\t2021-11-06T23:00:00.000000000Z
+                        VTJW\tnull\t2021-11-06T23:00:00.000000000Z
                         \tnull\t2021-11-07T00:00:00.000000000Z
-                        VTJW\tnull\t2021-11-07T00:00:00.000000000Z
-                        RXGZ\tnull\t2021-11-07T00:00:00.000000000Z
                         HYRX\tnull\t2021-11-07T00:00:00.000000000Z
+                        PEHN\t81.46807944500559\t2021-11-07T00:00:00.000000000Z
+                        RXGZ\tnull\t2021-11-07T00:00:00.000000000Z
+                        VTJW\tnull\t2021-11-07T00:00:00.000000000Z
                         \t57.93466326862211\t2021-11-07T01:00:00.000000000Z
                         HYRX\t12.026122412833129\t2021-11-07T01:00:00.000000000Z
+                        PEHN\tnull\t2021-11-07T01:00:00.000000000Z
+                        RXGZ\tnull\t2021-11-07T01:00:00.000000000Z
                         VTJW\tnull\t2021-11-07T01:00:00.000000000Z
-                        RXGZ\tnull\t2021-11-07T01:00:00.000000000Z
-                        PEHN\tnull\t2021-11-07T01:00:00.000000000Z
-                        VTJW\t48.820511018586934\t2021-11-07T01:00:00.000000000Z
                         \tnull\t2021-11-07T01:00:00.000000000Z
-                        RXGZ\tnull\t2021-11-07T01:00:00.000000000Z
-                        PEHN\tnull\t2021-11-07T01:00:00.000000000Z
                         HYRX\tnull\t2021-11-07T01:00:00.000000000Z
+                        PEHN\tnull\t2021-11-07T01:00:00.000000000Z
+                        RXGZ\tnull\t2021-11-07T01:00:00.000000000Z
+                        VTJW\t48.820511018586934\t2021-11-07T01:00:00.000000000Z
                         \t26.922103479744898\t2021-11-07T02:00:00.000000000Z
-                        VTJW\tnull\t2021-11-07T02:00:00.000000000Z
-                        RXGZ\tnull\t2021-11-07T02:00:00.000000000Z
-                        PEHN\tnull\t2021-11-07T02:00:00.000000000Z
                         HYRX\tnull\t2021-11-07T02:00:00.000000000Z
+                        PEHN\tnull\t2021-11-07T02:00:00.000000000Z
+                        RXGZ\tnull\t2021-11-07T02:00:00.000000000Z
+                        VTJW\tnull\t2021-11-07T02:00:00.000000000Z
                         \t52.98405941762054\t2021-11-07T03:00:00.000000000Z
-                        VTJW\tnull\t2021-11-07T03:00:00.000000000Z
-                        RXGZ\tnull\t2021-11-07T03:00:00.000000000Z
-                        PEHN\tnull\t2021-11-07T03:00:00.000000000Z
                         HYRX\tnull\t2021-11-07T03:00:00.000000000Z
-                        PEHN\t84.45258177211063\t2021-11-07T04:00:00.000000000Z
+                        PEHN\tnull\t2021-11-07T03:00:00.000000000Z
+                        RXGZ\tnull\t2021-11-07T03:00:00.000000000Z
+                        VTJW\tnull\t2021-11-07T03:00:00.000000000Z
                         \tnull\t2021-11-07T04:00:00.000000000Z
-                        VTJW\tnull\t2021-11-07T04:00:00.000000000Z
-                        RXGZ\tnull\t2021-11-07T04:00:00.000000000Z
                         HYRX\tnull\t2021-11-07T04:00:00.000000000Z
+                        PEHN\t84.45258177211063\t2021-11-07T04:00:00.000000000Z
+                        RXGZ\tnull\t2021-11-07T04:00:00.000000000Z
+                        VTJW\tnull\t2021-11-07T04:00:00.000000000Z
                         \t97.5019885372507\t2021-11-07T05:00:00.000000000Z
-                        VTJW\tnull\t2021-11-07T05:00:00.000000000Z
-                        RXGZ\tnull\t2021-11-07T05:00:00.000000000Z
-                        PEHN\tnull\t2021-11-07T05:00:00.000000000Z
                         HYRX\tnull\t2021-11-07T05:00:00.000000000Z
-                        PEHN\t49.00510449885239\t2021-11-07T06:00:00.000000000Z
+                        PEHN\tnull\t2021-11-07T05:00:00.000000000Z
+                        RXGZ\tnull\t2021-11-07T05:00:00.000000000Z
+                        VTJW\tnull\t2021-11-07T05:00:00.000000000Z
                         \t80.01121139739173\t2021-11-07T06:00:00.000000000Z
-                        VTJW\tnull\t2021-11-07T06:00:00.000000000Z
-                        RXGZ\tnull\t2021-11-07T06:00:00.000000000Z
                         HYRX\tnull\t2021-11-07T06:00:00.000000000Z
+                        PEHN\t49.00510449885239\t2021-11-07T06:00:00.000000000Z
+                        RXGZ\tnull\t2021-11-07T06:00:00.000000000Z
+                        VTJW\tnull\t2021-11-07T06:00:00.000000000Z
                         \t92.050039469858\t2021-11-07T07:00:00.000000000Z
-                        VTJW\tnull\t2021-11-07T07:00:00.000000000Z
-                        RXGZ\tnull\t2021-11-07T07:00:00.000000000Z
-                        PEHN\tnull\t2021-11-07T07:00:00.000000000Z
                         HYRX\tnull\t2021-11-07T07:00:00.000000000Z
+                        PEHN\tnull\t2021-11-07T07:00:00.000000000Z
+                        RXGZ\tnull\t2021-11-07T07:00:00.000000000Z
+                        VTJW\tnull\t2021-11-07T07:00:00.000000000Z
                         \t45.6344569609078\t2021-11-07T08:00:00.000000000Z
-                        VTJW\tnull\t2021-11-07T08:00:00.000000000Z
-                        RXGZ\tnull\t2021-11-07T08:00:00.000000000Z
-                        PEHN\tnull\t2021-11-07T08:00:00.000000000Z
                         HYRX\tnull\t2021-11-07T08:00:00.000000000Z
+                        PEHN\tnull\t2021-11-07T08:00:00.000000000Z
+                        RXGZ\tnull\t2021-11-07T08:00:00.000000000Z
+                        VTJW\tnull\t2021-11-07T08:00:00.000000000Z
                         \t40.455469747939254\t2021-11-07T09:00:00.000000000Z
-                        VTJW\tnull\t2021-11-07T09:00:00.000000000Z
-                        RXGZ\tnull\t2021-11-07T09:00:00.000000000Z
-                        PEHN\tnull\t2021-11-07T09:00:00.000000000Z
                         HYRX\tnull\t2021-11-07T09:00:00.000000000Z
+                        PEHN\tnull\t2021-11-07T09:00:00.000000000Z
+                        RXGZ\tnull\t2021-11-07T09:00:00.000000000Z
+                        VTJW\tnull\t2021-11-07T09:00:00.000000000Z
                         """);
     }
 
@@ -9217,7 +11756,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFillNullMonthAlignToCalendar() throws Exception {
-        assertQuery("select b, sum(a), k from x sample by 1M fill(null) align to calendar")
+        assertQuery("select b, sum(a), k from x sample by 1M fill(null) align to calendar order by k, b")
                 .ddl("create table x as " +
                         "(" +
                         "select" +
@@ -9228,33 +11767,32 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         " long_sequence(2200)" +
                         ") timestamp(k) partition by NONE")
                 .timestamp("k")
-                .noRandomAccess()
                 .returns("""
                         b\tsum\tk
                         \t752.2523117908589\t2020-01-01T00:00:00.000000000Z
-                        VTJW\t177.84974249247676\t2020-01-01T00:00:00.000000000Z
-                        RXGZ\t80.49958150707765\t2020-01-01T00:00:00.000000000Z
-                        PEHN\t297.9750008612368\t2020-01-01T00:00:00.000000000Z
-                        HYRX\t159.16605899292972\t2020-01-01T00:00:00.000000000Z
                         CPSW\t12.02416087573498\t2020-01-01T00:00:00.000000000Z
-                        CPSW\t3857.95047972562\t2020-02-01T00:00:00.000000000Z
+                        HYRX\t159.16605899292972\t2020-01-01T00:00:00.000000000Z
+                        PEHN\t297.9750008612368\t2020-01-01T00:00:00.000000000Z
+                        RXGZ\t80.49958150707765\t2020-01-01T00:00:00.000000000Z
+                        VTJW\t177.84974249247676\t2020-01-01T00:00:00.000000000Z
                         \t20982.992943772188\t2020-02-01T00:00:00.000000000Z
-                        VTJW\t4052.7570641301963\t2020-02-01T00:00:00.000000000Z
+                        CPSW\t3857.95047972562\t2020-02-01T00:00:00.000000000Z
                         HYRX\t4024.0173141255395\t2020-02-01T00:00:00.000000000Z
-                        RXGZ\t4063.6346983106814\t2020-02-01T00:00:00.000000000Z
                         PEHN\t3822.787218703387\t2020-02-01T00:00:00.000000000Z
-                        PEHN\t4978.97740950064\t2020-03-01T00:00:00.000000000Z
+                        RXGZ\t4063.6346983106814\t2020-02-01T00:00:00.000000000Z
+                        VTJW\t4052.7570641301963\t2020-02-01T00:00:00.000000000Z
                         \t22044.41664067389\t2020-03-01T00:00:00.000000000Z
-                        RXGZ\t3810.211911971742\t2020-03-01T00:00:00.000000000Z
                         CPSW\t3600.963491125638\t2020-03-01T00:00:00.000000000Z
-                        VTJW\t4217.430402136565\t2020-03-01T00:00:00.000000000Z
                         HYRX\t4829.549935728278\t2020-03-01T00:00:00.000000000Z
+                        PEHN\t4978.97740950064\t2020-03-01T00:00:00.000000000Z
+                        RXGZ\t3810.211911971742\t2020-03-01T00:00:00.000000000Z
+                        VTJW\t4217.430402136565\t2020-03-01T00:00:00.000000000Z
                         \t12362.897601301143\t2020-04-01T00:00:00.000000000Z
-                        PEHN\t2303.0347534138255\t2020-04-01T00:00:00.000000000Z
-                        VTJW\t3442.2595700377174\t2020-04-01T00:00:00.000000000Z
                         CPSW\t2284.4297223007393\t2020-04-01T00:00:00.000000000Z
                         HYRX\t2554.8026818426815\t2020-04-01T00:00:00.000000000Z
+                        PEHN\t2303.0347534138255\t2020-04-01T00:00:00.000000000Z
                         RXGZ\t2519.8254806241976\t2020-04-01T00:00:00.000000000Z
+                        VTJW\t3442.2595700377174\t2020-04-01T00:00:00.000000000Z
                         """);
     }
 
@@ -9384,6 +11922,149 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         " long_sequence(30)" +
                         ") timestamp(k) partition by NONE")
                 .fails(46, "fill value of type NULL cannot fill column of type CHAR");
+    }
+
+    @Test
+    public void testSampleFillNullNotKeyedFromDayTimeZone() throws Exception {
+        // For a stride of a day or longer, code generation leaves FROM in local time, and the sampler grid starts
+        // at FROM. The not-keyed FILL(NULL) cursor starts at the bucket at FROM, as the GROUP BY path does. The
+        // cursor used to round FROM plus the offset of a zone behind UTC, and the rows below matched the GROUP BY
+        // path only because SimpleTimestampSampler.round() rounds a value less than a stride before the grid start
+        // up to that start. The month and year samplers floor, see testSampleFillNullNotKeyedFromMonthTimeZone().
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP_NS, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2024-01-15T10:00:00.000000000Z', 1.0),
+                        ('2024-01-16T10:00:00.000000000Z', 2.0)
+                    """);
+            // the sub-query keeps the statement on the SAMPLE BY cursor
+            final String select = "SELECT ts, count() c, sum(v) s FROM (SELECT * FROM t WHERE v > 0)"
+                    + " SAMPLE BY 1d FROM '2024-01-12' FILL(NULL) ALIGN TO CALENDAR TIME ZONE ";
+            final String expected = """
+                    ts\tc\ts
+                    2024-01-12T05:00:00.000000000Z\tnull\tnull
+                    2024-01-13T05:00:00.000000000Z\tnull\tnull
+                    2024-01-14T05:00:00.000000000Z\tnull\tnull
+                    2024-01-15T05:00:00.000000000Z\t1\t1.0
+                    2024-01-16T05:00:00.000000000Z\t1\t2.0
+                    """;
+            assertSampleByCursorFrom(select + "'-05:00'", "fill: null\n", expected);
+            assertSampleByCursorFrom(select + "'America/New_York'", "fill: null\n", expected);
+        });
+    }
+
+    @Test
+    public void testSampleFillNullNotKeyedFromMonthTimeZone() throws Exception {
+        // GitHub issue #7763. For a stride of a day or longer, code generation leaves FROM in local time, but the
+        // cursor rounded FROM plus the offset of the zone. For a zone behind UTC, that is the evening before FROM,
+        // and the month sampler floored it into December 2023. The not-keyed FILL(NULL) cursor then emitted a
+        // fill row for December, also with TO. It now starts at the bucket at FROM, as the GROUP BY path does,
+        // for a zone name and for a numeric zone. A FROM a month before the first row still fills that month.
+        // Issue #7763 does not affect a zone ahead of UTC: with Europe/Berlin, the cursor returns the rows of the
+        // GROUP BY path.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP_NS, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2024-01-15T10:00:00.000000000Z', 1.0),
+                        ('2024-02-10T10:00:00.000000000Z', 2.0)
+                    """);
+            // the sub-query keeps the statement on the SAMPLE BY cursor
+            final String select = "SELECT ts, count() c, sum(v) s FROM (SELECT * FROM t WHERE v > 0) SAMPLE BY 1M";
+            final String expected = """
+                    ts\tc\ts
+                    2024-01-01T05:00:00.000000000Z\t1\t1.0
+                    2024-02-01T05:00:00.000000000Z\t1\t2.0
+                    """;
+            assertSampleByCursorFrom(
+                    select + " FROM '2024-01-01' FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'America/New_York'",
+                    "fill: null\n",
+                    expected
+            );
+            assertSampleByCursorFrom(
+                    select + " FROM '2024-01-01' FILL(NULL) ALIGN TO CALENDAR TIME ZONE '-05:00'",
+                    "fill: null\n",
+                    expected
+            );
+            assertSampleByCursorFrom(
+                    select + " FROM '2024-01-01' TO '2024-04-01' FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'America/New_York'",
+                    "fill: null\n",
+                    """
+                            ts\tc\ts
+                            2024-01-01T05:00:00.000000000Z\t1\t1.0
+                            2024-02-01T05:00:00.000000000Z\t1\t2.0
+                            2024-03-01T05:00:00.000000000Z\tnull\tnull
+                            """
+            );
+            assertSampleByCursorFrom(
+                    select + " FROM '2023-12-01' FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'America/New_York'",
+                    "fill: null\n",
+                    """
+                            ts\tc\ts
+                            2023-12-01T05:00:00.000000000Z\tnull\tnull
+                            2024-01-01T05:00:00.000000000Z\t1\t1.0
+                            2024-02-01T05:00:00.000000000Z\t1\t2.0
+                            """
+            );
+            assertSampleByCursorFrom(
+                    select + " FROM '2024-01-01' FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'",
+                    "fill: null\n",
+                    """
+                            ts\tc\ts
+                            2023-12-31T23:00:00.000000000Z\t1\t1.0
+                            2024-01-31T23:00:00.000000000Z\t1\t2.0
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testSampleFillNullNotKeyedFromYearTimeZone() throws Exception {
+        // GitHub issue #7763, see testSampleFillNullNotKeyedFromMonthTimeZone(). The year sampler floored FROM plus
+        // the offset of a zone behind UTC into 2023, and the not-keyed FILL(NULL) cursor emitted a fill row for
+        // 2023 before the bucket at FROM.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP_NS, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2024-01-15T10:00:00.000000000Z', 1.0),
+                        ('2024-02-10T10:00:00.000000000Z', 2.0)
+                    """);
+            // the sub-query keeps the statement on the SAMPLE BY cursor
+            final String select = "SELECT ts, count() c, sum(v) s FROM (SELECT * FROM t WHERE v > 0) SAMPLE BY 1y";
+            final String expected = """
+                    ts\tc\ts
+                    2024-01-01T05:00:00.000000000Z\t2\t3.0
+                    """;
+            assertSampleByCursorFrom(
+                    select + " FROM '2024-01-01' FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'America/New_York'",
+                    "fill: null\n",
+                    expected
+            );
+            assertSampleByCursorFrom(
+                    select + " FROM '2024-01-01' FILL(NULL) ALIGN TO CALENDAR TIME ZONE '-05:00'",
+                    "fill: null\n",
+                    expected
+            );
+            assertSampleByCursorFrom(
+                    select + " FROM '2023-01-01' FILL(NULL) ALIGN TO CALENDAR TIME ZONE '-05:00'",
+                    "fill: null\n",
+                    """
+                            ts\tc\ts
+                            2023-01-01T05:00:00.000000000Z\tnull\tnull
+                            2024-01-01T05:00:00.000000000Z\t2\t3.0
+                            """
+            );
+            assertSampleByCursorFrom(
+                    select + " FROM '2024-01-01' FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'",
+                    "fill: null\n",
+                    """
+                            ts\tc\ts
+                            2023-12-31T23:00:00.000000000Z\t2\t3.0
+                            """
+            );
+        });
     }
 
     @Test
@@ -9533,7 +12214,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFillNullYearAlignToCalendar() throws Exception {
-        assertQuery("select b, sum(a), k from x sample by 1y fill(null) align to calendar")
+        assertQuery("select b, sum(a), k from x sample by 1y fill(null) align to calendar order by k, b")
                 .ddl("create table x as " +
                         "(" +
                         "select" +
@@ -9544,39 +12225,38 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         " long_sequence(30000)" +
                         ") timestamp(k) partition by NONE")
                 .timestamp("k")
-                .noRandomAccess()
                 .returns("""
                         b\tsum\tk
                         \t192977.39674906916\t2020-01-01T00:00:00.000000000Z
-                        VTJW\t38819.17900889909\t2020-01-01T00:00:00.000000000Z
-                        RXGZ\t41231.89396856814\t2020-01-01T00:00:00.000000000Z
-                        PEHN\t41154.26693020971\t2020-01-01T00:00:00.000000000Z
-                        HYRX\t38585.79005800996\t2020-01-01T00:00:00.000000000Z
                         CPSW\t39995.23576507835\t2020-01-01T00:00:00.000000000Z
-                        VTJW\t46031.90714575466\t2021-01-01T00:00:00.000000000Z
+                        HYRX\t38585.79005800996\t2020-01-01T00:00:00.000000000Z
+                        PEHN\t41154.26693020971\t2020-01-01T00:00:00.000000000Z
+                        RXGZ\t41231.89396856814\t2020-01-01T00:00:00.000000000Z
+                        VTJW\t38819.17900889909\t2020-01-01T00:00:00.000000000Z
                         \t230201.98037264214\t2021-01-01T00:00:00.000000000Z
-                        HYRX\t45639.52581429897\t2021-01-01T00:00:00.000000000Z
                         CPSW\t46157.93033664501\t2021-01-01T00:00:00.000000000Z
+                        HYRX\t45639.52581429897\t2021-01-01T00:00:00.000000000Z
                         PEHN\t48339.24529983588\t2021-01-01T00:00:00.000000000Z
                         RXGZ\t45630.841778811395\t2021-01-01T00:00:00.000000000Z
-                        VTJW\t47672.22031275194\t2022-01-01T00:00:00.000000000Z
-                        RXGZ\t46381.871992904176\t2022-01-01T00:00:00.000000000Z
+                        VTJW\t46031.90714575466\t2021-01-01T00:00:00.000000000Z
                         \t232716.0885252789\t2022-01-01T00:00:00.000000000Z
+                        CPSW\t44254.55436645622\t2022-01-01T00:00:00.000000000Z
                         HYRX\t47593.89994935438\t2022-01-01T00:00:00.000000000Z
                         PEHN\t47004.12204168089\t2022-01-01T00:00:00.000000000Z
-                        CPSW\t44254.55436645622\t2022-01-01T00:00:00.000000000Z
+                        RXGZ\t46381.871992904176\t2022-01-01T00:00:00.000000000Z
+                        VTJW\t47672.22031275194\t2022-01-01T00:00:00.000000000Z
                         \t92574.9318100312\t2023-01-01T00:00:00.000000000Z
+                        CPSW\t18169.52371202805\t2023-01-01T00:00:00.000000000Z
                         HYRX\t19887.875742375127\t2023-01-01T00:00:00.000000000Z
-                        VTJW\t15913.049745259726\t2023-01-01T00:00:00.000000000Z
                         PEHN\t19107.977604407188\t2023-01-01T00:00:00.000000000Z
                         RXGZ\t19292.04735492167\t2023-01-01T00:00:00.000000000Z
-                        CPSW\t18169.52371202805\t2023-01-01T00:00:00.000000000Z
+                        VTJW\t15913.049745259726\t2023-01-01T00:00:00.000000000Z
                         """);
     }
 
     @Test
     public void testSampleFillPrev() throws Exception {
-        assertQuery("select b, sum(a), k from x sample by 3h fill(prev)")
+        assertQuery("select b, sum(a), k from x sample by 3h fill(prev) order by k, b")
                 .ddl("create table x as " +
                         "(" +
                         "select" +
@@ -9595,136 +12275,135 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         " long_sequence(5)" +
                         ") timestamp(k)")
                 .timestamp("k")
-                .noRandomAccess()
                 .returns("""
                         b\tsum\tk
                         \t11.427984775756228\t1970-01-03T00:00:00.000000000Z
-                        VTJW\t42.17768841969397\t1970-01-03T00:00:00.000000000Z
-                        RXGZ\t23.90529010846525\t1970-01-03T00:00:00.000000000Z
-                        PEHN\tnull\t1970-01-03T00:00:00.000000000Z
                         HYRX\tnull\t1970-01-03T00:00:00.000000000Z
-                        PEHN\t70.94360487171201\t1970-01-03T03:00:00.000000000Z
+                        PEHN\tnull\t1970-01-03T00:00:00.000000000Z
+                        RXGZ\t23.90529010846525\t1970-01-03T00:00:00.000000000Z
+                        VTJW\t42.17768841969397\t1970-01-03T00:00:00.000000000Z
                         \t120.87811633071126\t1970-01-03T03:00:00.000000000Z
-                        VTJW\t42.17768841969397\t1970-01-03T03:00:00.000000000Z
-                        RXGZ\t23.90529010846525\t1970-01-03T03:00:00.000000000Z
                         HYRX\tnull\t1970-01-03T03:00:00.000000000Z
+                        PEHN\t70.94360487171201\t1970-01-03T03:00:00.000000000Z
+                        RXGZ\t23.90529010846525\t1970-01-03T03:00:00.000000000Z
+                        VTJW\t42.17768841969397\t1970-01-03T03:00:00.000000000Z
+                        \t57.93466326862211\t1970-01-03T06:00:00.000000000Z
                         HYRX\t97.71103146051203\t1970-01-03T06:00:00.000000000Z
                         PEHN\t81.46807944500559\t1970-01-03T06:00:00.000000000Z
-                        \t57.93466326862211\t1970-01-03T06:00:00.000000000Z
-                        VTJW\t42.17768841969397\t1970-01-03T06:00:00.000000000Z
                         RXGZ\t23.90529010846525\t1970-01-03T06:00:00.000000000Z
-                        HYRX\t12.026122412833129\t1970-01-03T09:00:00.000000000Z
-                        VTJW\t48.820511018586934\t1970-01-03T09:00:00.000000000Z
+                        VTJW\t42.17768841969397\t1970-01-03T06:00:00.000000000Z
                         \t26.922103479744898\t1970-01-03T09:00:00.000000000Z
-                        RXGZ\t23.90529010846525\t1970-01-03T09:00:00.000000000Z
+                        HYRX\t12.026122412833129\t1970-01-03T09:00:00.000000000Z
                         PEHN\t81.46807944500559\t1970-01-03T09:00:00.000000000Z
+                        RXGZ\t23.90529010846525\t1970-01-03T09:00:00.000000000Z
+                        VTJW\t48.820511018586934\t1970-01-03T09:00:00.000000000Z
                         \t150.48604795487125\t1970-01-03T12:00:00.000000000Z
-                        PEHN\t84.45258177211063\t1970-01-03T12:00:00.000000000Z
-                        VTJW\t48.820511018586934\t1970-01-03T12:00:00.000000000Z
-                        RXGZ\t23.90529010846525\t1970-01-03T12:00:00.000000000Z
                         HYRX\t12.026122412833129\t1970-01-03T12:00:00.000000000Z
-                        PEHN\t49.00510449885239\t1970-01-03T15:00:00.000000000Z
+                        PEHN\t84.45258177211063\t1970-01-03T12:00:00.000000000Z
+                        RXGZ\t23.90529010846525\t1970-01-03T12:00:00.000000000Z
+                        VTJW\t48.820511018586934\t1970-01-03T12:00:00.000000000Z
                         \t172.06125086724973\t1970-01-03T15:00:00.000000000Z
-                        VTJW\t48.820511018586934\t1970-01-03T15:00:00.000000000Z
-                        RXGZ\t23.90529010846525\t1970-01-03T15:00:00.000000000Z
                         HYRX\t12.026122412833129\t1970-01-03T15:00:00.000000000Z
+                        PEHN\t49.00510449885239\t1970-01-03T15:00:00.000000000Z
+                        RXGZ\t23.90529010846525\t1970-01-03T15:00:00.000000000Z
+                        VTJW\t48.820511018586934\t1970-01-03T15:00:00.000000000Z
                         \t86.08992670884706\t1970-01-03T18:00:00.000000000Z
-                        VTJW\t48.820511018586934\t1970-01-03T18:00:00.000000000Z
-                        RXGZ\t23.90529010846525\t1970-01-03T18:00:00.000000000Z
-                        PEHN\t49.00510449885239\t1970-01-03T18:00:00.000000000Z
                         HYRX\t12.026122412833129\t1970-01-03T18:00:00.000000000Z
+                        PEHN\t49.00510449885239\t1970-01-03T18:00:00.000000000Z
+                        RXGZ\t23.90529010846525\t1970-01-03T18:00:00.000000000Z
+                        VTJW\t48.820511018586934\t1970-01-03T18:00:00.000000000Z
                         """, """
                         b\tsum\tk
                         \t11.427984775756228\t1970-01-03T00:00:00.000000000Z
-                        VTJW\t42.17768841969397\t1970-01-03T00:00:00.000000000Z
-                        RXGZ\t23.90529010846525\t1970-01-03T00:00:00.000000000Z
-                        PEHN\tnull\t1970-01-03T00:00:00.000000000Z
                         HYRX\tnull\t1970-01-03T00:00:00.000000000Z
-                        UVSD\tnull\t1970-01-03T00:00:00.000000000Z
                         KGHV\tnull\t1970-01-03T00:00:00.000000000Z
-                        PEHN\t70.94360487171201\t1970-01-03T03:00:00.000000000Z
+                        PEHN\tnull\t1970-01-03T00:00:00.000000000Z
+                        RXGZ\t23.90529010846525\t1970-01-03T00:00:00.000000000Z
+                        UVSD\tnull\t1970-01-03T00:00:00.000000000Z
+                        VTJW\t42.17768841969397\t1970-01-03T00:00:00.000000000Z
                         \t120.87811633071126\t1970-01-03T03:00:00.000000000Z
-                        VTJW\t42.17768841969397\t1970-01-03T03:00:00.000000000Z
-                        RXGZ\t23.90529010846525\t1970-01-03T03:00:00.000000000Z
                         HYRX\tnull\t1970-01-03T03:00:00.000000000Z
-                        UVSD\tnull\t1970-01-03T03:00:00.000000000Z
                         KGHV\tnull\t1970-01-03T03:00:00.000000000Z
-                        HYRX\t97.71103146051203\t1970-01-03T06:00:00.000000000Z
-                        PEHN\t81.46807944500559\t1970-01-03T06:00:00.000000000Z
+                        PEHN\t70.94360487171201\t1970-01-03T03:00:00.000000000Z
+                        RXGZ\t23.90529010846525\t1970-01-03T03:00:00.000000000Z
+                        UVSD\tnull\t1970-01-03T03:00:00.000000000Z
+                        VTJW\t42.17768841969397\t1970-01-03T03:00:00.000000000Z
                         \t57.93466326862211\t1970-01-03T06:00:00.000000000Z
-                        VTJW\t42.17768841969397\t1970-01-03T06:00:00.000000000Z
+                        HYRX\t97.71103146051203\t1970-01-03T06:00:00.000000000Z
+                        KGHV\tnull\t1970-01-03T06:00:00.000000000Z
+                        PEHN\t81.46807944500559\t1970-01-03T06:00:00.000000000Z
                         RXGZ\t23.90529010846525\t1970-01-03T06:00:00.000000000Z
                         UVSD\tnull\t1970-01-03T06:00:00.000000000Z
-                        KGHV\tnull\t1970-01-03T06:00:00.000000000Z
-                        HYRX\t12.026122412833129\t1970-01-03T09:00:00.000000000Z
-                        VTJW\t48.820511018586934\t1970-01-03T09:00:00.000000000Z
+                        VTJW\t42.17768841969397\t1970-01-03T06:00:00.000000000Z
                         \t26.922103479744898\t1970-01-03T09:00:00.000000000Z
-                        RXGZ\t23.90529010846525\t1970-01-03T09:00:00.000000000Z
-                        PEHN\t81.46807944500559\t1970-01-03T09:00:00.000000000Z
-                        UVSD\tnull\t1970-01-03T09:00:00.000000000Z
+                        HYRX\t12.026122412833129\t1970-01-03T09:00:00.000000000Z
                         KGHV\tnull\t1970-01-03T09:00:00.000000000Z
+                        PEHN\t81.46807944500559\t1970-01-03T09:00:00.000000000Z
+                        RXGZ\t23.90529010846525\t1970-01-03T09:00:00.000000000Z
+                        UVSD\tnull\t1970-01-03T09:00:00.000000000Z
+                        VTJW\t48.820511018586934\t1970-01-03T09:00:00.000000000Z
                         \t150.48604795487125\t1970-01-03T12:00:00.000000000Z
-                        PEHN\t84.45258177211063\t1970-01-03T12:00:00.000000000Z
-                        VTJW\t48.820511018586934\t1970-01-03T12:00:00.000000000Z
-                        RXGZ\t23.90529010846525\t1970-01-03T12:00:00.000000000Z
                         HYRX\t12.026122412833129\t1970-01-03T12:00:00.000000000Z
-                        UVSD\tnull\t1970-01-03T12:00:00.000000000Z
                         KGHV\tnull\t1970-01-03T12:00:00.000000000Z
-                        PEHN\t49.00510449885239\t1970-01-03T15:00:00.000000000Z
+                        PEHN\t84.45258177211063\t1970-01-03T12:00:00.000000000Z
+                        RXGZ\t23.90529010846525\t1970-01-03T12:00:00.000000000Z
+                        UVSD\tnull\t1970-01-03T12:00:00.000000000Z
+                        VTJW\t48.820511018586934\t1970-01-03T12:00:00.000000000Z
                         \t172.06125086724973\t1970-01-03T15:00:00.000000000Z
-                        VTJW\t48.820511018586934\t1970-01-03T15:00:00.000000000Z
-                        RXGZ\t23.90529010846525\t1970-01-03T15:00:00.000000000Z
                         HYRX\t12.026122412833129\t1970-01-03T15:00:00.000000000Z
-                        UVSD\tnull\t1970-01-03T15:00:00.000000000Z
                         KGHV\tnull\t1970-01-03T15:00:00.000000000Z
+                        PEHN\t49.00510449885239\t1970-01-03T15:00:00.000000000Z
+                        RXGZ\t23.90529010846525\t1970-01-03T15:00:00.000000000Z
+                        UVSD\tnull\t1970-01-03T15:00:00.000000000Z
+                        VTJW\t48.820511018586934\t1970-01-03T15:00:00.000000000Z
                         \t86.08992670884706\t1970-01-03T18:00:00.000000000Z
-                        VTJW\t48.820511018586934\t1970-01-03T18:00:00.000000000Z
-                        RXGZ\t23.90529010846525\t1970-01-03T18:00:00.000000000Z
-                        PEHN\t49.00510449885239\t1970-01-03T18:00:00.000000000Z
                         HYRX\t12.026122412833129\t1970-01-03T18:00:00.000000000Z
-                        UVSD\tnull\t1970-01-03T18:00:00.000000000Z
                         KGHV\tnull\t1970-01-03T18:00:00.000000000Z
+                        PEHN\t49.00510449885239\t1970-01-03T18:00:00.000000000Z
+                        RXGZ\t23.90529010846525\t1970-01-03T18:00:00.000000000Z
+                        UVSD\tnull\t1970-01-03T18:00:00.000000000Z
+                        VTJW\t48.820511018586934\t1970-01-03T18:00:00.000000000Z
                         \t86.08992670884706\t1970-01-03T21:00:00.000000000Z
-                        VTJW\t48.820511018586934\t1970-01-03T21:00:00.000000000Z
-                        RXGZ\t23.90529010846525\t1970-01-03T21:00:00.000000000Z
-                        PEHN\t49.00510449885239\t1970-01-03T21:00:00.000000000Z
                         HYRX\t12.026122412833129\t1970-01-03T21:00:00.000000000Z
-                        UVSD\tnull\t1970-01-03T21:00:00.000000000Z
                         KGHV\tnull\t1970-01-03T21:00:00.000000000Z
+                        PEHN\t49.00510449885239\t1970-01-03T21:00:00.000000000Z
+                        RXGZ\t23.90529010846525\t1970-01-03T21:00:00.000000000Z
+                        UVSD\tnull\t1970-01-03T21:00:00.000000000Z
+                        VTJW\t48.820511018586934\t1970-01-03T21:00:00.000000000Z
                         \t86.08992670884706\t1970-01-04T00:00:00.000000000Z
-                        VTJW\t48.820511018586934\t1970-01-04T00:00:00.000000000Z
-                        RXGZ\t23.90529010846525\t1970-01-04T00:00:00.000000000Z
-                        PEHN\t49.00510449885239\t1970-01-04T00:00:00.000000000Z
                         HYRX\t12.026122412833129\t1970-01-04T00:00:00.000000000Z
-                        UVSD\tnull\t1970-01-04T00:00:00.000000000Z
                         KGHV\tnull\t1970-01-04T00:00:00.000000000Z
+                        PEHN\t49.00510449885239\t1970-01-04T00:00:00.000000000Z
+                        RXGZ\t23.90529010846525\t1970-01-04T00:00:00.000000000Z
+                        UVSD\tnull\t1970-01-04T00:00:00.000000000Z
+                        VTJW\t48.820511018586934\t1970-01-04T00:00:00.000000000Z
                         \t54.49155021518948\t1970-01-04T03:00:00.000000000Z
-                        VTJW\t48.820511018586934\t1970-01-04T03:00:00.000000000Z
-                        RXGZ\t23.90529010846525\t1970-01-04T03:00:00.000000000Z
-                        PEHN\t49.00510449885239\t1970-01-04T03:00:00.000000000Z
                         HYRX\t12.026122412833129\t1970-01-04T03:00:00.000000000Z
-                        UVSD\tnull\t1970-01-04T03:00:00.000000000Z
                         KGHV\tnull\t1970-01-04T03:00:00.000000000Z
+                        PEHN\t49.00510449885239\t1970-01-04T03:00:00.000000000Z
+                        RXGZ\t23.90529010846525\t1970-01-04T03:00:00.000000000Z
+                        UVSD\tnull\t1970-01-04T03:00:00.000000000Z
+                        VTJW\t48.820511018586934\t1970-01-04T03:00:00.000000000Z
                         \t135.835983782176\t1970-01-04T06:00:00.000000000Z
-                        UVSD\t49.42890511958454\t1970-01-04T06:00:00.000000000Z
-                        VTJW\t48.820511018586934\t1970-01-04T06:00:00.000000000Z
-                        RXGZ\t23.90529010846525\t1970-01-04T06:00:00.000000000Z
-                        PEHN\t49.00510449885239\t1970-01-04T06:00:00.000000000Z
                         HYRX\t12.026122412833129\t1970-01-04T06:00:00.000000000Z
                         KGHV\tnull\t1970-01-04T06:00:00.000000000Z
-                        KGHV\t67.52509547112409\t1970-01-04T09:00:00.000000000Z
+                        PEHN\t49.00510449885239\t1970-01-04T06:00:00.000000000Z
+                        RXGZ\t23.90529010846525\t1970-01-04T06:00:00.000000000Z
+                        UVSD\t49.42890511958454\t1970-01-04T06:00:00.000000000Z
+                        VTJW\t48.820511018586934\t1970-01-04T06:00:00.000000000Z
                         \t135.835983782176\t1970-01-04T09:00:00.000000000Z
-                        VTJW\t48.820511018586934\t1970-01-04T09:00:00.000000000Z
-                        RXGZ\t23.90529010846525\t1970-01-04T09:00:00.000000000Z
-                        PEHN\t49.00510449885239\t1970-01-04T09:00:00.000000000Z
                         HYRX\t12.026122412833129\t1970-01-04T09:00:00.000000000Z
+                        KGHV\t67.52509547112409\t1970-01-04T09:00:00.000000000Z
+                        PEHN\t49.00510449885239\t1970-01-04T09:00:00.000000000Z
+                        RXGZ\t23.90529010846525\t1970-01-04T09:00:00.000000000Z
                         UVSD\t49.42890511958454\t1970-01-04T09:00:00.000000000Z
+                        VTJW\t48.820511018586934\t1970-01-04T09:00:00.000000000Z
                         """);
     }
 
     @Test
     public void testSampleFillPrevAlignToCalendar() throws Exception {
-        assertQuery("select b, sum(a), k from x sample by 3h fill(prev) align to calendar")
+        assertQuery("select b, sum(a), k from x sample by 3h fill(prev) align to calendar order by k, b")
                 .ddl("create table x as " +
                         "(" +
                         "select" +
@@ -9743,118 +12422,117 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         " long_sequence(5)" +
                         ") timestamp(k)")
                 .timestamp("k")
-                .noRandomAccess()
                 .returns("""
                         b\tsum\tk
                         \t11.427984775756228\t1970-01-03T00:00:00.000000000Z
-                        VTJW\t42.17768841969397\t1970-01-03T00:00:00.000000000Z
-                        RXGZ\t23.90529010846525\t1970-01-03T00:00:00.000000000Z
-                        PEHN\t70.94360487171201\t1970-01-03T00:00:00.000000000Z
                         HYRX\tnull\t1970-01-03T00:00:00.000000000Z
+                        PEHN\t70.94360487171201\t1970-01-03T00:00:00.000000000Z
+                        RXGZ\t23.90529010846525\t1970-01-03T00:00:00.000000000Z
+                        VTJW\t42.17768841969397\t1970-01-03T00:00:00.000000000Z
                         \t120.87811633071126\t1970-01-03T03:00:00.000000000Z
                         HYRX\t97.71103146051203\t1970-01-03T03:00:00.000000000Z
-                        VTJW\t42.17768841969397\t1970-01-03T03:00:00.000000000Z
-                        RXGZ\t23.90529010846525\t1970-01-03T03:00:00.000000000Z
                         PEHN\t70.94360487171201\t1970-01-03T03:00:00.000000000Z
-                        PEHN\t81.46807944500559\t1970-01-03T06:00:00.000000000Z
+                        RXGZ\t23.90529010846525\t1970-01-03T03:00:00.000000000Z
+                        VTJW\t42.17768841969397\t1970-01-03T03:00:00.000000000Z
                         \t57.93466326862211\t1970-01-03T06:00:00.000000000Z
                         HYRX\t12.026122412833129\t1970-01-03T06:00:00.000000000Z
-                        VTJW\t48.820511018586934\t1970-01-03T06:00:00.000000000Z
+                        PEHN\t81.46807944500559\t1970-01-03T06:00:00.000000000Z
                         RXGZ\t23.90529010846525\t1970-01-03T06:00:00.000000000Z
+                        VTJW\t48.820511018586934\t1970-01-03T06:00:00.000000000Z
                         \t79.90616289736545\t1970-01-03T09:00:00.000000000Z
-                        PEHN\t84.45258177211063\t1970-01-03T09:00:00.000000000Z
-                        VTJW\t48.820511018586934\t1970-01-03T09:00:00.000000000Z
-                        RXGZ\t23.90529010846525\t1970-01-03T09:00:00.000000000Z
                         HYRX\t12.026122412833129\t1970-01-03T09:00:00.000000000Z
+                        PEHN\t84.45258177211063\t1970-01-03T09:00:00.000000000Z
+                        RXGZ\t23.90529010846525\t1970-01-03T09:00:00.000000000Z
+                        VTJW\t48.820511018586934\t1970-01-03T09:00:00.000000000Z
                         \t269.56323940450045\t1970-01-03T12:00:00.000000000Z
-                        PEHN\t49.00510449885239\t1970-01-03T12:00:00.000000000Z
-                        VTJW\t48.820511018586934\t1970-01-03T12:00:00.000000000Z
-                        RXGZ\t23.90529010846525\t1970-01-03T12:00:00.000000000Z
                         HYRX\t12.026122412833129\t1970-01-03T12:00:00.000000000Z
+                        PEHN\t49.00510449885239\t1970-01-03T12:00:00.000000000Z
+                        RXGZ\t23.90529010846525\t1970-01-03T12:00:00.000000000Z
+                        VTJW\t48.820511018586934\t1970-01-03T12:00:00.000000000Z
                         \t86.08992670884706\t1970-01-03T15:00:00.000000000Z
-                        VTJW\t48.820511018586934\t1970-01-03T15:00:00.000000000Z
-                        RXGZ\t23.90529010846525\t1970-01-03T15:00:00.000000000Z
-                        PEHN\t49.00510449885239\t1970-01-03T15:00:00.000000000Z
                         HYRX\t12.026122412833129\t1970-01-03T15:00:00.000000000Z
+                        PEHN\t49.00510449885239\t1970-01-03T15:00:00.000000000Z
+                        RXGZ\t23.90529010846525\t1970-01-03T15:00:00.000000000Z
+                        VTJW\t48.820511018586934\t1970-01-03T15:00:00.000000000Z
                         """, """
                         b\tsum\tk
                         \t11.427984775756228\t1970-01-03T00:00:00.000000000Z
-                        VTJW\t42.17768841969397\t1970-01-03T00:00:00.000000000Z
-                        RXGZ\t23.90529010846525\t1970-01-03T00:00:00.000000000Z
-                        PEHN\t70.94360487171201\t1970-01-03T00:00:00.000000000Z
                         HYRX\tnull\t1970-01-03T00:00:00.000000000Z
-                        UVSD\tnull\t1970-01-03T00:00:00.000000000Z
                         KGHV\tnull\t1970-01-03T00:00:00.000000000Z
+                        PEHN\t70.94360487171201\t1970-01-03T00:00:00.000000000Z
+                        RXGZ\t23.90529010846525\t1970-01-03T00:00:00.000000000Z
+                        UVSD\tnull\t1970-01-03T00:00:00.000000000Z
+                        VTJW\t42.17768841969397\t1970-01-03T00:00:00.000000000Z
                         \t120.87811633071126\t1970-01-03T03:00:00.000000000Z
                         HYRX\t97.71103146051203\t1970-01-03T03:00:00.000000000Z
-                        VTJW\t42.17768841969397\t1970-01-03T03:00:00.000000000Z
-                        RXGZ\t23.90529010846525\t1970-01-03T03:00:00.000000000Z
-                        PEHN\t70.94360487171201\t1970-01-03T03:00:00.000000000Z
-                        UVSD\tnull\t1970-01-03T03:00:00.000000000Z
                         KGHV\tnull\t1970-01-03T03:00:00.000000000Z
-                        PEHN\t81.46807944500559\t1970-01-03T06:00:00.000000000Z
+                        PEHN\t70.94360487171201\t1970-01-03T03:00:00.000000000Z
+                        RXGZ\t23.90529010846525\t1970-01-03T03:00:00.000000000Z
+                        UVSD\tnull\t1970-01-03T03:00:00.000000000Z
+                        VTJW\t42.17768841969397\t1970-01-03T03:00:00.000000000Z
                         \t57.93466326862211\t1970-01-03T06:00:00.000000000Z
                         HYRX\t12.026122412833129\t1970-01-03T06:00:00.000000000Z
-                        VTJW\t48.820511018586934\t1970-01-03T06:00:00.000000000Z
+                        KGHV\tnull\t1970-01-03T06:00:00.000000000Z
+                        PEHN\t81.46807944500559\t1970-01-03T06:00:00.000000000Z
                         RXGZ\t23.90529010846525\t1970-01-03T06:00:00.000000000Z
                         UVSD\tnull\t1970-01-03T06:00:00.000000000Z
-                        KGHV\tnull\t1970-01-03T06:00:00.000000000Z
+                        VTJW\t48.820511018586934\t1970-01-03T06:00:00.000000000Z
                         \t79.90616289736545\t1970-01-03T09:00:00.000000000Z
-                        PEHN\t84.45258177211063\t1970-01-03T09:00:00.000000000Z
-                        VTJW\t48.820511018586934\t1970-01-03T09:00:00.000000000Z
-                        RXGZ\t23.90529010846525\t1970-01-03T09:00:00.000000000Z
                         HYRX\t12.026122412833129\t1970-01-03T09:00:00.000000000Z
-                        UVSD\tnull\t1970-01-03T09:00:00.000000000Z
                         KGHV\tnull\t1970-01-03T09:00:00.000000000Z
+                        PEHN\t84.45258177211063\t1970-01-03T09:00:00.000000000Z
+                        RXGZ\t23.90529010846525\t1970-01-03T09:00:00.000000000Z
+                        UVSD\tnull\t1970-01-03T09:00:00.000000000Z
+                        VTJW\t48.820511018586934\t1970-01-03T09:00:00.000000000Z
                         \t269.56323940450045\t1970-01-03T12:00:00.000000000Z
-                        PEHN\t49.00510449885239\t1970-01-03T12:00:00.000000000Z
-                        VTJW\t48.820511018586934\t1970-01-03T12:00:00.000000000Z
-                        RXGZ\t23.90529010846525\t1970-01-03T12:00:00.000000000Z
                         HYRX\t12.026122412833129\t1970-01-03T12:00:00.000000000Z
-                        UVSD\tnull\t1970-01-03T12:00:00.000000000Z
                         KGHV\tnull\t1970-01-03T12:00:00.000000000Z
+                        PEHN\t49.00510449885239\t1970-01-03T12:00:00.000000000Z
+                        RXGZ\t23.90529010846525\t1970-01-03T12:00:00.000000000Z
+                        UVSD\tnull\t1970-01-03T12:00:00.000000000Z
+                        VTJW\t48.820511018586934\t1970-01-03T12:00:00.000000000Z
                         \t86.08992670884706\t1970-01-03T15:00:00.000000000Z
-                        VTJW\t48.820511018586934\t1970-01-03T15:00:00.000000000Z
-                        RXGZ\t23.90529010846525\t1970-01-03T15:00:00.000000000Z
-                        PEHN\t49.00510449885239\t1970-01-03T15:00:00.000000000Z
                         HYRX\t12.026122412833129\t1970-01-03T15:00:00.000000000Z
-                        UVSD\tnull\t1970-01-03T15:00:00.000000000Z
                         KGHV\tnull\t1970-01-03T15:00:00.000000000Z
+                        PEHN\t49.00510449885239\t1970-01-03T15:00:00.000000000Z
+                        RXGZ\t23.90529010846525\t1970-01-03T15:00:00.000000000Z
+                        UVSD\tnull\t1970-01-03T15:00:00.000000000Z
+                        VTJW\t48.820511018586934\t1970-01-03T15:00:00.000000000Z
                         \t86.08992670884706\t1970-01-03T18:00:00.000000000Z
-                        VTJW\t48.820511018586934\t1970-01-03T18:00:00.000000000Z
-                        RXGZ\t23.90529010846525\t1970-01-03T18:00:00.000000000Z
-                        PEHN\t49.00510449885239\t1970-01-03T18:00:00.000000000Z
                         HYRX\t12.026122412833129\t1970-01-03T18:00:00.000000000Z
-                        UVSD\tnull\t1970-01-03T18:00:00.000000000Z
                         KGHV\tnull\t1970-01-03T18:00:00.000000000Z
+                        PEHN\t49.00510449885239\t1970-01-03T18:00:00.000000000Z
+                        RXGZ\t23.90529010846525\t1970-01-03T18:00:00.000000000Z
+                        UVSD\tnull\t1970-01-03T18:00:00.000000000Z
+                        VTJW\t48.820511018586934\t1970-01-03T18:00:00.000000000Z
                         \t86.08992670884706\t1970-01-03T21:00:00.000000000Z
-                        VTJW\t48.820511018586934\t1970-01-03T21:00:00.000000000Z
-                        RXGZ\t23.90529010846525\t1970-01-03T21:00:00.000000000Z
-                        PEHN\t49.00510449885239\t1970-01-03T21:00:00.000000000Z
                         HYRX\t12.026122412833129\t1970-01-03T21:00:00.000000000Z
-                        UVSD\tnull\t1970-01-03T21:00:00.000000000Z
                         KGHV\tnull\t1970-01-03T21:00:00.000000000Z
+                        PEHN\t49.00510449885239\t1970-01-03T21:00:00.000000000Z
+                        RXGZ\t23.90529010846525\t1970-01-03T21:00:00.000000000Z
+                        UVSD\tnull\t1970-01-03T21:00:00.000000000Z
+                        VTJW\t48.820511018586934\t1970-01-03T21:00:00.000000000Z
                         \t86.08992670884706\t1970-01-04T00:00:00.000000000Z
-                        VTJW\t48.820511018586934\t1970-01-04T00:00:00.000000000Z
-                        RXGZ\t23.90529010846525\t1970-01-04T00:00:00.000000000Z
-                        PEHN\t49.00510449885239\t1970-01-04T00:00:00.000000000Z
                         HYRX\t12.026122412833129\t1970-01-04T00:00:00.000000000Z
-                        UVSD\tnull\t1970-01-04T00:00:00.000000000Z
                         KGHV\tnull\t1970-01-04T00:00:00.000000000Z
+                        PEHN\t49.00510449885239\t1970-01-04T00:00:00.000000000Z
+                        RXGZ\t23.90529010846525\t1970-01-04T00:00:00.000000000Z
+                        UVSD\tnull\t1970-01-04T00:00:00.000000000Z
+                        VTJW\t48.820511018586934\t1970-01-04T00:00:00.000000000Z
                         \t131.41536915856756\t1970-01-04T03:00:00.000000000Z
-                        VTJW\t48.820511018586934\t1970-01-04T03:00:00.000000000Z
-                        RXGZ\t23.90529010846525\t1970-01-04T03:00:00.000000000Z
-                        PEHN\t49.00510449885239\t1970-01-04T03:00:00.000000000Z
                         HYRX\t12.026122412833129\t1970-01-04T03:00:00.000000000Z
-                        UVSD\tnull\t1970-01-04T03:00:00.000000000Z
                         KGHV\tnull\t1970-01-04T03:00:00.000000000Z
-                        UVSD\t49.42890511958454\t1970-01-04T06:00:00.000000000Z
+                        PEHN\t49.00510449885239\t1970-01-04T03:00:00.000000000Z
+                        RXGZ\t23.90529010846525\t1970-01-04T03:00:00.000000000Z
+                        UVSD\tnull\t1970-01-04T03:00:00.000000000Z
+                        VTJW\t48.820511018586934\t1970-01-04T03:00:00.000000000Z
                         \t58.912164838797885\t1970-01-04T06:00:00.000000000Z
-                        KGHV\t67.52509547112409\t1970-01-04T06:00:00.000000000Z
-                        VTJW\t48.820511018586934\t1970-01-04T06:00:00.000000000Z
-                        RXGZ\t23.90529010846525\t1970-01-04T06:00:00.000000000Z
-                        PEHN\t49.00510449885239\t1970-01-04T06:00:00.000000000Z
                         HYRX\t12.026122412833129\t1970-01-04T06:00:00.000000000Z
+                        KGHV\t67.52509547112409\t1970-01-04T06:00:00.000000000Z
+                        PEHN\t49.00510449885239\t1970-01-04T06:00:00.000000000Z
+                        RXGZ\t23.90529010846525\t1970-01-04T06:00:00.000000000Z
+                        UVSD\t49.42890511958454\t1970-01-04T06:00:00.000000000Z
+                        VTJW\t48.820511018586934\t1970-01-04T06:00:00.000000000Z
                         """);
     }
 
@@ -9863,7 +12541,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
         // EST timezone has clock go back on 7 Nov. From -4 UTC to -5 UTC
         // at 6am UTC EST time is 2am (DTS), when clock goes back 7am also becomes 2am UTC
         // hence 6am UTC is duplicate timestamp and is expected to be compounded
-        assertQuery("select b, s, to_timezone(k, 'EST') k from (select b, sum(a) s, k from x sample by 1h fill(prev) align to calendar time zone 'EST')")
+        assertQuery("select b, s, to_timezone(k, 'EST') k from (select b, sum(a) s, k from x sample by 1h fill(prev) align to calendar time zone 'EST' order by k, b)")
                 .ddl("create table x as " +
                         "(" +
                         "select" +
@@ -9873,94 +12551,93 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE")
-                .noRandomAccess()
                 .returns("""
                         b\ts\tk
                         \t11.427984775756228\t2021-11-06T18:00:00.000000000Z
-                        VTJW\tnull\t2021-11-06T18:00:00.000000000Z
-                        RXGZ\tnull\t2021-11-06T18:00:00.000000000Z
-                        PEHN\tnull\t2021-11-06T18:00:00.000000000Z
                         HYRX\tnull\t2021-11-06T18:00:00.000000000Z
-                        VTJW\t42.17768841969397\t2021-11-06T19:00:00.000000000Z
-                        RXGZ\t23.90529010846525\t2021-11-06T19:00:00.000000000Z
+                        PEHN\tnull\t2021-11-06T18:00:00.000000000Z
+                        RXGZ\tnull\t2021-11-06T18:00:00.000000000Z
+                        VTJW\tnull\t2021-11-06T18:00:00.000000000Z
                         \t11.427984775756228\t2021-11-06T19:00:00.000000000Z
-                        PEHN\tnull\t2021-11-06T19:00:00.000000000Z
                         HYRX\tnull\t2021-11-06T19:00:00.000000000Z
-                        PEHN\t70.94360487171201\t2021-11-06T20:00:00.000000000Z
+                        PEHN\tnull\t2021-11-06T19:00:00.000000000Z
+                        RXGZ\t23.90529010846525\t2021-11-06T19:00:00.000000000Z
+                        VTJW\t42.17768841969397\t2021-11-06T19:00:00.000000000Z
                         \t11.427984775756228\t2021-11-06T20:00:00.000000000Z
-                        VTJW\t42.17768841969397\t2021-11-06T20:00:00.000000000Z
-                        RXGZ\t23.90529010846525\t2021-11-06T20:00:00.000000000Z
                         HYRX\tnull\t2021-11-06T20:00:00.000000000Z
+                        PEHN\t70.94360487171201\t2021-11-06T20:00:00.000000000Z
+                        RXGZ\t23.90529010846525\t2021-11-06T20:00:00.000000000Z
+                        VTJW\t42.17768841969397\t2021-11-06T20:00:00.000000000Z
                         \t87.99634725391621\t2021-11-06T21:00:00.000000000Z
-                        VTJW\t42.17768841969397\t2021-11-06T21:00:00.000000000Z
-                        RXGZ\t23.90529010846525\t2021-11-06T21:00:00.000000000Z
-                        PEHN\t70.94360487171201\t2021-11-06T21:00:00.000000000Z
                         HYRX\tnull\t2021-11-06T21:00:00.000000000Z
+                        PEHN\t70.94360487171201\t2021-11-06T21:00:00.000000000Z
+                        RXGZ\t23.90529010846525\t2021-11-06T21:00:00.000000000Z
+                        VTJW\t42.17768841969397\t2021-11-06T21:00:00.000000000Z
                         \t32.881769076795045\t2021-11-06T22:00:00.000000000Z
-                        VTJW\t42.17768841969397\t2021-11-06T22:00:00.000000000Z
-                        RXGZ\t23.90529010846525\t2021-11-06T22:00:00.000000000Z
-                        PEHN\t70.94360487171201\t2021-11-06T22:00:00.000000000Z
                         HYRX\tnull\t2021-11-06T22:00:00.000000000Z
-                        HYRX\t97.71103146051203\t2021-11-06T23:00:00.000000000Z
+                        PEHN\t70.94360487171201\t2021-11-06T22:00:00.000000000Z
+                        RXGZ\t23.90529010846525\t2021-11-06T22:00:00.000000000Z
+                        VTJW\t42.17768841969397\t2021-11-06T22:00:00.000000000Z
                         \t32.881769076795045\t2021-11-06T23:00:00.000000000Z
-                        VTJW\t42.17768841969397\t2021-11-06T23:00:00.000000000Z
-                        RXGZ\t23.90529010846525\t2021-11-06T23:00:00.000000000Z
+                        HYRX\t97.71103146051203\t2021-11-06T23:00:00.000000000Z
                         PEHN\t70.94360487171201\t2021-11-06T23:00:00.000000000Z
-                        PEHN\t81.46807944500559\t2021-11-07T00:00:00.000000000Z
+                        RXGZ\t23.90529010846525\t2021-11-06T23:00:00.000000000Z
+                        VTJW\t42.17768841969397\t2021-11-06T23:00:00.000000000Z
                         \t32.881769076795045\t2021-11-07T00:00:00.000000000Z
-                        VTJW\t42.17768841969397\t2021-11-07T00:00:00.000000000Z
-                        RXGZ\t23.90529010846525\t2021-11-07T00:00:00.000000000Z
                         HYRX\t97.71103146051203\t2021-11-07T00:00:00.000000000Z
+                        PEHN\t81.46807944500559\t2021-11-07T00:00:00.000000000Z
+                        RXGZ\t23.90529010846525\t2021-11-07T00:00:00.000000000Z
+                        VTJW\t42.17768841969397\t2021-11-07T00:00:00.000000000Z
                         \t57.93466326862211\t2021-11-07T01:00:00.000000000Z
                         HYRX\t12.026122412833129\t2021-11-07T01:00:00.000000000Z
+                        PEHN\t81.46807944500559\t2021-11-07T01:00:00.000000000Z
+                        RXGZ\t23.90529010846525\t2021-11-07T01:00:00.000000000Z
                         VTJW\t42.17768841969397\t2021-11-07T01:00:00.000000000Z
-                        RXGZ\t23.90529010846525\t2021-11-07T01:00:00.000000000Z
-                        PEHN\t81.46807944500559\t2021-11-07T01:00:00.000000000Z
-                        VTJW\t48.820511018586934\t2021-11-07T01:00:00.000000000Z
                         \t57.93466326862211\t2021-11-07T01:00:00.000000000Z
-                        RXGZ\t23.90529010846525\t2021-11-07T01:00:00.000000000Z
-                        PEHN\t81.46807944500559\t2021-11-07T01:00:00.000000000Z
                         HYRX\t12.026122412833129\t2021-11-07T01:00:00.000000000Z
+                        PEHN\t81.46807944500559\t2021-11-07T01:00:00.000000000Z
+                        RXGZ\t23.90529010846525\t2021-11-07T01:00:00.000000000Z
+                        VTJW\t48.820511018586934\t2021-11-07T01:00:00.000000000Z
                         \t26.922103479744898\t2021-11-07T02:00:00.000000000Z
-                        VTJW\t48.820511018586934\t2021-11-07T02:00:00.000000000Z
-                        RXGZ\t23.90529010846525\t2021-11-07T02:00:00.000000000Z
-                        PEHN\t81.46807944500559\t2021-11-07T02:00:00.000000000Z
                         HYRX\t12.026122412833129\t2021-11-07T02:00:00.000000000Z
+                        PEHN\t81.46807944500559\t2021-11-07T02:00:00.000000000Z
+                        RXGZ\t23.90529010846525\t2021-11-07T02:00:00.000000000Z
+                        VTJW\t48.820511018586934\t2021-11-07T02:00:00.000000000Z
                         \t52.98405941762054\t2021-11-07T03:00:00.000000000Z
-                        VTJW\t48.820511018586934\t2021-11-07T03:00:00.000000000Z
-                        RXGZ\t23.90529010846525\t2021-11-07T03:00:00.000000000Z
-                        PEHN\t81.46807944500559\t2021-11-07T03:00:00.000000000Z
                         HYRX\t12.026122412833129\t2021-11-07T03:00:00.000000000Z
-                        PEHN\t84.45258177211063\t2021-11-07T04:00:00.000000000Z
+                        PEHN\t81.46807944500559\t2021-11-07T03:00:00.000000000Z
+                        RXGZ\t23.90529010846525\t2021-11-07T03:00:00.000000000Z
+                        VTJW\t48.820511018586934\t2021-11-07T03:00:00.000000000Z
                         \t52.98405941762054\t2021-11-07T04:00:00.000000000Z
-                        VTJW\t48.820511018586934\t2021-11-07T04:00:00.000000000Z
-                        RXGZ\t23.90529010846525\t2021-11-07T04:00:00.000000000Z
                         HYRX\t12.026122412833129\t2021-11-07T04:00:00.000000000Z
+                        PEHN\t84.45258177211063\t2021-11-07T04:00:00.000000000Z
+                        RXGZ\t23.90529010846525\t2021-11-07T04:00:00.000000000Z
+                        VTJW\t48.820511018586934\t2021-11-07T04:00:00.000000000Z
                         \t97.5019885372507\t2021-11-07T05:00:00.000000000Z
-                        VTJW\t48.820511018586934\t2021-11-07T05:00:00.000000000Z
-                        RXGZ\t23.90529010846525\t2021-11-07T05:00:00.000000000Z
-                        PEHN\t84.45258177211063\t2021-11-07T05:00:00.000000000Z
                         HYRX\t12.026122412833129\t2021-11-07T05:00:00.000000000Z
-                        PEHN\t49.00510449885239\t2021-11-07T06:00:00.000000000Z
+                        PEHN\t84.45258177211063\t2021-11-07T05:00:00.000000000Z
+                        RXGZ\t23.90529010846525\t2021-11-07T05:00:00.000000000Z
+                        VTJW\t48.820511018586934\t2021-11-07T05:00:00.000000000Z
                         \t80.01121139739173\t2021-11-07T06:00:00.000000000Z
-                        VTJW\t48.820511018586934\t2021-11-07T06:00:00.000000000Z
-                        RXGZ\t23.90529010846525\t2021-11-07T06:00:00.000000000Z
                         HYRX\t12.026122412833129\t2021-11-07T06:00:00.000000000Z
+                        PEHN\t49.00510449885239\t2021-11-07T06:00:00.000000000Z
+                        RXGZ\t23.90529010846525\t2021-11-07T06:00:00.000000000Z
+                        VTJW\t48.820511018586934\t2021-11-07T06:00:00.000000000Z
                         \t92.050039469858\t2021-11-07T07:00:00.000000000Z
-                        VTJW\t48.820511018586934\t2021-11-07T07:00:00.000000000Z
-                        RXGZ\t23.90529010846525\t2021-11-07T07:00:00.000000000Z
-                        PEHN\t49.00510449885239\t2021-11-07T07:00:00.000000000Z
                         HYRX\t12.026122412833129\t2021-11-07T07:00:00.000000000Z
+                        PEHN\t49.00510449885239\t2021-11-07T07:00:00.000000000Z
+                        RXGZ\t23.90529010846525\t2021-11-07T07:00:00.000000000Z
+                        VTJW\t48.820511018586934\t2021-11-07T07:00:00.000000000Z
                         \t45.6344569609078\t2021-11-07T08:00:00.000000000Z
-                        VTJW\t48.820511018586934\t2021-11-07T08:00:00.000000000Z
-                        RXGZ\t23.90529010846525\t2021-11-07T08:00:00.000000000Z
-                        PEHN\t49.00510449885239\t2021-11-07T08:00:00.000000000Z
                         HYRX\t12.026122412833129\t2021-11-07T08:00:00.000000000Z
+                        PEHN\t49.00510449885239\t2021-11-07T08:00:00.000000000Z
+                        RXGZ\t23.90529010846525\t2021-11-07T08:00:00.000000000Z
+                        VTJW\t48.820511018586934\t2021-11-07T08:00:00.000000000Z
                         \t40.455469747939254\t2021-11-07T09:00:00.000000000Z
-                        VTJW\t48.820511018586934\t2021-11-07T09:00:00.000000000Z
-                        RXGZ\t23.90529010846525\t2021-11-07T09:00:00.000000000Z
-                        PEHN\t49.00510449885239\t2021-11-07T09:00:00.000000000Z
                         HYRX\t12.026122412833129\t2021-11-07T09:00:00.000000000Z
+                        PEHN\t49.00510449885239\t2021-11-07T09:00:00.000000000Z
+                        RXGZ\t23.90529010846525\t2021-11-07T09:00:00.000000000Z
+                        VTJW\t48.820511018586934\t2021-11-07T09:00:00.000000000Z
                         """);
     }
 
@@ -10015,7 +12692,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFillPrevDuplicateKey() throws Exception {
-        assertQuery("select b, b, b, sum(a), k from x sample by 3h fill(prev)")
+        assertQuery("select b, b, b, sum(a), k from x sample by 3h fill(prev) order by k, b")
                 .ddl("create table x as " +
                         "(" +
                         "select" +
@@ -10034,130 +12711,129 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         " long_sequence(5)" +
                         ") timestamp(k)")
                 .timestamp("k")
-                .noRandomAccess()
                 .returns("""
                         b\tb1\tb2\tsum\tk
                         \t\t\t11.427984775756228\t1970-01-03T00:00:00.000000000Z
-                        VTJW\tVTJW\tVTJW\t42.17768841969397\t1970-01-03T00:00:00.000000000Z
-                        RXGZ\tRXGZ\tRXGZ\t23.90529010846525\t1970-01-03T00:00:00.000000000Z
-                        PEHN\tPEHN\tPEHN\tnull\t1970-01-03T00:00:00.000000000Z
                         HYRX\tHYRX\tHYRX\tnull\t1970-01-03T00:00:00.000000000Z
-                        PEHN\tPEHN\tPEHN\t70.94360487171201\t1970-01-03T03:00:00.000000000Z
+                        PEHN\tPEHN\tPEHN\tnull\t1970-01-03T00:00:00.000000000Z
+                        RXGZ\tRXGZ\tRXGZ\t23.90529010846525\t1970-01-03T00:00:00.000000000Z
+                        VTJW\tVTJW\tVTJW\t42.17768841969397\t1970-01-03T00:00:00.000000000Z
                         \t\t\t120.87811633071126\t1970-01-03T03:00:00.000000000Z
-                        VTJW\tVTJW\tVTJW\t42.17768841969397\t1970-01-03T03:00:00.000000000Z
-                        RXGZ\tRXGZ\tRXGZ\t23.90529010846525\t1970-01-03T03:00:00.000000000Z
                         HYRX\tHYRX\tHYRX\tnull\t1970-01-03T03:00:00.000000000Z
+                        PEHN\tPEHN\tPEHN\t70.94360487171201\t1970-01-03T03:00:00.000000000Z
+                        RXGZ\tRXGZ\tRXGZ\t23.90529010846525\t1970-01-03T03:00:00.000000000Z
+                        VTJW\tVTJW\tVTJW\t42.17768841969397\t1970-01-03T03:00:00.000000000Z
+                        \t\t\t57.93466326862211\t1970-01-03T06:00:00.000000000Z
                         HYRX\tHYRX\tHYRX\t97.71103146051203\t1970-01-03T06:00:00.000000000Z
                         PEHN\tPEHN\tPEHN\t81.46807944500559\t1970-01-03T06:00:00.000000000Z
-                        \t\t\t57.93466326862211\t1970-01-03T06:00:00.000000000Z
-                        VTJW\tVTJW\tVTJW\t42.17768841969397\t1970-01-03T06:00:00.000000000Z
                         RXGZ\tRXGZ\tRXGZ\t23.90529010846525\t1970-01-03T06:00:00.000000000Z
-                        HYRX\tHYRX\tHYRX\t12.026122412833129\t1970-01-03T09:00:00.000000000Z
-                        VTJW\tVTJW\tVTJW\t48.820511018586934\t1970-01-03T09:00:00.000000000Z
+                        VTJW\tVTJW\tVTJW\t42.17768841969397\t1970-01-03T06:00:00.000000000Z
                         \t\t\t26.922103479744898\t1970-01-03T09:00:00.000000000Z
-                        RXGZ\tRXGZ\tRXGZ\t23.90529010846525\t1970-01-03T09:00:00.000000000Z
+                        HYRX\tHYRX\tHYRX\t12.026122412833129\t1970-01-03T09:00:00.000000000Z
                         PEHN\tPEHN\tPEHN\t81.46807944500559\t1970-01-03T09:00:00.000000000Z
+                        RXGZ\tRXGZ\tRXGZ\t23.90529010846525\t1970-01-03T09:00:00.000000000Z
+                        VTJW\tVTJW\tVTJW\t48.820511018586934\t1970-01-03T09:00:00.000000000Z
                         \t\t\t150.48604795487125\t1970-01-03T12:00:00.000000000Z
-                        PEHN\tPEHN\tPEHN\t84.45258177211063\t1970-01-03T12:00:00.000000000Z
-                        VTJW\tVTJW\tVTJW\t48.820511018586934\t1970-01-03T12:00:00.000000000Z
-                        RXGZ\tRXGZ\tRXGZ\t23.90529010846525\t1970-01-03T12:00:00.000000000Z
                         HYRX\tHYRX\tHYRX\t12.026122412833129\t1970-01-03T12:00:00.000000000Z
-                        PEHN\tPEHN\tPEHN\t49.00510449885239\t1970-01-03T15:00:00.000000000Z
+                        PEHN\tPEHN\tPEHN\t84.45258177211063\t1970-01-03T12:00:00.000000000Z
+                        RXGZ\tRXGZ\tRXGZ\t23.90529010846525\t1970-01-03T12:00:00.000000000Z
+                        VTJW\tVTJW\tVTJW\t48.820511018586934\t1970-01-03T12:00:00.000000000Z
                         \t\t\t172.06125086724973\t1970-01-03T15:00:00.000000000Z
-                        VTJW\tVTJW\tVTJW\t48.820511018586934\t1970-01-03T15:00:00.000000000Z
-                        RXGZ\tRXGZ\tRXGZ\t23.90529010846525\t1970-01-03T15:00:00.000000000Z
                         HYRX\tHYRX\tHYRX\t12.026122412833129\t1970-01-03T15:00:00.000000000Z
+                        PEHN\tPEHN\tPEHN\t49.00510449885239\t1970-01-03T15:00:00.000000000Z
+                        RXGZ\tRXGZ\tRXGZ\t23.90529010846525\t1970-01-03T15:00:00.000000000Z
+                        VTJW\tVTJW\tVTJW\t48.820511018586934\t1970-01-03T15:00:00.000000000Z
                         \t\t\t86.08992670884706\t1970-01-03T18:00:00.000000000Z
-                        VTJW\tVTJW\tVTJW\t48.820511018586934\t1970-01-03T18:00:00.000000000Z
-                        RXGZ\tRXGZ\tRXGZ\t23.90529010846525\t1970-01-03T18:00:00.000000000Z
-                        PEHN\tPEHN\tPEHN\t49.00510449885239\t1970-01-03T18:00:00.000000000Z
                         HYRX\tHYRX\tHYRX\t12.026122412833129\t1970-01-03T18:00:00.000000000Z
+                        PEHN\tPEHN\tPEHN\t49.00510449885239\t1970-01-03T18:00:00.000000000Z
+                        RXGZ\tRXGZ\tRXGZ\t23.90529010846525\t1970-01-03T18:00:00.000000000Z
+                        VTJW\tVTJW\tVTJW\t48.820511018586934\t1970-01-03T18:00:00.000000000Z
                         """, """
                         b\tb1\tb2\tsum\tk
                         \t\t\t11.427984775756228\t1970-01-03T00:00:00.000000000Z
-                        VTJW\tVTJW\tVTJW\t42.17768841969397\t1970-01-03T00:00:00.000000000Z
-                        RXGZ\tRXGZ\tRXGZ\t23.90529010846525\t1970-01-03T00:00:00.000000000Z
-                        PEHN\tPEHN\tPEHN\tnull\t1970-01-03T00:00:00.000000000Z
                         HYRX\tHYRX\tHYRX\tnull\t1970-01-03T00:00:00.000000000Z
-                        UVSD\tUVSD\tUVSD\tnull\t1970-01-03T00:00:00.000000000Z
                         KGHV\tKGHV\tKGHV\tnull\t1970-01-03T00:00:00.000000000Z
-                        PEHN\tPEHN\tPEHN\t70.94360487171201\t1970-01-03T03:00:00.000000000Z
+                        PEHN\tPEHN\tPEHN\tnull\t1970-01-03T00:00:00.000000000Z
+                        RXGZ\tRXGZ\tRXGZ\t23.90529010846525\t1970-01-03T00:00:00.000000000Z
+                        UVSD\tUVSD\tUVSD\tnull\t1970-01-03T00:00:00.000000000Z
+                        VTJW\tVTJW\tVTJW\t42.17768841969397\t1970-01-03T00:00:00.000000000Z
                         \t\t\t120.87811633071126\t1970-01-03T03:00:00.000000000Z
-                        VTJW\tVTJW\tVTJW\t42.17768841969397\t1970-01-03T03:00:00.000000000Z
-                        RXGZ\tRXGZ\tRXGZ\t23.90529010846525\t1970-01-03T03:00:00.000000000Z
                         HYRX\tHYRX\tHYRX\tnull\t1970-01-03T03:00:00.000000000Z
-                        UVSD\tUVSD\tUVSD\tnull\t1970-01-03T03:00:00.000000000Z
                         KGHV\tKGHV\tKGHV\tnull\t1970-01-03T03:00:00.000000000Z
-                        HYRX\tHYRX\tHYRX\t97.71103146051203\t1970-01-03T06:00:00.000000000Z
-                        PEHN\tPEHN\tPEHN\t81.46807944500559\t1970-01-03T06:00:00.000000000Z
+                        PEHN\tPEHN\tPEHN\t70.94360487171201\t1970-01-03T03:00:00.000000000Z
+                        RXGZ\tRXGZ\tRXGZ\t23.90529010846525\t1970-01-03T03:00:00.000000000Z
+                        UVSD\tUVSD\tUVSD\tnull\t1970-01-03T03:00:00.000000000Z
+                        VTJW\tVTJW\tVTJW\t42.17768841969397\t1970-01-03T03:00:00.000000000Z
                         \t\t\t57.93466326862211\t1970-01-03T06:00:00.000000000Z
-                        VTJW\tVTJW\tVTJW\t42.17768841969397\t1970-01-03T06:00:00.000000000Z
+                        HYRX\tHYRX\tHYRX\t97.71103146051203\t1970-01-03T06:00:00.000000000Z
+                        KGHV\tKGHV\tKGHV\tnull\t1970-01-03T06:00:00.000000000Z
+                        PEHN\tPEHN\tPEHN\t81.46807944500559\t1970-01-03T06:00:00.000000000Z
                         RXGZ\tRXGZ\tRXGZ\t23.90529010846525\t1970-01-03T06:00:00.000000000Z
                         UVSD\tUVSD\tUVSD\tnull\t1970-01-03T06:00:00.000000000Z
-                        KGHV\tKGHV\tKGHV\tnull\t1970-01-03T06:00:00.000000000Z
-                        HYRX\tHYRX\tHYRX\t12.026122412833129\t1970-01-03T09:00:00.000000000Z
-                        VTJW\tVTJW\tVTJW\t48.820511018586934\t1970-01-03T09:00:00.000000000Z
+                        VTJW\tVTJW\tVTJW\t42.17768841969397\t1970-01-03T06:00:00.000000000Z
                         \t\t\t26.922103479744898\t1970-01-03T09:00:00.000000000Z
-                        RXGZ\tRXGZ\tRXGZ\t23.90529010846525\t1970-01-03T09:00:00.000000000Z
-                        PEHN\tPEHN\tPEHN\t81.46807944500559\t1970-01-03T09:00:00.000000000Z
-                        UVSD\tUVSD\tUVSD\tnull\t1970-01-03T09:00:00.000000000Z
+                        HYRX\tHYRX\tHYRX\t12.026122412833129\t1970-01-03T09:00:00.000000000Z
                         KGHV\tKGHV\tKGHV\tnull\t1970-01-03T09:00:00.000000000Z
+                        PEHN\tPEHN\tPEHN\t81.46807944500559\t1970-01-03T09:00:00.000000000Z
+                        RXGZ\tRXGZ\tRXGZ\t23.90529010846525\t1970-01-03T09:00:00.000000000Z
+                        UVSD\tUVSD\tUVSD\tnull\t1970-01-03T09:00:00.000000000Z
+                        VTJW\tVTJW\tVTJW\t48.820511018586934\t1970-01-03T09:00:00.000000000Z
                         \t\t\t150.48604795487125\t1970-01-03T12:00:00.000000000Z
-                        PEHN\tPEHN\tPEHN\t84.45258177211063\t1970-01-03T12:00:00.000000000Z
-                        VTJW\tVTJW\tVTJW\t48.820511018586934\t1970-01-03T12:00:00.000000000Z
-                        RXGZ\tRXGZ\tRXGZ\t23.90529010846525\t1970-01-03T12:00:00.000000000Z
                         HYRX\tHYRX\tHYRX\t12.026122412833129\t1970-01-03T12:00:00.000000000Z
-                        UVSD\tUVSD\tUVSD\tnull\t1970-01-03T12:00:00.000000000Z
                         KGHV\tKGHV\tKGHV\tnull\t1970-01-03T12:00:00.000000000Z
-                        PEHN\tPEHN\tPEHN\t49.00510449885239\t1970-01-03T15:00:00.000000000Z
+                        PEHN\tPEHN\tPEHN\t84.45258177211063\t1970-01-03T12:00:00.000000000Z
+                        RXGZ\tRXGZ\tRXGZ\t23.90529010846525\t1970-01-03T12:00:00.000000000Z
+                        UVSD\tUVSD\tUVSD\tnull\t1970-01-03T12:00:00.000000000Z
+                        VTJW\tVTJW\tVTJW\t48.820511018586934\t1970-01-03T12:00:00.000000000Z
                         \t\t\t172.06125086724973\t1970-01-03T15:00:00.000000000Z
-                        VTJW\tVTJW\tVTJW\t48.820511018586934\t1970-01-03T15:00:00.000000000Z
-                        RXGZ\tRXGZ\tRXGZ\t23.90529010846525\t1970-01-03T15:00:00.000000000Z
                         HYRX\tHYRX\tHYRX\t12.026122412833129\t1970-01-03T15:00:00.000000000Z
-                        UVSD\tUVSD\tUVSD\tnull\t1970-01-03T15:00:00.000000000Z
                         KGHV\tKGHV\tKGHV\tnull\t1970-01-03T15:00:00.000000000Z
+                        PEHN\tPEHN\tPEHN\t49.00510449885239\t1970-01-03T15:00:00.000000000Z
+                        RXGZ\tRXGZ\tRXGZ\t23.90529010846525\t1970-01-03T15:00:00.000000000Z
+                        UVSD\tUVSD\tUVSD\tnull\t1970-01-03T15:00:00.000000000Z
+                        VTJW\tVTJW\tVTJW\t48.820511018586934\t1970-01-03T15:00:00.000000000Z
                         \t\t\t86.08992670884706\t1970-01-03T18:00:00.000000000Z
-                        VTJW\tVTJW\tVTJW\t48.820511018586934\t1970-01-03T18:00:00.000000000Z
-                        RXGZ\tRXGZ\tRXGZ\t23.90529010846525\t1970-01-03T18:00:00.000000000Z
-                        PEHN\tPEHN\tPEHN\t49.00510449885239\t1970-01-03T18:00:00.000000000Z
                         HYRX\tHYRX\tHYRX\t12.026122412833129\t1970-01-03T18:00:00.000000000Z
-                        UVSD\tUVSD\tUVSD\tnull\t1970-01-03T18:00:00.000000000Z
                         KGHV\tKGHV\tKGHV\tnull\t1970-01-03T18:00:00.000000000Z
+                        PEHN\tPEHN\tPEHN\t49.00510449885239\t1970-01-03T18:00:00.000000000Z
+                        RXGZ\tRXGZ\tRXGZ\t23.90529010846525\t1970-01-03T18:00:00.000000000Z
+                        UVSD\tUVSD\tUVSD\tnull\t1970-01-03T18:00:00.000000000Z
+                        VTJW\tVTJW\tVTJW\t48.820511018586934\t1970-01-03T18:00:00.000000000Z
                         \t\t\t86.08992670884706\t1970-01-03T21:00:00.000000000Z
-                        VTJW\tVTJW\tVTJW\t48.820511018586934\t1970-01-03T21:00:00.000000000Z
-                        RXGZ\tRXGZ\tRXGZ\t23.90529010846525\t1970-01-03T21:00:00.000000000Z
-                        PEHN\tPEHN\tPEHN\t49.00510449885239\t1970-01-03T21:00:00.000000000Z
                         HYRX\tHYRX\tHYRX\t12.026122412833129\t1970-01-03T21:00:00.000000000Z
-                        UVSD\tUVSD\tUVSD\tnull\t1970-01-03T21:00:00.000000000Z
                         KGHV\tKGHV\tKGHV\tnull\t1970-01-03T21:00:00.000000000Z
+                        PEHN\tPEHN\tPEHN\t49.00510449885239\t1970-01-03T21:00:00.000000000Z
+                        RXGZ\tRXGZ\tRXGZ\t23.90529010846525\t1970-01-03T21:00:00.000000000Z
+                        UVSD\tUVSD\tUVSD\tnull\t1970-01-03T21:00:00.000000000Z
+                        VTJW\tVTJW\tVTJW\t48.820511018586934\t1970-01-03T21:00:00.000000000Z
                         \t\t\t86.08992670884706\t1970-01-04T00:00:00.000000000Z
-                        VTJW\tVTJW\tVTJW\t48.820511018586934\t1970-01-04T00:00:00.000000000Z
-                        RXGZ\tRXGZ\tRXGZ\t23.90529010846525\t1970-01-04T00:00:00.000000000Z
-                        PEHN\tPEHN\tPEHN\t49.00510449885239\t1970-01-04T00:00:00.000000000Z
                         HYRX\tHYRX\tHYRX\t12.026122412833129\t1970-01-04T00:00:00.000000000Z
-                        UVSD\tUVSD\tUVSD\tnull\t1970-01-04T00:00:00.000000000Z
                         KGHV\tKGHV\tKGHV\tnull\t1970-01-04T00:00:00.000000000Z
+                        PEHN\tPEHN\tPEHN\t49.00510449885239\t1970-01-04T00:00:00.000000000Z
+                        RXGZ\tRXGZ\tRXGZ\t23.90529010846525\t1970-01-04T00:00:00.000000000Z
+                        UVSD\tUVSD\tUVSD\tnull\t1970-01-04T00:00:00.000000000Z
+                        VTJW\tVTJW\tVTJW\t48.820511018586934\t1970-01-04T00:00:00.000000000Z
                         \t\t\t54.49155021518948\t1970-01-04T03:00:00.000000000Z
-                        VTJW\tVTJW\tVTJW\t48.820511018586934\t1970-01-04T03:00:00.000000000Z
-                        RXGZ\tRXGZ\tRXGZ\t23.90529010846525\t1970-01-04T03:00:00.000000000Z
-                        PEHN\tPEHN\tPEHN\t49.00510449885239\t1970-01-04T03:00:00.000000000Z
                         HYRX\tHYRX\tHYRX\t12.026122412833129\t1970-01-04T03:00:00.000000000Z
-                        UVSD\tUVSD\tUVSD\tnull\t1970-01-04T03:00:00.000000000Z
                         KGHV\tKGHV\tKGHV\tnull\t1970-01-04T03:00:00.000000000Z
+                        PEHN\tPEHN\tPEHN\t49.00510449885239\t1970-01-04T03:00:00.000000000Z
+                        RXGZ\tRXGZ\tRXGZ\t23.90529010846525\t1970-01-04T03:00:00.000000000Z
+                        UVSD\tUVSD\tUVSD\tnull\t1970-01-04T03:00:00.000000000Z
+                        VTJW\tVTJW\tVTJW\t48.820511018586934\t1970-01-04T03:00:00.000000000Z
                         \t\t\t135.835983782176\t1970-01-04T06:00:00.000000000Z
-                        UVSD\tUVSD\tUVSD\t49.42890511958454\t1970-01-04T06:00:00.000000000Z
-                        VTJW\tVTJW\tVTJW\t48.820511018586934\t1970-01-04T06:00:00.000000000Z
-                        RXGZ\tRXGZ\tRXGZ\t23.90529010846525\t1970-01-04T06:00:00.000000000Z
-                        PEHN\tPEHN\tPEHN\t49.00510449885239\t1970-01-04T06:00:00.000000000Z
                         HYRX\tHYRX\tHYRX\t12.026122412833129\t1970-01-04T06:00:00.000000000Z
                         KGHV\tKGHV\tKGHV\tnull\t1970-01-04T06:00:00.000000000Z
-                        KGHV\tKGHV\tKGHV\t67.52509547112409\t1970-01-04T09:00:00.000000000Z
+                        PEHN\tPEHN\tPEHN\t49.00510449885239\t1970-01-04T06:00:00.000000000Z
+                        RXGZ\tRXGZ\tRXGZ\t23.90529010846525\t1970-01-04T06:00:00.000000000Z
+                        UVSD\tUVSD\tUVSD\t49.42890511958454\t1970-01-04T06:00:00.000000000Z
+                        VTJW\tVTJW\tVTJW\t48.820511018586934\t1970-01-04T06:00:00.000000000Z
                         \t\t\t135.835983782176\t1970-01-04T09:00:00.000000000Z
-                        VTJW\tVTJW\tVTJW\t48.820511018586934\t1970-01-04T09:00:00.000000000Z
-                        RXGZ\tRXGZ\tRXGZ\t23.90529010846525\t1970-01-04T09:00:00.000000000Z
-                        PEHN\tPEHN\tPEHN\t49.00510449885239\t1970-01-04T09:00:00.000000000Z
                         HYRX\tHYRX\tHYRX\t12.026122412833129\t1970-01-04T09:00:00.000000000Z
+                        KGHV\tKGHV\tKGHV\t67.52509547112409\t1970-01-04T09:00:00.000000000Z
+                        PEHN\tPEHN\tPEHN\t49.00510449885239\t1970-01-04T09:00:00.000000000Z
+                        RXGZ\tRXGZ\tRXGZ\t23.90529010846525\t1970-01-04T09:00:00.000000000Z
                         UVSD\tUVSD\tUVSD\t49.42890511958454\t1970-01-04T09:00:00.000000000Z
+                        VTJW\tVTJW\tVTJW\t48.820511018586934\t1970-01-04T09:00:00.000000000Z
                         """);
     }
 
@@ -10510,7 +13186,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFillPrevNoTimestamp() throws Exception {
-        assertQuery("select b, sum(a) from x sample by 3h fill(prev)")
+        assertQuery("select b, sum(a) from x sample by 3h fill(prev) order by k, b")
                 .ddl("create table x as " +
                         "(" +
                         "select" +
@@ -10528,130 +13204,129 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         " from" +
                         " long_sequence(5)" +
                         ") timestamp(k)")
-                .noRandomAccess()
                 .returns("""
                         b\tsum
                         \t11.427984775756228
-                        VTJW\t42.17768841969397
-                        RXGZ\t23.90529010846525
+                        HYRX\tnull
                         PEHN\tnull
+                        RXGZ\t23.90529010846525
+                        VTJW\t42.17768841969397
+                        \t120.87811633071126
                         HYRX\tnull
                         PEHN\t70.94360487171201
-                        \t120.87811633071126
-                        VTJW\t42.17768841969397
                         RXGZ\t23.90529010846525
-                        HYRX\tnull
+                        VTJW\t42.17768841969397
+                        \t57.93466326862211
                         HYRX\t97.71103146051203
                         PEHN\t81.46807944500559
-                        \t57.93466326862211
+                        RXGZ\t23.90529010846525
                         VTJW\t42.17768841969397
-                        RXGZ\t23.90529010846525
-                        HYRX\t12.026122412833129
-                        VTJW\t48.820511018586934
                         \t26.922103479744898
-                        RXGZ\t23.90529010846525
+                        HYRX\t12.026122412833129
                         PEHN\t81.46807944500559
+                        RXGZ\t23.90529010846525
+                        VTJW\t48.820511018586934
                         \t150.48604795487125
+                        HYRX\t12.026122412833129
                         PEHN\t84.45258177211063
-                        VTJW\t48.820511018586934
                         RXGZ\t23.90529010846525
-                        HYRX\t12.026122412833129
-                        PEHN\t49.00510449885239
+                        VTJW\t48.820511018586934
                         \t172.06125086724973
-                        VTJW\t48.820511018586934
-                        RXGZ\t23.90529010846525
                         HYRX\t12.026122412833129
-                        \t86.08992670884706
-                        VTJW\t48.820511018586934
-                        RXGZ\t23.90529010846525
                         PEHN\t49.00510449885239
+                        RXGZ\t23.90529010846525
+                        VTJW\t48.820511018586934
+                        \t86.08992670884706
                         HYRX\t12.026122412833129
+                        PEHN\t49.00510449885239
+                        RXGZ\t23.90529010846525
+                        VTJW\t48.820511018586934
                         """, """
                         b\tsum
                         \t11.427984775756228
-                        VTJW\t42.17768841969397
-                        RXGZ\t23.90529010846525
-                        PEHN\tnull
                         HYRX\tnull
+                        KGHV\tnull
+                        PEHN\tnull
+                        RXGZ\t23.90529010846525
                         UVSD\tnull
+                        VTJW\t42.17768841969397
+                        \t120.87811633071126
+                        HYRX\tnull
                         KGHV\tnull
                         PEHN\t70.94360487171201
-                        \t120.87811633071126
-                        VTJW\t42.17768841969397
                         RXGZ\t23.90529010846525
-                        HYRX\tnull
                         UVSD\tnull
-                        KGHV\tnull
-                        HYRX\t97.71103146051203
-                        PEHN\t81.46807944500559
+                        VTJW\t42.17768841969397
                         \t57.93466326862211
-                        VTJW\t42.17768841969397
-                        RXGZ\t23.90529010846525
-                        UVSD\tnull
+                        HYRX\t97.71103146051203
                         KGHV\tnull
-                        HYRX\t12.026122412833129
-                        VTJW\t48.820511018586934
-                        \t26.922103479744898
-                        RXGZ\t23.90529010846525
                         PEHN\t81.46807944500559
+                        RXGZ\t23.90529010846525
                         UVSD\tnull
+                        VTJW\t42.17768841969397
+                        \t26.922103479744898
+                        HYRX\t12.026122412833129
                         KGHV\tnull
+                        PEHN\t81.46807944500559
+                        RXGZ\t23.90529010846525
+                        UVSD\tnull
+                        VTJW\t48.820511018586934
                         \t150.48604795487125
+                        HYRX\t12.026122412833129
+                        KGHV\tnull
                         PEHN\t84.45258177211063
-                        VTJW\t48.820511018586934
                         RXGZ\t23.90529010846525
-                        HYRX\t12.026122412833129
                         UVSD\tnull
-                        KGHV\tnull
-                        PEHN\t49.00510449885239
+                        VTJW\t48.820511018586934
                         \t172.06125086724973
-                        VTJW\t48.820511018586934
-                        RXGZ\t23.90529010846525
                         HYRX\t12.026122412833129
-                        UVSD\tnull
                         KGHV\tnull
-                        \t86.08992670884706
-                        VTJW\t48.820511018586934
-                        RXGZ\t23.90529010846525
                         PEHN\t49.00510449885239
-                        HYRX\t12.026122412833129
-                        UVSD\tnull
-                        KGHV\tnull
-                        \t86.08992670884706
-                        VTJW\t48.820511018586934
                         RXGZ\t23.90529010846525
-                        PEHN\t49.00510449885239
-                        HYRX\t12.026122412833129
                         UVSD\tnull
-                        KGHV\tnull
-                        \t86.08992670884706
                         VTJW\t48.820511018586934
-                        RXGZ\t23.90529010846525
-                        PEHN\t49.00510449885239
+                        \t86.08992670884706
                         HYRX\t12.026122412833129
-                        UVSD\tnull
                         KGHV\tnull
+                        PEHN\t49.00510449885239
+                        RXGZ\t23.90529010846525
+                        UVSD\tnull
+                        VTJW\t48.820511018586934
+                        \t86.08992670884706
+                        HYRX\t12.026122412833129
+                        KGHV\tnull
+                        PEHN\t49.00510449885239
+                        RXGZ\t23.90529010846525
+                        UVSD\tnull
+                        VTJW\t48.820511018586934
+                        \t86.08992670884706
+                        HYRX\t12.026122412833129
+                        KGHV\tnull
+                        PEHN\t49.00510449885239
+                        RXGZ\t23.90529010846525
+                        UVSD\tnull
+                        VTJW\t48.820511018586934
                         \t54.49155021518948
-                        VTJW\t48.820511018586934
-                        RXGZ\t23.90529010846525
-                        PEHN\t49.00510449885239
                         HYRX\t12.026122412833129
+                        KGHV\tnull
+                        PEHN\t49.00510449885239
+                        RXGZ\t23.90529010846525
                         UVSD\tnull
-                        KGHV\tnull
-                        \t135.835983782176
-                        UVSD\t49.42890511958454
                         VTJW\t48.820511018586934
-                        RXGZ\t23.90529010846525
-                        PEHN\t49.00510449885239
+                        \t135.835983782176
                         HYRX\t12.026122412833129
                         KGHV\tnull
+                        PEHN\t49.00510449885239
+                        RXGZ\t23.90529010846525
+                        UVSD\t49.42890511958454
+                        VTJW\t48.820511018586934
+                        \t135.835983782176
+                        HYRX\t12.026122412833129
                         KGHV\t67.52509547112409
-                        \t135.835983782176
-                        VTJW\t48.820511018586934
-                        RXGZ\t23.90529010846525
                         PEHN\t49.00510449885239
-                        HYRX\t12.026122412833129
+                        RXGZ\t23.90529010846525
                         UVSD\t49.42890511958454
+                        VTJW\t48.820511018586934
                         """);
     }
 
@@ -11619,8 +14294,216 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleFillPrevNotKeyedFromBeforeFirstRow() throws Exception {
+        // GitHub issue #7742: the first row, at 21:20, comes two buckets after FROM. The not-keyed
+        // FILL(PREV) cursor emits the buckets at 19:45 and 20:30 before it aggregates a row, and it used to
+        // read the bucket at 20:30 from a map value that nothing had written. Both buckets now hold NULL for
+        // every aggregate, count() included, as on the GROUP BY path. The cursor used to omit the bucket at
+        // FROM itself, 19:45 (GitHub issue #7764).
+        // the sub-query keeps the statement on the SAMPLE BY cursor
+        assertQuery("""
+                SELECT ts, count() c, sum(price) sp, first(qty) fq, last(l) ll, count_distinct(qty) cd
+                FROM (SELECT * FROM fal WHERE price > 0)
+                SAMPLE BY 45m FROM '2021-10-30T19:45' FILL(PREV)
+                """)
+                .ddl(
+                        "CREATE TABLE fal (price DOUBLE, qty INT, l LONG, ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY",
+                        """
+                                INSERT INTO fal VALUES
+                                    (1.5, 10, 100, '2021-10-30T21:20:00.000000000Z'),
+                                    (2.5, 20, 200, '2021-10-30T22:10:00.000000000Z'),
+                                    (3.5, 30, 300, '2021-10-30T22:50:00.000000000Z'),
+                                    (7.5, 70, 700, '2021-10-31T01:50:00.000000000Z')
+                                """
+                )
+                .timestamp("ts")
+                .noRandomAccess()
+                .withPlanContaining("Sample By\n  fill: prev\n")
+                .returns("""
+                        ts\tc\tsp\tfq\tll\tcd
+                        2021-10-30T19:45:00.000000000Z\tnull\tnull\tnull\tnull\tnull
+                        2021-10-30T20:30:00.000000000Z\tnull\tnull\tnull\tnull\tnull
+                        2021-10-30T21:15:00.000000000Z\t1\t1.5\t10\t100\t1
+                        2021-10-30T22:00:00.000000000Z\t1\t2.5\t20\t200\t1
+                        2021-10-30T22:45:00.000000000Z\t1\t3.5\t30\t300\t1
+                        2021-10-30T23:30:00.000000000Z\t1\t3.5\t30\t300\t1
+                        2021-10-31T00:15:00.000000000Z\t1\t3.5\t30\t300\t1
+                        2021-10-31T01:00:00.000000000Z\t1\t3.5\t30\t300\t1
+                        2021-10-31T01:45:00.000000000Z\t1\t7.5\t70\t700\t1
+                        """);
+    }
+
+    @Test
+    public void testSampleFillPrevNotKeyedFromHourBeforeFirstRow() throws Exception {
+        // GitHub issue #7764: on its first call, the not-keyed FILL(PREV) cursor expected the bucket after
+        // the bucket at FROM, so it omitted the bucket at FROM whenever the first row came after it. The
+        // rows equal those of the GROUP BY path, with NULL for every aggregate, count() included, up to the
+        // first row. With FROM in the bucket of the first row, no bucket precedes that row. Code generation
+        // converts a sub-day FROM in a zone to UTC, see SampleByTest.testSampleByFromToSubDayTimeZoneLimitFillPrev().
+        // The assertion reads each statement twice and rewinds the cursor in between; LIMIT stops the
+        // cursor inside the fill rows before the first row.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP_NS, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2021-01-01T00:30:00.000000000Z', 1.0),
+                        ('2021-01-01T01:10:00.000000000Z', 2.0)
+                    """);
+            // the sub-query keeps the statement on the SAMPLE BY cursor
+            final String select = "SELECT ts, count() c, sum(v) s FROM (SELECT ts, v FROM t WHERE v > 0) SAMPLE BY 1h FROM ";
+            assertSampleByCursorFrom(
+                    select + "'2020-12-31T23:00' FILL(PREV)",
+                    "fill: prev\n",
+                    """
+                            ts\tc\ts
+                            2020-12-31T23:00:00.000000000Z\tnull\tnull
+                            2021-01-01T00:00:00.000000000Z\t1\t1.0
+                            2021-01-01T01:00:00.000000000Z\t1\t2.0
+                            """
+            );
+            assertSampleByCursorFrom(
+                    select + "'2020-12-31T22:00' FILL(PREV)",
+                    "fill: prev\n",
+                    """
+                            ts\tc\ts
+                            2020-12-31T22:00:00.000000000Z\tnull\tnull
+                            2020-12-31T23:00:00.000000000Z\tnull\tnull
+                            2021-01-01T00:00:00.000000000Z\t1\t1.0
+                            2021-01-01T01:00:00.000000000Z\t1\t2.0
+                            """
+            );
+            assertSampleByCursorFrom(
+                    select + "'2021-01-01T00:00' FILL(PREV)",
+                    "fill: prev\n",
+                    """
+                            ts\tc\ts
+                            2021-01-01T00:00:00.000000000Z\t1\t1.0
+                            2021-01-01T01:00:00.000000000Z\t1\t2.0
+                            """
+            );
+            assertSampleByCursorFrom(
+                    select + "'2020-12-31T22:00' FILL(PREV) ALIGN TO CALENDAR TIME ZONE '+02:00'",
+                    "fill: prev\n",
+                    """
+                            ts\tc\ts
+                            2020-12-31T20:00:00.000000000Z\tnull\tnull
+                            2020-12-31T21:00:00.000000000Z\tnull\tnull
+                            2020-12-31T22:00:00.000000000Z\tnull\tnull
+                            2020-12-31T23:00:00.000000000Z\tnull\tnull
+                            2021-01-01T00:00:00.000000000Z\t1\t1.0
+                            2021-01-01T01:00:00.000000000Z\t1\t2.0
+                            """
+            );
+            assertSampleByCursorFrom(
+                    select + "'2020-12-31T22:00' FILL(PREV) LIMIT 2",
+                    "fill: prev\n",
+                    """
+                            ts\tc\ts
+                            2020-12-31T22:00:00.000000000Z\tnull\tnull
+                            2020-12-31T23:00:00.000000000Z\tnull\tnull
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testSampleFillPrevNotKeyedFromMonthTimeZone() throws Exception {
+        // For a stride of a day or longer, code generation leaves FROM in local time, and the cursor
+        // starts at the bucket at FROM, January 2024, see testSampleFillNullNotKeyedFromMonthTimeZone().
+        // The first row falls in that bucket, so the not-keyed FILL(PREV) cursor aggregates it there and
+        // returns the rows of the GROUP BY path; testSampleFillPrevNotKeyedFromMonthTimeZoneBeforeFirstRow()
+        // covers a bucket at FROM with no row. Both rows come before the DST change in March, so every
+        // bucket carries the offset of the first row on both paths.
+        // the sub-query keeps the statement on the SAMPLE BY cursor
+        assertQuery("""
+                SELECT ts, sum(v) s
+                FROM (SELECT * FROM t WHERE v > 0)
+                SAMPLE BY 1M FROM '2024-01-01' FILL(PREV) ALIGN TO CALENDAR TIME ZONE 'America/New_York'
+                """)
+                .ddl(
+                        "CREATE TABLE t (ts TIMESTAMP_NS, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY",
+                        """
+                                INSERT INTO t VALUES
+                                    ('2024-01-15T10:00:00.000000000Z', 1.0),
+                                    ('2024-02-10T10:00:00.000000000Z', 2.0)
+                                """
+                )
+                .timestamp("ts")
+                .noRandomAccess()
+                .withPlanContaining("Sample By\n  fill: prev\n")
+                .returns("""
+                        ts\ts
+                        2024-01-01T05:00:00.000000000Z\t1.0
+                        2024-02-01T05:00:00.000000000Z\t2.0
+                        """);
+    }
+
+    @Test
+    public void testSampleFillPrevNotKeyedFromMonthTimeZoneBeforeFirstRow() throws Exception {
+        // GitHub issue #7764, see testSampleFillPrevNotKeyedFromHourBeforeFirstRow(). The first row comes
+        // two months after FROM. For a month, quarter or year stride in a zone behind UTC, the cursor used to
+        // start one bucket before FROM (GitHub issue #7763), so it emitted the bucket at FROM by accident.
+        // It now starts at FROM and emits that bucket on its first call. The rows equal those of the GROUP
+        // BY path. The first row comes before the DST change in March, so the New York buckets before it
+        // carry the offset of the first row on both paths.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP_NS, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2024-03-05T10:00:00.000000000Z', 1.0),
+                        ('2024-05-10T10:00:00.000000000Z', 2.0)
+                    """);
+            // the sub-query keeps the statement on the SAMPLE BY cursor
+            final String select = "SELECT ts, count() c, sum(v) s FROM (SELECT ts, v FROM t WHERE v > 0) SAMPLE BY ";
+            assertSampleByCursorFrom(
+                    select + "1M FROM '2024-01-01' FILL(PREV) ALIGN TO CALENDAR TIME ZONE '-05:00'",
+                    "fill: prev\n",
+                    """
+                            ts\tc\ts
+                            2024-01-01T05:00:00.000000000Z\tnull\tnull
+                            2024-02-01T05:00:00.000000000Z\tnull\tnull
+                            2024-03-01T05:00:00.000000000Z\t1\t1.0
+                            2024-04-01T05:00:00.000000000Z\t1\t1.0
+                            2024-05-01T05:00:00.000000000Z\t1\t2.0
+                            """
+            );
+            assertSampleByCursorFrom(
+                    select + "1M FROM '2024-01-01' FILL(PREV) ALIGN TO CALENDAR TIME ZONE 'America/New_York'",
+                    "fill: prev\n",
+                    """
+                            ts\tc\ts
+                            2024-01-01T05:00:00.000000000Z\tnull\tnull
+                            2024-02-01T05:00:00.000000000Z\tnull\tnull
+                            2024-03-01T05:00:00.000000000Z\t1\t1.0
+                            2024-04-01T04:00:00.000000000Z\t1\t1.0
+                            2024-05-01T04:00:00.000000000Z\t1\t2.0
+                            """
+            );
+            assertSampleByCursorFrom(
+                    select + "3M FROM '2023-10-01' FILL(PREV) ALIGN TO CALENDAR TIME ZONE '-05:00'",
+                    "fill: prev\n",
+                    """
+                            ts\tc\ts
+                            2023-10-01T05:00:00.000000000Z\tnull\tnull
+                            2024-01-01T05:00:00.000000000Z\t1\t1.0
+                            2024-04-01T05:00:00.000000000Z\t1\t2.0
+                            """
+            );
+            assertSampleByCursorFrom(
+                    select + "1y FROM '2023-01-01' FILL(PREV) ALIGN TO CALENDAR TIME ZONE '-05:00'",
+                    "fill: prev\n",
+                    """
+                            ts\tc\ts
+                            2023-01-01T05:00:00.000000000Z\tnull\tnull
+                            2024-01-01T05:00:00.000000000Z\t2\t3.0
+                            """
+            );
+        });
+    }
+
+    @Test
     public void testSampleFillValue() throws Exception {
-        assertQuery("select b, sum(a), k from x sample by 3h fill(20.56)")
+        assertQuery("select b, sum(a), k from x sample by 3h fill(20.56) order by k, b")
                 .ddl("create table x as " +
                         "(" +
                         "select" +
@@ -11639,130 +14522,129 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         " long_sequence(5)" +
                         ") timestamp(k)")
                 .timestamp("k")
-                .noRandomAccess()
                 .returns("""
                         b\tsum\tk
                         \t11.427984775756228\t1970-01-03T00:00:00.000000000Z
-                        VTJW\t42.17768841969397\t1970-01-03T00:00:00.000000000Z
-                        RXGZ\t23.90529010846525\t1970-01-03T00:00:00.000000000Z
-                        PEHN\t20.56\t1970-01-03T00:00:00.000000000Z
                         HYRX\t20.56\t1970-01-03T00:00:00.000000000Z
-                        PEHN\t70.94360487171201\t1970-01-03T03:00:00.000000000Z
+                        PEHN\t20.56\t1970-01-03T00:00:00.000000000Z
+                        RXGZ\t23.90529010846525\t1970-01-03T00:00:00.000000000Z
+                        VTJW\t42.17768841969397\t1970-01-03T00:00:00.000000000Z
                         \t120.87811633071126\t1970-01-03T03:00:00.000000000Z
-                        VTJW\t20.56\t1970-01-03T03:00:00.000000000Z
-                        RXGZ\t20.56\t1970-01-03T03:00:00.000000000Z
                         HYRX\t20.56\t1970-01-03T03:00:00.000000000Z
+                        PEHN\t70.94360487171201\t1970-01-03T03:00:00.000000000Z
+                        RXGZ\t20.56\t1970-01-03T03:00:00.000000000Z
+                        VTJW\t20.56\t1970-01-03T03:00:00.000000000Z
+                        \t57.93466326862211\t1970-01-03T06:00:00.000000000Z
                         HYRX\t97.71103146051203\t1970-01-03T06:00:00.000000000Z
                         PEHN\t81.46807944500559\t1970-01-03T06:00:00.000000000Z
-                        \t57.93466326862211\t1970-01-03T06:00:00.000000000Z
-                        VTJW\t20.56\t1970-01-03T06:00:00.000000000Z
                         RXGZ\t20.56\t1970-01-03T06:00:00.000000000Z
-                        HYRX\t12.026122412833129\t1970-01-03T09:00:00.000000000Z
-                        VTJW\t48.820511018586934\t1970-01-03T09:00:00.000000000Z
+                        VTJW\t20.56\t1970-01-03T06:00:00.000000000Z
                         \t26.922103479744898\t1970-01-03T09:00:00.000000000Z
-                        RXGZ\t20.56\t1970-01-03T09:00:00.000000000Z
+                        HYRX\t12.026122412833129\t1970-01-03T09:00:00.000000000Z
                         PEHN\t20.56\t1970-01-03T09:00:00.000000000Z
+                        RXGZ\t20.56\t1970-01-03T09:00:00.000000000Z
+                        VTJW\t48.820511018586934\t1970-01-03T09:00:00.000000000Z
                         \t150.48604795487125\t1970-01-03T12:00:00.000000000Z
-                        PEHN\t84.45258177211063\t1970-01-03T12:00:00.000000000Z
-                        VTJW\t20.56\t1970-01-03T12:00:00.000000000Z
-                        RXGZ\t20.56\t1970-01-03T12:00:00.000000000Z
                         HYRX\t20.56\t1970-01-03T12:00:00.000000000Z
-                        PEHN\t49.00510449885239\t1970-01-03T15:00:00.000000000Z
+                        PEHN\t84.45258177211063\t1970-01-03T12:00:00.000000000Z
+                        RXGZ\t20.56\t1970-01-03T12:00:00.000000000Z
+                        VTJW\t20.56\t1970-01-03T12:00:00.000000000Z
                         \t172.06125086724973\t1970-01-03T15:00:00.000000000Z
-                        VTJW\t20.56\t1970-01-03T15:00:00.000000000Z
-                        RXGZ\t20.56\t1970-01-03T15:00:00.000000000Z
                         HYRX\t20.56\t1970-01-03T15:00:00.000000000Z
+                        PEHN\t49.00510449885239\t1970-01-03T15:00:00.000000000Z
+                        RXGZ\t20.56\t1970-01-03T15:00:00.000000000Z
+                        VTJW\t20.56\t1970-01-03T15:00:00.000000000Z
                         \t86.08992670884706\t1970-01-03T18:00:00.000000000Z
-                        VTJW\t20.56\t1970-01-03T18:00:00.000000000Z
-                        RXGZ\t20.56\t1970-01-03T18:00:00.000000000Z
-                        PEHN\t20.56\t1970-01-03T18:00:00.000000000Z
                         HYRX\t20.56\t1970-01-03T18:00:00.000000000Z
+                        PEHN\t20.56\t1970-01-03T18:00:00.000000000Z
+                        RXGZ\t20.56\t1970-01-03T18:00:00.000000000Z
+                        VTJW\t20.56\t1970-01-03T18:00:00.000000000Z
                         """, """
                         b\tsum\tk
                         \t11.427984775756228\t1970-01-03T00:00:00.000000000Z
-                        VTJW\t42.17768841969397\t1970-01-03T00:00:00.000000000Z
-                        RXGZ\t23.90529010846525\t1970-01-03T00:00:00.000000000Z
-                        PEHN\t20.56\t1970-01-03T00:00:00.000000000Z
                         HYRX\t20.56\t1970-01-03T00:00:00.000000000Z
-                        UVSD\t20.56\t1970-01-03T00:00:00.000000000Z
                         KGHV\t20.56\t1970-01-03T00:00:00.000000000Z
-                        PEHN\t70.94360487171201\t1970-01-03T03:00:00.000000000Z
+                        PEHN\t20.56\t1970-01-03T00:00:00.000000000Z
+                        RXGZ\t23.90529010846525\t1970-01-03T00:00:00.000000000Z
+                        UVSD\t20.56\t1970-01-03T00:00:00.000000000Z
+                        VTJW\t42.17768841969397\t1970-01-03T00:00:00.000000000Z
                         \t120.87811633071126\t1970-01-03T03:00:00.000000000Z
-                        VTJW\t20.56\t1970-01-03T03:00:00.000000000Z
-                        RXGZ\t20.56\t1970-01-03T03:00:00.000000000Z
                         HYRX\t20.56\t1970-01-03T03:00:00.000000000Z
-                        UVSD\t20.56\t1970-01-03T03:00:00.000000000Z
                         KGHV\t20.56\t1970-01-03T03:00:00.000000000Z
-                        HYRX\t97.71103146051203\t1970-01-03T06:00:00.000000000Z
-                        PEHN\t81.46807944500559\t1970-01-03T06:00:00.000000000Z
+                        PEHN\t70.94360487171201\t1970-01-03T03:00:00.000000000Z
+                        RXGZ\t20.56\t1970-01-03T03:00:00.000000000Z
+                        UVSD\t20.56\t1970-01-03T03:00:00.000000000Z
+                        VTJW\t20.56\t1970-01-03T03:00:00.000000000Z
                         \t57.93466326862211\t1970-01-03T06:00:00.000000000Z
-                        VTJW\t20.56\t1970-01-03T06:00:00.000000000Z
+                        HYRX\t97.71103146051203\t1970-01-03T06:00:00.000000000Z
+                        KGHV\t20.56\t1970-01-03T06:00:00.000000000Z
+                        PEHN\t81.46807944500559\t1970-01-03T06:00:00.000000000Z
                         RXGZ\t20.56\t1970-01-03T06:00:00.000000000Z
                         UVSD\t20.56\t1970-01-03T06:00:00.000000000Z
-                        KGHV\t20.56\t1970-01-03T06:00:00.000000000Z
-                        HYRX\t12.026122412833129\t1970-01-03T09:00:00.000000000Z
-                        VTJW\t48.820511018586934\t1970-01-03T09:00:00.000000000Z
+                        VTJW\t20.56\t1970-01-03T06:00:00.000000000Z
                         \t26.922103479744898\t1970-01-03T09:00:00.000000000Z
-                        RXGZ\t20.56\t1970-01-03T09:00:00.000000000Z
-                        PEHN\t20.56\t1970-01-03T09:00:00.000000000Z
-                        UVSD\t20.56\t1970-01-03T09:00:00.000000000Z
+                        HYRX\t12.026122412833129\t1970-01-03T09:00:00.000000000Z
                         KGHV\t20.56\t1970-01-03T09:00:00.000000000Z
+                        PEHN\t20.56\t1970-01-03T09:00:00.000000000Z
+                        RXGZ\t20.56\t1970-01-03T09:00:00.000000000Z
+                        UVSD\t20.56\t1970-01-03T09:00:00.000000000Z
+                        VTJW\t48.820511018586934\t1970-01-03T09:00:00.000000000Z
                         \t150.48604795487125\t1970-01-03T12:00:00.000000000Z
-                        PEHN\t84.45258177211063\t1970-01-03T12:00:00.000000000Z
-                        VTJW\t20.56\t1970-01-03T12:00:00.000000000Z
-                        RXGZ\t20.56\t1970-01-03T12:00:00.000000000Z
                         HYRX\t20.56\t1970-01-03T12:00:00.000000000Z
-                        UVSD\t20.56\t1970-01-03T12:00:00.000000000Z
                         KGHV\t20.56\t1970-01-03T12:00:00.000000000Z
-                        PEHN\t49.00510449885239\t1970-01-03T15:00:00.000000000Z
+                        PEHN\t84.45258177211063\t1970-01-03T12:00:00.000000000Z
+                        RXGZ\t20.56\t1970-01-03T12:00:00.000000000Z
+                        UVSD\t20.56\t1970-01-03T12:00:00.000000000Z
+                        VTJW\t20.56\t1970-01-03T12:00:00.000000000Z
                         \t172.06125086724973\t1970-01-03T15:00:00.000000000Z
-                        VTJW\t20.56\t1970-01-03T15:00:00.000000000Z
-                        RXGZ\t20.56\t1970-01-03T15:00:00.000000000Z
                         HYRX\t20.56\t1970-01-03T15:00:00.000000000Z
-                        UVSD\t20.56\t1970-01-03T15:00:00.000000000Z
                         KGHV\t20.56\t1970-01-03T15:00:00.000000000Z
+                        PEHN\t49.00510449885239\t1970-01-03T15:00:00.000000000Z
+                        RXGZ\t20.56\t1970-01-03T15:00:00.000000000Z
+                        UVSD\t20.56\t1970-01-03T15:00:00.000000000Z
+                        VTJW\t20.56\t1970-01-03T15:00:00.000000000Z
                         \t86.08992670884706\t1970-01-03T18:00:00.000000000Z
-                        VTJW\t20.56\t1970-01-03T18:00:00.000000000Z
-                        RXGZ\t20.56\t1970-01-03T18:00:00.000000000Z
-                        PEHN\t20.56\t1970-01-03T18:00:00.000000000Z
                         HYRX\t20.56\t1970-01-03T18:00:00.000000000Z
-                        UVSD\t20.56\t1970-01-03T18:00:00.000000000Z
                         KGHV\t20.56\t1970-01-03T18:00:00.000000000Z
+                        PEHN\t20.56\t1970-01-03T18:00:00.000000000Z
+                        RXGZ\t20.56\t1970-01-03T18:00:00.000000000Z
+                        UVSD\t20.56\t1970-01-03T18:00:00.000000000Z
+                        VTJW\t20.56\t1970-01-03T18:00:00.000000000Z
                         \t20.56\t1970-01-03T21:00:00.000000000Z
-                        VTJW\t20.56\t1970-01-03T21:00:00.000000000Z
-                        RXGZ\t20.56\t1970-01-03T21:00:00.000000000Z
-                        PEHN\t20.56\t1970-01-03T21:00:00.000000000Z
                         HYRX\t20.56\t1970-01-03T21:00:00.000000000Z
-                        UVSD\t20.56\t1970-01-03T21:00:00.000000000Z
                         KGHV\t20.56\t1970-01-03T21:00:00.000000000Z
+                        PEHN\t20.56\t1970-01-03T21:00:00.000000000Z
+                        RXGZ\t20.56\t1970-01-03T21:00:00.000000000Z
+                        UVSD\t20.56\t1970-01-03T21:00:00.000000000Z
+                        VTJW\t20.56\t1970-01-03T21:00:00.000000000Z
                         \t20.56\t1970-01-04T00:00:00.000000000Z
-                        VTJW\t20.56\t1970-01-04T00:00:00.000000000Z
-                        RXGZ\t20.56\t1970-01-04T00:00:00.000000000Z
-                        PEHN\t20.56\t1970-01-04T00:00:00.000000000Z
                         HYRX\t20.56\t1970-01-04T00:00:00.000000000Z
-                        UVSD\t20.56\t1970-01-04T00:00:00.000000000Z
                         KGHV\t20.56\t1970-01-04T00:00:00.000000000Z
+                        PEHN\t20.56\t1970-01-04T00:00:00.000000000Z
+                        RXGZ\t20.56\t1970-01-04T00:00:00.000000000Z
+                        UVSD\t20.56\t1970-01-04T00:00:00.000000000Z
+                        VTJW\t20.56\t1970-01-04T00:00:00.000000000Z
                         \t54.49155021518948\t1970-01-04T03:00:00.000000000Z
-                        VTJW\t20.56\t1970-01-04T03:00:00.000000000Z
-                        RXGZ\t20.56\t1970-01-04T03:00:00.000000000Z
-                        PEHN\t20.56\t1970-01-04T03:00:00.000000000Z
                         HYRX\t20.56\t1970-01-04T03:00:00.000000000Z
-                        UVSD\t20.56\t1970-01-04T03:00:00.000000000Z
                         KGHV\t20.56\t1970-01-04T03:00:00.000000000Z
+                        PEHN\t20.56\t1970-01-04T03:00:00.000000000Z
+                        RXGZ\t20.56\t1970-01-04T03:00:00.000000000Z
+                        UVSD\t20.56\t1970-01-04T03:00:00.000000000Z
+                        VTJW\t20.56\t1970-01-04T03:00:00.000000000Z
                         \t135.835983782176\t1970-01-04T06:00:00.000000000Z
-                        UVSD\t49.42890511958454\t1970-01-04T06:00:00.000000000Z
-                        VTJW\t20.56\t1970-01-04T06:00:00.000000000Z
-                        RXGZ\t20.56\t1970-01-04T06:00:00.000000000Z
-                        PEHN\t20.56\t1970-01-04T06:00:00.000000000Z
                         HYRX\t20.56\t1970-01-04T06:00:00.000000000Z
                         KGHV\t20.56\t1970-01-04T06:00:00.000000000Z
-                        KGHV\t67.52509547112409\t1970-01-04T09:00:00.000000000Z
+                        PEHN\t20.56\t1970-01-04T06:00:00.000000000Z
+                        RXGZ\t20.56\t1970-01-04T06:00:00.000000000Z
+                        UVSD\t49.42890511958454\t1970-01-04T06:00:00.000000000Z
+                        VTJW\t20.56\t1970-01-04T06:00:00.000000000Z
                         \t20.56\t1970-01-04T09:00:00.000000000Z
-                        VTJW\t20.56\t1970-01-04T09:00:00.000000000Z
-                        RXGZ\t20.56\t1970-01-04T09:00:00.000000000Z
-                        PEHN\t20.56\t1970-01-04T09:00:00.000000000Z
                         HYRX\t20.56\t1970-01-04T09:00:00.000000000Z
+                        KGHV\t67.52509547112409\t1970-01-04T09:00:00.000000000Z
+                        PEHN\t20.56\t1970-01-04T09:00:00.000000000Z
+                        RXGZ\t20.56\t1970-01-04T09:00:00.000000000Z
                         UVSD\t20.56\t1970-01-04T09:00:00.000000000Z
+                        VTJW\t20.56\t1970-01-04T09:00:00.000000000Z
                         """);
     }
 
@@ -11771,7 +14653,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
         // EST timezone has clock go back on 7 Nov. From -4 UTC to -5 UTC
         // at 6am UTC EST time is 2am (DTS), when clock goes back 7am also becomes 2am UTC
         // hence 6am UTC is duplicate timestamp and is expected to be compounded
-        assertQuery("select b, sum(a), k from x sample by 1h fill(101.2) align to calendar time zone 'EST'")
+        assertQuery("select b, sum(a), k from x sample by 1h fill(101.2) align to calendar time zone 'EST' order by k, b")
                 .ddl("create table x as " +
                         "(" +
                         "select" +
@@ -11782,94 +14664,93 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE")
                 .timestamp("k")
-                .noRandomAccess()
                 .returns("""
                         b\tsum\tk
                         \t11.427984775756228\t2021-11-06T22:00:00.000000000Z
-                        VTJW\t101.2\t2021-11-06T22:00:00.000000000Z
-                        RXGZ\t101.2\t2021-11-06T22:00:00.000000000Z
-                        PEHN\t101.2\t2021-11-06T22:00:00.000000000Z
                         HYRX\t101.2\t2021-11-06T22:00:00.000000000Z
-                        VTJW\t42.17768841969397\t2021-11-06T23:00:00.000000000Z
-                        RXGZ\t23.90529010846525\t2021-11-06T23:00:00.000000000Z
+                        PEHN\t101.2\t2021-11-06T22:00:00.000000000Z
+                        RXGZ\t101.2\t2021-11-06T22:00:00.000000000Z
+                        VTJW\t101.2\t2021-11-06T22:00:00.000000000Z
                         \t101.2\t2021-11-06T23:00:00.000000000Z
-                        PEHN\t101.2\t2021-11-06T23:00:00.000000000Z
                         HYRX\t101.2\t2021-11-06T23:00:00.000000000Z
-                        PEHN\t70.94360487171201\t2021-11-07T00:00:00.000000000Z
+                        PEHN\t101.2\t2021-11-06T23:00:00.000000000Z
+                        RXGZ\t23.90529010846525\t2021-11-06T23:00:00.000000000Z
+                        VTJW\t42.17768841969397\t2021-11-06T23:00:00.000000000Z
                         \t101.2\t2021-11-07T00:00:00.000000000Z
-                        VTJW\t101.2\t2021-11-07T00:00:00.000000000Z
-                        RXGZ\t101.2\t2021-11-07T00:00:00.000000000Z
                         HYRX\t101.2\t2021-11-07T00:00:00.000000000Z
+                        PEHN\t70.94360487171201\t2021-11-07T00:00:00.000000000Z
+                        RXGZ\t101.2\t2021-11-07T00:00:00.000000000Z
+                        VTJW\t101.2\t2021-11-07T00:00:00.000000000Z
                         \t87.99634725391621\t2021-11-07T01:00:00.000000000Z
-                        VTJW\t101.2\t2021-11-07T01:00:00.000000000Z
-                        RXGZ\t101.2\t2021-11-07T01:00:00.000000000Z
-                        PEHN\t101.2\t2021-11-07T01:00:00.000000000Z
                         HYRX\t101.2\t2021-11-07T01:00:00.000000000Z
+                        PEHN\t101.2\t2021-11-07T01:00:00.000000000Z
+                        RXGZ\t101.2\t2021-11-07T01:00:00.000000000Z
+                        VTJW\t101.2\t2021-11-07T01:00:00.000000000Z
                         \t32.881769076795045\t2021-11-07T02:00:00.000000000Z
-                        VTJW\t101.2\t2021-11-07T02:00:00.000000000Z
-                        RXGZ\t101.2\t2021-11-07T02:00:00.000000000Z
-                        PEHN\t101.2\t2021-11-07T02:00:00.000000000Z
                         HYRX\t101.2\t2021-11-07T02:00:00.000000000Z
-                        HYRX\t97.71103146051203\t2021-11-07T03:00:00.000000000Z
+                        PEHN\t101.2\t2021-11-07T02:00:00.000000000Z
+                        RXGZ\t101.2\t2021-11-07T02:00:00.000000000Z
+                        VTJW\t101.2\t2021-11-07T02:00:00.000000000Z
                         \t101.2\t2021-11-07T03:00:00.000000000Z
-                        VTJW\t101.2\t2021-11-07T03:00:00.000000000Z
-                        RXGZ\t101.2\t2021-11-07T03:00:00.000000000Z
+                        HYRX\t97.71103146051203\t2021-11-07T03:00:00.000000000Z
                         PEHN\t101.2\t2021-11-07T03:00:00.000000000Z
-                        PEHN\t81.46807944500559\t2021-11-07T04:00:00.000000000Z
+                        RXGZ\t101.2\t2021-11-07T03:00:00.000000000Z
+                        VTJW\t101.2\t2021-11-07T03:00:00.000000000Z
                         \t101.2\t2021-11-07T04:00:00.000000000Z
-                        VTJW\t101.2\t2021-11-07T04:00:00.000000000Z
-                        RXGZ\t101.2\t2021-11-07T04:00:00.000000000Z
                         HYRX\t101.2\t2021-11-07T04:00:00.000000000Z
+                        PEHN\t81.46807944500559\t2021-11-07T04:00:00.000000000Z
+                        RXGZ\t101.2\t2021-11-07T04:00:00.000000000Z
+                        VTJW\t101.2\t2021-11-07T04:00:00.000000000Z
                         \t57.93466326862211\t2021-11-07T05:00:00.000000000Z
                         HYRX\t12.026122412833129\t2021-11-07T05:00:00.000000000Z
-                        VTJW\t101.2\t2021-11-07T05:00:00.000000000Z
-                        RXGZ\t101.2\t2021-11-07T05:00:00.000000000Z
                         PEHN\t101.2\t2021-11-07T05:00:00.000000000Z
-                        VTJW\t48.820511018586934\t2021-11-07T06:00:00.000000000Z
+                        RXGZ\t101.2\t2021-11-07T05:00:00.000000000Z
+                        VTJW\t101.2\t2021-11-07T05:00:00.000000000Z
                         \t101.2\t2021-11-07T06:00:00.000000000Z
-                        RXGZ\t101.2\t2021-11-07T06:00:00.000000000Z
-                        PEHN\t101.2\t2021-11-07T06:00:00.000000000Z
                         HYRX\t101.2\t2021-11-07T06:00:00.000000000Z
+                        PEHN\t101.2\t2021-11-07T06:00:00.000000000Z
+                        RXGZ\t101.2\t2021-11-07T06:00:00.000000000Z
+                        VTJW\t48.820511018586934\t2021-11-07T06:00:00.000000000Z
                         \t26.922103479744898\t2021-11-07T07:00:00.000000000Z
-                        VTJW\t101.2\t2021-11-07T07:00:00.000000000Z
-                        RXGZ\t101.2\t2021-11-07T07:00:00.000000000Z
-                        PEHN\t101.2\t2021-11-07T07:00:00.000000000Z
                         HYRX\t101.2\t2021-11-07T07:00:00.000000000Z
+                        PEHN\t101.2\t2021-11-07T07:00:00.000000000Z
+                        RXGZ\t101.2\t2021-11-07T07:00:00.000000000Z
+                        VTJW\t101.2\t2021-11-07T07:00:00.000000000Z
                         \t52.98405941762054\t2021-11-07T08:00:00.000000000Z
-                        VTJW\t101.2\t2021-11-07T08:00:00.000000000Z
-                        RXGZ\t101.2\t2021-11-07T08:00:00.000000000Z
-                        PEHN\t101.2\t2021-11-07T08:00:00.000000000Z
                         HYRX\t101.2\t2021-11-07T08:00:00.000000000Z
-                        PEHN\t84.45258177211063\t2021-11-07T09:00:00.000000000Z
+                        PEHN\t101.2\t2021-11-07T08:00:00.000000000Z
+                        RXGZ\t101.2\t2021-11-07T08:00:00.000000000Z
+                        VTJW\t101.2\t2021-11-07T08:00:00.000000000Z
                         \t101.2\t2021-11-07T09:00:00.000000000Z
-                        VTJW\t101.2\t2021-11-07T09:00:00.000000000Z
-                        RXGZ\t101.2\t2021-11-07T09:00:00.000000000Z
                         HYRX\t101.2\t2021-11-07T09:00:00.000000000Z
+                        PEHN\t84.45258177211063\t2021-11-07T09:00:00.000000000Z
+                        RXGZ\t101.2\t2021-11-07T09:00:00.000000000Z
+                        VTJW\t101.2\t2021-11-07T09:00:00.000000000Z
                         \t97.5019885372507\t2021-11-07T10:00:00.000000000Z
-                        VTJW\t101.2\t2021-11-07T10:00:00.000000000Z
-                        RXGZ\t101.2\t2021-11-07T10:00:00.000000000Z
-                        PEHN\t101.2\t2021-11-07T10:00:00.000000000Z
                         HYRX\t101.2\t2021-11-07T10:00:00.000000000Z
-                        PEHN\t49.00510449885239\t2021-11-07T11:00:00.000000000Z
+                        PEHN\t101.2\t2021-11-07T10:00:00.000000000Z
+                        RXGZ\t101.2\t2021-11-07T10:00:00.000000000Z
+                        VTJW\t101.2\t2021-11-07T10:00:00.000000000Z
                         \t80.01121139739173\t2021-11-07T11:00:00.000000000Z
-                        VTJW\t101.2\t2021-11-07T11:00:00.000000000Z
-                        RXGZ\t101.2\t2021-11-07T11:00:00.000000000Z
                         HYRX\t101.2\t2021-11-07T11:00:00.000000000Z
+                        PEHN\t49.00510449885239\t2021-11-07T11:00:00.000000000Z
+                        RXGZ\t101.2\t2021-11-07T11:00:00.000000000Z
+                        VTJW\t101.2\t2021-11-07T11:00:00.000000000Z
                         \t92.050039469858\t2021-11-07T12:00:00.000000000Z
-                        VTJW\t101.2\t2021-11-07T12:00:00.000000000Z
-                        RXGZ\t101.2\t2021-11-07T12:00:00.000000000Z
-                        PEHN\t101.2\t2021-11-07T12:00:00.000000000Z
                         HYRX\t101.2\t2021-11-07T12:00:00.000000000Z
+                        PEHN\t101.2\t2021-11-07T12:00:00.000000000Z
+                        RXGZ\t101.2\t2021-11-07T12:00:00.000000000Z
+                        VTJW\t101.2\t2021-11-07T12:00:00.000000000Z
                         \t45.6344569609078\t2021-11-07T13:00:00.000000000Z
-                        VTJW\t101.2\t2021-11-07T13:00:00.000000000Z
-                        RXGZ\t101.2\t2021-11-07T13:00:00.000000000Z
-                        PEHN\t101.2\t2021-11-07T13:00:00.000000000Z
                         HYRX\t101.2\t2021-11-07T13:00:00.000000000Z
+                        PEHN\t101.2\t2021-11-07T13:00:00.000000000Z
+                        RXGZ\t101.2\t2021-11-07T13:00:00.000000000Z
+                        VTJW\t101.2\t2021-11-07T13:00:00.000000000Z
                         \t40.455469747939254\t2021-11-07T14:00:00.000000000Z
-                        VTJW\t101.2\t2021-11-07T14:00:00.000000000Z
-                        RXGZ\t101.2\t2021-11-07T14:00:00.000000000Z
-                        PEHN\t101.2\t2021-11-07T14:00:00.000000000Z
                         HYRX\t101.2\t2021-11-07T14:00:00.000000000Z
+                        PEHN\t101.2\t2021-11-07T14:00:00.000000000Z
+                        RXGZ\t101.2\t2021-11-07T14:00:00.000000000Z
+                        VTJW\t101.2\t2021-11-07T14:00:00.000000000Z
                         """);
     }
 
@@ -12633,6 +15514,152 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleFillValueNegative() throws Exception {
+        // The parser turns FILL(-1) into a unary minus over the literal 1. The SAMPLE BY cursor used to
+        // parse the minus sign alone and reject the statement with "invalid fill value: -". It now
+        // returns the rows that the GROUP BY path returns, not keyed and keyed, alone and next to PREV.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t (ts TIMESTAMP_NS, k SYMBOL, i INT, l LONG, d DOUBLE, f FLOAT, s SHORT, b BYTE)
+                    TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:00.000000000Z', 'a', 10, 100, 1.25, 2.5, 3, 4),
+                    ('2024-01-01T00:30:00.000000000Z', 'b', 20, 200, 2.25, 3.5, 5, 6),
+                    ('2024-01-01T03:00:00.000000000Z', 'a', 30, 300, 3.25, 4.5, 7, 8)
+                    """);
+            assertSampleByFillNegative(
+                    "SELECT ts, sum(i) s",
+                    " SAMPLE BY 1h FILL(-1)",
+                    """
+                            ts\ts
+                            2024-01-01T00:00:00.000000000Z\t30
+                            2024-01-01T01:00:00.000000000Z\t-1
+                            2024-01-01T02:00:00.000000000Z\t-1
+                            2024-01-01T03:00:00.000000000Z\t30
+                            """
+            );
+            assertSampleByFillNegative(
+                    "SELECT ts, avg(d) a",
+                    " SAMPLE BY 1h FILL(-1.5)",
+                    """
+                            ts\ta
+                            2024-01-01T00:00:00.000000000Z\t1.75
+                            2024-01-01T01:00:00.000000000Z\t-1.5
+                            2024-01-01T02:00:00.000000000Z\t-1.5
+                            2024-01-01T03:00:00.000000000Z\t3.25
+                            """
+            );
+            final String notKeyed = "SELECT ts, first(i) i, first(l) l, first(d) d, first(f) f, first(s) s, first(b) b";
+            assertSampleByFillNegative(
+                    notKeyed,
+                    " SAMPLE BY 1h FILL(-1, -2, -1.5, -2.5, -3, -4)",
+                    """
+                            ts\ti\tl\td\tf\ts\tb
+                            2024-01-01T00:00:00.000000000Z\t10\t100\t1.25\t2.5\t3\t4
+                            2024-01-01T01:00:00.000000000Z\t-1\t-2\t-1.5\t-2.5\t-3\t-4
+                            2024-01-01T02:00:00.000000000Z\t-1\t-2\t-1.5\t-2.5\t-3\t-4
+                            2024-01-01T03:00:00.000000000Z\t30\t300\t3.25\t4.5\t7\t8
+                            """
+            );
+            assertSampleByFillNegative(
+                    notKeyed,
+                    " SAMPLE BY 1h FILL(PREV, -1, -1.5, PREV, -2, -3)",
+                    """
+                            ts\ti\tl\td\tf\ts\tb
+                            2024-01-01T00:00:00.000000000Z\t10\t100\t1.25\t2.5\t3\t4
+                            2024-01-01T01:00:00.000000000Z\t10\t-1\t-1.5\t2.5\t-2\t-3
+                            2024-01-01T02:00:00.000000000Z\t10\t-1\t-1.5\t2.5\t-2\t-3
+                            2024-01-01T03:00:00.000000000Z\t30\t300\t3.25\t4.5\t7\t8
+                            """
+            );
+            final String keyed = "SELECT ts, k, first(i) i, first(l) l, first(d) d, first(f) f, first(s) s, first(b) b";
+            assertSampleByFillNegative(
+                    keyed,
+                    " SAMPLE BY 1h FILL(-1, -2, -1.5, -2.5, -3, -4)",
+                    """
+                            ts\tk\ti\tl\td\tf\ts\tb
+                            2024-01-01T00:00:00.000000000Z\ta\t10\t100\t1.25\t2.5\t3\t4
+                            2024-01-01T00:00:00.000000000Z\tb\t20\t200\t2.25\t3.5\t5\t6
+                            2024-01-01T01:00:00.000000000Z\ta\t-1\t-2\t-1.5\t-2.5\t-3\t-4
+                            2024-01-01T01:00:00.000000000Z\tb\t-1\t-2\t-1.5\t-2.5\t-3\t-4
+                            2024-01-01T02:00:00.000000000Z\ta\t-1\t-2\t-1.5\t-2.5\t-3\t-4
+                            2024-01-01T02:00:00.000000000Z\tb\t-1\t-2\t-1.5\t-2.5\t-3\t-4
+                            2024-01-01T03:00:00.000000000Z\ta\t30\t300\t3.25\t4.5\t7\t8
+                            2024-01-01T03:00:00.000000000Z\tb\t-1\t-2\t-1.5\t-2.5\t-3\t-4
+                            """
+            );
+            assertSampleByFillNegative(
+                    keyed,
+                    " SAMPLE BY 1h FILL(PREV, -1, -1.5, PREV, -2, -3)",
+                    """
+                            ts\tk\ti\tl\td\tf\ts\tb
+                            2024-01-01T00:00:00.000000000Z\ta\t10\t100\t1.25\t2.5\t3\t4
+                            2024-01-01T00:00:00.000000000Z\tb\t20\t200\t2.25\t3.5\t5\t6
+                            2024-01-01T01:00:00.000000000Z\ta\t10\t-1\t-1.5\t2.5\t-2\t-3
+                            2024-01-01T01:00:00.000000000Z\tb\t20\t-1\t-1.5\t3.5\t-2\t-3
+                            2024-01-01T02:00:00.000000000Z\ta\t10\t-1\t-1.5\t2.5\t-2\t-3
+                            2024-01-01T02:00:00.000000000Z\tb\t20\t-1\t-1.5\t3.5\t-2\t-3
+                            2024-01-01T03:00:00.000000000Z\ta\t30\t300\t3.25\t4.5\t7\t8
+                            2024-01-01T03:00:00.000000000Z\tb\t20\t-1\t-1.5\t3.5\t-2\t-3
+                            """
+            );
+            assertSampleByFillNegative(
+                    "SELECT ts, first(i) i, first(l) l",
+                    " SAMPLE BY 1h FILL(-2_147_483_647, -9_223_372_036_854_775_807)",
+                    """
+                            ts\ti\tl
+                            2024-01-01T00:00:00.000000000Z\t10\t100
+                            2024-01-01T01:00:00.000000000Z\t-2147483647\t-9223372036854775807
+                            2024-01-01T02:00:00.000000000Z\t-2147483647\t-9223372036854775807
+                            2024-01-01T03:00:00.000000000Z\t30\t300
+                            """
+            );
+            // The lowest INT and LONG literals are the NULL sentinels of their types, so they fill NULL.
+            assertSampleByCursorFrom(
+                    """
+                            SELECT ts, first(i) i, first(l) l FROM (SELECT * FROM t WHERE i > 0)
+                            SAMPLE BY 1h FILL(-2_147_483_648, -9_223_372_036_854_775_808)
+                            """,
+                    "fill: value\n",
+                    """
+                            ts\ti\tl
+                            2024-01-01T00:00:00.000000000Z\t10\t100
+                            2024-01-01T01:00:00.000000000Z\tnull\tnull
+                            2024-01-01T02:00:00.000000000Z\tnull\tnull
+                            2024-01-01T03:00:00.000000000Z\t30\t300
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testSampleFillValueNegativeInvalid() throws Exception {
+        // The SAMPLE BY cursor accepts a minus sign only over a literal and parses the signed literal, so
+        // a value that the column type's parser rejects, such as a fraction or a value outside the int
+        // range for an INT column, or a minus sign over anything else, keeps failing at the minus sign.
+        // SHORT and BYTE get only the int range check: createPlaceHolderFunction() narrows their fill
+        // value with a plain cast, so FILL(-129) for an aggregate of type BYTE, such as first() over a
+        // BYTE column, fills 127 instead of failing.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP_NS, i INT) TIMESTAMP(ts) PARTITION BY DAY");
+            assertQuery("SELECT ts, sum(i) s FROM (SELECT * FROM t WHERE i > 0) SAMPLE BY 1h FILL(-abc)")
+                    .noLeakCheck()
+                    .fails(73, "invalid fill value: -");
+            assertQuery("SELECT ts, first(i) i FROM (SELECT * FROM t WHERE i > 0) SAMPLE BY 1h FILL(-1.5)")
+                    .noLeakCheck()
+                    .fails(75, "invalid fill value: -1.5");
+            assertQuery("SELECT ts, first(i) i FROM (SELECT * FROM t WHERE i > 0) SAMPLE BY 1h FILL(-2_147_483_649)")
+                    .noLeakCheck()
+                    .fails(75, "invalid fill value: -2_147_483_649");
+            assertQuery("SELECT ts, first(ts) fts FROM (SELECT * FROM t WHERE i > 0) SAMPLE BY 1h FILL(-'2019-01-01')")
+                    .noLeakCheck()
+                    .fails(78, "Invalid fill value: '-'. Timestamp fill value must be in quotes.");
+        });
+    }
+
+    @Test
     public void testSampleFillValueNotEnough() throws Exception {
         // Per-column fill values must cover every non-key aggregate; 5 fill
         // values for 6 aggregates (b is a symbol key, not an aggregate) must
@@ -13215,6 +16242,159 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         20.56\t1970-01-03T08:01:06.000000000Z
                         84.45258177211063\t1970-01-03T08:31:06.000000000Z
                         """);
+    }
+
+    @Test
+    public void testSampleFillValueNotKeyedFromBeforeFirstRow() throws Exception {
+        // The not-keyed FILL(value) cursor emits the buckets between FROM and the first row before it
+        // aggregates a row. The FILL(PREV) columns of a mixed fill list read those buckets from a value that
+        // the cursor zeroes, so they showed 0.0, 0, the first symbol and the percentile of histogram 0, where
+        // the GROUP BY path shows NULL. The FILL(value) and FILL(NULL) columns keep their fill. The CROSS JOIN
+        // rewinds the sample for the second row of long_sequence(2).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP_NS, sym SYMBOL, v DOUBLE, l LONG, s VARCHAR) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2021-01-01T00:10:00.000000000Z', 'A', 10.0, 10, 'x1'),
+                        ('2021-01-01T01:10:00.000000000Z', 'B', 20.0, 20, 'x2'),
+                        ('2021-01-01T02:10:00.000000000Z', 'B', 30.0, 30, 'x3'),
+                        ('2021-01-01T02:20:00.000000000Z', 'A', 40.0, 40, 'x4')
+                    """);
+            final String select = """
+                    SELECT ts, sum(v) sv, last(v) lv, max(l) ml, last(sym) ls, last(s) lvc, approx_percentile(v, 0.5) pv,
+                        min(l) mnl, count() c
+                    FROM\s""";
+            final String sampleBy = " SAMPLE BY 1h FROM '2020-12-31T22:00' FILL(PREV, PREV, PREV, PREV, PREV, PREV, 7, NULL)";
+            final String expected = """
+                    ts\tsv\tlv\tml\tls\tlvc\tpv\tmnl\tc
+                    2020-12-31T22:00:00.000000000Z\tnull\tnull\tnull\t\t\tnull\t7\tnull
+                    2020-12-31T23:00:00.000000000Z\tnull\tnull\tnull\t\t\tnull\t7\tnull
+                    2021-01-01T00:00:00.000000000Z\t10.0\t10.0\t10\tA\tx1\t10.0\t10\t1
+                    2021-01-01T01:00:00.000000000Z\t20.0\t20.0\t20\tB\tx2\t20.0\t20\t1
+                    2021-01-01T02:00:00.000000000Z\t70.0\t40.0\t40\tA\tx4\t30.0\t30\t2
+                    """;
+            // the table alone takes the GROUP BY path
+            assertQuery(select + "t" + sampleBy)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .withPlanContaining("Sample By Fill\n")
+                    .returns(expected);
+            // the sub-query keeps the statement on the SAMPLE BY cursor
+            final String cursorSql = select + "(SELECT * FROM t WHERE v > 0)" + sampleBy;
+            assertSampleByCursorFrom(cursorSql, "fill: value\n", expected);
+            assertQuery("SELECT * FROM long_sequence(2) CROSS JOIN (" + cursorSql + ")")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Sample By\n", "fill: value\n")
+                    .returns("""
+                            x\tts\tsv\tlv\tml\tls\tlvc\tpv\tmnl\tc
+                            1\t2020-12-31T22:00:00.000000000Z\tnull\tnull\tnull\t\t\tnull\t7\tnull
+                            1\t2020-12-31T23:00:00.000000000Z\tnull\tnull\tnull\t\t\tnull\t7\tnull
+                            1\t2021-01-01T00:00:00.000000000Z\t10.0\t10.0\t10\tA\tx1\t10.0\t10\t1
+                            1\t2021-01-01T01:00:00.000000000Z\t20.0\t20.0\t20\tB\tx2\t20.0\t20\t1
+                            1\t2021-01-01T02:00:00.000000000Z\t70.0\t40.0\t40\tA\tx4\t30.0\t30\t2
+                            2\t2020-12-31T22:00:00.000000000Z\tnull\tnull\tnull\t\t\tnull\t7\tnull
+                            2\t2020-12-31T23:00:00.000000000Z\tnull\tnull\tnull\t\t\tnull\t7\tnull
+                            2\t2021-01-01T00:00:00.000000000Z\t10.0\t10.0\t10\tA\tx1\t10.0\t10\t1
+                            2\t2021-01-01T01:00:00.000000000Z\t20.0\t20.0\t20\tB\tx2\t20.0\t20\t1
+                            2\t2021-01-01T02:00:00.000000000Z\t70.0\t40.0\t40\tA\tx4\t30.0\t30\t2
+                            """);
+        });
+    }
+
+    @Test
+    public void testSampleFillValueNotKeyedFromMonthTimeZone() throws Exception {
+        // GitHub issue #7763, see testSampleFillNullNotKeyedFromMonthTimeZone(). The not-keyed FILL(value) cursor
+        // emitted a row with the fill values for December 2023, the month before FROM, for a zone behind UTC.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP_NS, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2024-01-15T10:00:00.000000000Z', 1.0),
+                        ('2024-02-10T10:00:00.000000000Z', 2.0)
+                    """);
+            // the sub-query keeps the statement on the SAMPLE BY cursor
+            final String select = "SELECT ts, count() c, sum(v) s FROM (SELECT * FROM t WHERE v > 0) SAMPLE BY 1M";
+            assertSampleByCursorFrom(
+                    select + " FROM '2024-01-01' FILL(5, 5) ALIGN TO CALENDAR TIME ZONE 'America/New_York'",
+                    "fill: value\n",
+                    """
+                            ts\tc\ts
+                            2024-01-01T05:00:00.000000000Z\t1\t1.0
+                            2024-02-01T05:00:00.000000000Z\t1\t2.0
+                            """
+            );
+            assertSampleByCursorFrom(
+                    select + " FROM '2024-01-01' TO '2024-04-01' FILL(5, 5) ALIGN TO CALENDAR TIME ZONE '-05:00'",
+                    "fill: value\n",
+                    """
+                            ts\tc\ts
+                            2024-01-01T05:00:00.000000000Z\t1\t1.0
+                            2024-02-01T05:00:00.000000000Z\t1\t2.0
+                            2024-03-01T05:00:00.000000000Z\t5\t5.0
+                            """
+            );
+            assertSampleByCursorFrom(
+                    select + " FROM '2023-12-01' FILL(5, 5) ALIGN TO CALENDAR TIME ZONE 'America/New_York'",
+                    "fill: value\n",
+                    """
+                            ts\tc\ts
+                            2023-12-01T05:00:00.000000000Z\t5\t5.0
+                            2024-01-01T05:00:00.000000000Z\t1\t1.0
+                            2024-02-01T05:00:00.000000000Z\t1\t2.0
+                            """
+            );
+            assertSampleByCursorFrom(
+                    select + " FROM '2024-01-01' FILL(5, 5) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'",
+                    "fill: value\n",
+                    """
+                            ts\tc\ts
+                            2023-12-31T23:00:00.000000000Z\t1\t1.0
+                            2024-01-31T23:00:00.000000000Z\t1\t2.0
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testSampleFillValueNotKeyedFromYearTimeZone() throws Exception {
+        // GitHub issue #7763, see testSampleFillNullNotKeyedFromYearTimeZone(). The not-keyed FILL(value) cursor
+        // emitted a row with the fill values for 2023, the year before FROM, for a zone behind UTC.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP_NS, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2024-01-15T10:00:00.000000000Z', 1.0),
+                        ('2024-02-10T10:00:00.000000000Z', 2.0)
+                    """);
+            // the sub-query keeps the statement on the SAMPLE BY cursor
+            final String select = "SELECT ts, count() c, sum(v) s FROM (SELECT * FROM t WHERE v > 0) SAMPLE BY 1y";
+            final String expected = """
+                    ts\tc\ts
+                    2024-01-01T05:00:00.000000000Z\t2\t3.0
+                    """;
+            assertSampleByCursorFrom(
+                    select + " FROM '2024-01-01' FILL(5, 5) ALIGN TO CALENDAR TIME ZONE 'America/New_York'",
+                    "fill: value\n",
+                    expected
+            );
+            assertSampleByCursorFrom(
+                    select + " FROM '2024-01-01' FILL(5, 5) ALIGN TO CALENDAR TIME ZONE '-05:00'",
+                    "fill: value\n",
+                    expected
+            );
+            assertSampleByCursorFrom(
+                    select + " FROM '2023-01-01' FILL(5, 5) ALIGN TO CALENDAR TIME ZONE '-05:00'",
+                    "fill: value\n",
+                    """
+                            ts\tc\ts
+                            2023-01-01T05:00:00.000000000Z\t5\t5.0
+                            2024-01-01T05:00:00.000000000Z\t2\t3.0
+                            """
+            );
+        });
     }
 
     @Test
@@ -14108,7 +17288,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     "SAMPLE BY 1d FROM '2021-03-01' ALIGN TO CALENDAR WITH OFFSET '+00:15';")
                     .noLeakCheck()
                     .timestamp("ts")
-                    .expectSize()
+                    .noRandomAccess()
                     .returns("""
                             min\tmax\tcount\tts
                             1\t25\t25\t2021-03-01T00:15:00.000000000Z
@@ -14279,7 +17459,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     FROM '2026-02-11T20:06:26.916' TO '2026-02-11T20:07:26.916'
                     """)
                     .noLeakCheck()
-                    .expectSize()
+                    .noRandomAccess()
                     .timestamp("value_time")
                     .returns("""
                             sum\tvalue_time
@@ -14318,6 +17498,63 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByFromToFillLinearEndFill() throws Exception {
+        // A FILL list that mixes LINEAR with another fill takes the not-keyed FILL(value) cursor. Its end fill, the
+        // buckets after the last bucket with rows up to TO, has no bucket with rows to interpolate towards. A LINEAR
+        // column now shows the value of the last bucket with rows there, and the other columns show their fill
+        // values. FILL(0, LINEAR) used to fail with a NullPointerException for TO 03:00, to fill the count of the
+        // 02:00 bucket from the bucket before it for TO 02:30, and to leave out the 04:00 bucket for TO 04:30.
+        // FILL(LINEAR, LINEAR) returned the same rows before. The table alone and the filtered sub-query both take
+        // the cursor, because the GROUP BY path does not fill LINEAR.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP_NS, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2021-01-01T00:10:00.000000000Z', 1.0),
+                        ('2021-01-01T01:10:00.000000000Z', 2.0),
+                        ('2021-01-01T03:10:00.000000000Z', 4.0)
+                    """);
+            final String lastBucketThenFill = """
+                    ts\tc\ts
+                    2021-01-01T00:00:00.000000000Z\t1\t1.0
+                    2021-01-01T01:00:00.000000000Z\t1\t2.0
+                    2021-01-01T02:00:00.000000000Z\t0\t2.0
+                    """;
+            for (String source : new String[]{"t", "(SELECT ts, v FROM t WHERE v > 0)"}) {
+                final String select = "SELECT ts, count() c, sum(v) s FROM " + source + " SAMPLE BY 1h FROM '2021-01-01' TO ";
+                // the bucket that TO ends follows the last bucket with rows without a gap
+                assertSampleByCursorFrom(select + "'2021-01-01T02:30' FILL(0, LINEAR)", "fill: value\n", lastBucketThenFill);
+                // count() reads a long through the LINEAR fill
+                assertSampleByCursorFrom(
+                        select + "'2021-01-01T02:30' FILL(LINEAR, LINEAR)",
+                        "fill: value\n",
+                        """
+                                ts\tc\ts
+                                2021-01-01T00:00:00.000000000Z\t1\t1.0
+                                2021-01-01T01:00:00.000000000Z\t1\t2.0
+                                2021-01-01T02:00:00.000000000Z\t1\t2.0
+                                """
+                );
+                // a gap follows the last bucket with rows, and TO falls on the grid
+                assertSampleByCursorFrom(select + "'2021-01-01T03:00' FILL(0, LINEAR)", "fill: value\n", lastBucketThenFill);
+                // the bucket after a gap reads the last row, and the end fill follows that bucket
+                assertSampleByCursorFrom(
+                        select + "'2021-01-01T04:30' FILL(0, LINEAR)",
+                        "fill: value\n",
+                        """
+                                ts\tc\ts
+                                2021-01-01T00:00:00.000000000Z\t1\t1.0
+                                2021-01-01T01:00:00.000000000Z\t1\t2.0
+                                2021-01-01T02:00:00.000000000Z\t0\t3.0
+                                2021-01-01T03:00:00.000000000Z\t1\t4.0
+                                2021-01-01T04:00:00.000000000Z\t0\t4.0
+                                """
+                );
+            }
+        });
+    }
+
+    @Test
     public void testSampleByFromToFillLinearMultiBucket() throws Exception {
         assertMemoryLeak(() -> {
             execute(FROM_TO_DDL);
@@ -14342,7 +17579,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     SAMPLE BY 5d FROM '2018-01-01' TO '2018-01-31'
                     """)
                     .noLeakCheck()
-                    .expectSize()
+                    .noRandomAccess()
                     .timestamp("ts")
                     .returns("""
                             ts\tavg
@@ -14599,7 +17836,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     "SAMPLE BY 1h FROM '2021-10-30' ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin';")
                     .noLeakCheck()
                     .timestamp("ts")
-                    .expectSize()
+                    .noRandomAccess()
                     .returns("""
                             min\tmax\tts
                             1\t6\t2021-10-30T21:00:00.000000000Z
@@ -14636,7 +17873,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     "SAMPLE BY 1h FROM '2021-03-27' ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin';")
                     .noLeakCheck()
                     .timestamp("ts")
-                    .expectSize()
+                    .noRandomAccess()
                     .returns("""
                             min\tmax\tts
                             1\t6\t2021-03-27T21:00:00.000000000Z
@@ -14757,7 +17994,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
             assertQuery(query)
                     .noLeakCheck()
                     .timestamp("ts")
-                    .expectSize()
+                    .noRandomAccess()
                     .returns("""
                             ts\tcount\tts_divided
                             2010-01-01T00:00:00.000000000Z\t1\t1262307600000000000
@@ -14773,7 +18010,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
             assertQuery(query)
                     .noLeakCheck()
                     .timestamp("ts")
-                    .expectSize()
+                    .noRandomAccess()
                     .returns("""
                             ts\tdiff1\tdiff2
                             2010-01-01T01:00:00.000000000Z\t1\t0
@@ -14789,7 +18026,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
             assertQuery(query)
                     .noLeakCheck()
                     .timestamp("ts")
-                    .expectSize()
+                    .noRandomAccess()
                     .returns("""
                             ts\tdiff1\tdiff2
                             2010-01-01T01:00:00.000000000Z\t61\t61
@@ -14805,7 +18042,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
             assertQuery(query)
                     .noLeakCheck()
                     .timestamp("ts")
-                    .expectSize()
+                    .noRandomAccess()
                     .returns("""
                             ts\tmax\tdiff1\tdiff2
                             2010-01-01T01:00:00.000000000Z\t1\t1\t0
@@ -14821,7 +18058,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
             assertQuery(query)
                     .noLeakCheck()
                     .timestamp("ts")
-                    .expectSize()
+                    .noRandomAccess()
                     .returns("""
                             ts\tdiff
                             2010-01-01T00:00:00.000000000Z\t1
@@ -14837,7 +18074,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
             assertQuery(query)
                     .noLeakCheck()
                     .timestamp("ts")
-                    .expectSize()
+                    .noRandomAccess()
                     .returns("""
                             ts\tdiff1\tdiff2
                             2010-01-01T00:00:00.000000000Z\t1\t0
@@ -15018,6 +18255,16 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
         });
     }
 
+    private static void createAllNullTimestampTable() throws SqlException {
+        // the table has no designated timestamp, so a statement can designate ts, which holds NULL in every row
+        execute("CREATE TABLE an (ts TIMESTAMP_NS, sym SYMBOL, v DOUBLE)");
+        execute("""
+                INSERT INTO an VALUES
+                    (NULL, 'a', 1.0),
+                    (NULL, 'b', 2.0)
+                """);
+    }
+
     @NotNull
     private static CairoConfiguration createMmapFailingConfiguration(FilesFacade ff) {
         return new DefaultTestCairoConfiguration(root) {
@@ -15026,6 +18273,105 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                 return ff;
             }
         };
+    }
+
+    private static void createNullBucketTable() throws SqlException {
+        // see SampleByTest.createNullBucketTable()
+        execute("CREATE TABLE nb (ts TIMESTAMP_NS, sym SYMBOL, v DOUBLE)");
+        execute("""
+                INSERT INTO nb VALUES
+                    ('2024-01-01T00:15:00.000000000Z', 'a', 1.0),
+                    (NULL, 'b', 2.0),
+                    ('2024-01-01T02:30:00.000000000Z', 'a', 4.0),
+                    ('2024-01-03T09:30:00.000000000Z', 'b', 8.0),
+                    (NULL, 'a', 16.0),
+                    ('2024-02-10T09:30:00.000000000Z', 'a', 32.0),
+                    ('2024-03-20T09:30:00.000000000Z', 'b', 64.0),
+                    (NULL, 'b', 128.0),
+                    ('2024-04-05T10:00:00.000000000Z', 'a', 256.0),
+                    ('2025-01-15T12:00:00.000000000Z', 'b', 512.0)
+                """);
+    }
+
+    private static void createNullTimestampTable() throws SqlException {
+        // the table has no designated timestamp, so a statement can designate ts, whose second row holds NULL
+        execute("CREATE TABLE n (ts TIMESTAMP_NS, sym SYMBOL, v DOUBLE)");
+        execute("""
+                INSERT INTO n VALUES
+                    ('2024-01-01T00:00:00.000000000Z', 'a', 1.0),
+                    (NULL, 'b', 2.0),
+                    ('2024-01-01T02:30:00.000000000Z', 'a', 4.0)
+                """);
+    }
+
+    // A TO that reads NULL during code generation, before execution initializes now(), and the timestamp in local time
+    // otherwise
+    private static String toOverNow(String to) {
+        return " TO CASE WHEN now() > '1971-01-01' THEN '" + to + "'::timestamp END";
+    }
+
+    // Asserts a statement on the SAMPLE BY cursor path. LIMIT bounds the statements that a change of the
+    // time zone offset at a bucket boundary used to keep in an endless loop, see GitHub issue #7752.
+    private void assertSampleByCursorDst(String sql, String planFill, String expected) throws Exception {
+        assertSampleByCursorFrom(sql + " LIMIT 100", planFill, expected);
+    }
+
+    private void assertSampleByCursorFrom(String sql, String planFill, String expected) throws Exception {
+        assertQuery(sql)
+                .noLeakCheck()
+                .timestamp("ts")
+                .noRandomAccess()
+                .withPlanContaining("Sample By\n", planFill)
+                .returns(expected);
+    }
+
+    // Asserts the first three and the last three rows of a statement on the SAMPLE BY cursor path, through
+    // LIMIT 3 and LIMIT -3.
+    private void assertSampleByCursorLimit(String sql, String firstRows, String lastRows) throws Exception {
+        assertQuery(sql + " LIMIT 3")
+                .noLeakCheck()
+                .timestamp("ts")
+                .noRandomAccess()
+                .withPlanContaining("Sample By\n")
+                .returns(firstRows);
+        assertQuery(sql + " LIMIT -3")
+                .noLeakCheck()
+                .timestamp("ts")
+                .noRandomAccess()
+                .expectSize()
+                .withPlanContaining("Sample By\n")
+                .returns(lastRows);
+    }
+
+    // Asserts count() c and sum(v) s on both SAMPLE BY paths with the same rows: the table alone takes the GROUP BY
+    // path, and the filtered sub-query keeps the statement on the SAMPLE BY cursor. The plan of the table alone must
+    // not show the Sample By node of the cursor.
+    private void assertSampleByCursorMatchesGroupBy(String table, String sampleBy, String planFill, String expected) throws Exception {
+        assertQuery("SELECT ts, count() c, sum(v) s FROM " + table + sampleBy)
+                .noLeakCheck()
+                .timestamp("ts")
+                .inferRandomAccess()
+                .sizeMayVary()
+                .withPlanNotContaining("Sample By\n")
+                .returns(expected);
+        assertSampleByCursorFrom(
+                "SELECT ts, count() c, sum(v) s FROM (SELECT ts, v FROM " + table + " WHERE v > 0)" + sampleBy,
+                planFill,
+                expected
+        );
+    }
+
+    // Asserts a negative FILL value on both SAMPLE BY paths with the same rows: the table alone takes the GROUP BY
+    // path, and the filtered sub-query keeps the statement on the SAMPLE BY cursor.
+    private void assertSampleByFillNegative(String select, String sampleBy, String expected) throws Exception {
+        assertQuery(select + " FROM t" + sampleBy)
+                .noLeakCheck()
+                .timestamp("ts")
+                .inferRandomAccess()
+                .sizeMayVary()
+                .withPlanContaining("Sample By Fill\n")
+                .returns(expected);
+        assertSampleByCursorFrom(select + " FROM (SELECT * FROM t WHERE i > 0)" + sampleBy, "fill: value\n", expected);
     }
 
     private void assertSampleByFlavours(String expected, String sql) throws Exception {
@@ -15072,6 +18418,146 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
         });
     }
 
+    // Asserts a statement of GitHub issue #7760 on both SAMPLE BY paths, see
+    // SampleByTest.assertSampleByNegativeOffset().
+    private void assertSampleByNegativeOffset(String select, String sampleBy, String groupByPlan, String expected) throws Exception {
+        assertSampleByNegativeOffset(select, sampleBy, groupByPlan, expected, expected);
+    }
+
+    private void assertSampleByNegativeOffset(
+            String select,
+            String sampleBy,
+            String groupByPlan,
+            String expectedGroupBy,
+            String expectedCursor
+    ) throws Exception {
+        assertQuery(select + " FROM t" + sampleBy + " LIMIT 100")
+                .noLeakCheck()
+                .timestamp("ts")
+                .inferRandomAccess()
+                .sizeMayVary()
+                .withPlanContaining(groupByPlan)
+                .returns(expectedGroupBy);
+        assertQuery(select + " FROM (SELECT * FROM t WHERE v > 0)" + sampleBy + " LIMIT 100")
+                .noLeakCheck()
+                .timestamp("ts")
+                .inferRandomAccess()
+                .sizeMayVary()
+                .withPlanContaining("Sample By\n")
+                .returns(expectedCursor);
+    }
+
+    // Asserts a statement without FILL on the SAMPLE BY cursor path over table nb: the NULL bucket, then the rows of
+    // the same statement over the source without the NULL rows, and the same rows as the GROUP BY path where it has
+    // a spelling of the statement. See SampleByTest.assertSampleByNullBucket().
+    private void assertSampleByNullBucket(String select, String orderBy, String sampleBy, String expectedNullBucket) throws Exception {
+        final String statement = select + " FROM ((SELECT * FROM nb ORDER BY ts) TIMESTAMP(ts)) SAMPLE BY " + sampleBy;
+        printSql(select + " FROM ((SELECT * FROM nb WHERE ts IS NOT NULL ORDER BY ts) TIMESTAMP(ts)) SAMPLE BY " + sampleBy);
+        final String withoutNulls = sink.toString();
+        final int headerLength = withoutNulls.indexOf('\n') + 1;
+        Assert.assertTrue("the source without the NULL rows has buckets", withoutNulls.length() > headerLength);
+        final String expected = withoutNulls.substring(0, headerLength) + expectedNullBucket + withoutNulls.substring(headerLength);
+        // When the statement has a timestamp, the chain below spends the first execution of its factory on a pass
+        // that reads the timestamps alone, and compares the rows from the second execution on. So this pair
+        // compiles a factory of its own and compares the rows of the first execution; the chain adds the second
+        // pass, the calculateSize() check and the factory properties.
+        printSql(statement);
+        TestUtils.assertEquals(expected, sink);
+        assertQuery(statement)
+                .noLeakCheck()
+                .timestamp(select.startsWith("SELECT ts") ? "ts" : null)
+                .noRandomAccess()
+                .withPlanContaining("Sample By\n")
+                .returns(expected);
+
+        if (!sampleBy.contains("FIRST OBSERVATION")) {
+            final String groupByStatement = "SELECT * FROM (" + select + " FROM nb TIMESTAMP(ts) SAMPLE BY " + sampleBy + ") ORDER BY " + orderBy;
+            assertQuery(groupByStatement)
+                    .noLeakCheck()
+                    .assertsPlanContaining("keyFunctions: [timestamp_floor_utc(");
+            printSql(groupByStatement);
+            final String expectedOrdered = sink.toString();
+            final String orderedStatement = "SELECT * FROM (" + statement + ") ORDER BY " + orderBy;
+            // the same pair ahead of the chain, for the first execution of the ordered statement
+            printSql(orderedStatement);
+            TestUtils.assertEquals(expectedOrdered, sink);
+            // ORDER BY ts alone follows the order of the cursor and adds no sort. Every other ORDER BY sorts a copy of
+            // the rows, and the copy supports random access.
+            assertQuery(orderedStatement)
+                    .noLeakCheck()
+                    .timestamp(select.startsWith("SELECT ts") ? "ts" : null)
+                    .supportsRandomAccess(!"ts".equals(orderBy))
+                    .withPlanContaining("Sample By\n")
+                    .returns(expectedOrdered);
+        }
+    }
+
+    // Asserts that a statement over a designated timestamp that holds NULL fails with an error that names the NULL,
+    // and pins the path of the same statement in its plan. LIMIT keeps a regression that walks the fill grid from
+    // the NULL from hanging the test, except with FILL(LINEAR), which builds every bucket before it returns the
+    // first row.
+    private void assertSampleByNullTimestampFails(String sql, String planFragment) throws Exception {
+        final String limited = sql + " LIMIT 10";
+        assertQuery(limited)
+                .noLeakCheck()
+                .assertsPlanContaining(planFragment);
+        assertQuery(limited)
+                .noLeakCheck()
+                .failsWith("SAMPLE BY designated timestamp cannot be NULL");
+    }
+
+    // Asserts count() c and sum(v) s on both SAMPLE BY paths with the same rows, on the table alone: with FROM and TO
+    // as constants, the statement takes the GROUP BY path, and with FROM and TO as expressions over now(), which read
+    // NULL during code generation, it stays on the SAMPLE BY cursor
+    private void assertSampleByRuntimeBoundsMatchesGroupBy(
+            String table,
+            String stride,
+            String from,
+            String to,
+            String fill,
+            String planFill,
+            String expected
+    ) throws Exception {
+        final String sampleBy = "SELECT ts, count() c, sum(v) s FROM " + table + " SAMPLE BY " + stride;
+        assertQuery(sampleBy + " FROM '" + from + "' TO '" + to + "'" + fill)
+                .noLeakCheck()
+                .timestamp("ts")
+                .inferRandomAccess()
+                .sizeMayVary()
+                .withPlanContaining("Sample By Fill\n")
+                .returns(expected);
+        assertSampleByCursorFrom(
+                sampleBy + " FROM CASE WHEN now() > '1971-01-01' THEN '" + from + "'::timestamp END" + toOverNow(to) + fill,
+                planFill,
+                expected
+        );
+    }
+
+    // Asserts count() c and sum(v) s with the same rows on the GROUP BY path, with the table alone and TO as a
+    // constant, and on the SAMPLE BY cursor, with the filtered sub-query and TO as an expression over now(), see
+    // toOverNow(). The caller fixes the clock past 1971.
+    private void assertSampleByRuntimeToMatchesGroupBy(
+            String table,
+            String sampleByFrom,
+            String to,
+            String fill,
+            String planFill,
+            String expected
+    ) throws Exception {
+        assertQuery("SELECT ts, count() c, sum(v) s FROM " + table + sampleByFrom + " TO '" + to + "'" + fill)
+                .noLeakCheck()
+                .timestamp("ts")
+                .inferRandomAccess()
+                .sizeMayVary()
+                .withPlanContaining("Sample By Fill\n")
+                .returns(expected);
+        assertSampleByCursorFrom(
+                "SELECT ts, count() c, sum(v) s FROM (SELECT ts, v FROM " + table + " WHERE v > 0)" + sampleByFrom + toOverNow(to) + fill,
+                planFill,
+                expected
+        );
+    }
+
     private void assertWithSymbolColumnTop(String expected, String query) throws Exception {
         assertWithSymbolColumnTop(expected, query, false, false);
     }
@@ -15086,8 +18572,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
             assertQuery(forceNoIndexQuery)
                     .noLeakCheck()
                     .timestamp("k")
-                    .supportsRandomAccess(supportsRandomAccess)
-                    .expectSize(expectSize)
+                    .noRandomAccess()
                     .returns(expected);
 
             assertQuery(query)
@@ -15103,7 +18588,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
         return "".equals(fill) || "none".equals(fill);
     }
 
-    private static String sampleByPushdownPlan(String fill, String align) {
+    private static String sampleByPushdownPlan(String fill, String align, boolean hasDesignatedTimestamp) {
         boolean isFastPath = (fill.equals("null") || fill.equals("prev"))
                 && !"align to first observation".equals(align);
         boolean isNoneFill = fill.isEmpty() || "none".equals(fill);
@@ -15112,13 +18597,39 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     "    Sample By Fill\n" +
                     "      stride: '1m'\n" +
                     "      fill: " + fill + "\n" +
-                    "        Encode sort light\n" +
-                    "          keys: [tstmp]\n" +
-                    "            Async JIT Group By workers: 1\n" +
-                    "              keys: [tstmp,sym]\n" +
-                    "              keyFunctions: [timestamp_floor_utc('1m',ts)]\n" +
-                    "              values: [first(val),avg(val),last(val),max(val)]\n" +
-                    "              filter: sym='B'\n" +
+                    (hasDesignatedTimestamp ?
+                            "      cached: true\n" +
+                            "        Async JIT Stream Group By workers: 1\n" +
+                            "          segmentKey: timestamp_floor_utc('1m',ts)\n" +
+                            "          keys: [tstmp,sym]\n" +
+                            "          keyFunctions: [timestamp_floor_utc('1m',ts)]\n" +
+                            "          values: [first(val),avg(val),last(val),max(val)]\n" +
+                            "          filter: sym='B'\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: #TABLE#\n" :
+                            "        Encode sort light\n" +
+                            "          keys: [tstmp]\n" +
+                            "            Async JIT Group By workers: 1\n" +
+                            "              keys: [tstmp,sym]\n" +
+                            "              keyFunctions: [timestamp_floor_utc('1m',ts)]\n" +
+                            "              values: [first(val),avg(val),last(val),max(val)]\n" +
+                            "              filter: sym='B'\n" +
+                            "                PageFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: #TABLE#\n");
+        }
+        if (hasDesignatedTimestamp && "linear".equals(fill) && !"align to first observation".equals(align)) {
+            return "Filter filter: (tstmp>=2022-12-01T00:00:00.000000000Z and sym='B' and 0<length(sym)*tstmp::long)\n" +
+                    "    Sample By\n" +
+                    "      fill: linear\n" +
+                    "      keys: [tstmp,sym]\n" +
+                    "        Async Stream Group By workers: 1\n" +
+                    "          segmentKey: timestamp_floor('minute',tstmp)\n" +
+                    "          keys: [sym,__sample_by_bucket]\n" +
+                    "          keyFunctions: [timestamp_floor('minute',tstmp)]\n" +
+                    "          values: [first(val),avg(val),last(val),max(val)]\n" +
+                    "            SelectedRecord\n" +
                     "                PageFrame\n" +
                     "                    Row forward scan\n" +
                     "                    Frame forward scan on: #TABLE#\n";
@@ -15240,9 +18751,9 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
         });
     }
 
-    private void testSampleByPushdown(String fill, String alignTo, String plan) throws Exception {
-        testSampleByPushdownWithDesignatedTs(fill, alignTo, plan);
-        testSampleByPushdownWithoutDesignatedTs(fill, alignTo, plan);
+    private void testSampleByPushdown(String fill, String alignTo) throws Exception {
+        testSampleByPushdownWithDesignatedTs(fill, alignTo, sampleByPushdownPlan(fill, alignTo, true));
+        testSampleByPushdownWithoutDesignatedTs(fill, alignTo, sampleByPushdownPlan(fill, alignTo, false));
     }
 
     private void testSampleByPushdownWithDesignatedTs(String fill, String alignTo, String plan) throws Exception {

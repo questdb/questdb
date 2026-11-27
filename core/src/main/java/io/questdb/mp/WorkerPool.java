@@ -279,6 +279,11 @@ public class WorkerPool implements Closeable {
         freeOnExit.add(resource);
     }
 
+    @TestOnly
+    public int getAssignedJobCount() {
+        return assignedJobs.size();
+    }
+
     /**
      * The live-fiber limit of the whole pool: the sum of its groups' limits.
      */
@@ -348,10 +353,16 @@ public class WorkerPool implements Closeable {
     }
 
     /**
-     * The CPU set of group {@code group}, sorted, or null when the pool's groups have no CPU sets.
+     * Per group, the CPUs its workers run on, or null if the pool leaves placement to the worker
+     * affinity.
      */
-    public @Nullable int[] getGroupCpus(int group) {
-        return groupCpus != null ? groupCpus[group] : null;
+    public @Nullable int[][] getGroupCpus() {
+        return groupCpus;
+    }
+
+    @TestOnly
+    public int getFreeOnExitJobCount() {
+        return freeOnExit.size();
     }
 
     public String getPoolName() {
@@ -637,8 +648,8 @@ public class WorkerPool implements Closeable {
     public void updateWorkerMetrics() {
         final long nowNanos = System.nanoTime();
         WorkerMetrics workerMetrics = metrics.workerMetrics();
-        long min = workerMetrics.getMinElapsedMicros();
-        long max = workerMetrics.getMaxElapsedMicros();
+        long min = Long.MAX_VALUE;
+        long max = Long.MIN_VALUE;
         // Iterate the workers list under the monitor: the /metrics scrape calls this concurrently
         // with start()'s add-loop and halt()'s clear(). Without the guard a torn read returns a null
         // slot (NPE on getQuick(i).getJobStartNanos()) or a half-published pos/buffer.
@@ -651,7 +662,10 @@ public class WorkerPool implements Closeable {
                 }
             }
         }
-        workerMetrics.update(min, max);
+        // Pools without running workers, such as during startup, have no sample to report.
+        if (max != Long.MIN_VALUE) {
+            workerMetrics.update(min, max);
+        }
     }
 
     private static Throwable addCleanupFailure(@Nullable Throwable primary, Throwable failure) {
@@ -783,9 +797,10 @@ public class WorkerPool implements Closeable {
     }
 
     // A group's share of a pool-wide fiber limit, in proportion to its share of the workers,
-    // rounded up and at least 1. A real split has at least CpuTopology.MIN_WORKERS_PER_GROUP
-    // workers per group, so dividing the default limits gives what the default formulas give for
-    // the group's own worker count. A limit below 1 passes through for the runtime to reject.
+    // rounded up and at least 1. A split network pool has at least
+    // PropServerConfiguration.MIN_NETWORK_GROUP_WORKERS (8) workers per group, so dividing the
+    // default limits gives what the default formulas give for the group's own worker count. A limit
+    // below 1 passes through for the runtime to reject.
     private int getGroupShare(int limit, int group) {
         if (groupCount == 1 || limit < 1) {
             return limit;

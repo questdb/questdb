@@ -25,6 +25,7 @@
 package io.questdb.cairo.pool;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.TableToken;
@@ -33,10 +34,12 @@ import io.questdb.cairo.pool.ex.PoolClosedException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.ConcurrentHashMap;
+import io.questdb.std.LongList;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.util.Arrays;
 import java.util.Map;
@@ -100,6 +103,64 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
 
     public int getMaxEntries() {
         return maxEntries;
+    }
+
+    /**
+     * Adds the id of the thread that holds each slot of the table, in every segment, to the sink,
+     * one id per slot, and takes no slot. Leaves out the slots that the calling thread holds with
+     * no tenant: a lock attempt of the thread that failed took them, and {@link #lock} on the thread
+     * passes over them. A slot of the calling thread that holds a tenant counts: lock() fails on it.
+     */
+    public void getOwnerThreads(TableToken tableToken, LongList sink) {
+        Entry<T> e = entries.get(tableToken.getDirName());
+        if (e == null) {
+            return;
+        }
+        final long thread = Thread.currentThread().threadId();
+        do {
+            for (int i = 0; i < segmentSize; i++) {
+                final long owner = Unsafe.arrayGetVolatile(e.allocations, i);
+                // same thread, don't need to order reads
+                if (owner != UNALLOCATED && (owner != thread || e.getTenant(i) != null)) {
+                    sink.add(owner);
+                }
+            }
+            e = e.next;
+        } while (e != null);
+    }
+
+    /**
+     * Force-reclaims every slot the calling thread still has checked out, closing its tenant and resetting
+     * ownership: the WAL-writer counterpart of {@link WriterPool#releaseCrashOrphanedWriters()}. Only the
+     * caller's own slots are reclaimed; a healthy engine sees no effect.
+     *
+     * @return the number of orphaned tenants reclaimed
+     */
+    @TestOnly
+    public int releaseCrashOrphanedTenants() {
+        final long thread = Thread.currentThread().threadId();
+        int reclaimed = 0;
+        for (Entry<T> e : entries.values()) {
+            Entry<T> entry = e;
+            do {
+                for (int i = 0; i < segmentSize; i++) {
+                    if (Unsafe.arrayGetVolatile(entry.allocations, i) == thread && entry.getTenant(i) != null) {
+                        closeTenant(thread, entry, i, PoolListener.EV_EXPIRE, PoolConstants.CR_POOL_CLOSE);
+                        Unsafe.arrayPutOrdered(entry.allocations, i, UNALLOCATED);
+                        reclaimed++;
+                    }
+                }
+                entry = entry.next;
+            } while (entry != null);
+        }
+        // Drop the emptied per-dir-name entries so a later reuse of the same dir name cannot inherit a
+        // stale (possibly dropped-flagged) entry -- mirrors releaseAll's full-close entry sweep.
+        for (Map.Entry<CharSequence, Entry<T>> me : entries.entrySet()) {
+            if (isEntryEmpty(me.getValue())) {
+                entries.remove(me.getKey(), me.getValue());
+            }
+        }
+        return reclaimed;
     }
 
     public int getSegmentSize() {
@@ -178,6 +239,9 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
                 entries.remove(token.getDirName());
             }
 
+            // Finish releasing the tenants before propagating a fatal flush stop. Ordinary close errors
+            // remain log-only, as before.
+            CairoError closeFailure = null;
             Entry<T> e = firstEntry;
             while (e != null) {
                 for (int i = 0; i < segmentSize; i++) {
@@ -187,6 +251,9 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
                         } catch (Throwable th) {
                             LOG.critical().$("error on closing pool item [table=").$(token)
                                     .$(", error=").$(th).I$();
+                            if (closeFailure == null && th instanceof CairoError error && CairoException.isDataSyncFailure(error)) {
+                                closeFailure = error;
+                            }
                         }
                         Unsafe.arrayPutOrdered(e.allocations, i, UNALLOCATED);
                     }
@@ -201,6 +268,9 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
                 }
 
                 e = e.next;
+            }
+            if (closeFailure != null) {
+                throw closeFailure;
             }
         }
     }

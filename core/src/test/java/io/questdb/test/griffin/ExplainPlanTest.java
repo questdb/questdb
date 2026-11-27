@@ -178,6 +178,7 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.StationaryMicrosClock;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Ignore;
@@ -1208,11 +1209,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQuery("select distinct ts from di order by 1 limit 10")
                 .ddl("create table di (x int, y long, ts timestamp) timestamp(ts)")
                 .assertsPlan("""
-                        Long Top K lo: 10
-                          keys: [ts asc]
-                            Async Group By workers: 1
+                        Limit value: 10 skip-rows-max: 0 take-rows-max: 10
+                            Async Stream Group By workers: 1
                               keys: [ts]
-                              filter: null
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: di
@@ -1224,11 +1223,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQuery("select distinct ts from di order by 1 desc limit 10")
                 .ddl("create table di (x int, y long, ts timestamp) timestamp(ts)")
                 .assertsPlan("""
-                        Long Top K lo: 10
-                          keys: [ts desc]
-                            Async Group By workers: 1
+                        Limit value: 10 skip-rows-max: 0 take-rows-max: 10
+                            Async Stream Group By workers: 1
                               keys: [ts]
-                              filter: null
                                 PageFrame
                                     Row backward scan
                                     Frame backward scan on: di
@@ -1241,9 +1238,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 .ddl("create table di (x int, y long, ts timestamp) timestamp(ts)")
                 .assertsPlan("""
                         Limit value: 10 skip-rows-max: 0 take-rows-max: 10
-                            Async Group By workers: 1
+                            Async Stream Group By workers: 1
                               keys: [ts]
-                              filter: null
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: di
@@ -1256,12 +1252,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 .ddl("create table di (x int, y long, ts timestamp) timestamp(ts)")
                 .assertsPlan("""
                         Limit value: -10 skip-rows: baseRows-10 take-rows-max: 10
-                            Async Group By workers: 1
-                              keys: [ts]
-                              filter: null
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: di
+                            Materialize
+                                Async Stream Group By workers: 1
+                                  keys: [ts]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: di
                         """);
     }
 
@@ -1271,7 +1267,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 .ddl("create table di (x int, y long, ts timestamp) timestamp(ts)")
                 .assertsPlan("""
                         Limit value: 10 skip-rows-max: 0 take-rows-max: 10
-                            Async JIT Group By workers: 1
+                            Async JIT Stream Group By workers: 1
                               keys: [ts]
                               filter: y=5
                                 PageFrame
@@ -1286,12 +1282,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 .ddl("create table di (x int, y long, ts timestamp) timestamp(ts)")
                 .assertsPlan("""
                         Limit value: -10 skip-rows: baseRows-10 take-rows-max: 10
-                            Async JIT Group By workers: 1
-                              keys: [ts]
-                              filter: y=5
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: di
+                            Materialize
+                                Async JIT Stream Group By workers: 1
+                                  keys: [ts]
+                                  filter: y=5
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: di
                         """);
     }
 
@@ -1301,7 +1298,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 .ddl("create table di (x int, y long, ts timestamp) timestamp(ts)")
                 .assertsPlan("""
                         Limit value: 10 skip-rows-max: 0 take-rows-max: 10
-                            Async Group By workers: 1
+                            Async Stream Group By workers: 1
                               keys: [ts]
                               filter: abs(y)=5
                                 PageFrame
@@ -1316,12 +1313,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 .ddl("create table di (x int, y long, ts timestamp) timestamp(ts)")
                 .assertsPlan("""
                         Limit value: -10 skip-rows: baseRows-10 take-rows-max: 10
-                            Async Group By workers: 1
-                              keys: [ts]
-                              filter: abs(y)=5
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: di
+                            Materialize
+                                Async Stream Group By workers: 1
+                                  keys: [ts]
+                                  filter: abs(y)=5
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: di
                         """);
     }
 
@@ -1331,7 +1329,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 .ddl("create table di (x int, y long, ts timestamp) timestamp(ts)")
                 .assertsPlan("""
                         Limit left: 10 right: 20 skip-rows-max: 10 take-rows-max: 10
-                            Async Group By workers: 1
+                            Async Stream Group By workers: 1
                               keys: [ts]
                               filter: abs(y)=5
                                 PageFrame
@@ -1598,22 +1596,44 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testExplainCreateLiveViewAfterCompilerReuse() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, x int) timestamp(ts) partition by day wal");
+            assertExplainAfterCompilerReuse(
+                    "create live view test flush every 1s start from now as " +
+                            "select ts, x, count(*) over (partition by x order by ts rows between 1 preceding and current row) rn from tab",
+                    "create live view other flush every 1s start from now as " +
+                            "select ts, x, count(*) over (partition by x order by ts rows between 1 preceding and current row) rn from tab"
+            );
+        });
+    }
+
+    @Test
     public void testExplainCreateMatView() throws Exception {
         assertQuery("create materialized view test as (select ts, k, avg(v) from tab sample by 30s) partition by day")
                 .ddl("create table tab (ts timestamp, k symbol, v long) timestamp(ts) partition by day wal")
                 .assertsPlan("""
                         Create materialized view: test
-                            Encode sort light
-                              keys: [ts]
-                                Async Group By workers: 1
-                                  keys: [ts,k]
-                                  keyFunctions: [timestamp_floor_utc('30s',ts)]
-                                  values: [avg(v)]
-                                  filter: null
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: tab
+                            Async Stream Group By workers: 1
+                              segmentKey: timestamp_floor_utc('30s',ts)
+                              keys: [ts,k]
+                              keyFunctions: [timestamp_floor_utc('30s',ts)]
+                              values: [avg(v)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
                         """);
+    }
+
+    @Test
+    public void testExplainCreateMatViewAfterCompilerReuse() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, k symbol, v long) timestamp(ts) partition by day wal");
+            assertExplainAfterCompilerReuse(
+                    "create materialized view test as (select ts, k, avg(v) from tab sample by 30s) partition by day",
+                    "create materialized view other as (select ts, k, avg(v) from tab sample by 30s) partition by day"
+            );
+        });
     }
 
     @Test
@@ -1626,6 +1646,14 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testExplainCreateTableAfterCompilerReuse() throws Exception {
+        assertMemoryLeak(() -> assertExplainAfterCompilerReuse(
+                "create table test (x long)",
+                "create table other (x long)"
+        ));
+    }
+
+    @Test
     public void testExplainCreateTableAsSelect() throws Exception {
         assertMemoryLeak(() -> assertQuery("create table a as (select x, 1 from long_sequence(10))")
                 .noLeakCheck()
@@ -1635,6 +1663,17 @@ public class ExplainPlanTest extends AbstractCairoTest {
                               functions: [x,1]
                                 long_sequence count: 10
                         """));
+    }
+
+    @Test
+    public void testExplainCreateTableAsSelectAfterCompilerReuse() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, x long) timestamp(ts) partition by day wal");
+            assertExplainAfterCompilerReuse(
+                    "create table test as (select ts, x from tab) timestamp(ts) partition by day",
+                    "create table other as (select ts, x from tab) timestamp(ts) partition by day"
+            );
+        });
     }
 
     @Test
@@ -1745,6 +1784,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testExplainInsertAfterCompilerReuse() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test (x long)");
+            execute("create table other (x long)");
+            assertExplainAfterCompilerReuse("insert into test values (1)", "insert into other values (2)");
+        });
+    }
+
+    @Test
     public void testExplainInsertAsSelect() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table a ( l long, d double)");
@@ -1756,6 +1804,18 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                   functions: [x,1]
                                     long_sequence count: 10
                             """);
+        });
+    }
+
+    @Test
+    public void testExplainInsertAsSelectAfterCompilerReuse() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test (x long)");
+            execute("create table other (x long)");
+            assertExplainAfterCompilerReuse(
+                    "insert into test select x from long_sequence(10)",
+                    "insert into other select x from long_sequence(20)"
+            );
         });
     }
 
@@ -1897,6 +1957,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                                     Row forward scan
                                                     Frame forward scan on: b
                             """);
+        });
+    }
+
+    @Test
+    public void testExplainUpdateAfterCompilerReuse() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test (x long)");
+            execute("create table other (x long)");
+            assertExplainAfterCompilerReuse("update test set x = 1", "update other set x = 2");
         });
     }
 
@@ -3544,18 +3613,22 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQuery("select max(i) from (select * from a join a b on i )")
                 .ddl("create table a (i int, d double)")
                 .assertsPlan("""
-                        GroupBy vectorized: false
-                          values: [max(i)]
-                            SelectedRecord
-                                Hash Join Light
-                                  condition: b.i=a.i
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: a
-                                    Hash
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: a
+                        Async Hash Join Group By workers: 1
+                          logicalJoinType: inner
+                          physicalJoinType: inner
+                          inputSwapped: false
+                          condition: a.i=b.i
+                          buildStrategy: shared
+                          aggregation: scalar
+                          values: [max(a.i)]
+                            Probe
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: a
+                            Build
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: a
                         """);
     }
 
@@ -4117,15 +4190,14 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQuery("select ts, count(*) from di where y = 5 group by ts order by ts desc limit 10")
                 .ddl("create table di (x int, y long, ts timestamp) timestamp(ts)")
                 .assertsPlan("""
-                        Long Top K lo: 10
-                          keys: [ts desc]
-                            Async JIT Group By workers: 1
+                        Limit value: 10 skip-rows-max: 0 take-rows-max: 10
+                            Async JIT Stream Group By workers: 1
                               keys: [ts]
                               values: [count(*)]
                               filter: y=5
                                 PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: di
+                                    Row backward scan
+                                    Frame backward scan on: di
                         """);
     }
 
@@ -4215,9 +4287,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
             for (int i = 0; i < joinTypes.length; i++) {
                 String joinType = joinTypes[i];
                 String factoryType = joinFactoryTypes[i];
+                // A RIGHT join preserves b, so the predicate filters b before the join. LEFT and FULL
+                // NULL-extend b, so it stays a filter above the join.
                 assertQuery("select * from a " + joinType + " join b on i where b.i is not null")
                         .noLeakCheck()
-                        .assertsPlan("SelectedRecord\n" + "    Filter filter: b.i!=null\n" + "        " + factoryType + "\n" + "          condition: b.i=a.i\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: a\n" + "            Hash\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: b\n");
+                        .assertsPlan("RIGHT".equals(joinType)
+                                ? "SelectedRecord\n" + "    " + factoryType + "\n" + "      condition: b.i=a.i\n" + "        PageFrame\n" + "            Row forward scan\n" + "            Frame forward scan on: a\n" + "        Hash\n" + "            Async JIT Filter workers: 1\n" + "              filter: i!=null\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: b\n"
+                                : "SelectedRecord\n" + "    Filter filter: b.i!=null\n" + "        " + factoryType + "\n" + "          condition: b.i=a.i\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: a\n" + "            Hash\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: b\n");
             }
         });
     }
@@ -4703,28 +4779,28 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertQuery(sql)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Limit value: 10 skip-rows-max: 0 take-rows-max: 10
-                                Encode sort
-                                  keys: [bits desc]
-                                    VirtualRecord
-                                      functions: [timestamp,cluster,alias,timestamp-timestamp1,octets-octets1*8,packets-packets1]
-                                        SelectedRecord
-                                            Lt Join Light
-                                              condition: maps.cluster=_xQdbA3.cluster and maps.alias=_xQdbA3.alias
-                                                LatestByAllSymbolsFiltered
-                                                  jit: true
-                                                  filter: cluster in [cluster10]
-                                                    Row backward scan
-                                                      expectedSymbolsCount: 2147483647
-                                                    Interval backward scan on: maps
-                                                      intervals: [("2023-09-01T09:40:27.286000Z","2023-09-01T10:40:27.286000Z")]
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: maps
+                            Encode sort lo: 10
+                              keys: [bits desc]
+                                VirtualRecord
+                                  functions: [timestamp,cluster,alias,timestamp-timestamp1,octets-octets1*8,packets-packets1]
+                                    SelectedRecord
+                                        Lt Join Light
+                                          condition: maps.cluster=_xQdbA3.cluster and maps.alias=_xQdbA3.alias
+                                            LatestByAllSymbolsFiltered
+                                              jit: true
+                                              filter: cluster in [cluster10]
+                                                Row backward scan
+                                                  expectedSymbolsCount: 2147483647
+                                                Interval backward scan on: maps
+                                                  intervals: [("2023-09-01T09:40:27.286000Z","2023-09-01T10:40:27.286000Z")]
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: maps
                             """);
 
             assertQuery(sql)
                     .noLeakCheck()
+                    .expectSize()
                     .returns("""
                             timestamp\tcluster\talias\tinterval\tbits\tpackets
                             2023-09-01T09:42:00.000000Z\tcluster10\ta\t60000000\t8\t1
@@ -5050,6 +5126,177 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Row backward scan
                                 Frame backward scan on: a
                         """);
+    }
+
+    // Only scalar-expiry expansion opts into the direct-table hoist. Ordinary sub-queries keep
+    // their previous plans, including interval pruning, even when an indexed key could benefit.
+    @Test
+    public void testLatestOnTrivialSubqueryFilteredStaysLight() throws Exception {
+        assertQuery("select s, i, ts from (select * from a where ts >= 0::timestamp) latest on ts partition by s")
+                .ddl("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
+                        LatestBy light order_by_timestamp: true
+                            PageFrame
+                                Row forward scan
+                                Interval forward scan on: a
+                                  intervals: [("1970-01-01T00:00:00.000000Z","MAX")]
+                        """);
+    }
+
+    @Test
+    public void testLatestOnTrivialSubqueryUnfilteredStaysLight() throws Exception {
+        assertQuery("select * from (select * from a) latest on ts partition by s")
+                .ddl("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
+                        LatestBy light order_by_timestamp: true
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                        """);
+    }
+
+    // The scope boundary does not depend on key indexes.
+    @Test
+    public void testLatestOnTrivialSubqueryNonIndexedStaysLight() throws Exception {
+        assertQuery("select s, i, ts from (select * from a where ts >= 0::timestamp) latest on ts partition by s")
+                .ddl("create table a ( i int, s symbol, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
+                        LatestBy light order_by_timestamp: true
+                            PageFrame
+                                Row forward scan
+                                Interval forward scan on: a
+                                  intervals: [("1970-01-01T00:00:00.000000Z","MAX")]
+                        """);
+    }
+
+    // Negative: a renamed partition key is not an identity passthrough; keep LatestBy light.
+    @Test
+    public void testLatestOnRenamedKeySubqueryStaysLight() throws Exception {
+        assertQuery("select k, i, ts from (select i, s as k, ts from a) latest on ts partition by k")
+                .ddl("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
+                        LatestBy light order_by_timestamp: true
+                            SelectedRecord
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: a
+                        """);
+    }
+
+    // Negative: LATEST ON a non-designated timestamp must not be relocated to the base (whose fast
+    // path keys off the designated timestamp); keep LatestBy light.
+    @Test
+    public void testLatestOnNonDesignatedTimestampSubqueryStaysLight() throws Exception {
+        assertQuery("select s, i, ts, ts2 from (select * from a) latest on ts2 partition by s")
+                .ddl("create table a ( i int, s symbol index, ts timestamp, ts2 timestamp) timestamp(ts);")
+                .assertsPlan("""
+                        LatestBy light order_by_timestamp: false
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                        """);
+    }
+
+    // Negative: the sub-query specifies timestamp(ts2).
+    // LATEST ON names the designated timestamp column of the table.
+    // The rewrite must not occur. The rewrite removes the timestamp(ts2) clause.
+    // Then a SAMPLE BY clause or an ASOF JOIN clause above this query uses ts and not ts2.
+    @Test
+    public void testLatestOnRedesignatedTimestampBaseColumnSubqueryStaysLight() throws Exception {
+        assertQuery("select a, s, ts, ts2 from (select * from a2 timestamp(ts2)) latest on ts partition by s")
+                .ddl("create table a2 ( a int, s symbol index, ts timestamp, ts2 timestamp) timestamp(ts);")
+                .assertsPlan("""
+                        LatestBy light order_by_timestamp: false
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a2
+                        """);
+    }
+
+    // Negative: a sub-query that REDESIGNATES the timestamp (timestamp(ts2)) must not be hoisted onto
+    // the base's designated timestamp - doing so turns a valid query into a compile error. Stays light.
+    @Test
+    public void testLatestOnRedesignatedTimestampSubqueryStaysLight() throws Exception {
+        assertQuery("select a, s, ts, ts2 from (select * from a2 timestamp(ts2)) latest on ts2 partition by s")
+                .ddl("create table a2 ( a int, s symbol index, ts timestamp, ts2 timestamp) timestamp(ts);")
+                .assertsPlan("""
+                        LatestBy light order_by_timestamp: true
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a2
+                        """);
+    }
+
+    // Negative: when the LATEST ON model itself carries a JOIN, latest-by applies to the join output;
+    // the hoist must not fire (it would apply latest-by to the table before the join, changing results
+    // whenever the join multiplies rows per key).
+    @Test
+    public void testLatestOnSubqueryWithJoinStaysUnhoisted() throws Exception {
+        assertQuery("select * from (select * from a) join b on s2 = s latest on ts partition by s")
+                .ddl(
+                        "create table a ( i int, s symbol index, ts timestamp) timestamp(ts);",
+                        "create table b ( s2 symbol, v double );"
+                )
+                .assertsPlan("""
+                        SelectedRecord
+                            LatestBy
+                                Hash Join Light
+                                  condition: s2=s
+                                  symbolKeyJoin: true
+                                    LatestBy light order_by_timestamp: true
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: a
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: b
+                        """);
+    }
+
+    // An alias-qualified column in the sub-query WHERE (x.i) must not trigger the direct-table rewrite:
+    // it would drop the sub-query that defines `x`, leaving the prefix unresolvable and failing to
+    // compile. The query stays on the LatestBy light plan instead.
+    @Test
+    public void testLatestOnAliasQualifiedFilterSubqueryStaysLight() throws Exception {
+        assertQuery("select * from (select * from a x where x.i > 0) latest on ts partition by s")
+                .ddl("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);")
+                .assertsPlanContaining("LatestBy light");
+    }
+
+    // The same case without an explicit alias - the column is qualified by the table's own name (a.i).
+    // It must also stay on the LatestBy light plan rather than fail to compile.
+    @Test
+    public void testLatestOnTableQualifiedFilterSubqueryStaysLight() throws Exception {
+        assertQuery("select * from (select * from a where a.i > 0) latest on ts partition by s")
+                .ddl("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);")
+                .assertsPlanContaining("LatestBy light");
+    }
+
+    // Negative: a LIMIT in the sub-query bounds the rows LATEST ON sees. Hoisting the table read up would
+    // drop the LIMIT and compute latest-by over the whole table (wrong results), so the rewrite must not fire.
+    @Test
+    public void testLatestOnLimitSubqueryStaysLight() throws Exception {
+        assertQuery("select * from (select * from a limit 1) latest on ts partition by s")
+                .ddl("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);")
+                .assertsPlanContaining("LatestBy light");
+    }
+
+    // Negative: an ORDER BY layer between LATEST ON and the table read must not be hoisted away.
+    @Test
+    public void testLatestOnOrderBySubqueryStaysLight() throws Exception {
+        assertQuery("select * from (select * from a order by ts desc) latest on ts partition by s")
+                .ddl("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);")
+                .assertsPlanContaining("LatestBy light");
+    }
+
+    // Negative: a UNION sub-query is not a plain table read; the rewrite must not fire. A wrongful hoist to
+    // the indexed fast path would drop the UNION, so its survival in the plan proves the rewrite stayed off.
+    @Test
+    public void testLatestOnUnionSubqueryStaysUnhoisted() throws Exception {
+        assertQuery("select * from (select * from a union all select * from a) latest on ts partition by s")
+                .ddl("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);")
+                .assertsPlanContaining("Union All");
     }
 
     @Test
@@ -5734,14 +5981,58 @@ public class ExplainPlanTest extends AbstractCairoTest {
             for (int i = 0; i < joinTypes.length; i++) {
                 String joinType = joinTypes[i];
                 String factoryType = joinFactoryTypes[i];
+                // The scalar count over a LEFT or RIGHT equi-join takes the fused hash join
+                // GROUP BY, which carries the predicate as an attribute of its own instead of a
+                // Filter node above the join. FULL OUTER and the temporal joins keep both. A RIGHT
+                // join pushes a T2 predicate into T2, its preserved side, which reduces the rows
+                // that its ordinary plan hashes, so it keeps the ordinary plan for one.
+                boolean isFused = i < 2;
+                boolean isSwapped = "RIGHT".equals(joinType);
+                boolean isT2Fused = isFused && !isSwapped;
 
                 assertQuery("SELECT count(1) " + "FROM tab as T1 " + joinType + " JOIN tab as T2 " + (i < 3 ? " ON T1.created=T2.created " : "") + "WHERE not T2.value<>T2.value")
                         .noLeakCheck()
-                        .assertsPlan("Count\n" + "    Filter filter: T2.value=T2.value\n" + "        " + factoryType + "\n" + (i < 3 ? "          condition: T2.created=T1.created\n" : "") + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n" + (i < 3 ? "            Hash\n" : "") + (i < 3 ? "    " : "") + "            PageFrame\n" + (i < 3 ? "    " : "") + "                Row forward scan\n" + (i < 3 ? "    " : "") + "                Frame forward scan on: tab\n");
+                        // The filter compiler folds value=value away in T2's scan: fixed-width NULLs
+                        // compare equal, so the predicate holds for every row. The RIGHT join
+                        // still keeps the ordinary plan, since the analysis sees the predicate
+                        // before the compile folds it.
+                        .assertsPlan(isT2Fused
+                                ? fusedCountPlan(false, "postJoinFilter: T2.value=T2.value", false)
+                                : isSwapped
+                                  ? """
+                                Count
+                                    Hash Right Outer Join Light
+                                      condition: T2.created=T1.created
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: tab
+                                """
+                                  : "Count\n" + "    Filter filter: T2.value=T2.value\n" + "        " + factoryType + "\n" + (i < 3 ? "          condition: T2.created=T1.created\n" : "") + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n" + (i < 3 ? "            Hash\n" : "") + (i < 3 ? "    " : "") + "            PageFrame\n" + (i < 3 ? "    " : "") + "                Row forward scan\n" + (i < 3 ? "    " : "") + "                Frame forward scan on: tab\n");
 
                 assertQuery("SELECT count(1) " + "FROM tab as T1 " + joinType + " JOIN tab as T2 " + (i < 3 ? " ON T1.created=T2.created " : "") + "WHERE not T2.value=1")
                         .noLeakCheck()
-                        .assertsPlan("Count\n" + "    Filter filter: T2.value!=1\n" + "        " + factoryType + "\n" + (i < 3 ? "          condition: T2.created=T1.created\n" : "") + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n" + (i < 3 ? "            Hash\n" : "") + (i < 3 ? "    " : "") + "            PageFrame\n" + (i < 3 ? "    " : "") + "                Row forward scan\n" + (i < 3 ? "    " : "") + "                Frame forward scan on: tab\n");
+                        .assertsPlan(isT2Fused
+                                ? fusedCountPlan(false, "postJoinFilter: T2.value!=1", false)
+                                : isSwapped
+                                  ? """
+                                Count
+                                    Hash Right Outer Join Light
+                                      condition: T2.created=T1.created
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                        Hash
+                                            Async JIT Filter workers: 1
+                                              filter: value!=1
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: tab
+                                """
+                                  : "Count\n" + "    Filter filter: T2.value!=1\n" + "        " + factoryType + "\n" + (i < 3 ? "          condition: T2.created=T1.created\n" : "") + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n" + (i < 3 ? "            Hash\n" : "") + (i < 3 ? "    " : "") + "            PageFrame\n" + (i < 3 ? "    " : "") + "                Row forward scan\n" + (i < 3 ? "    " : "") + "                Frame forward scan on: tab\n");
 
                 // Push the predicate down to the 'left' table for joins that keep every left
                 // row (LEFT OUTER, LT, ASOF). RIGHT and FULL OUTER NULL-extend the left table,
@@ -5749,9 +6040,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 boolean isLeftNulled = "RIGHT".equals(joinType) || "FULL".equals(joinType);
                 assertQuery("SELECT count(1) " + "FROM tab as T1 " + joinType + " JOIN tab as T2 " + (i < 3 ? " ON T1.created=T2.created " : "") + "WHERE not T1.value=1")
                         .noLeakCheck()
-                        .assertsPlan(isLeftNulled
-                                ? "Count\n" + "    Filter filter: T1.value!=1\n" + "        " + factoryType + "\n" + "          condition: T2.created=T1.created\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n" + "            Hash\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n"
-                                : "Count\n" + "    " + factoryType + "\n" + (i < 3 ? "      condition: T2.created=T1.created\n" : "") + "        Async JIT Filter workers: 1\n" + "          filter: value!=1\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n" + (i < 3 ? "        Hash\n" : "") + (i < 3 ? "    " : "") + "        PageFrame\n" + (i < 3 ? "    " : "") + "            Row forward scan\n" + (i < 3 ? "    " : "") + "            Frame forward scan on: tab\n");
+                        .assertsPlan(isFused
+                                ? fusedCountPlan(isSwapped, isSwapped ? "postJoinFilter: T1.value!=1" : "probeFilter: value!=1", !isSwapped)
+                                : isLeftNulled
+                                  ? "Count\n" + "    Filter filter: T1.value!=1\n" + "        " + factoryType + "\n" + "          condition: T2.created=T1.created\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n" + "            Hash\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n"
+                                  : "Count\n" + "    " + factoryType + "\n" + (i < 3 ? "      condition: T2.created=T1.created\n" : "") + "        Async JIT Filter workers: 1\n" + "          filter: value!=1\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n" + (i < 3 ? "        Hash\n" : "") + (i < 3 ? "    " : "") + "        PageFrame\n" + (i < 3 ? "    " : "") + "            Row forward scan\n" + (i < 3 ? "    " : "") + "            Frame forward scan on: tab\n");
             }
 
             // two joins
@@ -5760,6 +6053,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 String factoryType = joinFactoryTypes[i];
                 // RIGHT and FULL OUTER NULL-extend T1, so a T1 predicate stays a post-join filter.
                 boolean isLeftNulled = "RIGHT".equals(joinType) || "FULL".equals(joinType);
+                // The three-input queries below keep the ordinary plan; the two parent-model
+                // ones are two-input joins that the fused hash join GROUP BY takes, except for the
+                // RIGHT join's predicate on T2, its preserved side.
+                boolean isFused = i < 2;
+                boolean isSwapped = "RIGHT".equals(joinType);
+                boolean isT2Fused = isFused && !isSwapped;
 
                 assertQuery("SELECT count(1) " + "FROM tab as T1 " + joinType + " JOIN tab as T2 ON T1.created=T2.created " + "JOIN tab as T3 ON T2.created=T3.created " + "WHERE T1.value=1")
                         .noLeakCheck()
@@ -5767,9 +6066,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 ? "Count\n" + "    Hash Join Light\n" + "      condition: T3.created=T2.created\n" + "        Filter filter: T1.value=1\n" + "            " + factoryType + "\n" + "              condition: T2.created=T1.created\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n" + "                Hash\n" + "                    PageFrame\n" + "                        Row forward scan\n" + "                        Frame forward scan on: tab\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n"
                                 : "Count\n" + "    Hash Join Light\n" + "      condition: T3.created=T2.created\n" + "        " + factoryType + "\n" + "          condition: T2.created=T1.created\n" + "            Async JIT Filter workers: 1\n" + "              filter: value=1\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n" + "            Hash\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n");
 
+                // A RIGHT join preserves T2, so the predicate narrows T2's scan to an interval.
                 assertQuery("SELECT count(1) " + "FROM tab as T1 " + joinType + " JOIN tab as T2 ON T1.created=T2.created " + "JOIN tab as T3 ON T2.created=T3.created " + "WHERE T2.created=1")
                         .noLeakCheck()
-                        .assertsPlan("Count\n" + "    Hash Join Light\n" + "      condition: T3.created=T2.created\n" + "        Filter filter: 1=T2.created\n" + "            " + factoryType + "\n" + "              condition: T2.created=T1.created\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n" + "                Hash\n" + "                    PageFrame\n" + "                        Row forward scan\n" + "                        Frame forward scan on: tab\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n");
+                        .assertsPlan(isSwapped
+                                ? "Count\n" + "    Hash Join Light\n" + "      condition: T3.created=T2.created\n" + "        " + factoryType + "\n" + "          condition: T2.created=T1.created\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n" + "            Hash\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Interval forward scan on: tab\n" + "                      intervals: [(\"1970-01-01T00:00:00.000001Z\",\"1970-01-01T00:00:00.000001Z\")]\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n"
+                                : "Count\n" + "    Hash Join Light\n" + "      condition: T3.created=T2.created\n" + "        Filter filter: 1=T2.created\n" + "            " + factoryType + "\n" + "              condition: T2.created=T1.created\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n" + "                Hash\n" + "                    PageFrame\n" + "                        Row forward scan\n" + "                        Frame forward scan on: tab\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n");
 
                 assertQuery("SELECT count(1) " + "FROM tab as T1 " + joinType + " JOIN tab as T2 ON T1.created=T2.created " + "JOIN tab as T3 ON T2.created=T3.created " + "WHERE T3.value=1")
                         .noLeakCheck()
@@ -5778,16 +6080,34 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 // where clause in parent model
                 assertQuery("SELECT count(1) " + "FROM ( " + "SELECT * " + "FROM tab as T1 " + joinType + " JOIN tab as T2 ON T1.created=T2.created ) e " + "WHERE not value1<>value1")
                         .noLeakCheck()
-                        .assertsPlan("Count\n" + "    SelectedRecord\n" + "        Filter filter: T2.value=T2.value\n" + "            " + factoryType + "\n" + "              condition: T2.created=T1.created\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n" + "                Hash\n" + "                    PageFrame\n" + "                        Row forward scan\n" + "                        Frame forward scan on: tab\n");
+                        .assertsPlan(isT2Fused
+                                ? fusedCountPlan(false, "postJoinFilter: T2.value=T2.value", false)
+                                : isSwapped
+                                  ? """
+                                Count
+                                    SelectedRecord
+                                        Hash Right Outer Join Light
+                                          condition: T2.created=T1.created
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: tab
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: tab
+                                """
+                                  : "Count\n" + "    SelectedRecord\n" + "        Filter filter: T2.value=T2.value\n" + "            " + factoryType + "\n" + "              condition: T2.created=T1.created\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n" + "                Hash\n" + "                    PageFrame\n" + "                        Row forward scan\n" + "                        Frame forward scan on: tab\n");
 
                 // value is T1 (the master): RIGHT/FULL OUTER NULL-extend it, so the tautological
                 // not value<>value (T1.value=T1.value) stays a post-join filter instead of pushing
                 // into the master sub-query. The count is unchanged; only the plan moves.
                 assertQuery("SELECT count(1) " + "FROM ( " + "SELECT * " + "FROM tab as T1 " + joinType + " JOIN tab as T2 ON T1.created=T2.created ) e " + "WHERE not value<>value")
                         .noLeakCheck()
-                        .assertsPlan(isLeftNulled
-                                ? "Count\n" + "    SelectedRecord\n" + "        Filter filter: T1.value=T1.value\n" + "            " + factoryType + "\n" + "              condition: T2.created=T1.created\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n" + "                Hash\n" + "                    PageFrame\n" + "                        Row forward scan\n" + "                        Frame forward scan on: tab\n"
-                                : "Count\n" + "    SelectedRecord\n" + "        " + factoryType + "\n" + "          condition: T2.created=T1.created\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n" + "            Hash\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n");
+                        .assertsPlan(isFused
+                                ? fusedCountPlan(isSwapped, isSwapped ? "postJoinFilter: T1.value=T1.value" : null, false)
+                                : isLeftNulled
+                                  ? "Count\n" + "    SelectedRecord\n" + "        Filter filter: T1.value=T1.value\n" + "            " + factoryType + "\n" + "              condition: T2.created=T1.created\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n" + "                Hash\n" + "                    PageFrame\n" + "                        Row forward scan\n" + "                        Frame forward scan on: tab\n"
+                                  : "Count\n" + "    SelectedRecord\n" + "        " + factoryType + "\n" + "          condition: T2.created=T1.created\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n" + "            Hash\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n");
             }
         });
     }
@@ -6757,6 +7077,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         .noRandomAccess()
                         .returns("k\tcid\tbid\nnull\tnull\t5\n");
 
+                // the non-equi outer join runs at its SQL position, so the inner joins drop the b row
+                // it NULL-extends: c.k = NULL matches no f row. Master ran the inner joins first and
+                // returned that row as (null,100,null,null), which the NULL bind value kept.
                 assertQuery("""
                         SELECT *
                         FROM (
@@ -7262,18 +7585,23 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .assertsPlan("""
                             VirtualRecord
                               functions: [sum,sum1,sum+COUNT*10,sum1+COUNT1*10]
-                                GroupBy vectorized: false
-                                  values: [sum(x),sum(x1),count(x),count(x1)]
-                                    SelectedRecord
-                                        Hash Join Light
-                                          condition: tabb.id=taba.id
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: taba
-                                            Hash
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: tabb
+                                Async Hash Join Group By workers: 1
+                                  logicalJoinType: inner
+                                  physicalJoinType: inner
+                                  inputSwapped: false
+                                  condition: taba.id=tabb.id
+                                  buildStrategy: shared
+                                  buildPayload: copied when the probe is large enough
+                                  aggregation: scalar
+                                  values: [sum(taba.x),sum(tabb.x),count(taba.x),count(tabb.x)]
+                                    Probe
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: taba
+                                    Build
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tabb
                             """);
 
             assertQuery("SELECT sum(tabb.x),sum(taba.x),sum(10+taba.x), sum(10+tabb.x) " + "FROM taba " + "join tabb on (id)")
@@ -7281,18 +7609,23 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .assertsPlan("""
                             VirtualRecord
                               functions: [sum,sum1,COUNT*10+sum1,COUNT1*10+sum]
-                                GroupBy vectorized: false
-                                  values: [sum(x),sum(x1),count(x1),count(x)]
-                                    SelectedRecord
-                                        Hash Join Light
-                                          condition: tabb.id=taba.id
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: taba
-                                            Hash
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: tabb
+                                Async Hash Join Group By workers: 1
+                                  logicalJoinType: inner
+                                  physicalJoinType: inner
+                                  inputSwapped: false
+                                  condition: taba.id=tabb.id
+                                  buildStrategy: shared
+                                  buildPayload: copied when the probe is large enough
+                                  aggregation: scalar
+                                  values: [sum(tabb.x),sum(taba.x),count(taba.x),count(tabb.x)]
+                                    Probe
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: taba
+                                    Build
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tabb
                             """);
         });
     }
@@ -7580,18 +7913,23 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .assertsPlan("""
                             VirtualRecord
                               functions: [sum,sum1,sum*10,sum1*10]
-                                GroupBy vectorized: false
-                                  values: [sum(x),sum(x1)]
-                                    SelectedRecord
-                                        Hash Join Light
-                                          condition: tabb.id=taba.id
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: taba
-                                            Hash
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: tabb
+                                Async Hash Join Group By workers: 1
+                                  logicalJoinType: inner
+                                  physicalJoinType: inner
+                                  inputSwapped: false
+                                  condition: taba.id=tabb.id
+                                  buildStrategy: shared
+                                  buildPayload: copied when the probe is large enough
+                                  aggregation: scalar
+                                  values: [sum(taba.x),sum(tabb.x)]
+                                    Probe
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: taba
+                                    Build
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tabb
                             """);
 
             assertQuery("SELECT sum(taba.x),sum(tabb.x),sum(10*taba.x), sum(10*tabb.x) " + "FROM taba " + "join tabb on (id)")
@@ -7599,18 +7937,23 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .assertsPlan("""
                             VirtualRecord
                               functions: [sum,sum1,10*sum,10*sum1]
-                                GroupBy vectorized: false
-                                  values: [sum(x),sum(x1)]
-                                    SelectedRecord
-                                        Hash Join Light
-                                          condition: tabb.id=taba.id
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: taba
-                                            Hash
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: tabb
+                                Async Hash Join Group By workers: 1
+                                  logicalJoinType: inner
+                                  physicalJoinType: inner
+                                  inputSwapped: false
+                                  condition: taba.id=tabb.id
+                                  buildStrategy: shared
+                                  buildPayload: copied when the probe is large enough
+                                  aggregation: scalar
+                                  values: [sum(taba.x),sum(tabb.x)]
+                                    Probe
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: taba
+                                    Build
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tabb
                             """);
         });
     }
@@ -7762,18 +8105,23 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .assertsPlan("""
                             VirtualRecord
                               functions: [sum,sum1,sum-COUNT*10,sum1-COUNT1*10]
-                                GroupBy vectorized: false
-                                  values: [sum(x),sum(x1),count(x),count(x1)]
-                                    SelectedRecord
-                                        Hash Join Light
-                                          condition: tabb.id=taba.id
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: taba
-                                            Hash
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: tabb
+                                Async Hash Join Group By workers: 1
+                                  logicalJoinType: inner
+                                  physicalJoinType: inner
+                                  inputSwapped: false
+                                  condition: taba.id=tabb.id
+                                  buildStrategy: shared
+                                  buildPayload: copied when the probe is large enough
+                                  aggregation: scalar
+                                  values: [sum(taba.x),sum(tabb.x),count(taba.x),count(tabb.x)]
+                                    Probe
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: taba
+                                    Build
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tabb
                             """);
 
             assertQuery("SELECT sum(taba.x),sum(tabb.x),sum(10-taba.x), sum(10-tabb.x) " + "FROM taba " + "join tabb on (id)")
@@ -7781,18 +8129,23 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .assertsPlan("""
                             VirtualRecord
                               functions: [sum,sum1,COUNT*10-sum,COUNT1*10-sum1]
-                                GroupBy vectorized: false
-                                  values: [sum(x),sum(x1),count(x),count(x1)]
-                                    SelectedRecord
-                                        Hash Join Light
-                                          condition: tabb.id=taba.id
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: taba
-                                            Hash
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: tabb
+                                Async Hash Join Group By workers: 1
+                                  logicalJoinType: inner
+                                  physicalJoinType: inner
+                                  inputSwapped: false
+                                  condition: taba.id=tabb.id
+                                  buildStrategy: shared
+                                  buildPayload: copied when the probe is large enough
+                                  aggregation: scalar
+                                  values: [sum(taba.x),sum(tabb.x),count(taba.x),count(tabb.x)]
+                                    Probe
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: taba
+                                    Build
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tabb
                             """);
         });
     }
@@ -7835,18 +8188,23 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .assertsPlan("""
                             VirtualRecord
                               functions: [sum,count,SUM1,SUM1+count1,sum+count*1,SUM1*2,sum,count1]
-                                GroupBy vectorized: false
-                                  values: [sum(resolutIONWidth),count(resolutIONWidth),sum(ResolutionWidth1),count(*)]
-                                    SelectedRecord
-                                        Hash Join Light
-                                          condition: h2.id=h1.id
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: hits1
-                                            Hash
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: hits2
+                                Async Hash Join Group By workers: 1
+                                  logicalJoinType: inner
+                                  physicalJoinType: inner
+                                  inputSwapped: false
+                                  condition: h1.id=h2.id
+                                  buildStrategy: shared
+                                  buildPayload: copied when the probe is large enough
+                                  aggregation: scalar
+                                  values: [sum(h1.ResolutionWidth),count(h1.ResolutionWidth),sum(h2.ResolutionWidth),count(*)]
+                                    Probe
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: hits1
+                                    Build
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: hits2
                             """);
         });
     }
@@ -8083,16 +8441,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                Encode sort light
+                                Async Stream Group By workers: 1
                                   keys: [ts]
-                                    Async Group By workers: 1
-                                      keys: [ts]
-                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
-                                      values: [first(i)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: a
+                                  keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                  values: [first(i)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: a
                             """);
         });
     }
@@ -8119,13 +8474,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                Encode sort light
+                                Encode sort
                                   keys: [a]
-                                    Async Group By workers: 1
+                                    Async Stream Group By workers: 1
+                                      segmentKey: timestamp_floor_utc('2m',ts)
                                       keys: [a,ts]
                                       keyFunctions: [timestamp_floor_utc('2m',ts)]
                                       values: [sum(b)]
-                                      filter: null
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: x
@@ -8135,13 +8490,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                Encode sort light
+                                Encode sort
                                   keys: [a]
-                                    Async Group By workers: 1
+                                    Async Stream Group By workers: 1
+                                      segmentKey: timestamp_floor_utc('2m',ts,null,'00:00','Europe/Paris')
                                       keys: [a,ts]
                                       keyFunctions: [timestamp_floor_utc('2m',ts,null,'00:00','Europe/Paris')]
                                       values: [sum(b)]
-                                      filter: null
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: x
@@ -8151,13 +8506,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                Encode sort light
+                                Encode sort
                                   keys: [column]
-                                    Async Group By workers: 1
+                                    Async Stream Group By workers: 1
+                                      segmentKey: timestamp_floor_utc('2m',ts,null,'00:00','Europe/Paris')
                                       keys: [a,ts,column]
                                       keyFunctions: [timestamp_floor_utc('2m',ts,null,'00:00','Europe/Paris'),10*a]
                                       values: [sum(b)]
-                                      filter: null
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: x
@@ -8167,13 +8522,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                Encode sort light
+                                Encode sort
                                   keys: [a desc]
-                                    Async Group By workers: 1
+                                    Async Stream Group By workers: 1
+                                      segmentKey: timestamp_floor_utc('2m',ts,null,'00:00','Europe/Paris')
                                       keys: [a,ts]
                                       keyFunctions: [timestamp_floor_utc('2m',ts,null,'00:00','Europe/Paris')]
                                       values: [sum(b)]
-                                      filter: null
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: x
@@ -8183,13 +8538,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                Encode sort light
+                                Encode sort
                                   keys: [a10]
-                                    Async Group By workers: 1
+                                    Async Stream Group By workers: 1
+                                      segmentKey: timestamp_floor_utc('2m',ts,null,'00:00','Europe/Paris')
                                       keys: [a10,ts]
                                       keyFunctions: [10*a,timestamp_floor_utc('2m',ts,null,'00:00','Europe/Paris')]
                                       values: [sum(b)]
-                                      filter: null
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: x
@@ -8199,13 +8554,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                Encode sort light
+                                Encode sort
                                   keys: [column desc, a0]
-                                    Async Group By workers: 1
+                                    Async Stream Group By workers: 1
+                                      segmentKey: timestamp_floor_utc('2m',ts,null,'00:00','Europe/Paris')
                                       keys: [a0,ts,column]
                                       keyFunctions: [timestamp_floor_utc('2m',ts,null,'00:00','Europe/Paris'),10*a0]
                                       values: [sum(b)]
-                                      filter: null
                                         SelectedRecord
                                             PageFrame
                                                 Row forward scan
@@ -8216,13 +8571,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                Encode sort light
+                                Encode sort
                                   keys: [column desc, a0]
-                                    Async Group By workers: 1
+                                    Async Stream Group By workers: 1
+                                      segmentKey: timestamp_floor_utc('2m',ts,null,'00:00','Europe/Paris')
                                       keys: [a0,ts,column]
                                       keyFunctions: [timestamp_floor_utc('2m',ts,null,'00:00','Europe/Paris'),10*a0]
                                       values: [sum(b)]
-                                      filter: null
                                         SelectedRecord
                                             PageFrame
                                                 Row forward scan
@@ -8233,13 +8588,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                Encode sort light
+                                Encode sort
                                   keys: [column desc, a0, berlin_ts desc]
-                                    Async Group By workers: 1
+                                    Async Stream Group By workers: 1
+                                      segmentKey: timestamp_floor_utc('2m',ts,null,'00:00','Europe/Paris')
                                       keys: [ts,berlin_ts,a0,column]
                                       keyFunctions: [timestamp_floor_utc('2m',ts,null,'00:00','Europe/Paris'),to_utc(ts),10*a0]
                                       values: [sum(b)]
-                                      filter: null
                                         SelectedRecord
                                             PageFrame
                                                 Row forward scan
@@ -8256,34 +8611,30 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                Encode sort light
-                                  keys: [ts]
-                                    SelectedRecord
-                                        Async Group By workers: 1
-                                          keys: [b,k1,ts]
-                                          keyFunctions: [timestamp_floor_utc('3h',ts)]
-                                          values: [sum(a)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: x
+                                SelectedRecord
+                                    Async Stream Group By workers: 1
+                                      segmentKey: timestamp_floor_utc('3h',ts)
+                                      keys: [b,k1,ts]
+                                      keyFunctions: [timestamp_floor_utc('3h',ts)]
+                                      values: [sum(a)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: x
                             """);
 
             assertQuery("select b, sum(a), k, k k1 from x sample by 3h")
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                Encode sort light
-                                  keys: [ts]
-                                    SelectedRecord
-                                        Async Group By workers: 1
-                                          keys: [b,k,ts]
-                                          keyFunctions: [timestamp_floor_utc('3h',ts)]
-                                          values: [sum(a)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: x
+                                SelectedRecord
+                                    Async Stream Group By workers: 1
+                                      segmentKey: timestamp_floor_utc('3h',ts)
+                                      keys: [b,k,ts]
+                                      keyFunctions: [timestamp_floor_utc('3h',ts)]
+                                      values: [sum(a)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: x
                             """);
         });
     }
@@ -8308,10 +8659,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .assertsPlan("""
                             Sample By
                               fill: linear
-                              values: [first(i)]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
+                                Async Stream Group By workers: 1
+                                  keys: [__sample_by_bucket]
+                                  keyFunctions: [timestamp_floor('hour',ts)]
+                                  values: [first(i)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: a
                             """);
         });
     }
@@ -8338,16 +8692,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Sample By Fill
                                   stride: '1h'
                                   fill: null
-                                    Encode sort light
+                                    Async Stream Group By workers: 1
                                       keys: [ts]
-                                        Async Group By workers: 1
-                                          keys: [ts]
-                                          keyFunctions: [timestamp_floor_utc('1h',ts,'1970-01-01T10:00:00.000Z')]
-                                          values: [first(i)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: a
+                                      keyFunctions: [timestamp_floor_utc('1h',ts,'1970-01-01T10:00:00.000Z')]
+                                      values: [first(i)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: a
                             """);
 
             // with rewrite
@@ -8358,16 +8709,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Sample By Fill
                                   stride: '1h'
                                   fill: null
-                                    Encode sort light
+                                    Async Stream Group By workers: 1
                                       keys: [ts]
-                                        Async Group By workers: 1
-                                          keys: [ts]
-                                          keyFunctions: [timestamp_floor_utc('1h',ts)]
-                                          values: [first(i)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: a
+                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                      values: [first(i)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: a
                             """);
         });
     }
@@ -8395,16 +8743,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Sample By Fill
                                   stride: '1h'
                                   fill: prev
-                                    Encode sort light
-                                      keys: [ts]
-                                        Async Group By workers: 1
-                                          keys: [s,ts]
-                                          keyFunctions: [timestamp_floor_utc('1h',ts)]
-                                          values: [first(i)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: a
+                                  cached: true
+                                    Async Stream Group By workers: 1
+                                      segmentKey: timestamp_floor_utc('1h',ts)
+                                      keys: [s,ts]
+                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                      values: [first(i)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: a
                             """);
 
             // PREV(col_ref) cross-column: fill aggregate `a` with prev value of aggregate `s`.
@@ -8417,16 +8764,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Sample By Fill
                                   stride: '1h'
                                   fill: prev
-                                    Encode sort light
-                                      keys: [ts]
-                                        Async Group By workers: 1
-                                          keys: [k,ts]
-                                          keyFunctions: [timestamp_floor_utc('1h',ts)]
-                                          values: [first(i),first(j)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: b
+                                  cached: true
+                                    Async Stream Group By workers: 1
+                                      segmentKey: timestamp_floor_utc('1h',ts)
+                                      keys: [k,ts]
+                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                      values: [first(i),first(j)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: b
                             """);
 
             // Negative: PREV references an alias that does not exist in the select list.
@@ -8458,16 +8804,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Sample By Fill
                                   stride: '1h'
                                   fill: prev
-                                    Encode sort light
+                                    Async Stream Group By workers: 1
                                       keys: [ts]
-                                        Async Group By workers: 1
-                                          keys: [ts]
-                                          keyFunctions: [timestamp_floor_utc('1h',ts)]
-                                          values: [first(i)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: a
+                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                      values: [first(i)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: a
                             """);
 
             assertQuery("select first(a1.i) from a a1 asof join a a2 sample by 1h fill(prev) align to calendar")
@@ -8502,16 +8845,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Sample By Fill
                                   stride: '1h'
                                   fill: prev
-                                    Encode sort light
+                                    Async Stream Group By workers: 1
                                       keys: [ts]
-                                        Async Group By workers: 1
-                                          keys: [ts]
-                                          keyFunctions: [timestamp_floor_utc('1h',ts)]
-                                          values: [first(i),first(j)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: c
+                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                      values: [first(i),first(j)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: c
                             """);
 
             // Negative: PREV references an alias that does not exist in the select list.
@@ -8544,16 +8884,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Sample By Fill
                                   stride: '1h'
                                   fill: value
-                                    Encode sort light
-                                      keys: [ts]
-                                        Async Group By workers: 1
-                                          keys: [s,ts]
-                                          keyFunctions: [timestamp_floor_utc('1h',ts)]
-                                          values: [first(i)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: a
+                                  cached: true
+                                    Async Stream Group By workers: 1
+                                      segmentKey: timestamp_floor_utc('1h',ts)
+                                      keys: [s,ts]
+                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                      values: [first(i)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: a
                             """);
         });
     }
@@ -8580,16 +8919,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Sample By Fill
                                   stride: '1h'
                                   fill: value
-                                    Encode sort light
+                                    Async Stream Group By workers: 1
                                       keys: [ts]
-                                        Async Group By workers: 1
-                                          keys: [ts]
-                                          keyFunctions: [timestamp_floor_utc('1h',ts,'1970-01-01T10:00:00.000Z')]
-                                          values: [first(i)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: a
+                                      keyFunctions: [timestamp_floor_utc('1h',ts,'1970-01-01T10:00:00.000Z')]
+                                      values: [first(i)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: a
                             """);
 
             // with rewrite
@@ -8600,16 +8936,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Sample By Fill
                                   stride: '1h'
                                   fill: value
-                                    Encode sort light
+                                    Async Stream Group By workers: 1
                                       keys: [ts]
-                                        Async Group By workers: 1
-                                          keys: [ts]
-                                          keyFunctions: [timestamp_floor_utc('1h',ts)]
-                                          values: [first(i)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: a
+                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                      values: [first(i)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: a
                             """);
         });
     }
@@ -8634,16 +8967,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Sample By Fill
                                   stride: '1h'
                                   fill: value
-                                    Encode sort light
+                                    Async Stream Group By workers: 1
                                       keys: [ts]
-                                        Async Group By workers: 1
-                                          keys: [ts]
-                                          keyFunctions: [timestamp_floor_utc('1h',ts)]
-                                          values: [first(i),sum(j)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: a
+                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                      values: [first(i),sum(j)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: a
                             """);
 
             assertQuery("select ts, 'tag' as c, first(i) as a, sum(j) as b from a sample by 1h fill(prev) align to calendar")
@@ -8654,16 +8984,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Sample By Fill
                                   stride: '1h'
                                   fill: prev
-                                    Encode sort light
+                                    Async Stream Group By workers: 1
                                       keys: [ts]
-                                        Async Group By workers: 1
-                                          keys: [ts]
-                                          keyFunctions: [timestamp_floor_utc('1h',ts)]
-                                          values: [first(i),sum(j)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: a
+                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                      values: [first(i),sum(j)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: a
                             """);
         });
     }
@@ -8883,16 +9210,14 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                Encode sort light
-                                  keys: [ts]
-                                    Async Group By workers: 1
-                                      keys: [l,i,ts]
-                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
-                                      values: [first(i)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: a
+                                Async Stream Group By workers: 1
+                                  segmentKey: timestamp_floor_utc('1h',ts)
+                                  keys: [l,i,ts]
+                                  keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                  values: [first(i)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: a
                             """);
         });
     }
@@ -8916,16 +9241,14 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                Encode sort light
-                                  keys: [ts]
-                                    Async Group By workers: 1
-                                      keys: [l,i,ts]
-                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
-                                      values: [first(i)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: a
+                                Async Stream Group By workers: 1
+                                  segmentKey: timestamp_floor_utc('1h',ts)
+                                  keys: [l,i,ts]
+                                  keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                  values: [first(i)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: a
                             """);
         });
     }
@@ -8953,16 +9276,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Sample By Fill
                                   stride: '1h'
                                   fill: null
-                                    Encode sort light
-                                      keys: [ts]
-                                        Async Group By workers: 1
-                                          keys: [l,ts]
-                                          keyFunctions: [timestamp_floor_utc('1h',ts)]
-                                          values: [first(i)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: a
+                                  cached: true
+                                    Async Stream Group By workers: 1
+                                      segmentKey: timestamp_floor_utc('1h',ts)
+                                      keys: [l,ts]
+                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                      values: [first(i)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: a
                             """);
         });
     }
@@ -8989,10 +9311,14 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             Sample By
                               fill: linear
                               keys: [l]
-                              values: [first(i)]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
+                                Async Stream Group By workers: 1
+                                  segmentKey: timestamp_floor('day',ts)
+                                  keys: [l,__sample_by_bucket]
+                                  keyFunctions: [timestamp_floor('day',ts)]
+                                  values: [first(i)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: a
                             """);
         });
     }
@@ -9019,10 +9345,14 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             Sample By
                               fill: linear
                               keys: [l,m]
-                              values: [first(i)]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
+                                Async Stream Group By workers: 1
+                                  segmentKey: timestamp_floor('day',ts)
+                                  keys: [l,m,__sample_by_bucket]
+                                  keyFunctions: [timestamp_floor('day',ts)]
+                                  values: [first(i)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: a
                             """);
         });
     }
@@ -9050,16 +9380,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Sample By Fill
                                   stride: '1d'
                                   fill: value
-                                    Encode sort light
-                                      keys: [ts]
-                                        Async Group By workers: 1
-                                          keys: [l,ts]
-                                          keyFunctions: [timestamp_floor_utc('1d',ts)]
-                                          values: [first(i),last(i)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: a
+                                  cached: true
+                                    Async Stream Group By workers: 1
+                                      segmentKey: timestamp_floor_utc('1d',ts)
+                                      keys: [l,ts]
+                                      keyFunctions: [timestamp_floor_utc('1d',ts)]
+                                      values: [first(i),last(i)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: a
                             """);
         });
     }
@@ -9087,16 +9416,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Sample By Fill
                                   stride: '1d'
                                   fill: prev
-                                    Encode sort light
-                                      keys: [ts]
-                                        Async Group By workers: 1
-                                          keys: [l,ts]
-                                          keyFunctions: [timestamp_floor_utc('1d',ts)]
-                                          values: [first(i),last(i)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: a
+                                  cached: true
+                                    Async Stream Group By workers: 1
+                                      segmentKey: timestamp_floor_utc('1d',ts)
+                                      keys: [l,ts]
+                                      keyFunctions: [timestamp_floor_utc('1d',ts)]
+                                      values: [first(i),last(i)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: a
                             """);
         });
     }
@@ -9123,13 +9451,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                Encode sort light
+                                Encode sort
                                   keys: [a]
-                                    Async Group By workers: 1
+                                    Async Stream Group By workers: 1
+                                      segmentKey: timestamp_floor_utc('2m',ts)
                                       keys: [a,ts]
                                       keyFunctions: [timestamp_floor_utc('2m',ts)]
                                       values: [sum(b)]
-                                      filter: null
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: x
@@ -9139,13 +9467,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                Encode sort light
+                                Encode sort
                                   keys: [a]
-                                    Async Group By workers: 1
+                                    Async Stream Group By workers: 1
+                                      segmentKey: timestamp_floor_utc('2m',ts,null,'00:00','Europe/Paris')
                                       keys: [a,ts]
                                       keyFunctions: [timestamp_floor_utc('2m',ts,null,'00:00','Europe/Paris')]
                                       values: [sum(b)]
-                                      filter: null
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: x
@@ -9155,13 +9483,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                Encode sort light
+                                Encode sort
                                   keys: [column]
-                                    Async Group By workers: 1
+                                    Async Stream Group By workers: 1
+                                      segmentKey: timestamp_floor_utc('2m',ts,null,'00:00','Europe/Paris')
                                       keys: [a,ts,column]
                                       keyFunctions: [timestamp_floor_utc('2m',ts,null,'00:00','Europe/Paris'),10*a]
                                       values: [sum(b)]
-                                      filter: null
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: x
@@ -9171,13 +9499,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                Encode sort light
+                                Encode sort
                                   keys: [a desc]
-                                    Async Group By workers: 1
+                                    Async Stream Group By workers: 1
+                                      segmentKey: timestamp_floor_utc('2m',ts,null,'00:00','Europe/Paris')
                                       keys: [a,ts]
                                       keyFunctions: [timestamp_floor_utc('2m',ts,null,'00:00','Europe/Paris')]
                                       values: [sum(b)]
-                                      filter: null
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: x
@@ -9187,13 +9515,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                Encode sort light
+                                Encode sort
                                   keys: [a10]
-                                    Async Group By workers: 1
+                                    Async Stream Group By workers: 1
+                                      segmentKey: timestamp_floor_utc('2m',ts,null,'00:00','Europe/Paris')
                                       keys: [a10,ts]
                                       keyFunctions: [10*a,timestamp_floor_utc('2m',ts,null,'00:00','Europe/Paris')]
                                       values: [sum(b)]
-                                      filter: null
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: x
@@ -9203,13 +9531,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                Encode sort light
+                                Encode sort
                                   keys: [column desc, a0]
-                                    Async Group By workers: 1
+                                    Async Stream Group By workers: 1
+                                      segmentKey: timestamp_floor_utc('2m',ts,null,'00:00','Europe/Paris')
                                       keys: [a0,ts,column]
                                       keyFunctions: [timestamp_floor_utc('2m',ts,null,'00:00','Europe/Paris'),10*a0]
                                       values: [sum(b)]
-                                      filter: null
                                         SelectedRecord
                                             PageFrame
                                                 Row forward scan
@@ -9220,13 +9548,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                Encode sort light
+                                Encode sort
                                   keys: [column desc, a0]
-                                    Async Group By workers: 1
+                                    Async Stream Group By workers: 1
+                                      segmentKey: timestamp_floor_utc('2m',ts,null,'00:00','Europe/Paris')
                                       keys: [a0,ts,column]
                                       keyFunctions: [timestamp_floor_utc('2m',ts,null,'00:00','Europe/Paris'),10*a0]
                                       values: [sum(b)]
-                                      filter: null
                                         SelectedRecord
                                             PageFrame
                                                 Row forward scan
@@ -9237,15 +9565,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                Encode sort light
+                                Encode sort
                                   keys: [column desc, a0, berlin_ts desc]
                                     VirtualRecord
                                       functions: [ts,to_utc(ts),a0,sum,10*a0]
-                                        Async Group By workers: 1
+                                        Async Stream Group By workers: 1
+                                          segmentKey: timestamp_floor_utc('2m',ts,null,'00:00','Europe/Paris')
                                           keys: [ts,a0]
                                           keyFunctions: [timestamp_floor_utc('2m',ts,null,'00:00','Europe/Paris')]
                                           values: [sum(b)]
-                                          filter: null
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: x
@@ -9261,15 +9589,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertQuery("select a, sum(b), to_timezone(ts, 'Europe/Berlin') berlin_ts from x sample by 2m order by berlin_ts desc")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort light
+                            Encode sort
                               keys: [berlin_ts desc]
                                 VirtualRecord
                                   functions: [a,sum,to_timezone(ts)]
-                                    Async Group By workers: 1
+                                    Async Stream Group By workers: 1
+                                      segmentKey: timestamp_floor_utc('2m',ts)
                                       keys: [a,ts]
                                       keyFunctions: [timestamp_floor_utc('2m',ts)]
                                       values: [sum(b)]
-                                      filter: null
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: x
@@ -9278,15 +9606,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertQuery("select a, sum(b), to_timezone(ts, 'Europe/Berlin') berlin_ts from x sample by 2m order by 3 asc")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort light
+                            Encode sort
                               keys: [berlin_ts]
                                 VirtualRecord
                                   functions: [a,sum,to_timezone(ts)]
-                                    Async Group By workers: 1
+                                    Async Stream Group By workers: 1
+                                      segmentKey: timestamp_floor_utc('2m',ts)
                                       keys: [a,ts]
                                       keyFunctions: [timestamp_floor_utc('2m',ts)]
                                       values: [sum(b)]
-                                      filter: null
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: x
@@ -9295,15 +9623,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertQuery("select a, sum(b), to_timezone(ts, 'Europe/Berlin') berlin_ts from x sample by 2m order by to_timezone(ts, 'Europe/Berlin')")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort light
+                            Encode sort
                               keys: [berlin_ts]
                                 VirtualRecord
                                   functions: [a,sum,to_timezone(ts)]
-                                    Async Group By workers: 1
+                                    Async Stream Group By workers: 1
+                                      segmentKey: timestamp_floor_utc('2m',ts)
                                       keys: [a,ts]
                                       keyFunctions: [timestamp_floor_utc('2m',ts)]
                                       values: [sum(b)]
-                                      filter: null
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: x
@@ -9312,15 +9640,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertQuery("select a, timestamp_floor('M', ts) month_ts, sum(b), to_timezone(ts, 'Europe/Berlin') berlin_ts from x sample by 2m order by berlin_ts desc, a asc, month_ts asc")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort light
+                            Encode sort
                               keys: [berlin_ts desc, a, month_ts]
                                 VirtualRecord
                                   functions: [a,timestamp_floor('month',ts),sum,to_timezone(ts)]
-                                    Async Group By workers: 1
+                                    Async Stream Group By workers: 1
+                                      segmentKey: timestamp_floor_utc('2m',ts)
                                       keys: [a,ts]
                                       keyFunctions: [timestamp_floor_utc('2m',ts)]
                                       values: [sum(b)]
-                                      filter: null
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: x
@@ -9780,9 +10108,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQuery("select distinct l, ts from tab")
                 .ddl("create table tab ( l long, ts timestamp) timestamp(ts);")
                 .assertsPlan("""
-                        Async Group By workers: 1
+                        Async Stream Group By workers: 1
+                          segmentKey: ts
                           keys: [l,ts]
-                          filter: null
                             PageFrame
                                 Row forward scan
                                 Frame forward scan on: tab
@@ -10057,7 +10385,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSelectIndexedSymbols01a() throws Exception {
         assertMemoryLeak(() -> {
-            // if query is ordered by symbol and there's only one partition to scan, there's no need to sort
+            // ordering by the symbol column always needs a sort: the index cursor restarts its key walk
+            // on every page frame, so the scan cannot promise a globally ordered result
             testSelectIndexedSymbol("");
             testSelectIndexedSymbol("timestamp(ts)");
             testSelectIndexedSymbolWithIntervalFilter();
@@ -10123,8 +10452,19 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testSelectIndexedSymbols01c() throws Exception {
         assertQuery("select ts, s from a where s in ('S1', 'S2') and length(s) = 2 order by s desc limit 1")
                 .ddl("create table a ( s symbol index, ts timestamp) timestamp(ts) ;")
-                .assertsPlan("Limit value: 1 skip-rows-max: 0 take-rows-max: 1\n" + "    FilterOnValues symbolOrder: desc\n" + "        Cursor-order scan\n" + //actual order is S2, S1
-                        "            Index forward scan on: s deferred: true\n" + "              symbolFilter: s='S2'\n" + "              filter: length(s)=2\n" + "            Index forward scan on: s deferred: true\n" + "              symbolFilter: s='S1'\n" + "              filter: length(s)=2\n" + "        Frame forward scan on: a\n");
+                .assertsPlan("""
+                        Encode sort light lo: 1
+                          keys: [s desc]
+                            FilterOnValues symbolOrder: desc
+                                Cursor-order scan
+                                    Index forward scan on: s deferred: true
+                                      symbolFilter: s='S2'
+                                      filter: length(s)=2
+                                    Index forward scan on: s deferred: true
+                                      symbolFilter: s='S1'
+                                      filter: length(s)=2
+                                Frame forward scan on: a
+                        """); // actual cursor order is S2, S1
     }
 
     @Test // TODO: sql is same as in testSelectIndexedSymbols1 but doesn't use index !
@@ -10236,19 +10576,23 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testSelectIndexedSymbols07NonPartitioned() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table a ( s symbol index)");
+            // the scan drains one symbol key at a time per page frame, so the sort above it is what
+            // makes the result globally ordered
             String expectedPlan = """
-                    FilterOnExcludedValues symbolOrder: #ORDER#
-                      symbolFilter: s not in ['S1']
-                      filter: length(s)=2
-                        Cursor-order scan
-                        Frame forward scan on: a
+                    Encode sort light
+                      keys: [s#SORT#]
+                        FilterOnExcludedValues symbolOrder: #ORDER#
+                          symbolFilter: s not in ['S1']
+                          filter: length(s)=2
+                            Cursor-order scan
+                            Frame forward scan on: a
                     """;
             assertQuery("select * from a where s != 'S1' and length(s) = 2 order by s ")
                     .noLeakCheck()
-                    .assertsPlan(expectedPlan.replace("#ORDER#", "asc"));
+                    .assertsPlan(expectedPlan.replace("#SORT#", "").replace("#ORDER#", "asc"));
             assertQuery("select * from a where s != 'S1' and length(s) = 2 order by s desc")
                     .noLeakCheck()
-                    .assertsPlan(expectedPlan.replace("#ORDER#", "desc"));
+                    .assertsPlan(expectedPlan.replace("#SORT#", " desc").replace("#ORDER#", "desc"));
         });
     }
 
@@ -10258,22 +10602,26 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( s symbol index, ts timestamp) timestamp(ts) partition by day");
 
             String query = "select * from a where s != 'S1' and length(s) = 2 and ts in '2023-03-15' order by s #ORDER#";
+            // a single-day interval no longer buys the scan an ordering claim: one calendar day can hold
+            // several page frames, and the key walk restarts on each of them
             String expectedPlan = """
-                    FilterOnExcludedValues symbolOrder: #ORDER#
-                      symbolFilter: s not in ['S1']
-                      filter: length(s)=2
-                        Cursor-order scan
-                        Interval forward scan on: a
-                          intervals: [("2023-03-15T00:00:00.000000Z","2023-03-15T23:59:59.999999Z")]
+                    Encode sort light
+                      keys: [s#SORT#]
+                        FilterOnExcludedValues symbolOrder: #ORDER#
+                          symbolFilter: s not in ['S1']
+                          filter: length(s)=2
+                            Cursor-order scan
+                            Interval forward scan on: a
+                              intervals: [("2023-03-15T00:00:00.000000Z","2023-03-15T23:59:59.999999Z")]
                     """;
 
             assertQuery(query.replace("#ORDER#", "asc"))
                     .noLeakCheck()
-                    .assertsPlan(expectedPlan.replace("#ORDER#", "asc"));
+                    .assertsPlan(expectedPlan.replace("#SORT#", "").replace("#ORDER#", "asc"));
 
             assertQuery(query.replace("#ORDER#", "desc"))
                     .noLeakCheck()
-                    .assertsPlan(expectedPlan.replace("#ORDER#", "desc"));
+                    .assertsPlan(expectedPlan.replace("#SORT#", " desc").replace("#ORDER#", "desc"));
         });
     }
 
@@ -10287,16 +10635,18 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            FilterOnExcludedValues symbolOrder: asc
-                              symbolFilter: s not in ['a']
-                                Cursor-order scan
-                                    Index forward scan on: s
-                                      filter: s=0
-                                    Index forward scan on: s
-                                      filter: s=3
-                                    Index forward scan on: s
-                                      filter: s=2
-                                Frame forward scan on: a
+                            Encode sort light
+                              keys: [s]
+                                FilterOnExcludedValues symbolOrder: asc
+                                  symbolFilter: s not in ['a']
+                                    Cursor-order scan
+                                        Index forward scan on: s
+                                          filter: s=0
+                                        Index forward scan on: s
+                                          filter: s=3
+                                        Index forward scan on: s
+                                          filter: s=2
+                                    Frame forward scan on: a
                             """);
 
             assertQuery(query)
@@ -10308,16 +10658,18 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            FilterOnExcludedValues symbolOrder: desc
-                              symbolFilter: s not in ['a']
-                                Cursor-order scan
-                                    Index forward scan on: s
-                                      filter: s=2
-                                    Index forward scan on: s
-                                      filter: s=3
-                                    Index forward scan on: s
-                                      filter: s=0
-                                Frame forward scan on: a
+                            Encode sort light
+                              keys: [s desc]
+                                FilterOnExcludedValues symbolOrder: desc
+                                  symbolFilter: s not in ['a']
+                                    Cursor-order scan
+                                        Index forward scan on: s
+                                          filter: s=2
+                                        Index forward scan on: s
+                                          filter: s=3
+                                        Index forward scan on: s
+                                          filter: s=0
+                                    Frame forward scan on: a
                             """);
 
             assertQuery(query)
@@ -10333,16 +10685,18 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            FilterOnExcludedValues symbolOrder: desc
-                              symbolFilter: s not in [null]
-                                Cursor-order scan
-                                    Index forward scan on: s
-                                      filter: s=2
-                                    Index forward scan on: s
-                                      filter: s=3
-                                    Index forward scan on: s
-                                      filter: s=1
-                                Frame forward scan on: a
+                            Encode sort light
+                              keys: [s desc]
+                                FilterOnExcludedValues symbolOrder: desc
+                                  symbolFilter: s not in [null]
+                                    Cursor-order scan
+                                        Index forward scan on: s
+                                          filter: s=2
+                                        Index forward scan on: s
+                                          filter: s=3
+                                        Index forward scan on: s
+                                          filter: s=1
+                                    Frame forward scan on: a
                             """);
 
             assertQuery(query)
@@ -10362,11 +10716,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQuery("select * from a where ts >= 0::timestamp and ts < 100::timestamp order by s asc")
                 .ddl("create table a ( s symbol index, ts timestamp) timestamp(ts) partition by year ;")
                 .assertsPlan("""
-                        SortedSymbolIndex
-                            Index forward scan on: s
-                              symbolOrder: asc
-                            Interval forward scan on: a
-                              intervals: [("1970-01-01T00:00:00.000000Z","1970-01-01T00:00:00.000099Z")]
+                        Encode sort light
+                          keys: [s]
+                            PageFrame
+                                Row forward scan
+                                Interval forward scan on: a
+                                  intervals: [("1970-01-01T00:00:00.000000Z","1970-01-01T00:00:00.000099Z")]
                         """);
     }
 
@@ -10467,7 +10822,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
         });
     }
 
-    @Test // backward index scan is triggered only if query uses a single partition and orders by key column and ts desc
+    @Test
+    // ORDER BY key, ts DESC no longer triggers a backward index scan: the index cursor is re-opened per
+    // page frame while the frames still arrive ascending, so a backward walk would emit one descending run
+    // per frame. The scan stays forward and a sort makes the result globally descending.
     public void testSelectIndexedSymbols15() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table a ( s1 symbol index, ts timestamp) timestamp(ts) partition by year;");
@@ -10475,11 +10833,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertQuery("select * from a " + "where s1 = 'S1' " + "and ts > 0::timestamp and ts < 9::timestamp  " + "order by s1,ts desc")
                     .noLeakCheck()
                     .assertsPlan("""
-                            DeferredSingleSymbolFilterPageFrame
-                                Index backward scan on: s1 deferred: true
-                                  filter: s1='S1'
-                                Interval forward scan on: a
-                                  intervals: [("1970-01-01T00:00:00.000001Z","1970-01-01T00:00:00.000008Z")]
+                            Encode sort light
+                              keys: [s1, ts desc]
+                                DeferredSingleSymbolFilterPageFrame
+                                    Index forward scan on: s1 deferred: true
+                                      filter: s1='S1'
+                                    Interval forward scan on: a
+                                      intervals: [("1970-01-01T00:00:00.000001Z","1970-01-01T00:00:00.000008Z")]
                             """);
         });
     }
@@ -10492,14 +10852,16 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertQuery("select * from a " + "where s1 in ('S1', 'S2') " + "and ts > 0::timestamp and ts < 9::timestamp  " + "order by s1,ts desc")
                     .noLeakCheck()
                     .assertsPlan("""
-                            FilterOnValues symbolOrder: asc
-                                Cursor-order scan
-                                    Index backward scan on: s1 deferred: true
-                                      filter: s1='S1'
-                                    Index backward scan on: s1 deferred: true
-                                      filter: s1='S2'
-                                Interval forward scan on: a
-                                  intervals: [("1970-01-01T00:00:00.000001Z","1970-01-01T00:00:00.000008Z")]
+                            Encode sort light
+                              keys: [s1, ts desc]
+                                FilterOnValues symbolOrder: desc
+                                    Cursor-order scan
+                                        Index forward scan on: s1 deferred: true
+                                          filter: s1='S2'
+                                        Index forward scan on: s1 deferred: true
+                                          filter: s1='S1'
+                                    Interval forward scan on: a
+                                      intervals: [("1970-01-01T00:00:00.000001Z","1970-01-01T00:00:00.000008Z")]
                             """);
         });
     }
@@ -10563,11 +10925,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQuery("select s from a where s != 'S1' and length(s) = 2 order by s ")
                 .ddl("create table a ( ts timestamp, s symbol index) timestamp(ts);")
                 .assertsPlan("""
-                        FilterOnExcludedValues symbolOrder: asc
-                          symbolFilter: s not in ['S1']
-                          filter: length(s)=2
-                            Cursor-order scan
-                            Frame forward scan on: a
+                        Encode sort light
+                          keys: [s]
+                            FilterOnExcludedValues symbolOrder: asc
+                              symbolFilter: s not in ['S1']
+                              filter: length(s)=2
+                                Cursor-order scan
+                                Frame forward scan on: a
                         """);
     }
 
@@ -12148,7 +12512,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 .ddl("create table a ( i int, l long, ts timestamp) timestamp(ts) ;")
                 .assertsPlan("""
                         Filter filter: 1<mil+mini
-                            Async Group By workers: 1
+                            Async Stream Group By workers: 1
                               keys: [k]
                               values: [max(i*l),min(l),min(i)]
                               filter: l::short<i
@@ -12292,17 +12656,16 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .assertsPlan("""
                             SelectedRecord
                                 Lt Join Fast
-                                    Limit value: 10 skip-rows: 0 take-rows: 0
-                                        Encode sort
-                                          keys: [ts, l]
-                                            SelectedRecord
-                                                Cross Join
-                                                    PageFrame
-                                                        Row forward scan
-                                                        Frame forward scan on: a
-                                                    PageFrame
-                                                        Row forward scan
-                                                        Frame forward scan on: a
+                                    Encode sort lo: 10 partiallySorted: true
+                                      keys: [ts, l]
+                                        SelectedRecord
+                                            Cross Join
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: a
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: a
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: a
@@ -13486,10 +13849,61 @@ public class ExplainPlanTest extends AbstractCairoTest {
         return factory instanceof EqLong256StrFunctionFactory;
     }
 
+    /**
+     * The plan of a scalar {@code count()} over an equi-join of two {@code tab} scans that the
+     * fused hash join GROUP BY takes. {@code filterAttr} is the operator's own predicate
+     * attribute, or null when the query has none. Only a post-join filter reads a build column,
+     * which makes the build carry a payload that the operator may copy.
+     */
+    private static String fusedCountPlan(boolean isSwapped, String filterAttr, boolean isJitFilter) {
+        return (isJitFilter ? "Async JIT Hash Join Group By workers: 1\n" : "Async Hash Join Group By workers: 1\n")
+                + "  logicalJoinType: " + (isSwapped ? "right outer" : "left outer") + "\n"
+                + "  physicalJoinType: left outer\n"
+                + "  inputSwapped: " + isSwapped + "\n"
+                + "  condition: " + (isSwapped ? "T2.created=T1.created" : "T1.created=T2.created") + "\n"
+                + "  buildStrategy: shared\n"
+                + (filterAttr != null && filterAttr.startsWith("postJoinFilter") ? "  buildPayload: copied when the probe is large enough\n" : "")
+                + "  aggregation: scalar\n"
+                + "  values: [count(*)]\n"
+                + (filterAttr == null ? "" : "  " + filterAttr + "\n")
+                + "    Probe\n"
+                + "        PageFrame\n"
+                + "            Row forward scan\n"
+                + "            Frame forward scan on: tab\n"
+                + "    Build\n"
+                + "        PageFrame\n"
+                + "            Row forward scan\n"
+                + "            Frame forward scan on: tab\n";
+    }
+
     private void assertBindVarPlan(String type) throws Exception {
         assertQuery("select * from t where x = :v1 ")
                 .noLeakCheck()
                 .assertsPlan("Async Filter workers: 1\n" + "  filter: x=:v1::" + type + "\n" + "    PageFrame\n" + "        Row forward scan\n" + "        Frame forward scan on: t\n");
+    }
+
+    private void assertExplainAfterCompilerReuse(String sql, String otherSql) throws Exception {
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            ObjList<String> formats = list("text", "json");
+            ObjList<String> nextQueries = list("select * from long_sequence(1)", "explain " + otherSql);
+            for (int i = 0, n = formats.size(); i < n; i++) {
+                String explain = "explain (format " + formats.getQuick(i) + ") " + sql;
+                StringSink expected = new StringSink();
+                TestUtils.printSql(compiler, sqlExecutionContext, explain, expected);
+                for (int j = 0, m = nextQueries.size(); j < m; j++) {
+                    String nextSql = nextQueries.getQuick(j);
+                    try (RecordCursorFactory factory = compiler.compile(explain, sqlExecutionContext).getRecordCursorFactory()) {
+                        try (RecordCursorFactory ignored = compiler.compile(nextSql, sqlExecutionContext).getRecordCursorFactory()) {
+                            assertFactory(factory)
+                                    .withContext(sqlExecutionContext)
+                                    .noRandomAccess()
+                                    .expectSize()
+                                    .returns(expected);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     private void assertNotSupportedByExplain(String sql, SqlExecutionContextImpl sqlExecutionContext) {
@@ -13619,7 +14033,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQuery(query)
                 .noLeakCheck()
                 .assertsPlan("""
-                        Limit value: 5 skip-rows-max: 0 take-rows-max: 5
+                        Encode sort light lo: 5
+                          keys: [s desc]
                             FilterOnValues symbolOrder: desc
                                 Cursor-order scan
                                     Index forward scan on: s deferred: true
@@ -13631,6 +14046,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
         assertQuery(query)
                 .noLeakCheck()
+                .expectSize()
                 .returns("""
                         s\tts
                         S2\t1970-01-01T00:00:00.000000Z
@@ -13644,7 +14060,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQuery(query)
                 .noLeakCheck()
                 .assertsPlan("""
-                        Limit value: 5 skip-rows-max: 0 take-rows-max: 5
+                        Encode sort light lo: 5
+                          keys: [s]
                             FilterOnValues symbolOrder: asc
                                 Cursor-order scan
                                     Index forward scan on: s deferred: true
@@ -13656,6 +14073,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
         assertQuery(query)
                 .noLeakCheck()
+                .expectSize()
                 .returns("""
                         s\tts
                         S1\t1970-01-01T00:00:00.000001Z
@@ -13680,7 +14098,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQuery(query)
                 .noLeakCheck()
                 .assertsPlan("""
-                        Limit value: 5 skip-rows-max: 0 take-rows-max: 5
+                        Encode sort light lo: 5
+                          keys: [s desc]
                             FilterOnValues symbolOrder: desc
                                 Cursor-order scan
                                     Index forward scan on: s deferred: true
@@ -13693,6 +14112,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
         assertQuery(query)
                 .noLeakCheck()
+                .expectSize()
                 .returns("""
                         s\tts
                         S2\t1970-01-01T00:00:00.000000Z
@@ -13706,7 +14126,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQuery(query)
                 .noLeakCheck()
                 .assertsPlan("""
-                        Limit value: 5 skip-rows-max: 0 take-rows-max: 5
+                        Encode sort light lo: 5
+                          keys: [s]
                             FilterOnValues symbolOrder: asc
                                 Cursor-order scan
                                     Index forward scan on: s deferred: true
@@ -13719,6 +14140,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
         assertQuery(query)
                 .noLeakCheck()
+                .expectSize()
                 .returns("""
                         s\tts
                         S1\t1970-01-01T00:00:00.000001Z

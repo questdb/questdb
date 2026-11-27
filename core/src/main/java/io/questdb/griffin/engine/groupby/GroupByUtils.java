@@ -27,11 +27,17 @@ package io.questdb.griffin.engine.groupby;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.ListColumnFilter;
+import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.map.Map;
+import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlException;
@@ -39,6 +45,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.functions.MonotonicTimestampFunction;
 import io.questdb.griffin.engine.functions.PerWorkerFunctionList;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.cast.CastStrToSymbolFunctionFactory;
@@ -67,14 +74,24 @@ import io.questdb.griffin.engine.functions.columns.StrColumn;
 import io.questdb.griffin.engine.functions.columns.TimestampColumn;
 import io.questdb.griffin.engine.functions.columns.UuidColumn;
 import io.questdb.griffin.engine.functions.columns.VarcharColumn;
+import io.questdb.griffin.engine.functions.constants.NullConstant;
+import io.questdb.griffin.engine.functions.groupby.GroupingFunction;
 import io.questdb.griffin.engine.functions.groupby.SparklineGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.TwapGroupByFunction;
+import io.questdb.griffin.engine.functions.rnd.LongSequenceFunctionFactory;
+import io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory;
+import io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory;
+import io.questdb.griffin.engine.table.FilteredRecordCursorFactory;
+import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
+import io.questdb.griffin.engine.table.SelectedRecordCursorFactory;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
+import io.questdb.std.LongList;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -84,9 +101,33 @@ import java.util.ArrayDeque;
 import static io.questdb.griffin.model.ExpressionNode.LITERAL;
 
 public class GroupByUtils {
+    // Grouping sets roll up columns only: a rolled-up key is replaced with NULL by its input column.
+    public static final String EXPRESSION_GROUPING_KEY_MESSAGE = "expression keys in ROLLUP, CUBE and GROUPING SETS must be computed in a subquery";
     public static final int PROJECTION_FUNCTION_FLAG_COLUMN = 0;
     public static final int PROJECTION_FUNCTION_FLAG_GROUP_BY = 2;
     public static final int PROJECTION_FUNCTION_FLAG_VIRTUAL = 1;
+
+    public static void aggregateKeyedBatch(
+            PageFrameMemoryRecord record,
+            Map map,
+            RecordSink sink,
+            ObjList<GroupByFunction> functions,
+            FlyweightPackedMapValue value,
+            long batchAddress,
+            long rowIdsAddress,
+            long lo,
+            long hi,
+            long baseRowId
+    ) {
+        // Entry offsets must remain valid until every function has updated the batch.
+        map.reserveCapacity(hi - lo);
+        final long baseAddress = rowIdsAddress == 0
+                ? map.probeBatch(record, sink, lo, hi, batchAddress)
+                : map.probeBatchFiltered(record, sink, rowIdsAddress, lo, hi, batchAddress);
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            functions.getQuick(i).computeKeyedBatch(record, value, baseAddress, batchAddress, hi - lo, baseRowId);
+        }
+    }
 
     public static void assembleGroupByFunctions(
             @NotNull FunctionParser functionParser,
@@ -132,17 +173,22 @@ public class GroupByUtils {
                             baseMetadata,
                             executionContext
                     );
+                    if (func instanceof GroupingFunction groupingFunction) {
+                        setGroupingArgKeyPositions(groupingFunction, column);
+                    }
 
                     outerProjectionFunctions.add(func);
                     if (extraOuterProjectionFunctions != null) {
                         for (int d = 0, dn = extraOuterProjectionFunctions.size(); d < dn; d++) {
+                            // Shared projections exist only without grouping sets, where GROUPING() is
+                            // rejected, so these copies never need GROUPING() key positions.
                             Function extraFunc = functionParser.parseFunction(node, baseMetadata, executionContext);
                             extraOuterProjectionFunctions.getQuick(d).add(extraFunc);
                         }
                     }
                     innerProjectionFunctions.add(func);
 
-                    index = findColumnKeyIndex(node, func, baseMetadata);
+                    index = findColumnKeyIndex(node, func, baseMetadata, model.hasGroupingSets());
                     if (index != -1) {
                         // it's a column key
                         projectionFunctionFlags.add(PROJECTION_FUNCTION_FLAG_COLUMN);
@@ -192,6 +238,11 @@ public class GroupByUtils {
                                 baseMetadata.isSymbolTableStatic(index),
                                 baseMetadata.getMetadata(index)
                         );
+                        // A column key passes its column through, so it keeps the column's PARQUET(...) setting.
+                        // The sampler computes the bucket timestamp of the legacy SAMPLE BY, which keeps the default.
+                        if (index != timestampIndex || timestampUnimportant) {
+                            m.setParquetEncodingConfig(baseMetadata.getColumnMetadata(index).getParquetEncodingConfig());
+                        }
                     }
                 }
                 projectionMetadata.add(m);
@@ -223,7 +274,10 @@ public class GroupByUtils {
                 if (!hasNoneMixed) {
                     int aggregateCount = 0;
                     for (int i = 0, n = outerProjectionFunctions.size(); i < n; i++) {
-                        if (outerProjectionFunctions.getQuick(i) instanceof GroupByFunction) {
+                        // GROUPING() columns are fill keys, so SqlCodeGenerator.generateFill
+                        // assigns them no fill value.
+                        final Function function = outerProjectionFunctions.getQuick(i);
+                        if (function instanceof GroupByFunction && !(function instanceof GroupingFunction)) {
                             aggregateCount++;
                         }
                     }
@@ -237,12 +291,14 @@ public class GroupByUtils {
             // slots for the group-by functions. They are added first because each group-by function is likely
             // to require several slots. The number of slots for each function is not known upfront and
             // is effectively evaluated in the first loop.
+            // 0-based index of the current aggregate in the FILL list. GROUPING() columns take no slot.
+            int fillAggregateIndex = 0;
             for (int i = 0, n = columns.size(); i < n; i++) {
                 final QueryColumn column = columns.getQuick(i);
                 final ExpressionNode node = column.getAst();
                 final Function func = outerProjectionFunctions.getQuick(i);
 
-                final int index = findColumnKeyIndex(node, func, baseMetadata);
+                final int index = findColumnKeyIndex(node, func, baseMetadata, model.hasGroupingSets());
                 if (index != -1) {
                     if (index != timestampIndex || timestampUnimportant) {
                         // when we have the same column several times in a row,
@@ -272,14 +328,14 @@ public class GroupByUtils {
                         } else if (groupByFunc instanceof SparklineGroupByFunction sparklineFunc) {
                             sparklineFunc.validateScanDirection(isBaseTimestampAscending, node.position);
                         }
-                        if (fillCount > 0) {
-                            // 0-based index of the just-added aggregate. The Math.min clamp
-                            // below covers only the single-fill broadcast case (FILL(NULL)
-                            // applied to N aggregates -- every iteration lands on fill[0]).
-                            // The multi-fill count mismatch (fillCount > 1, fillCount <
-                            // aggregateCount) is rejected as "not enough fill values" up
-                            // front, so it cannot reach this loop.
-                            int funcIndex = outGroupByFunctions.size() - 1;
+                        // GROUPING() columns are fill keys and take no fill value.
+                        if (fillCount > 0 && !(groupByFunc instanceof GroupingFunction)) {
+                            // The Math.min clamp below covers only the single-fill broadcast
+                            // case (FILL(NULL) applied to N aggregates -- every iteration
+                            // lands on fill[0]). The multi-fill count mismatch (fillCount > 1,
+                            // fillCount < aggregateCount) is rejected as "not enough fill
+                            // values" up front, so it cannot reach this loop.
+                            int funcIndex = fillAggregateIndex++;
                             int sampleByFlags = groupByFunc.getSampleByFlags();
                             ExpressionNode fillNode = sampleByFill.getQuick(Math.min(funcIndex, fillCount - 1));
                             if (validateFill) {
@@ -335,7 +391,7 @@ public class GroupByUtils {
                 final ExpressionNode node = column.getAst();
                 final Function func = outerProjectionFunctions.getQuick(i);
 
-                final int index = findColumnKeyIndex(node, func, baseMetadata);
+                final int index = findColumnKeyIndex(node, func, baseMetadata, model.hasGroupingSets());
                 if (index != -1) {
                     final int type = baseMetadata.getColumnType(index);
 
@@ -404,6 +460,150 @@ public class GroupByUtils {
             }
             throw th;
         }
+    }
+
+    /**
+     * Computes the value each function reports over an empty group, for functions whose
+     * {@link GroupByFunction#hasNonNullEmptyValue()} is true. The result and
+     * {@code emptyValueTypes} are parallel to {@code functions}. For a function with a non-NULL
+     * empty value, entry i of {@code emptyValueTypes} holds the function's type tag (BOOLEAN,
+     * DOUBLE or LONG) and entry i of the result holds the value's raw bits: 1 or 0 for BOOLEAN,
+     * {@link Double#doubleToRawLongBits(double)} for DOUBLE, the value itself for LONG. For any
+     * other function, the type tag is {@link ColumnType#UNDEFINED}, which means the function
+     * reports NULL over an empty group, and the value is {@link Numbers#LONG_NULL}.
+     *
+     * @param functions       assembled group-by functions, with their value types already initialized
+     * @param valueCount      number of map value slots the functions' value types occupy
+     * @param emptyValueTypes receives the per-function type tags; cleared first, and left empty
+     *                        when the method returns null
+     * @return the per-function empty values, or null when every function reports NULL
+     */
+    @Nullable
+    public static LongList computeNonNullEmptyValues(ObjList<GroupByFunction> functions, int valueCount, IntList emptyValueTypes) {
+        emptyValueTypes.clear();
+        final int n = functions.size();
+        boolean hasNonNullEmptyValue = false;
+        for (int i = 0; i < n; i++) {
+            if (functions.getQuick(i).hasNonNullEmptyValue()) {
+                hasNonNullEmptyValue = true;
+                break;
+            }
+        }
+        if (!hasNonNullEmptyValue) {
+            return null;
+        }
+
+        final LongList values = new LongList(n);
+        values.setAll(n, Numbers.LONG_NULL);
+        emptyValueTypes.setAll(n, ColumnType.UNDEFINED);
+        try (SimpleMapValue value = new SimpleMapValue(valueCount)) {
+            // Zero the value so that every slot, including those of functions not flagged
+            // here, starts from a known state.
+            value.clear();
+            for (int i = 0; i < n; i++) {
+                final GroupByFunction function = functions.getQuick(i);
+                if (function.hasNonNullEmptyValue()) {
+                    final short typeTag = ColumnType.tagOf(function.getType());
+                    switch (typeTag) {
+                        case ColumnType.BOOLEAN -> {
+                            function.setEmpty(value);
+                            values.setQuick(i, function.getBool(value) ? 1 : 0);
+                            emptyValueTypes.setQuick(i, typeTag);
+                        }
+                        case ColumnType.DOUBLE -> {
+                            function.setEmpty(value);
+                            values.setQuick(i, Double.doubleToRawLongBits(function.getDouble(value)));
+                            emptyValueTypes.setQuick(i, typeTag);
+                        }
+                        case ColumnType.LONG -> {
+                            function.setEmpty(value);
+                            values.setQuick(i, function.getLong(value));
+                            emptyValueTypes.setQuick(i, typeTag);
+                        }
+                        // GroupByFunction.hasNonNullEmptyValue() admits no other type. Without
+                        // assertions the entry stays UNDEFINED, so the column reports NULL.
+                        default -> {
+                            assert false : "non-NULL empty value of unsupported type: " + ColumnType.nameOf(typeTag);
+                        }
+                    }
+                }
+            }
+        }
+        return values;
+    }
+
+    private static void setGroupingArgKeyPositions(GroupingFunction function, QueryColumn column) {
+        IntList keyPositions = column.getGroupingArgKeyPositions();
+        for (int a = 0, n = keyPositions.size(); a < n; a++) {
+            function.setArgKeyPosition(a, keyPositions.getQuick(a));
+        }
+    }
+
+    public static IntList buildGroupingSetKeyColumnIndices(
+            IQueryModel model,
+            RecordMetadata baseMetadata,
+            ObjList<Function> innerProjectionFunctions,
+            IntList projectionFunctionFlags
+    ) throws SqlException {
+        IntList keyColumnIndices = new IntList(model.getGroupBy().size());
+        boolean hasGroupingFunction = false;
+        for (int i = 0, n = innerProjectionFunctions.size(); i < n; i++) {
+            if (innerProjectionFunctions.getQuick(i) instanceof GroupingFunction) {
+                hasGroupingFunction = true;
+                break;
+            }
+        }
+        for (int k = 0, n = model.getGroupBy().size(); k < n; k++) {
+            ExpressionNode key = model.getGroupBy().getQuick(k);
+            int i = findGroupingKeyColumnIndex(model, k);
+            assert i > -1 : "grouping key has no column: " + key.token;
+            QueryColumn column = model.getColumns().getQuick(i);
+            int baseColumnIndex = findColumnKeyIndex(
+                    column.getAst(),
+                    innerProjectionFunctions.getQuick(i),
+                    baseMetadata,
+                    true
+            );
+            if (baseColumnIndex < 0) {
+                for (int s = 0, sn = model.getGroupingSets().size(); s < sn; s++) {
+                    if (!model.getGroupingSets().getQuick(s).contains(k)) {
+                        throw SqlException.$(key.position, EXPRESSION_GROUPING_KEY_MESSAGE);
+                    }
+                }
+            }
+            if (hasGroupingFunction && key.type == LITERAL && baseColumnIndex >= 0 && keyColumnIndices.contains(baseColumnIndex)) {
+                baseColumnIndex = k;
+            }
+            keyColumnIndices.add(baseColumnIndex);
+        }
+        // Only the model's own columns: SqlCodeGenerator.addGroupingSetFillKey appends a hidden
+        // GROUPING_ID() whose key positions it has already set.
+        for (int i = 0, n = model.getColumns().size(); i < n; i++) {
+            Function function = innerProjectionFunctions.getQuick(i);
+            if (function instanceof GroupingFunction groupingFunction) {
+                IntList argColumnIndices = groupingFunction.getArgColumnIndices();
+                if (argColumnIndices.size() == keyColumnIndices.size()) {
+                    boolean isAligned = true;
+                    for (int a = 0, an = argColumnIndices.size(); a < an; a++) {
+                        if (argColumnIndices.getQuick(a) != keyColumnIndices.getQuick(a)) {
+                            isAligned = false;
+                            break;
+                        }
+                    }
+                    if (isAligned) {
+                        // A GROUPING() nested in another expression reaches the group-by model
+                        // without resolved key positions, so size the list before filling it.
+                        IntList keyPositions = model.getColumns().getQuick(i).getGroupingArgKeyPositions();
+                        keyPositions.setAll(argColumnIndices.size(), -1);
+                        for (int a = 0, an = argColumnIndices.size(); a < an; a++) {
+                            keyPositions.setQuick(a, a);
+                            groupingFunction.setArgKeyPosition(a, a);
+                        }
+                    }
+                }
+            }
+        }
+        return keyColumnIndices;
     }
 
     public static Function createColumnFunction(
@@ -486,6 +686,9 @@ public class GroupByUtils {
             case ColumnType.INTERVAL:
                 func = IntervalColumn.newInstance(keyColumnIndex - 1, type);
                 break;
+            case ColumnType.NULL:
+                func = NullConstant.NULL;
+                break;
             case ColumnType.ARRAY:
                 func = new ArrayColumn(keyColumnIndex - 1, type);
                 break;
@@ -553,6 +756,41 @@ public class GroupByUtils {
             }
         }
         return nonGroupByFunctions;
+    }
+
+    /**
+     * Returns the AST of the group-by model column that carries the GROUP BY key at the given
+     * index. The GROUP BY list keeps the keys as written, which over a join are table-qualified,
+     * while the column reads the name the nested select-choose model projects.
+     */
+    public static ExpressionNode findGroupingKeyColumnAst(IQueryModel model, int keyIndex) {
+        final int columnIndex = findGroupingKeyColumnIndex(model, keyIndex);
+        assert columnIndex > -1 : "grouping key has no column: " + model.getGroupBy().getQuick(keyIndex).token;
+        return model.getColumns().getQuick(columnIndex).getAst();
+    }
+
+    /**
+     * Returns the index of the group-by model column that carries the GROUP BY key at the given
+     * index, or -1 when no column matches. The key and the column AST can name the same input in
+     * different namespaces: in {@code SELECT x, a ... FROM (SELECT a, a AS x FROM t)} key a reads
+     * the sub-query's a while column x translates to a too, and in
+     * {@code SELECT b AS a, a AS b ... GROUP BY ROLLUP(a, b)} key b reads the table's b while column
+     * b reads the projected a. So the alias that SqlOptimiser.rewriteSelectClause0 records for each
+     * key decides, not the expressions.
+     */
+    public static int findGroupingKeyColumnIndex(IQueryModel model, int keyIndex) {
+        final ObjList<CharSequence> keyAliases = model.getGroupingKeyAliases();
+        assert keyAliases.size() == model.getGroupBy().size() : "grouping key aliases are not recorded";
+        final CharSequence alias = keyAliases.getQuick(keyIndex);
+        final ObjList<QueryColumn> columns = model.getColumns();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            if (Chars.equalsIgnoreCase(columns.getQuick(i).getAlias(), alias)) {
+                return i;
+            }
+        }
+        // rewriteSelectClause0 records the alias of a column it adds to this model.
+        assert false : "grouping key alias is not a column: " + alias;
+        return -1;
     }
 
     /**
@@ -635,6 +873,61 @@ public class GroupByUtils {
         }
     }
 
+    public static Function getGroupByKeyFunction(RecordCursorFactory base, ColumnTypes keyTypes, ListColumnFilter columnFilter, ObjList<Function> keyFunctions, int index) {
+        return index < columnFilter.getColumnCount()
+                ? createColumnFunction(base.getMetadata(), columnFilter.getColumnIndex(index), keyTypes.getColumnType(index), 0)
+                : keyFunctions.getQuick(index - columnFilter.getColumnCount());
+    }
+
+    public static int getStreamGroupByKeyIndex(
+            RecordCursorFactory base,
+            ColumnTypes keyTypes,
+            ListColumnFilter columnFilter,
+            ObjList<Function> keyFunctions,
+            ObjList<GroupByFunction> groupByFunctions
+    ) {
+        if (base.getScanDirection() != RecordCursorFactory.SCAN_DIRECTION_FORWARD
+                || keyTypes.getColumnCount() == 0 || !base.isStableWithinExecution()) {
+            return -1;
+        }
+        for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
+            final GroupByFunction function = groupByFunctions.getQuick(i);
+            if (!function.isStateSelfContained() || !function.isStableWithinExecution()) {
+                return -1;
+            }
+        }
+        for (int i = 0, n = keyFunctions.size(); i < n; i++) {
+            if (!keyFunctions.getQuick(i).isStableWithinExecution()) {
+                return -1;
+            }
+        }
+        for (int i = 0, n = keyTypes.getColumnCount(); i < n; i++) {
+            final int keyType = keyTypes.getColumnType(i);
+            if (!ColumnType.isTimestamp(keyType) && keyType != ColumnType.LONG && keyType != ColumnType.INT) {
+                continue;
+            }
+            final Function key = getGroupByKeyFunction(base, keyTypes, columnFilter, keyFunctions, i);
+            final Function arg = key instanceof MonotonicTimestampFunction monotonic && monotonic.preservesTimestampOrder()
+                    ? monotonic.getTimestampArg() : key;
+            if (arg instanceof ColumnFunction column
+                    && arg.getType() == base.getMetadata().getColumnType(column.getColumnIndex())
+                    && isAscendingKey(base, column.getColumnIndex())) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    public static int getStreamGroupByTimestampIndex(RecordMetadata metadata, ObjList<Function> functions, int keyIndex) {
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            if (ColumnType.isTimestamp(metadata.getColumnType(i))
+                    && functions.getQuick(i) instanceof ColumnFunction column && column.getColumnIndex() == keyIndex) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
     public static boolean isEarlyExitSupported(ObjList<GroupByFunction> functions) {
         for (int i = 0, n = functions.size(); i < n; i++) {
             if (!functions.getQuick(i).isEarlyExitSupported()) {
@@ -665,6 +958,14 @@ public class GroupByUtils {
             for (int i = 0, n = functions.size(); i < n; i++) {
                 functions.getQuick(i).setAllocator(allocator);
             }
+        }
+    }
+
+    public static void setStreamGroupByKey(MapValue value, int index, int type, long key) {
+        if (type == ColumnType.INT) {
+            value.putInt(index, key == Numbers.LONG_NULL ? Numbers.INT_NULL : (int) key);
+        } else {
+            value.putLong(index, key);
         }
     }
 
@@ -719,6 +1020,11 @@ public class GroupByUtils {
                             throw SqlException.$(key.position, "invalid column reference");
                         }
                     } else {
+                        if (model.hasGroupingSets()) {
+                            // This key came from the GROUP BY list being validated. Do not
+                            // reinterpret it as a SELECT alias while checking grouping sets.
+                            break;
+                        }
                         int refColumn = model.getAliasToColumnMap().keyIndex(key.token);
                         if (refColumn > -1) {
                             throw SqlException.$(key.position, "group by column does not match any key column is select statement");
@@ -828,13 +1134,37 @@ public class GroupByUtils {
      * 1. it's a column literal
      * 2. cast(a_column as same_type) which is compiled as a_column (the case is no-op)
      */
-    private static int findColumnKeyIndex(ExpressionNode node, Function func, RecordMetadata baseMetadata) {
+    private static int findColumnKeyIndex(
+            ExpressionNode node,
+            Function func,
+            RecordMetadata baseMetadata,
+            boolean hasGroupingSets
+    ) {
         if (node.type == LITERAL) {
             return SqlUtil.getColumnIndexQuiet(baseMetadata, node.token);
         }
-        if (SqlKeywords.isCastKeyword(node.token) && func instanceof ColumnFunction) {
+        // Grouping sets must keep expression keys separate from raw keys that roll up the same input.
+        if (!hasGroupingSets && SqlKeywords.isCastKeyword(node.token) && func instanceof ColumnFunction) {
             return ((ColumnFunction) func).getColumnIndex();
         }
         return -1;
+    }
+
+    private static boolean isAscendingKey(RecordCursorFactory factory, int columnIndex) {
+        if (factory instanceof PageFrameRecordCursorFactory pageFrameFactory) {
+            return pageFrameFactory.isAscendingTimestamp(columnIndex);
+        }
+        if (LongSequenceFunctionFactory.isLongSequence(factory)) {
+            return columnIndex == 0;
+        }
+        if (factory instanceof SelectedRecordCursorFactory) {
+            return isAscendingKey(factory.getBaseFactory(), factory.getColumnCrossIndex().getQuick(columnIndex));
+        }
+        if (factory instanceof FilteredRecordCursorFactory
+                || factory instanceof AsyncFilteredRecordCursorFactory
+                || factory instanceof AsyncJitFilteredRecordCursorFactory) {
+            return isAscendingKey(factory.getBaseFactory(), columnIndex);
+        }
+        return false;
     }
 }

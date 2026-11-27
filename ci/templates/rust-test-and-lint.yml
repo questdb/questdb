@@ -47,14 +47,18 @@ steps:
   # ── Rust coverage collection ──────────────────────────────────────────
   # Run all Rust tests with coverage instrumentation and upload the raw
   # profraw files. The CoverageReports stage merges them with Java runs.
+  # Each step saves cargo's build messages before it runs the tests: they name
+  # the test executables the LCOV step passes to llvm-cov, which cargo no longer
+  # puts in target/debug/deps since 1.100.
   - bash: |
       set -eux
       find . -name '*.profraw' -delete
-      rm -rf $(Build.SourcesDirectory)/rust-lint-profraw
-      mkdir -p $(Build.SourcesDirectory)/rust-lint-profraw
+      rm -rf $(Build.SourcesDirectory)/rust-lint-profraw $(Build.SourcesDirectory)/rust-lint-cargo-json
+      mkdir -p $(Build.SourcesDirectory)/rust-lint-profraw $(Build.SourcesDirectory)/rust-lint-cargo-json
       export RUSTFLAGS="-C instrument-coverage -D warnings"
       export LLVM_PROFILE_FILE="$(Build.SourcesDirectory)/rust-lint-profraw/qdb-core-%m.profraw"
       cd core/rust/qdb-core
+      cargo test --all-targets --no-run --message-format=json-render-diagnostics > "$(Build.SourcesDirectory)/rust-lint-cargo-json/qdb-core.json"
       cargo test --all-targets --no-fail-fast
     displayName: "qdb-core: cargo test (coverage)"
     condition: ${{ parameters.shouldRun }}
@@ -64,6 +68,7 @@ steps:
       export RUSTFLAGS="-C instrument-coverage -D warnings"
       export LLVM_PROFILE_FILE="$(Build.SourcesDirectory)/rust-lint-profraw/qdb-parquet-meta-%m.profraw"
       cd core/rust/qdb-parquet-meta
+      cargo test --all-targets --no-run --message-format=json-render-diagnostics > "$(Build.SourcesDirectory)/rust-lint-cargo-json/qdb-parquet-meta.json"
       cargo test --all-targets --no-fail-fast
     displayName: "qdb-parquet-meta: cargo test (coverage)"
     condition: ${{ parameters.shouldRun }}
@@ -73,6 +78,7 @@ steps:
       export RUSTFLAGS="-C instrument-coverage -D warnings"
       export LLVM_PROFILE_FILE="$(Build.SourcesDirectory)/rust-lint-profraw/qdbr-%m.profraw"
       cd core/rust/qdbr
+      cargo test --all-targets --no-run --message-format=json-render-diagnostics > "$(Build.SourcesDirectory)/rust-lint-cargo-json/qdbr.json"
       cargo test --all-targets --no-fail-fast
     displayName: "qdbr: cargo test (coverage)"
     condition: ${{ parameters.shouldRun }}
@@ -88,6 +94,7 @@ steps:
       # withholds secret variables from forks.
       bash ci/submodule-update.sh core/rust/parquet2/testing/parquet-testing
       cd core/rust/parquet2
+      cargo test --all-targets --no-run --message-format=json-render-diagnostics > "$(Build.SourcesDirectory)/rust-lint-cargo-json/parquet2.json"
       cargo test --all-targets --no-fail-fast
     displayName: "parquet2: cargo test (coverage)"
     env:
@@ -102,11 +109,12 @@ steps:
       set -eux
       export PATH=$LLVM_TOOLS_PATH:$PATH
       PROFRAW_DIR=$(Build.SourcesDirectory)/rust-lint-profraw
+      CARGO_JSON_DIR=$(Build.SourcesDirectory)/rust-lint-cargo-json
       IGNORE_RE='(.cargo/registry|rustc/.*\.rs)'
 
       # ── Helper: merge profraw → profdata → LCOV for a single crate ──
       generate_lcov() {
-        local CRATE=$1 TARGET_DIR=$2
+        local CRATE=$1
         mapfile -t PROFRAW < <(find "$PROFRAW_DIR" -name "${CRATE}-*.profraw" | sort)
         if [ ${#PROFRAW[@]} -eq 0 ]; then
           echo "No $CRATE profraw files found, skipping"
@@ -114,7 +122,16 @@ steps:
         fi
         llvm-profdata merge -sparse -o "$PROFRAW_DIR/$CRATE.profdata" "${PROFRAW[@]}"
 
-        mapfile -d '' -t BINS < <(find "$TARGET_DIR/deps" -maxdepth 1 -type f -executable ! -name '*.so' ! -name '*.dylib' ! -name '*.dll' ! -name '*.d' -print0 | sort -z)
+        # The executables the crate's test step built. Examples run no tests, and
+        # target/debug/deps never held them, so they stay out.
+        mapfile -t BINS < <(python3 -c 'import json, sys; sys.stdout.writelines(
+            m["executable"] + "\n" for m in map(json.loads, sys.stdin)
+            if m.get("executable") and "example" not in m["target"]["kind"])' \
+          < "$CARGO_JSON_DIR/$CRATE.json")
+        if [ ${#BINS[@]} -eq 0 ]; then
+          echo "No $CRATE test executables found in $CARGO_JSON_DIR/$CRATE.json"
+          exit 1
+        fi
         local OBJECT_ARGS=()
         for bin in "${BINS[@]}"; do
           OBJECT_ARGS+=(--object "$bin")
@@ -129,10 +146,10 @@ steps:
         echo "Generated $CRATE.lcov"
       }
 
-      generate_lcov qdb-core         core/rust/qdb-core/target/debug
-      generate_lcov qdb-parquet-meta core/rust/qdb-parquet-meta/target/debug
-      generate_lcov qdbr             core/rust/qdbr/target/debug
-      generate_lcov parquet2         core/rust/parquet2/target/debug
+      generate_lcov qdb-core
+      generate_lcov qdb-parquet-meta
+      generate_lcov qdbr
+      generate_lcov parquet2
 
       # Remove intermediate profraw files, keep profdata and lcov for upload.
       rm -f "$PROFRAW_DIR"/*.profraw

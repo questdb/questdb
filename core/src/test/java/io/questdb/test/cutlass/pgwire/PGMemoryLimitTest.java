@@ -24,6 +24,14 @@
 
 package io.questdb.test.cutlass.pgwire;
 
+import io.questdb.PropertyKey;
+import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.std.MemoryTracker;
+import io.questdb.std.MemoryTrackerProvider;
+import io.questdb.std.MemoryTrackerWorkload;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
+import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import org.junit.Assert;
 import org.junit.Test;
@@ -36,6 +44,168 @@ import java.sql.Statement;
 import static io.questdb.test.tools.TestUtils.assertContains;
 
 public class PGMemoryLimitTest extends BasePGTest {
+    @Test
+    public void testCachedFusedJoinRecompilesOnceItsBuildTableOutgrowsTheProbe() throws Exception {
+        // The fused hash join GROUP BY runs only with shared query workers.
+        sharedQueryWorkerCount = 2;
+        try {
+            assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+                try (Statement stat = connection.createStatement()) {
+                    stat.execute("CREATE TABLE f (k INT, v LONG)");
+                    stat.execute("CREATE TABLE d (k INT, g INT)");
+                    stat.execute("INSERT INTO d SELECT x::INT, (x % 10)::INT FROM long_sequence(5_000)");
+                    stat.execute("INSERT INTO f SELECT (x % 5_000 + 1)::INT, x FROM long_sequence(1_000)");
+                }
+                final String sql = "SELECT d.g, sum(f.v) v FROM f JOIN d ON f.k = d.k ORDER BY d.g";
+                // f has fewer rows than d, so the fused plan builds f.
+                try (Statement stat = connection.createStatement(); ResultSet plan = stat.executeQuery("EXPLAIN " + sql)) {
+                    sink.clear();
+                    while (plan.next()) {
+                        sink.put(plan.getString(1)).put('\n');
+                    }
+                    assertContains(sink, "Async Hash Join Group By");
+                    assertContains(sink, "inputSwapped: true");
+                }
+                try (PreparedStatement select = connection.prepareStatement(sql)) {
+                    try (ResultSet resultSet = select.executeQuery()) {
+                        sink.clear();
+                        assertResultSet(
+                                """
+                                        g[INTEGER],v[BIGINT]
+                                        0,50400
+                                        1,50500
+                                        2,49600
+                                        3,49700
+                                        4,49800
+                                        5,49900
+                                        6,50000
+                                        7,50100
+                                        8,50200
+                                        9,50300
+                                        """,
+                                sink,
+                                resultSet
+                        );
+                    }
+                    try (Statement stat = connection.createStatement()) {
+                        stat.execute("INSERT INTO f SELECT (x % 5_000 + 1)::INT, x FROM long_sequence(200_000)");
+                    }
+                    // A build of the 201_000 rows of f takes about 7 MiB, and a build of the 5_000 rows of
+                    // d about 0.2 MiB. The cached factory asks for a recompile rather than build f, and
+                    // the new plan builds d within the limit.
+                    setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 2 * Numbers.SIZE_1MB);
+                    try (ResultSet resultSet = select.executeQuery()) {
+                        sink.clear();
+                        assertResultSet(
+                                """
+                                        g[INTEGER],v[BIGINT]
+                                        0,2000130400
+                                        1,2000150500
+                                        2,1999969600
+                                        3,1999989700
+                                        4,2000009800
+                                        5,2000029900
+                                        6,2000050000
+                                        7,2000070100
+                                        8,2000090200
+                                        9,2000110300
+                                        """,
+                                sink,
+                                resultSet
+                        );
+                    } finally {
+                        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0);
+                    }
+                }
+            });
+        } finally {
+            sharedQueryWorkerCount = 0;
+        }
+    }
+
+    @Test
+    public void testPipelinedPortalChargesCastDictionaryToItsOwnExecution() throws Exception {
+        // The parallel window join initializes its join filter, and the cast to SYMBOL in it, on the
+        // first read. The driver sends both statements before Sync, so the second portal registers
+        // before the first one reads a row.
+        sharedQueryWorkerCount = 2;
+        try {
+            assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
+                try (Statement stat = connection.createStatement()) {
+                    stat.execute("""
+                            CREATE TABLE trades AS (
+                                SELECT rnd_symbol('a', 'b', 'c') sym, (x * 1_000_000)::TIMESTAMP ts
+                                FROM long_sequence(100)
+                            ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL""");
+                    stat.execute("""
+                            CREATE TABLE prices AS (
+                                SELECT rnd_symbol('a', 'b', 'c') sym, x, x * 1.5 price, (x * 100_000)::TIMESTAMP ts
+                                FROM long_sequence(1_000)
+                            ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL""");
+                }
+                final String windowJoin = """
+                        SELECT t.ts, sum(p.price) s
+                        FROM trades t
+                        WINDOW JOIN prices p ON (t.sym = p.sym) AND p.x::symbol <> 'zzz'
+                        RANGE BETWEEN 2 seconds PRECEDING AND 2 seconds FOLLOWING""";
+                try (Statement stat = connection.createStatement(); ResultSet plan = stat.executeQuery("EXPLAIN " + windowJoin)) {
+                    sink.clear();
+                    while (plan.next()) {
+                        sink.put(plan.getString(1)).put('\n');
+                    }
+                    assertContains(sink, "Async Window Fast Join");
+                    assertContains(sink, "join filter: p.x::symbol!='zzz'");
+                }
+
+                connection.setAutoCommit(false);
+                try (Statement stat = connection.createStatement()) {
+                    // A fetch size keeps the second portal suspended after the first one ends.
+                    stat.setFetchSize(1);
+                    Assert.assertTrue(stat.execute(windowJoin + "; SELECT x FROM long_sequence(10)"));
+
+                    // The first portal has ended. A tracker it returned to the pool still charged
+                    // with its dictionary fails the next acquire.
+                    final MemoryTrackerProvider provider = engine.getMemoryTrackerProvider();
+                    final ObjList<MemoryTracker> trackers = new ObjList<>();
+                    try {
+                        for (int i = 0; i < 16; i++) {
+                            final MemoryTracker tracker = provider.acquire(AllowAllSecurityContext.INSTANCE, -1, MemoryTrackerWorkload.QUERY);
+                            trackers.add(tracker);
+                            Assert.assertEquals(0, tracker.getUsed());
+                        }
+                    } finally {
+                        Misc.freeObjList(trackers);
+                    }
+
+                    Assert.assertTrue(stat.getMoreResults());
+                    try (ResultSet resultSet = stat.getResultSet()) {
+                        sink.clear();
+                        assertResultSet(
+                                """
+                                        x[BIGINT]
+                                        1
+                                        2
+                                        3
+                                        4
+                                        5
+                                        6
+                                        7
+                                        8
+                                        9
+                                        10
+                                        """,
+                                sink,
+                                resultSet
+                        );
+                    }
+                }
+                connection.commit();
+            });
+        } finally {
+            sharedQueryWorkerCount = 0;
+        }
+    }
+
     @Test
     public void testUpdateRecoversFromOomError() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {

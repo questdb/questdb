@@ -230,7 +230,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public int getCommitMode() {
-        return CommitMode.NOSYNC;
+        return CommitMode.DEFAULT;
     }
 
     @Override
@@ -321,6 +321,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public boolean getDebugWalApplyBlockFailureNoRetry() {
         return true;
+    }
+
+    @Override
+    public int getDebugWalApplyMaxTxnBlockSize() {
+        return Integer.MAX_VALUE;
     }
 
     @Override
@@ -670,6 +675,16 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getMatViewRowExpiryCleanupMaxCachedPartitions() {
+        return 16_384;
+    }
+
+    @Override
+    public double getMatViewRowExpiryCleanupMinExpiredFraction() {
+        return 0.5;
+    }
+
+    @Override
     public long getMatViewRowsPerQueryEstimate() {
         return 10_000_000L;
     }
@@ -746,7 +761,22 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public int getO3LastPartitionMaxSplits() {
-        return 15;
+        return 20;
+    }
+
+    @Override
+    public long getO3PartitionClusterBinWidth() {
+        return Micros.MINUTE_MICROS;
+    }
+
+    @Override
+    public int getO3PartitionClusterMaxBins() {
+        return 4096;
+    }
+
+    @Override
+    public int getO3PartitionMergeAppendFrameCacheSize() {
+        return 2;
     }
 
     @Override
@@ -771,8 +801,18 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getO3PartitionPreSplitMaxCuts() {
+        return 10_000;
+    }
+
+    @Override
     public int getO3OpenColumnQueueCapacity() {
         return 1024;
+    }
+
+    @Override
+    public int getO3PartitionPreSplitMinPieceMultiple() {
+        return 2;
     }
 
     @Override
@@ -856,6 +896,126 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getParquetExportVersion() {
         return ParquetVersion.PARQUET_VERSION_V1;
+    }
+
+    @Override
+    public long getPartitionCompactionAvgRowsPieceLim() {
+        return 4096;
+    }
+
+    @Override
+    public long getPartitionCompactionCheckInterval() {
+        return 120_000;
+    }
+
+    @Override
+    public long getPartitionCompactionDeadMinSize() {
+        return 50 * Numbers.SIZE_1MB;
+    }
+
+    @Override
+    public double getPartitionCompactionDeadRowsRatio() {
+        return 1;
+    }
+
+    @Override
+    public long getPartitionCompactionDeclineBackoffMax() {
+        return 60 * Micros.MINUTE_MICROS;
+    }
+
+    @Override
+    public long getPartitionCompactionIdleTimeout() {
+        return 60 * Micros.MINUTE_MICROS;
+    }
+
+    @Override
+    public long getPartitionCompactionIoBudget() {
+        return Numbers.SIZE_1GB;
+    }
+
+    @Override
+    public long getPartitionCompactionDeclineBackoffMin() {
+        return Micros.MINUTE_MICROS;
+    }
+
+    @Override
+    public int getPartitionCompactionDeclineBackoffMultiplier() {
+        return 2;
+    }
+
+    @Override
+    public int getPartitionCompactionHotCommits() {
+        return 10;
+    }
+
+    @Override
+    public int getPartitionCompactionIoCostMultiplier() {
+        return 2;
+    }
+
+    @Override
+    public int getPartitionCompactionMoveTailDeadRowsPercent() {
+        return 10;
+    }
+
+    @Override
+    public int getPartitionCompactionMoveTailPieceThreshold() {
+        return 1_000;
+    }
+
+    @Override
+    public int getPartitionCompactionMoveTailPrefixMultiple() {
+        return 2;
+    }
+
+    @Override
+    public int getPartitionCompactionPieceThreshold() {
+        return 20;
+    }
+
+    @Override
+    public long getPartitionCompactionSquashIdleTimeout() {
+        return 30 * Micros.MINUTE_MICROS;
+    }
+
+    @Override
+    public int getPartitionCompactionSquashTargetSizeMultiple() {
+        return 4;
+    }
+
+    @Override
+    public long getPartitionCompactionSwapTimeout() {
+        return 30 * Micros.MINUTE_MICROS;
+    }
+
+    @Override
+    public int getPartitionCompactionTableDeadStopPercent() {
+        return 10;
+    }
+
+    @Override
+    public int getPartitionCompactionTableDeadStopTriggerPercent() {
+        return 50;
+    }
+
+    @Override
+    public long getPartitionCompactionTableDeadThreshold() {
+        return 50 * Numbers.SIZE_1MB;
+    }
+
+    @Override
+    public int getPartitionCompactionTableDeadThresholdPercent() {
+        return 50;
+    }
+
+    @Override
+    public long getPartitionCompactionTableDeadTrigger() {
+        return 10 * Numbers.SIZE_1GB;
+    }
+
+    @Override
+    public long getPartitionCompactionTimeBudgetMs() {
+        return 1000;
     }
 
     @Override
@@ -1001,6 +1161,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getSampleByIndexSearchPageSize() {
         return 0;
+    }
+
+    @Override
+    public long getSequencerCheckMinInterval() {
+        return 500;
     }
 
     @Override
@@ -1241,6 +1406,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlMaxGroupingSets() {
+        return 4096;
+    }
+
+    @Override
     public int getSqlMaxNegativeLimit() {
         return 10_000;
     }
@@ -1268,6 +1438,31 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public double getSqlParallelFilterPreTouchThreshold() {
         return 0.05;
+    }
+
+    @Override
+    public long getSqlParallelHashJoinGroupByBuildParallelMinRows() {
+        return 300_000;
+    }
+
+    @Override
+    public long getSqlParallelHashJoinGroupByBuildRowsPerPartition() {
+        return 32_768;
+    }
+
+    @Override
+    public long getSqlParallelHashJoinGroupByPayloadCopyMaxSize() {
+        return 128 * Numbers.SIZE_1MB;
+    }
+
+    @Override
+    public double getSqlParallelHashJoinGroupByPayloadCopyMinProbeRatio() {
+        return 0.4;
+    }
+
+    @Override
+    public double getSqlParallelHashJoinGroupByPayloadCopyParallelMinProbeRatio() {
+        return 0.125;
     }
 
     @Override
@@ -1507,6 +1702,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getViewCompileBusyRetryTimeout() {
+        return 1000;
+    }
+
+    @Override
     public int getViewLexerPoolCapacity() {
         return 8;
     }
@@ -1522,6 +1722,21 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getWalApplyBlockMaxRows() {
+        return 100_000_000L;
+    }
+
+    @Override
+    public int getWalApplyBlockMemoryPercent() {
+        return 25;
+    }
+
+    @Override
+    public long getWalApplyBlockSize() {
+        return 75 * Numbers.SIZE_1MB;
+    }
+
+    @Override
     public int getWalApplyLookAheadTransactionCount() {
         return 20;
     }
@@ -1534,6 +1749,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public long getWalApplyTableTimeQuota() {
         return 1000L;
+    }
+
+    @Override
+    public int getWalApplyWorkerCount() {
+        return 1;
     }
 
     @Override
@@ -1681,8 +1901,18 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isCommitModeAdaptiveDowngrade() {
+        return false;
+    }
+
+    @Override
     public boolean isCopierChunkedEnabled() {
         return true;
+    }
+
+    @Override
+    public boolean isDebugWriterInvariantCheckEnabled() {
+        return false;
     }
 
     @Override
@@ -1726,7 +1956,17 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isMatViewRowExpiryCleanupEnabled() {
+        return true;
+    }
+
+    @Override
     public boolean isMultiKeyDedupEnabled() {
+        return false;
+    }
+
+    @Override
+    public boolean isO3PartitionMergeAppendEnabled() {
         return false;
     }
 
@@ -1811,6 +2051,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isSqlParallelHashJoinGroupByEnabled() {
+        return true;
+    }
+
+    @Override
     public boolean isSqlParallelHorizonJoinEnabled() {
         return true;
     }
@@ -1832,6 +2077,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public boolean isSqlParquetRowGroupPruningEnabled() {
+        return true;
+    }
+
+    @Override
+    public boolean isSqlStreamGroupByEnabled() {
         return true;
     }
 

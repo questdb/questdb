@@ -51,6 +51,7 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.mp.WorkerPoolMode;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Numbers;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
@@ -304,6 +305,68 @@ public class WorkerPoolManagerTest {
     }
 
     @Test
+    public void testConstructorRejectsPoolWithoutConfiguredCpus() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final int[][] cpus = {{0, 1}, {2, 3}};
+            final WorkerPoolConfiguration pinned = new WorkerPoolConfiguration() {
+                @Override
+                public int getGroupCount() {
+                    return 2;
+                }
+
+                @Override
+                public int[][] getGroupCpus() {
+                    return cpus;
+                }
+
+                @Override
+                public int getWorkerCount() {
+                    return 4;
+                }
+            };
+            // the factory builds the pool from a configuration that forwards the group count but
+            // not the CPU sets, so the group count alone doesn't tell the pools apart
+            final ServerConfiguration droppingCpus = createServerConfig(1, Metrics.ENABLED, null, pinned, c -> new WorkerPool(new WorkerPoolConfiguration() {
+                @Override
+                public int getGroupCount() {
+                    return c.getGroupCount();
+                }
+
+                @Override
+                public int getWorkerCount() {
+                    return c.getWorkerCount();
+                }
+            }));
+            try {
+                new WorkerPoolManager(droppingCpus) {
+                    @Override
+                    protected void configureWorkerPools(WorkerPool sharedPoolQuery, WorkerPool sharedPoolWrite) {
+                    }
+                };
+                Assert.fail();
+            } catch (IllegalStateException e) {
+                Assert.assertEquals(
+                        "pool does not have the configured worker groups [pool=worker, configured=2, actual=2,"
+                                + " configuredCpus=[[0, 1], [2, 3]], actualCpus=null]",
+                        e.getMessage()
+                );
+            }
+
+            // a pool built from the configuration itself keeps the CPU sets
+            final WorkerPoolManager workerPoolManager = new WorkerPoolManager(createServerConfig(1, Metrics.ENABLED, null, pinned, WorkerPool::new)) {
+                @Override
+                protected void configureWorkerPools(WorkerPool sharedPoolQuery, WorkerPool sharedPoolWrite) {
+                }
+            };
+            try {
+                Assert.assertSame(cpus, workerPoolManager.getSharedPoolNetwork().getGroupCpus());
+            } finally {
+                workerPoolManager.halt();
+            }
+        });
+    }
+
+    @Test
     public void testConstructorRejectsPoolWithoutConfiguredGroups() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final WorkerPoolConfiguration grouped = new WorkerPoolConfiguration() {
@@ -326,9 +389,10 @@ public class WorkerPoolManagerTest {
                 };
                 Assert.fail();
             } catch (IllegalStateException e) {
-                TestUtils.assertContains(
-                        e.getMessage(),
-                        "network pool does not have the configured worker groups [pool=worker, configured=2, actual=1]"
+                Assert.assertEquals(
+                        "pool does not have the configured worker groups [pool=worker, configured=2, actual=1,"
+                                + " configuredCpus=null, actualCpus=null]",
+                        e.getMessage()
                 );
             }
 
@@ -386,6 +450,69 @@ public class WorkerPoolManagerTest {
         } finally {
             workerPoolManager.halt();
         }
+    }
+
+    @Test
+    public void testGetInstanceDedicatedPoolChecksGroups() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final int[][] cpus = {{0, 1}, {2, 3}};
+            final WorkerPoolConfiguration pinned = new WorkerPoolConfiguration() {
+                @Override
+                public int getGroupCount() {
+                    return 2;
+                }
+
+                @Override
+                public int[][] getGroupCpus() {
+                    return cpus;
+                }
+
+                @Override
+                public String getPoolName() {
+                    return "pinned";
+                }
+
+                @Override
+                public int getWorkerCount() {
+                    return 4;
+                }
+            };
+            // the factory builds every pool from a configuration that doesn't forward the group methods,
+            // which the shared pools don't notice because they have no groups
+            final WorkerPoolManager dropping = new WorkerPoolManager(createServerConfig(1, Metrics.ENABLED, null, null, c -> new WorkerPool(c::getWorkerCount))) {
+                @Override
+                protected void configureWorkerPools(WorkerPool sharedPoolQuery, WorkerPool sharedPoolWrite) {
+                }
+            };
+            try {
+                try {
+                    dropping.getSharedPoolNetwork(pinned, WorkerPoolManager.Requester.HTTP_SERVER);
+                    Assert.fail();
+                } catch (IllegalStateException e) {
+                    // the dropping factory's pool has the default name
+                    Assert.assertEquals(
+                            "pool does not have the configured worker groups [pool=worker, configured=2, actual=1,"
+                                    + " configuredCpus=[[0, 1], [2, 3]], actualCpus=null]",
+                            e.getMessage()
+                    );
+                }
+            } finally {
+                dropping.halt();
+            }
+
+            final WorkerPoolManager keeping = new WorkerPoolManager(createServerConfig(1, Metrics.ENABLED, null, null, WorkerPool::new)) {
+                @Override
+                protected void configureWorkerPools(WorkerPool sharedPoolQuery, WorkerPool sharedPoolWrite) {
+                }
+            };
+            try {
+                final WorkerPool pool = keeping.getSharedPoolNetwork(pinned, WorkerPoolManager.Requester.HTTP_SERVER);
+                Assert.assertEquals(2, pool.getGroupCount());
+                Assert.assertSame(cpus, pool.getGroupCpus());
+            } finally {
+                keeping.halt();
+            }
+        });
     }
 
     @Test
@@ -626,6 +753,27 @@ public class WorkerPoolManagerTest {
     }
 
     @Test
+    public void testScrapeBeforeWorkersStartExportsNaNJobStartMetrics() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final Metrics metrics = new Metrics(true, new MetricsRegistryImpl());
+            final WorkerPoolManager workerPoolManager = createMetricsWorkerPoolManager(metrics, null);
+            try (DirectUtf8Sink sink = new DirectUtf8Sink(1024)) {
+                // the registry renders gauges before the manager target updates them, so the second scrape sees the update
+                metrics.scrapeIntoPrometheus(sink);
+                sink.clear();
+                metrics.scrapeIntoPrometheus(sink);
+                final String scraped = sink.toString();
+                TestUtils.assertContains(scraped, "questdb_workers_job_start_micros_min NaN\n");
+                TestUtils.assertContains(scraped, "questdb_workers_job_start_micros_max NaN\n");
+                Assert.assertEquals(Numbers.LONG_NULL, metrics.workerMetrics().getMinElapsedMicros());
+                Assert.assertEquals(Numbers.LONG_NULL, metrics.workerMetrics().getMaxElapsedMicros());
+            } finally {
+                workerPoolManager.halt();
+            }
+        });
+    }
+
+    @Test
     public void testScrapeWorkerMetrics() {
         int events = 20;
         AtomicInteger count = new AtomicInteger();
@@ -856,17 +1004,17 @@ public class WorkerPoolManagerTest {
             public WorkerPoolConfiguration getSharedWorkerPoolNetworkConfiguration() {
                 return networkConfiguration != null
                         ? networkConfiguration
-                        : TestWorkerPool.withRandomMode(rnd, () -> workerCount);
+                        : TestWorkerPool.withRandomMode(rnd, poolConfiguration(workerCount, metrics));
             }
 
             @Override
             public WorkerPoolConfiguration getSharedWorkerPoolQueryConfiguration() {
-                return TestWorkerPool.withRandomMode(rnd, () -> workerCount);
+                return TestWorkerPool.withRandomMode(rnd, poolConfiguration(workerCount, metrics));
             }
 
             @Override
             public WorkerPoolConfiguration getSharedWorkerPoolWriteConfiguration() {
-                return TestWorkerPool.withRandomMode(rnd, () -> workerCount);
+                return TestWorkerPool.withRandomMode(rnd, poolConfiguration(workerCount, metrics));
             }
 
             @Override
@@ -926,6 +1074,20 @@ public class WorkerPoolManagerTest {
                 throw new RuntimeException(END_MESSAGE);
             }
             return false; // not eager
+        };
+    }
+
+    private static WorkerPoolConfiguration poolConfiguration(int workerCount, Metrics metrics) {
+        return new WorkerPoolConfiguration() {
+            @Override
+            public Metrics getMetrics() {
+                return metrics;
+            }
+
+            @Override
+            public int getWorkerCount() {
+                return workerCount;
+            }
         };
     }
 

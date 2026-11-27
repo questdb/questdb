@@ -119,6 +119,12 @@ public class StaticContentProcessor implements HttpRequestProcessor, HttpRequest
         return true;
     }
 
+    @Override
+    public boolean isCrossSiteRequestAccepted() {
+        // links and embedded assets on other sites reach the web console's files
+        return true;
+    }
+
     public LogRecord logInfoWithFd(HttpConnectionContext context) {
         return LOG.info().$('[').$(context.getFd()).$("] ");
     }
@@ -144,7 +150,6 @@ public class StaticContentProcessor implements HttpRequestProcessor, HttpRequest
             if (headers.getQuery() != null) {
                 utf8Sink.putAscii('?').put(headers.getQuery());
             }
-            utf8Sink.putAscii(Misc.EOL);
             context.simpleResponse().sendStatusNoContent(HTTP_MOVED_PERM, utf8Sink);
             return;
         }

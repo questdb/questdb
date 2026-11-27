@@ -566,5 +566,10 @@ public class FirstDecimalGroupByFunctionFactory implements FunctionFactory {
         public boolean supportsParallelism() {
             return UnaryFunction.super.supportsParallelism();
         }
+
+        @Override
+        public boolean isStateSelfContained() {
+            return true;
+        }
     }
 }

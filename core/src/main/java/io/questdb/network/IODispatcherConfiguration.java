@@ -128,9 +128,9 @@ public interface IODispatcherConfiguration {
     long getTimeout();
 
     /**
-     * Whether a server whose listener the shared network pool's split divides by worker group
-     * steers each new connection to the listener of the group on the socket that processes its
-     * packets ({@code shared.network.worker.split.steer.connections}).
+     * Whether a server whose pool is split into worker groups steers each new connection to the
+     * listener of the group on the socket that processes its packets
+     * ({@code shared.network.worker.split.steer.connections}).
      */
     default boolean isConnectionSteeringEnabled() {
         return false;

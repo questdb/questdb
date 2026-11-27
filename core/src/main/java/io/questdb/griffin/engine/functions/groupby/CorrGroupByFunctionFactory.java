@@ -63,7 +63,7 @@ public class CorrGroupByFunctionFactory implements FunctionFactory {
      *
      * @see <a href="https://en.wikipedia.org/wiki/Algorithms_for_calculating_variance#Online">Welford's algorithm</a>
      */
-    private static class CorrGroupByFunction extends DoubleFunction implements GroupByFunction, BinaryFunction {
+    static class CorrGroupByFunction extends DoubleFunction implements GroupByFunction, BinaryFunction {
         protected final Function xFunc;
         protected final Function yFunc;
         protected int valueIndex;
@@ -217,6 +217,11 @@ public class CorrGroupByFunctionFactory implements FunctionFactory {
         @Override
         public boolean supportsParallelism() {
             return BinaryFunction.super.supportsParallelism();
+        }
+
+        @Override
+        public boolean isStateSelfContained() {
+            return true;
         }
 
         // mean_x, sum_x, mean_y, sum_y, sum_xy

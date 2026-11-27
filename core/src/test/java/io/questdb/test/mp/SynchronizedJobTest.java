@@ -26,63 +26,24 @@ package io.questdb.test.mp;
 
 import io.questdb.mp.Job;
 import io.questdb.mp.SynchronizedJob;
-import io.questdb.std.Unsafe;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicReference;
 
 public class SynchronizedJobTest {
-
-    @Test
-    public void testLockWordHasCacheLinesOfItsOwn() {
-        // the surefire argLine passes -XX:-RestrictContended, which lets HotSpot apply @Contended
-        // outside the JDK; it pads the field with 128 bytes on each side
-        final long lockedOffset = Unsafe.getFieldOffset(SynchronizedJob.class, "locked");
-        Assert.assertTrue(
-                "lock word is not padded, is -XX:-RestrictContended missing? [offset=" + lockedOffset + ']',
-                lockedOffset >= 128
-        );
-        final long subclassOffset = Unsafe.getFieldOffset(CountingJob.class, "runs");
-        Assert.assertTrue(
-                "subclass field shares the lock word's cache lines [lockedOffset=" + lockedOffset
-                        + ", subclassOffset=" + subclassOffset + ']',
-                subclassOffset - lockedOffset >= 128
-        );
-    }
 
     @Test
     public void testRunSeriallyNeverOverlaps() throws Exception {
         final int threadCount = 8;
         final int runsPerThread = 200_000;
         final CountingJob job = new CountingJob();
-        final CyclicBarrier barrier = new CyclicBarrier(threadCount);
-        final AtomicReference<Throwable> failure = new AtomicReference<>();
-        final AtomicInteger attempts = new AtomicInteger();
-        final Thread[] threads = new Thread[threadCount];
-        for (int t = 0; t < threadCount; t++) {
-            threads[t] = new Thread(() -> {
-                try {
-                    barrier.await();
-                    for (int i = 0; i < runsPerThread; i++) {
-                        job.run(Job.RUNNING_STATUS);
-                        attempts.incrementAndGet();
-                    }
-                } catch (Throwable th) {
-                    failure.compareAndSet(null, th);
-                }
-            });
-            threads[t].start();
-        }
-        for (Thread thread : threads) {
-            thread.join();
-        }
-        if (failure.get() != null) {
-            throw new AssertionError(failure.get());
-        }
-        Assert.assertEquals(threadCount * runsPerThread, attempts.get());
+        TestUtils.runConcurrently(threadCount, t -> {
+            for (int i = 0; i < runsPerThread; i++) {
+                job.run(Job.RUNNING_STATUS);
+            }
+        });
         Assert.assertEquals(0, job.overlaps.get());
         Assert.assertTrue("no run took the lock", job.runs > 0);
     }

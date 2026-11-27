@@ -41,6 +41,7 @@ import io.questdb.test.griffin.fuzz.FuzzTableFactory.ParquetMode;
  */
 public final class FuzzTable {
     private final ObjList<FuzzColumn> columns;
+    private final String compositeDay;
     private final String name;
     private final ParquetMode parquetMode;
     private final String parquetPartitions;
@@ -48,7 +49,7 @@ public final class FuzzTable {
     private final String tsColumnName;
 
     public FuzzTable(String name, ObjList<FuzzColumn> columns, String tsColumnName) {
-        this(name, columns, tsColumnName, ParquetMode.NONE, null, null);
+        this(name, columns, tsColumnName, ParquetMode.NONE, null, null, null);
     }
 
     public FuzzTable(
@@ -57,6 +58,7 @@ public final class FuzzTable {
             String tsColumnName,
             ParquetMode parquetMode,
             String parquetPartitions,
+            String compositeDay,
             FuzzTable shadow
     ) {
         this.name = name;
@@ -64,6 +66,7 @@ public final class FuzzTable {
         this.tsColumnName = tsColumnName;
         this.parquetMode = parquetMode;
         this.parquetPartitions = parquetPartitions;
+        this.compositeDay = compositeDay;
         this.shadow = shadow;
     }
 
@@ -77,6 +80,17 @@ public final class FuzzTable {
 
     public ObjList<FuzzColumn> getColumns() {
         return columns;
+    }
+
+    /**
+     * The ISO date backdated into to create a composite partition, or {@code null}
+     * if the composite-partition coin flip missed. A subsequent parquet
+     * conversion of the same day compacts it back to plain first, so this is not
+     * a guarantee the partition is still composite by query time -- see
+     * {@link FuzzTableFactory}.
+     */
+    public String getCompositeDay() {
+        return compositeDay;
     }
 
     public String getName() {

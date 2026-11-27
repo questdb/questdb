@@ -55,6 +55,16 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         this.cursor = new LimitRecordCursor(loFunction, hiFunction, argPos);
     }
 
+    public static long resolveLo(long lo, long hi, int position) throws SqlException {
+        if (lo == Numbers.LONG_NULL && hi != Numbers.LONG_NULL) {
+            return 0;
+        }
+        if (lo < 0 && hi > 0) {
+            throw SqlException.$(position, "LIMIT <negative>, <positive> is not allowed");
+        }
+        return lo;
+    }
+
     @Override
     public RecordCursorFactory getBaseFactory() {
         return base;
@@ -75,6 +85,11 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public int getScanDirection() {
         return base.getScanDirection();
+    }
+
+    @Override
+    public boolean hasTableScanTimestamp() {
+        return base.hasTableScanTimestamp();
     }
 
     @Override
@@ -421,11 +436,8 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                     hi = 0;
                 }
             } else {
-                lo = leftArg;
                 hi = rightFunction.getLong(null);
-                if (lo < 0 && hi > 0) {
-                    throw SqlException.$(argPos, "LIMIT <negative>, <positive> is not allowed");
-                }
+                lo = resolveLo(leftArg, hi, argPos);
                 if (lo > hi && Numbers.sameSign(lo, hi)) {
                     final long l = hi;
                     hi = lo;
