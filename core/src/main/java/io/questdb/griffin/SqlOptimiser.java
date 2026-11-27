@@ -15615,6 +15615,29 @@ public class SqlOptimiser implements Mutable {
         return Long.MAX_VALUE;
     }
 
+    private boolean hasSemanticPushdownBarrier(IQueryModel branch) {
+        IQueryModel m = branch;
+        while (m != null) {
+            if (m.getLatestBy().size() > 0
+                    || m.getLimitLo() != null
+                    || m.getLimitHi() != null
+                    || (m.getSampleBy() != null && !canPushToSampleBy(m, literalCollectorANames))
+                    || m.hasSharedRefs()
+                    || !m.isOptimisable()
+            ) {
+                return true;
+            }
+            final ObjList<IQueryModel> joinModels = m.getJoinModels();
+            for (int i = 1, n = joinModels.size(); i < n; i++) {
+                if (hasSemanticPushdownBarrier(joinModels.getQuick(i))) {
+                    return true;
+                }
+            }
+            m = m.getNestedModel();
+        }
+        return false;
+    }
+
     private boolean tryPushFilterIntoSetOperationBranches(ExpressionNode node, IQueryModel parent, IQueryModel nested) throws SqlException {
         // Only push filters on the designated timestamp into union branches.
         // Timestamp filters enable partition pruning — the only high-value optimization here.
@@ -15661,11 +15684,7 @@ public class SqlOptimiser implements Mutable {
         IQueryModel branch = nested;
         while (branch != null) {
             // Skip branches where pushing could change semantics
-            if (branch.getLatestBy().size() > 0
-                    || branch.getLimitLo() != null
-                    || branch.getLimitHi() != null
-                    || (branch.getSampleBy() != null && !canPushToSampleBy(branch, literalCollectorANames))
-            ) {
+            if (hasSemanticPushdownBarrier(branch)) {
                 allPushed = false;
                 branch = branch.getUnionModel();
                 continue;
