@@ -90,7 +90,8 @@ public final class PlanToFactoryRules {
         for (int i = 0, n = schema.getColumnCount(); i < n; i++) {
             final int type = schema.getColumnType(i);
             final boolean isCopied = RecordValueSinkFactory.isSupportedColumnType(type) || switch (ColumnType.tagOf(type)) {
-                case ColumnType.STRING, ColumnType.VARCHAR, ColumnType.BINARY, ColumnType.ARRAY, ColumnType.INTERVAL, ColumnType.NULL -> true;
+                case ColumnType.STRING, ColumnType.VARCHAR, ColumnType.BINARY, ColumnType.ARRAY, ColumnType.INTERVAL,
+                     ColumnType.NULL -> true;
                 default -> false;
             };
             if (!isCopied) {

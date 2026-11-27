@@ -442,9 +442,11 @@ final class OperatorPlanning implements Mutable {
         return switch (plan) {
             case FilterPlan _ -> true;
             case LimitPlan limit -> !LogicalPlans.hasSortUnderStableProjects(limit.getChild());
-            case SortPlan sort -> sort.getAlgorithm() == SortPlan.Algorithm.INPUT_ORDER || sort.getAlgorithm() == SortPlan.Algorithm.TIMESTAMP_DECLARATION;
-            case ProjectPlan project -> PlanToFactoryRules.projectionFactory(project) == PlanToFactoryRules.ProjectionFactory.VIRTUAL
-                    || PlanToFactoryRules.projectionFactory(project) == PlanToFactoryRules.ProjectionFactory.SELECTION;
+            case SortPlan sort ->
+                    sort.getAlgorithm() == SortPlan.Algorithm.INPUT_ORDER || sort.getAlgorithm() == SortPlan.Algorithm.TIMESTAMP_DECLARATION;
+            case ProjectPlan project ->
+                    PlanToFactoryRules.projectionFactory(project) == PlanToFactoryRules.ProjectionFactory.VIRTUAL
+                            || PlanToFactoryRules.projectionFactory(project) == PlanToFactoryRules.ProjectionFactory.SELECTION;
             default -> false;
         };
     }

@@ -880,10 +880,12 @@ final class PhysicalChoiceVerifier {
         final LogicalPlan base = PlanToFactoryRules.sampleByBase(sample);
         return switch (sample.getPreAggregation()) {
             case SERIAL -> true;
-            case PARALLEL -> OperatorPlanning.hasParallelFunctions(sample) && (bucket.getFunctionFlags() & BoundExpression.NO_PARALLELISM) == 0
-                    && !isUnsatisfied(PhysicalProperties.supportsPageFrameCursor(base), isPlanned);
-            case PARALLEL_STOLEN_FILTER -> OperatorPlanning.hasParallelFunctions(sample) && (bucket.getFunctionFlags() & BoundExpression.NO_PARALLELISM) == 0
-                    && PlanToFactoryRules.stolenFilter(base) != null;
+            case PARALLEL ->
+                    OperatorPlanning.hasParallelFunctions(sample) && (bucket.getFunctionFlags() & BoundExpression.NO_PARALLELISM) == 0
+                            && !isUnsatisfied(PhysicalProperties.supportsPageFrameCursor(base), isPlanned);
+            case PARALLEL_STOLEN_FILTER ->
+                    OperatorPlanning.hasParallelFunctions(sample) && (bucket.getFunctionFlags() & BoundExpression.NO_PARALLELISM) == 0
+                            && PlanToFactoryRules.stolenFilter(base) != null;
             default -> false;
         };
     }

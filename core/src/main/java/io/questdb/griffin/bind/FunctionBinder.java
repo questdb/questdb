@@ -597,7 +597,8 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
                             ? resolveCall(node, 0) : createColumn(node, index);
                 }
                 case ExpressionNode.BIND_VARIABLE -> createParameter(node);
-                case ExpressionNode.MEMBER_ACCESS -> captureConstant(new StrConstant(node.token), node.position, node.token);
+                case ExpressionNode.MEMBER_ACCESS ->
+                        captureConstant(new StrConstant(node.token), node.position, node.token);
                 case ExpressionNode.CONSTANT ->
                         captureConstant(resolver.createConstant(node.position, node.token, sqlExecutionContext), node.position, node.token);
                 case ExpressionNode.QUERY -> createCursorFunction(node, sqlExecutionContext);
