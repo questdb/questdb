@@ -157,12 +157,8 @@ public class ToTimezoneTimestampFunctionFactory implements FunctionFactory {
             // falls in a local interval are the instants whose local time falls in it, which the
             // conversion of a TICK timezone selects exactly, across the changes of the clocks too.
             // The conversion would overflow on a local time within a day of the ends of the range.
-            final long margin = timestampDriver.fromHours(24);
-            for (int i = startIndex, n = intervals.size(); i < n; i++) {
-                final long value = intervals.getQuick(i);
-                if (value != Long.MIN_VALUE && value != Long.MAX_VALUE && (value < Long.MIN_VALUE + margin || value > Long.MAX_VALUE - margin)) {
-                    return NONE;
-                }
+            if (MonotonicTimestampFunction.hasEndNearLongLimits(intervals, startIndex, timestampDriver.fromHours(24))) {
+                return NONE;
             }
             IntervalUtils.localIntervalsToUtc(tzRules, intervals, startIndex);
             return EXACT;

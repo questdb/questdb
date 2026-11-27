@@ -1806,6 +1806,72 @@ public final class IntervalUtils {
     }
 
     /**
+     * Converts the UTC intervals from {@code startIndex} on to the local times that
+     * {@code t - tzRules.getLocalOffset(t)}, the instant that to_utc() and dateadd() with a zone
+     * convert a local time {@code t} to, maps into them. Around a change of the clocks at T,
+     * getLocalOffset() returns the offset from before the change up to the local time
+     * {@code T + max(offset before, offset after)}, and the offset from after it from there on.
+     * So the local times of each run of one offset map to their instants shifted by the offset:
+     * <ul>
+     * <li>Where clocks spring forward, the skipped local times take the offset from before, and
+     * map to the instants from T on, which the first local times after the gap map to as well.
+     * An instant there has two local times, and an interval that ends there two pieces.</li>
+     * <li>Where clocks fall back, a repeated local time maps to its first occurrence, so no local
+     * time maps to the instants of the second.</li>
+     * </ul>
+     * An open end, Long.MIN_VALUE or Long.MAX_VALUE, stays open. The intervals that the conversion
+     * makes go after the others, then the intervals from {@code startIndex} on are sorted and
+     * merged. A finite end must lie further than {@code 2 * margin} from the ends of the long
+     * range, and {@code margin} must exceed any offset and any change of an offset.
+     */
+    public static void utcIntervalsToLocal(TimeZoneRules tzRules, LongList intervals, int startIndex, long margin) {
+        final int size = intervals.size();
+        for (int i = startIndex; i < size; i += 2) {
+            final long lo = intervals.getQuick(i);
+            final long hi = intervals.getQuick(i + 1);
+            if (lo == Long.MIN_VALUE && hi == Long.MAX_VALUE) {
+                intervals.add(Long.MIN_VALUE, Long.MAX_VALUE);
+                continue;
+            }
+            // Walk the runs of one offset from well before the first instant of the interval to well
+            // after its last: the local times of the runs beyond map to instants beyond the interval.
+            // An open end walks from the other end.
+            final long walkHi = (hi != Long.MAX_VALUE ? hi : lo) + margin;
+            long instant = (lo != Long.MIN_VALUE ? lo : hi) - margin;
+            long offset = tzRules.getOffset(instant);
+            // the first local time of the run, where the first run starts well before the interval
+            long runLo = Long.MIN_VALUE;
+            while (true) {
+                final long transition = tzRules.getNextDST(instant);
+                final boolean isLastRun = transition > walkHi;
+                final long nextOffset = isLastRun ? offset : tzRules.getOffset(transition);
+                // the first local time after the run, where the last run ends well after the interval
+                final long runHi = isLastRun ? Long.MAX_VALUE : transition + Math.max(offset, nextOffset);
+                final long pieceLo = Math.max(lo != Long.MIN_VALUE ? lo + offset : Long.MIN_VALUE, runLo);
+                final long pieceHi = Math.min(hi != Long.MAX_VALUE ? hi + offset : Long.MAX_VALUE, isLastRun ? Long.MAX_VALUE : runHi - 1);
+                if (pieceLo <= pieceHi) {
+                    assert pieceLo == Long.MIN_VALUE || tzRules.getLocalOffset(pieceLo) == offset;
+                    assert pieceHi == Long.MAX_VALUE || tzRules.getLocalOffset(pieceHi) == offset;
+                    intervals.add(pieceLo, pieceHi);
+                }
+                if (isLastRun) {
+                    break;
+                }
+                runLo = runHi;
+                offset = nextOffset;
+                instant = transition;
+            }
+        }
+        // move the pieces down over the UTC intervals, and join them
+        final int pieceSize = intervals.size() - size;
+        for (int k = 0; k < pieceSize; k++) {
+            intervals.setQuick(startIndex + k, intervals.getQuick(size + k));
+        }
+        intervals.setPos(startIndex + pieceSize);
+        sortAndUnionInPlace(intervals, startIndex);
+    }
+
+    /**
      * Adds a duration string to a timestamp. Supports multi-unit format like "5h3m31s".
      * Supported units: y (years), M (months), w (weeks), d (days), h (hours),
      * m (minutes), s (seconds), T (millis), u (micros), n (nanos).

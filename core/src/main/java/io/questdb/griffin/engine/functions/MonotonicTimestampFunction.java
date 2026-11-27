@@ -77,6 +77,21 @@ public interface MonotonicTimestampFunction {
     }
 
     /**
+     * Returns whether an end of the intervals from {@code startIndex} on, other than an open one,
+     * lies within {@code margin} of the ends of the long range, where shifting it by a zone offset
+     * of up to that much would overflow.
+     */
+    static boolean hasEndNearLongLimits(LongList intervals, int startIndex, long margin) {
+        for (int i = startIndex, n = intervals.size(); i < n; i++) {
+            final long value = intervals.getQuick(i);
+            if (value != Long.MIN_VALUE && value != Long.MAX_VALUE && (value < Long.MIN_VALUE + margin || value > Long.MAX_VALUE - margin)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
      * Inverts {@code [lo, hi]} for a function whose result is {@code arg + shift}, a constant
      * offset applied to every timestamp: the inverse subtracts {@code shift} back. Returns
      * {@link #EXACT}, or {@link #NONE} when subtracting {@code shift} would overflow the long

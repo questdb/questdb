@@ -34,14 +34,22 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.MonotonicTimestampFunction;
 import io.questdb.griffin.engine.functions.columns.TimestampColumn;
+import io.questdb.griffin.engine.functions.constants.CharConstant;
+import io.questdb.griffin.engine.functions.constants.IntConstant;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
+import io.questdb.griffin.engine.functions.constants.TimestampConstant;
+import io.questdb.griffin.engine.functions.date.TimestampAddWithTimezoneFunctionFactory;
+import io.questdb.griffin.engine.functions.date.TimestampFloorFromOffsetFunctionFactory;
 import io.questdb.griffin.engine.functions.date.ToTimezoneTimestampFunctionFactory;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.Interval;
 import io.questdb.std.LongList;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
+import io.questdb.std.datetime.DateLocaleFactory;
+import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.griffin.model.TickExprEngineJobTest;
 import io.questdb.test.tools.TestUtils;
@@ -55,10 +63,10 @@ import org.junit.Test;
  * selects exactly the rows that the predicate holds for, and the query keeps no row filter, so it
  * keeps the paths that need none: count() from the size of the intervals, vectorized aggregates
  * and a plain LIMIT. timestamp_floor(), date_trunc(), timestamp_ceil(), dateadd() by a fixed unit,
- * the addition of a constant, to_timezone() and to_utc() with a fixed offset, to_timezone() with a
- * named zone and a cast that widens the timestamp do; a dateadd() by months or with a zone,
- * to_utc() with a named zone, a timestamp_floor() in a named zone and a cast that narrows the
- * timestamp do not.
+ * the addition of a constant, to_timezone() and to_utc() in any zone, dateadd() by a fixed unit in
+ * any zone, timestamp_floor() by a fixed unit to the local time of a named zone, and a cast that
+ * widens the timestamp do, also where the clocks change; dateadd() by months, timestamp_floor() by
+ * months in a zone, with an offset or to UTC, and a cast that narrows the timestamp do not.
  * <p>
  * Each test compares the rows with those that in() selects row by row for the same predicate on
  * ts2, a copy of the timestamp that is not designated.
@@ -125,6 +133,18 @@ public class MonotonicTimestampTickInversionTest extends AbstractCairoTest {
             "to_timezone({ts}, 'Europe/London')",
             "to_timezone({ts}, 'America/New_York')",
             "to_timezone({ts}, 'Asia/Kolkata')",
+            "to_utc({ts}, 'Europe/London')",
+            "to_utc({ts}, 'Australia/Lord_Howe')",
+            "dateadd('h', 1, {ts}, 'Europe/London')",
+            "dateadd('m', -90, {ts}, 'America/New_York')",
+            "dateadd('d', 1, {ts}, 'Australia/Lord_Howe')",
+            "dateadd('h', 1, {ts}, '+02:00')",
+            "timestamp_floor('h', {ts}, null, '00:00', 'Europe/London')",
+            "timestamp_floor('45m', {ts}, null, '00:00', 'Australia/Lord_Howe')",
+            // a stride that does not divide a quarter of an hour, which re-floors out of every gap
+            "timestamp_floor('7m', {ts}, null, '00:00', 'Europe/London')",
+            "timestamp_floor('500000U', {ts}, null, '00:00', 'Europe/London')",
+            "timestamp_floor('d', {ts}, null, '00:00', 'America/New_York')",
             "timestamp_floor('h', to_timezone({ts}, 'Europe/Berlin'))",
             "to_timezone(dateadd('h', 1, {ts}), 'America/New_York')",
             "dateadd('m', 30, timestamp_floor('h', {ts}))",
@@ -135,11 +155,13 @@ public class MonotonicTimestampTickInversionTest extends AbstractCairoTest {
     private static final String[] INEXACT_CHAINS = {
             "dateadd('M', 1, {ts})",
             "dateadd('y', -1, {ts})",
-            "dateadd('h', 1, {ts}, 'Europe/London')",
-            "dateadd('h', 1, {ts}, '+02:00')",
-            "to_utc({ts}, 'Europe/London')",
-            "timestamp_floor('h', {ts}, null, '00:00', 'Europe/London')",
-            // maps no interval back at all
+            "dateadd('M', 1, {ts}, 'Europe/London')",
+            "dateadd('y', -1, {ts}, 'Europe/London')",
+            // a stride whose shift overflows
+            "dateadd('w', 2_000_000_000, {ts}, 'Europe/London')",
+            "timestamp_floor('h', {ts}, null, '00:15', 'Europe/London')",
+            "timestamp_floor_utc('h', {ts}, null, '00:00', 'Europe/London')",
+            // maps no interval back at all, as its buckets vary in width
             "timestamp_floor('M', {ts}, null, '00:00', 'Europe/London')"
     };
     // at 2024-01-02T10:00Z, a Tuesday
@@ -347,6 +369,97 @@ public class MonotonicTimestampTickInversionTest extends AbstractCairoTest {
                         "$today + 90m..$today + 524250m",
                         "[(\"2023-10-29T00:30:00.000000Z\",\"2023-10-29T00:59:59.999999Z\"),(\"2023-10-29T01:30:00.000000Z\",\"2024-10-27T00:30:00.000000Z\"),(\"2024-10-27T01:00:00.000000Z\",\"2024-10-27T01:30:00.000000Z\")]",
                         "count\tmin\tmax\n434\t2023-10-29T00:30:00.000000Z\t2024-10-27T01:30:00.000000Z\n"
+                );
+            } finally {
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
+    public void testDstIntervalsOfZoneFunctionsAtFallBack() throws Exception {
+        // On Sunday 2024-10-27, London clocks go back from 02:00 BST to 01:00 GMT at 01:00Z. to_utc()
+        // takes a local time of the repeated hour for its first occurrence, so no local time maps to
+        // the instants from 01:00Z to 02:00Z: those from 00:30Z to 01:30Z come only from the local
+        // times from 01:30 to 02:00, and a dateadd() in the zone, which converts back the way to_utc()
+        // does, returns none of the instants from 01:30Z to 01:45Z. The floor by hours to the local
+        // time returns 01:00 for both occurrences of the repeated hour. A row every five minutes.
+        assertMemoryLeak(() -> {
+            createTable("TIMESTAMP", "2024-10-26T00:00:00.000000Z", 864, 300_000_000L);
+            setCurrentMicros(parseMicros("2024-10-27T12:00:00.000000Z"));
+            try {
+                assertChainIntervals(
+                        "to_utc({ts}, 'Europe/London')",
+                        "$todayT00:30;1h",
+                        "[(\"2024-10-27T01:30:00.000000Z\",\"2024-10-27T01:59:59.999999Z\")]",
+                        "count\tmin\tmax\n6\t2024-10-27T01:30:00.000000Z\t2024-10-27T01:55:00.000000Z\n"
+                );
+                assertChainIntervals(
+                        "dateadd('h', 1, {ts}, 'Europe/London')",
+                        "$todayT01:30;15m",
+                        "[]",
+                        "count\tmin\tmax\n0\t\t\n"
+                );
+                assertChainIntervals(
+                        "timestamp_floor('h', {ts}, null, '00:00', 'Europe/London')",
+                        "$todayT01:00",
+                        "[(\"2024-10-27T00:00:00.000000Z\",\"2024-10-27T01:59:59.999999Z\")]",
+                        "count\tmin\tmax\n24\t2024-10-27T00:00:00.000000Z\t2024-10-27T01:55:00.000000Z\n"
+                );
+            } finally {
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
+    public void testDstIntervalsOfZoneFunctionsAtSpringForward() throws Exception {
+        // On Sunday 2024-03-31, London clocks skip from 01:00 GMT to 02:00 BST at 01:00Z. to_utc()
+        // takes a skipped local time with the offset from before, so the instants from 01:30Z to
+        // 01:45Z come from the local times 01:30 to 01:45, and from 02:30 to 02:45 too. dateadd() by
+        // an hour in the zone returns them for the local times 00:30 to 00:45 only, as 01:30 to 01:45
+        // has no instant. The buckets of 45 minutes since the epoch start at 00:45, 01:30 and 02:15
+        // local time: 01:30 starts inside the gap and ends after it, so the floor to the local time
+        // floors the local times 02:00 to 02:15, 01:00Z to 01:15Z, to the bucket of the start of the
+        // gap, 00:45, and none to 01:30. A row every five minutes.
+        assertMemoryLeak(() -> {
+            createTable("TIMESTAMP", "2024-03-30T00:00:00.000000Z", 864, 300_000_000L);
+            setCurrentMicros(parseMicros("2024-03-31T12:00:00.000000Z"));
+            try {
+                assertChainIntervals(
+                        "to_utc({ts}, 'Europe/London')",
+                        "$todayT01:30;15m",
+                        "[(\"2024-03-31T01:30:00.000000Z\",\"2024-03-31T01:44:59.999999Z\"),(\"2024-03-31T02:30:00.000000Z\",\"2024-03-31T02:44:59.999999Z\")]",
+                        "count\tmin\tmax\n6\t2024-03-31T01:30:00.000000Z\t2024-03-31T02:40:00.000000Z\n"
+                );
+                assertChainIntervals(
+                        "dateadd('h', 1, {ts}, 'Europe/London')",
+                        "$todayT01:30;15m",
+                        "[(\"2024-03-31T00:30:00.000000Z\",\"2024-03-31T00:44:59.999999Z\")]",
+                        "count\tmin\tmax\n3\t2024-03-31T00:30:00.000000Z\t2024-03-31T00:40:00.000000Z\n"
+                );
+                final String floor = "timestamp_floor('45m', {ts}, null, '00:00', 'Europe/London')";
+                // the bucket at 00:45 holds 00:45 to 01:00 and, from the bucket inside the gap, 02:00 to 02:15
+                assertChainIntervals(
+                        floor,
+                        "$todayT00:45",
+                        null,
+                        "count\tmin\tmax\n6\t2024-03-31T00:45:00.000000Z\t2024-03-31T01:10:00.000000Z\n"
+                );
+                // the bucket inside the gap holds no local time
+                assertChainIntervals(floor, "$todayT01:30", "[]", "count\tmin\tmax\n0\t\t\n");
+                assertChainIntervals(
+                        floor,
+                        "$todayT02:15",
+                        "[(\"2024-03-31T01:15:00.000000Z\",\"2024-03-31T01:59:59.999999Z\")]",
+                        "count\tmin\tmax\n9\t2024-03-31T01:15:00.000000Z\t2024-03-31T01:55:00.000000Z\n"
+                );
+                // both buckets
+                assertChainIntervals(
+                        floor,
+                        "$todayT00:30;90m",
+                        "[(\"2024-03-31T00:45:00.000000Z\",\"2024-03-31T01:14:59.999999Z\")]",
+                        "count\tmin\tmax\n6\t2024-03-31T00:45:00.000000Z\t2024-03-31T01:10:00.000000Z\n"
                 );
             } finally {
                 setCurrentMicros(-1);
@@ -641,23 +754,183 @@ public class MonotonicTimestampTickInversionTest extends AbstractCairoTest {
 
     @Test
     public void testNamedZoneNearRangeEndKeepsRowFilter() throws Exception {
-        // The conversion of a local time within a day of the ends of the range of a nanosecond
-        // timestamp, from 1677-09-21 to 2262-04-11, would overflow, so to_timezone() maps no
-        // interval back there and the row filter selects the rows
+        // The conversions of a zone, and the walk over its changes of the clocks, would overflow
+        // near the ends of the range of a nanosecond timestamp, from 1677-09-21T00:12Z to
+        // 2262-04-11T23:47Z, so the functions of a zone map no interval back there and the row
+        // filter selects the rows. A dateadd() also declines where its add could cross an end of the
+        // range, and the floor where the bucket after the interval would come near it.
         assertMemoryLeak(() -> {
             createTable("TIMESTAMP_NS", "2024-01-01T00:00:00.000000Z", 432, 600_000_000L);
             try {
-                for (String clock : new String[]{"2262-04-11T00:00:00.000000Z", "1677-09-21T12:00:00.000000Z"}) {
-                    setCurrentMicros(parseMicros(clock));
-                    assertQuery("SELECT count() FROM t WHERE to_timezone(ts, 'Europe/London') IN '$now'")
+                final String[][] cases = {
+                        {"2262-04-11T00:00:00.000000Z", "to_timezone(ts, 'Europe/London')", "to_timezone(ts)"},
+                        {"1677-09-21T12:00:00.000000Z", "to_timezone(ts, 'Europe/London')", "to_timezone(ts)"},
+                        {"2262-04-10T00:00:00.000000Z", "to_utc(ts, 'Europe/London')", "to_utc(ts)"},
+                        {"1677-09-22T12:00:00.000000Z", "to_utc(ts, 'Europe/London')", "to_utc(ts)"},
+                        {"2262-04-10T00:00:00.000000Z", "dateadd('h', 1, ts, 'Europe/London')", "dateadd('h',1,ts,'Europe/London')"},
+                        // ten days from the ends, which the add of ten days could cross
+                        {"1677-09-30T00:00:00.000000Z", "dateadd('d', 10, ts, 'Europe/London')", "dateadd('d',10,ts,'Europe/London')"},
+                        {"2262-04-02T00:00:00.000000Z", "dateadd('d', -10, ts, 'Europe/London')", "dateadd('d',-10,ts,'Europe/London')"},
+                        {"1677-09-21T06:00:00.000000Z", "timestamp_floor('h', ts, null, '00:00', 'Europe/London')", "timestamp_floor('1h',ts,null,'00:00','Europe/London')"},
+                        // the bucket after that of 20:00 ends within four hours of the end, the one after
+                        // that of 22:00 past it, and the bucket after 23:30 itself past it
+                        {"2262-04-11T20:00:00.000000Z", "timestamp_floor('h', ts, null, '00:00', 'Europe/London')", "timestamp_floor('1h',ts,null,'00:00','Europe/London')"},
+                        {"2262-04-11T22:00:00.000000Z", "timestamp_floor('h', ts, null, '00:00', 'Europe/London')", "timestamp_floor('1h',ts,null,'00:00','Europe/London')"},
+                        {"2262-04-11T23:30:00.000000Z", "timestamp_floor('h', ts, null, '00:00', 'Europe/London')", "timestamp_floor('1h',ts,null,'00:00','Europe/London')"}
+                };
+                for (String[] c : cases) {
+                    setCurrentMicros(parseMicros(c[0]));
+                    assertQuery("SELECT count() FROM t WHERE " + c[1] + " IN '$now'")
                             .noLeakCheck()
                             .noRandomAccess()
                             .expectSize()
-                            .withPlanContaining("filter: to_timezone(ts) in [")
+                            .withPlanContaining("filter: " + c[2] + " in [")
                             .returns("count\n0\n");
                 }
             } finally {
                 setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
+    public void testOpenStartAndEndOfZoneConversion() throws Exception {
+        // An outer floor from an origin inside the day of the literal opens the start of the
+        // intervals that it maps back, as every timestamp before the origin floors to it, and the
+        // functions of a zone keep that start open
+        assertMemoryLeak(() -> {
+            createTable("TIMESTAMP", "2023-12-31T00:00:00.000000Z", 720, 600_000_000L);
+            setCurrentMicros(parseMicros("2024-01-02T10:00:00.000000Z"));
+            try {
+                for (String chain : new String[]{
+                        "to_utc({ts}, 'Europe/London')",
+                        "dateadd('m', -90, {ts}, 'America/New_York')",
+                        "timestamp_floor('h', {ts}, null, '00:00', 'Europe/London')",
+                        "to_timezone({ts}, 'Australia/Lord_Howe')"
+                }) {
+                    final String predicate = "timestamp_floor('15m', " + chain + ", '2024-01-02T12:00:00.000000Z') IN '$today'";
+                    assertNoRowFilter(predicate);
+                    assertSameRowsAsRowFilter(predicate);
+                    Assert.assertTrue(chain, rowCount(predicate) > 0);
+                }
+            } finally {
+                setCurrentMicros(-1);
+            }
+        });
+        // The conversion of an open interval keeps the open ends, and splits a finite end where the
+        // clocks change: to_utc() maps to 2024-03-31T01:30Z from local 01:30 and before, as the
+        // skipped local times map with the offset from before, and from 02:00 to 02:30; from
+        // 2024-10-27T00:30Z on it maps from local 01:30 to 02:00, the first occurrences, and from
+        // 02:00 on
+        final TimeZoneRules london = MicrosTimestampDriver.INSTANCE.getTimezoneRules(DateLocaleFactory.EN_LOCALE, "Europe/London");
+        final long margin = MicrosTimestampDriver.INSTANCE.fromHours(48);
+        final LongList intervals = new LongList();
+        intervals.add(Long.MIN_VALUE, Long.MAX_VALUE);
+        IntervalUtils.utcIntervalsToLocal(london, intervals, 0, margin);
+        assertIntervals(intervals, Long.MIN_VALUE, Long.MAX_VALUE);
+        intervals.clear();
+        intervals.add(Long.MIN_VALUE, parseMicros("2024-03-31T01:30:00.000000Z"));
+        IntervalUtils.utcIntervalsToLocal(london, intervals, 0, margin);
+        assertIntervals(
+                intervals,
+                Long.MIN_VALUE, parseMicros("2024-03-31T01:30:00.000000Z"),
+                parseMicros("2024-03-31T02:00:00.000000Z"), parseMicros("2024-03-31T02:30:00.000000Z")
+        );
+        intervals.clear();
+        intervals.add(parseMicros("2024-10-27T00:30:00.000000Z"), Long.MAX_VALUE);
+        IntervalUtils.utcIntervalsToLocal(london, intervals, 0, margin);
+        assertIntervals(
+                intervals,
+                parseMicros("2024-10-27T01:30:00.000000Z"), parseMicros("2024-10-27T01:59:59.999999Z"),
+                parseMicros("2024-10-27T02:00:00.000000Z"), Long.MAX_VALUE
+        );
+        // the intervals before the start index stay, and those of two intervals that interleave
+        // around the spring forward come out in order
+        intervals.clear();
+        intervals.add(1L, 2L);
+        intervals.add(parseMicros("2024-03-31T01:10:00.000000Z"), parseMicros("2024-03-31T01:19:59.999999Z"));
+        intervals.add(parseMicros("2024-03-31T01:30:00.000000Z"), parseMicros("2024-03-31T01:39:59.999999Z"));
+        IntervalUtils.utcIntervalsToLocal(london, intervals, 2, margin);
+        assertIntervals(
+                intervals,
+                1L, 2L,
+                parseMicros("2024-03-31T01:10:00.000000Z"), parseMicros("2024-03-31T01:19:59.999999Z"),
+                parseMicros("2024-03-31T01:30:00.000000Z"), parseMicros("2024-03-31T01:39:59.999999Z"),
+                parseMicros("2024-03-31T02:10:00.000000Z"), parseMicros("2024-03-31T02:19:59.999999Z"),
+                parseMicros("2024-03-31T02:30:00.000000Z"), parseMicros("2024-03-31T02:39:59.999999Z")
+        );
+    }
+
+    @Test
+    public void testOpenAndEmptyIntervalsOfZoneFunctions() throws Exception {
+        // The functions of a zone keep an open end of the intervals that they map back, and map no
+        // interval back from none. No TICK literal makes an open end, as its intervals are finite.
+        assertMemoryLeak(() -> {
+            final Interval scratch = new Interval();
+            // dateadd() by an hour in London: from 2024-03-31T00:30Z the local time plus an hour lies in
+            // the gap from 01:00 to 02:00, which converts back with the offset from before, so the
+            // timestamps from 00:30Z on return 01:30Z and later
+            final ObjList<Function> addArgs = new ObjList<>();
+            addArgs.add(new CharConstant('h'));
+            addArgs.add(new IntConstant(1));
+            addArgs.add(TimestampColumn.newInstance(0, ColumnType.TIMESTAMP));
+            addArgs.add(new StrConstant("Europe/London"));
+            try (Function function = new TimestampAddWithTimezoneFunctionFactory().newInstance(0, addArgs, positions(4), configuration, sqlExecutionContext)) {
+                final MonotonicTimestampFunction dateAdd = (MonotonicTimestampFunction) function;
+                Assert.assertTrue(dateAdd.isExactForFiniteIntervals(scratch));
+                final LongList intervals = new LongList();
+                Assert.assertEquals(MonotonicTimestampFunction.EXACT, dateAdd.invertTimestampIntervals(intervals, 0, scratch));
+                Assert.assertEquals(0, intervals.size());
+                assertInverted(
+                        dateAdd,
+                        scratch,
+                        MonotonicTimestampFunction.EXACT,
+                        parseMicros("2024-03-31T01:30:00.000000Z"),
+                        Long.MAX_VALUE,
+                        parseMicros("2024-03-31T00:30:00.000000Z"),
+                        parseMicros("2024-03-31T00:59:59.999999Z"),
+                        parseMicros("2024-03-31T01:00:00.000000Z"),
+                        Long.MAX_VALUE
+                );
+            }
+            // the floor by hours to London time, and by months, whose buckets vary in width
+            for (String unit : new String[]{"h", "M"}) {
+                final ObjList<Function> floorArgs = new ObjList<>();
+                floorArgs.add(new StrConstant(unit));
+                floorArgs.add(TimestampColumn.newInstance(0, ColumnType.TIMESTAMP));
+                floorArgs.add(TimestampConstant.TIMESTAMP_MICRO_NULL);
+                floorArgs.add(new StrConstant("00:00"));
+                floorArgs.add(new StrConstant("Europe/London"));
+                try (Function function = new TimestampFloorFromOffsetFunctionFactory().newInstance(0, floorArgs, positions(5), configuration, sqlExecutionContext)) {
+                    final MonotonicTimestampFunction floor = (MonotonicTimestampFunction) function;
+                    if (unit.equals("M")) {
+                        Assert.assertFalse(floor.isExactForFiniteIntervals(scratch));
+                        assertInverted(floor, scratch, MonotonicTimestampFunction.NONE, parseMicros("2024-03-01T00:00:00.000000Z"), parseMicros("2024-03-31T23:59:59.999999Z"));
+                        continue;
+                    }
+                    Assert.assertTrue(floor.isExactForFiniteIntervals(scratch));
+                    assertInverted(floor, scratch, MonotonicTimestampFunction.EXACT, Long.MIN_VALUE, Long.MAX_VALUE, Long.MIN_VALUE, Long.MAX_VALUE);
+                    // the local hours from 00:00 on 2024-03-31, which starts in GMT
+                    assertInverted(
+                            floor,
+                            scratch,
+                            MonotonicTimestampFunction.EXACT,
+                            parseMicros("2024-03-31T00:00:00.000000Z"),
+                            Long.MAX_VALUE,
+                            parseMicros("2024-03-31T00:00:00.000000Z"),
+                            Long.MAX_VALUE
+                    );
+                    // up to 02:00 on 2024-10-27, the second 01:00 hour of which ends at 02:00Z
+                    assertInverted(
+                            floor,
+                            scratch,
+                            MonotonicTimestampFunction.EXACT,
+                            Long.MIN_VALUE,
+                            parseMicros("2024-10-27T01:00:00.000000Z"),
+                            Long.MIN_VALUE,
+                            parseMicros("2024-10-27T01:59:59.999999Z")
+                    );
+                }
             }
         });
     }
@@ -782,6 +1055,13 @@ public class MonotonicTimestampTickInversionTest extends AbstractCairoTest {
         });
     }
 
+    private static void assertIntervals(LongList intervals, long... expected) {
+        Assert.assertEquals(expected.length, intervals.size());
+        for (int i = 0; i < expected.length; i++) {
+            Assert.assertEquals("interval end " + i, expected[i], intervals.getQuick(i));
+        }
+    }
+
     private static void assertInverted(MonotonicTimestampFunction function, Interval scratch, int expectedGrade, long lo, long hi, long... expected) {
         final LongList intervals = new LongList();
         intervals.add(lo, hi);
@@ -796,6 +1076,14 @@ public class MonotonicTimestampTickInversionTest extends AbstractCairoTest {
 
     private static void createTable(String type, String from, int count, long stepMicros) throws SqlException {
         createTable(type, from, count, stepMicros, "PARTITION BY DAY");
+    }
+
+    private static IntList positions(int count) {
+        final IntList positions = new IntList();
+        for (int i = 0; i < count; i++) {
+            positions.add(0);
+        }
+        return positions;
     }
 
     private static void createTable(String type, String from, int count, long stepMicros, String partitioning) throws SqlException {
@@ -826,6 +1114,27 @@ public class MonotonicTimestampTickInversionTest extends AbstractCairoTest {
         assertDstIntervals("Europe/London", literal, intervals, expected);
     }
 
+    /**
+     * Asserts the intervals that the scan reads for the chain IN the literal, when not null, the
+     * count, first and last timestamp that the query selects, with no row filter, and the rows
+     * against the row filter on the copy of the timestamp.
+     */
+    private void assertChainIntervals(String chain, String literal, String intervals, String expected) throws Exception {
+        final String predicate = chain + " IN '" + literal + "'";
+        if (intervals != null) {
+            assertQuery("SELECT * FROM t WHERE " + predicate.replace("{ts}", "ts"))
+                    .noLeakCheck()
+                    .assertsPlanContaining("intervals: " + intervals);
+        }
+        assertQuery("SELECT count(), min(ts), max(ts) FROM t WHERE " + predicate.replace("{ts}", "ts"))
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .withPlanContaining("filter: null")
+                .returns(expected);
+        assertSameRowsAsRowFilter(predicate);
+    }
+
     private void assertDstIntervals(String zone, String literal, String intervals, String expected) throws Exception {
         final String predicate = "to_timezone({ts}, '" + zone + "') IN '" + literal + "'";
         assertQuery("SELECT * FROM t WHERE " + predicate.replace("{ts}", "ts"))
@@ -854,7 +1163,13 @@ public class MonotonicTimestampTickInversionTest extends AbstractCairoTest {
                     final String[] chains = {
                             "to_timezone({ts}, '" + zone + "')",
                             "timestamp_floor('h', to_timezone({ts}, '" + zone + "'))",
-                            "to_timezone(dateadd('m', 30, {ts}), '" + zone + "')"
+                            "to_timezone(dateadd('m', 30, {ts}), '" + zone + "')",
+                            "to_utc({ts}, '" + zone + "')",
+                            "dateadd('h', 1, {ts}, '" + zone + "')",
+                            "timestamp_floor('h', {ts}, null, '00:00', '" + zone + "')",
+                            // buckets that start inside a gap and end after it
+                            "timestamp_floor('45m', {ts}, null, '00:00', '" + zone + "')",
+                            "timestamp_floor('7m', {ts}, null, '00:00', '" + zone + "')"
                     };
                     int nonEmpty = 0;
                     for (long offset : DST_CLOCK_OFFSETS_MINUTES) {
@@ -893,7 +1208,7 @@ public class MonotonicTimestampTickInversionTest extends AbstractCairoTest {
                             assertNoRowFilter(predicate);
                             assertSameRowsAsRowFilter(predicate);
                         }
-                        // the whole days around the clock hold rows for every chain
+                        // the days around the clock hold rows for every chain
                         Assert.assertTrue(chain, rowCount(chain + " IN '$today'") > 0);
                         Assert.assertTrue(chain, rowCount(chain + " IN '[$yesterday, $tomorrow]'") > 0);
                         // no day of the literal is a Monday
