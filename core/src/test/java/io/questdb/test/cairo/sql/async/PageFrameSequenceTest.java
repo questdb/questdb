@@ -48,7 +48,7 @@ public class PageFrameSequenceTest extends AbstractCairoTest {
         // No worker pool consumes the reduce queue, so the owner publishes each frame and then
         // steals it back in the gang-steal loop of dispatch. A strategy that gates the owner on a
         // worker, such as SlotGatedWorkStealingStrategy, can hold it back only if the loop calls
-        // onBeforeDirectSteal() before each steal.
+        // onBeforeOwnerStep() before each steal.
         final AtomicInteger directStealCount = new AtomicInteger();
         factoryProvider = new DefaultFactoryProvider() {
             @Override
@@ -62,7 +62,7 @@ public class PageFrameSequenceTest extends AbstractCairoTest {
                         configuration.getSqlParallelWorkStealingSpinTimeout()
                 ) {
                     @Override
-                    public void onBeforeDirectSteal() {
+                    public void onBeforeOwnerStep() {
                         directStealCount.incrementAndGet();
                     }
                 };

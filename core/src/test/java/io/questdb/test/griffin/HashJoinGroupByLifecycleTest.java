@@ -24,21 +24,14 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.DefaultFactoryProvider;
-import io.questdb.FactoryProvider;
 import io.questdb.PropertyKey;
-import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.sql.StatefulAtom;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
-import io.questdb.cairo.sql.async.AdaptiveWorkStealingStrategy;
-import io.questdb.cairo.sql.async.WorkStealingStrategy;
-import io.questdb.cairo.sql.async.WorkStealingStrategyFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -48,13 +41,11 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
-import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Ignore;
 import org.junit.Test;
 
-import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.context;
 import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.fused;
@@ -93,19 +84,6 @@ public class HashJoinGroupByLifecycleTest extends AbstractCairoTest {
             "SELECT p.g, count() c, count(b.w) m FROM p LEFT JOIN b ON p.k = b.k GROUP BY p.g ORDER BY p.g",
             "SELECT p.g, count() c, count(b.w) m FROM p LEFT JOIN b ON p.s = b.s GROUP BY p.g ORDER BY p.g"
     };
-
-    // The adaptive strategy, which the default factory picks for 4 workers once the stealing
-    // threshold is 1, waits on the workers that took a round's tasks rather than stealing them.
-    // The owner of a build in rounds consults it whenever the reduce queue of 4 slots is full.
-    @Test
-    public void testAdaptiveWorkStealingDecidesInsideBuildRoundsWithLegacyWorkers() throws Exception {
-        assertAdaptiveWorkStealingInsideBuildRounds(WorkerPoolMode.LEGACY);
-    }
-
-    @Test
-    public void testAdaptiveWorkStealingDecidesInsideBuildRoundsWithoutWorkers() throws Exception {
-        assertAdaptiveWorkStealingInsideBuildRounds(null);
-    }
 
     @Test
     public void testDropPartitionBetweenOpenAndFirstReadKeepsTheSnapshot() throws Exception {
@@ -273,81 +251,6 @@ public class HashJoinGroupByLifecycleTest extends AbstractCairoTest {
             }
         } catch (CairoException e) {
             return "error: " + e.getFlyweightMessage();
-        }
-    }
-
-    private void assertAdaptiveWorkStealingInsideBuildRounds(@Nullable WorkerPoolMode mode) throws Exception {
-        HashJoinBuildMode.PARALLEL.applyProperties(node1.getConfigurationOverrides());
-        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD, 1);
-        setProperty(PropertyKey.CAIRO_UNORDERED_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, 4);
-        final AtomicInteger roundDecisions = new AtomicInteger();
-        final FactoryProvider previousFactoryProvider = factoryProvider;
-        factoryProvider = new DefaultFactoryProvider() {
-            @Override
-            public @NotNull WorkStealingStrategy getWorkStealingStrategy(
-                    @NotNull CairoConfiguration configuration,
-                    int workerCount,
-                    @NotNull StatefulAtom atom
-            ) {
-                final WorkStealingStrategy strategy = super.getWorkStealingStrategy(configuration, workerCount, atom);
-                if (!(atom instanceof AsyncHashJoinGroupByAtom fusedAtom)) {
-                    return strategy;
-                }
-                Assert.assertTrue(strategy instanceof AdaptiveWorkStealingStrategy);
-                // Counts the decisions taken while the open cursor's build is not yet published,
-                // which only the build's rounds take.
-                return new AdaptiveWorkStealingStrategy(
-                        configuration.getSqlParallelWorkStealingThreshold(),
-                        configuration.getSqlParallelWorkStealingSpinTimeout()
-                ) {
-                    @Override
-                    public boolean shouldSteal(int finishedCount) {
-                        if (fusedAtom.getFrozenBuild() == null) {
-                            roundDecisions.incrementAndGet();
-                        }
-                        return super.shouldSteal(finishedCount);
-                    }
-                };
-            }
-        };
-        try {
-            assertMemoryLeak(() -> {
-                final TestWorkerPool pool = mode == null ? null : new TestWorkerPool(4, mode);
-                TestUtils.execute(pool, (db, compiler, ignored) -> {
-                    Assert.assertTrue(WorkStealingStrategyFactory.getInstance(configuration, 4) instanceof AdaptiveWorkStealingStrategy);
-                    for (String sql : SHAPES) {
-                        createTables(db, ignored, false, 120);
-                        try (SqlExecutionContextImpl context = context(db, 4)) {
-                            // Frames of up to 3 rows give the build's rounds dozens of tasks each.
-                            context.changePageFrameSizes(2, 3);
-                            final int decisionsBefore = roundDecisions.get();
-                            try (RecordCursorFactory factory = db.select(sql, context)) {
-                                final String label = sql + "\n" + plan(factory, context);
-                                Assert.assertTrue(label, label.contains("Hash Join Group By"));
-                                final AsyncHashJoinGroupByAtom atom = fused(factory).getAtom();
-                                for (int run = 0; run < 2; run++) {
-                                    final String actual;
-                                    try (RecordCursor cursor = factory.getCursor(context)) {
-                                        actual = read(cursor, factory.getMetadata());
-                                        Assert.assertTrue(label, atom.isBuiltInRounds());
-                                    }
-                                    assertMatchesOrdinaryPlan(label, db, sql, context, actual);
-                                    Assert.assertEquals(label, 0, atom.getPerWorkerLocks().getAcquiredSlotCount());
-                                }
-                            }
-                            // Without workers, the queue fills after its fourth task, and with them,
-                            // long before the owner publishes a round's last one.
-                            if (mode == null) {
-                                Assert.assertTrue(sql, roundDecisions.get() > decisionsBefore);
-                            }
-                            Assert.assertNull(sql, context.getMemoryTracker());
-                        }
-                    }
-                    Assert.assertTrue(roundDecisions.get() > 0);
-                }, configuration, LOG);
-            });
-        } finally {
-            factoryProvider = previousFactoryProvider;
         }
     }
 

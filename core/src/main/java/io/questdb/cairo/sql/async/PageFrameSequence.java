@@ -899,7 +899,7 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
                 // The owner may take its own published frames here, so it lets the strategy hold
                 // it back first. An inactive sequence only drains, which the strategy must not hold.
                 if (isActive()) {
-                    workStealingStrategy.onBeforeDirectSteal();
+                    workStealingStrategy.onBeforeOwnerStep();
                 }
                 if (stealWork(reduceQueue, reduceSubSeq, localRecord, workStealCircuitBreaker)) {
                     if (isActive()) {
