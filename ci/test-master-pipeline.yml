@@ -8,9 +8,10 @@
 # a red master reruns, and alerts again, every slot until someone fixes it.
 #
 # ADO setup: the definition is named Master CI and its default branch is master. It needs
-# the variables GH_TOKEN, AZURE_DEVOPS_ENT_PAT, SCCACHE_AZURE_BLOB_CONTAINER and
-# SCCACHE_AZURE_CONNECTION_STRING, as on the New pull request and macwin definitions, and
-# BUILDS_SLACK_HOOK_URL for the alert (stage NotifyOnFailure).
+# the variables AZURE_DEVOPS_ENT_PAT, SCCACHE_AZURE_BLOB_CONTAINER and
+# SCCACHE_AZURE_CONNECTION_STRING, as on the New pull request and macwin definitions,
+# access to the github-public-read variable group, and BUILDS_SLACK_HOOK_URL for the alert
+# (stage NotifyOnFailure).
 trigger: none
 
 pr: none
