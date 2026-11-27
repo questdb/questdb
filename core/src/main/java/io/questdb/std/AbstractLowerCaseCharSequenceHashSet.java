@@ -90,6 +90,24 @@ public abstract class AbstractLowerCaseCharSequenceHashSet implements Mutable {
         return probe(key, index);
     }
 
+    /**
+     * Same as {@link #keyIndex(CharSequence)}, for a caller that holds the key's {@link Chars#lowerCaseHashCode(CharSequence)}
+     * already, so that a hot path does not hash the key again on every lookup, see
+     * {@link io.questdb.cairo.TableToken#getTableNameLowerCaseHashCode()}. A String key is compared with the String
+     * keys of the map through {@link String#charAt(int)}, which the JIT inlines.
+     */
+    public int keyIndex(CharSequence key, int lowerCaseHashCode) {
+        int index = lowerCaseHashCode & mask;
+        CharSequence mapKey;
+        while ((mapKey = keys[index]) != noEntryKey) {
+            if (keyEquals(key, mapKey)) {
+                return -index - 1;
+            }
+            index = (index + 1) & mask;
+        }
+        return index;
+    }
+
     public int keyIndex(CharSequence key, int lo, int hi) {
         int index = Chars.lowerCaseHashCode(key, lo, hi) & mask;
 
@@ -151,6 +169,29 @@ public abstract class AbstractLowerCaseCharSequenceHashSet implements Mutable {
 
     public int size() {
         return capacity - free;
+    }
+
+    // Chars.equalsIgnoreCase(), with a loop of its own for two Strings: String.charAt() inlines, where charAt() through
+    // CharSequence turns into a virtual call once many kinds of CharSequence have passed through Chars. The loop stays
+    // out of Chars.equalsIgnoreCase() on purpose: the JIT inlines that method into hot callers such as
+    // ConcurrentHashMap.get(), and a larger body stops the JIT from inlining those callers in turn.
+    private static boolean keyEquals(CharSequence key, CharSequence mapKey) {
+        if (key instanceof String s && mapKey instanceof String m) {
+            final int len = s.length();
+            if (len != m.length()) {
+                return false;
+            }
+            for (int i = 0; i < len; i++) {
+                final char sc = s.charAt(i);
+                final char mc = m.charAt(i);
+                // equal chars are equal in lower case too, and a map mostly holds a key spelled as it is looked up
+                if (sc != mc && Character.toLowerCase(sc) != Character.toLowerCase(mc)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+        return Chars.equalsIgnoreCase(key, mapKey);
     }
 
     private int probe(CharSequence key, int index) {

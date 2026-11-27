@@ -29,6 +29,7 @@ import io.questdb.griffin.engine.functions.str.TrimType;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.ObjList;
+import io.questdb.std.Rnd;
 import io.questdb.std.str.FileNameExtractorUtf8Sequence;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -374,6 +375,11 @@ public class CharsTest {
     }
 
     @Test
+    public void testEqualsIgnoreCaseMatchesCharacterToLowerCase() {
+        TestUtils.forEachCaseVariantPair(new Rnd(42, 7), CharsTest::assertEqualsIgnoreCase);
+    }
+
+    @Test
     public void testEqualsLowerCaseAscii() {
         Assert.assertTrue(Chars.equalsLowerCaseAscii("foo bar baz", "foo bar baz", 0, 11));
         Assert.assertTrue(Chars.equalsLowerCaseAscii("foo bar baz", "FoO bAr BaZ", 0, 11));
@@ -548,6 +554,21 @@ public class CharsTest {
         Assert.assertEquals(0, Chars.lastIndexOfDifferent("s  ", 0, 3, ' '));
         Assert.assertEquals(0, Chars.lastIndexOfDifferent("s s ", 0, 2, ' '));
         Assert.assertEquals(-1, Chars.lastIndexOfDifferent("s  ", 1, 3, ' '));
+    }
+
+    @Test
+    public void testLowerCaseHashCodeMatchesCharacterToLowerCase() {
+        // the hash of a single char is the char in lower case
+        for (int i = 0; i <= Character.MAX_VALUE; i++) {
+            final char c = (char) i;
+            final String value = "x" + c;
+            Assert.assertEquals("char " + i, Character.toLowerCase(c), Chars.lowerCaseHashCode(value, 1, 2));
+            Assert.assertEquals("char " + i, 31 * 'x' + Character.toLowerCase(c), Chars.lowerCaseHashCode(value));
+            // and through a CharSequence that is not a String
+            Assert.assertEquals("char " + i, 31 * 'x' + Character.toLowerCase(c), Chars.lowerCaseHashCode(new StringBuilder(value)));
+        }
+        Assert.assertEquals(Chars.lowerCaseHashCode("ingest_sensor_measurements_eu1"), Chars.lowerCaseHashCode("Ingest_SENSOR_Measurements_EU1"));
+        Assert.assertEquals(Chars.lowerCaseHashCode("éΩ"), Chars.lowerCaseHashCode("ÉΩ"));
     }
 
     @Test
@@ -752,6 +773,20 @@ public class CharsTest {
                 expected10,
                 sink.toString()
         );
+    }
+
+    // Checks the case-insensitive comparisons against isEqual, which compares the chars through Character.toLowerCase().
+    private static void assertEqualsIgnoreCase(String l, String r, boolean isEqual) {
+        final String message = "l=" + l + ", r=" + r;
+        Assert.assertEquals(message, isEqual, Chars.equalsIgnoreCase(l, r));
+        // and through CharSequences that are not Strings
+        Assert.assertEquals(message, isEqual, Chars.equalsIgnoreCase(new StringBuilder(l), r));
+        Assert.assertEquals(message, isEqual, Chars.equalsIgnoreCase(l, new StringBuilder(r)));
+        Assert.assertEquals(message, isEqual, Chars.equalsIgnoreCase(l, "#" + r, 1, r.length() + 1));
+        Assert.assertEquals(message, isEqual, Chars.equalsLowerCase("#" + l, 1, l.length() + 1, "##" + r, 2, r.length() + 2));
+        if (isEqual) {
+            Assert.assertEquals(message, Chars.lowerCaseHashCode(l), Chars.lowerCaseHashCode(r));
+        }
     }
 
     private void assertThat(String expected, ObjList<Path> list) {
