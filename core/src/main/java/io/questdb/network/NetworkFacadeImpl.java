@@ -26,6 +26,7 @@ package io.questdb.network;
 
 import io.questdb.log.Log;
 import io.questdb.std.Files;
+import io.questdb.std.LongList;
 import io.questdb.std.Os;
 import io.questdb.std.str.LPSZ;
 
@@ -40,6 +41,14 @@ public class NetworkFacadeImpl implements NetworkFacade {
     @Override
     public long accept(long serverFd) {
         return Net.accept(serverFd);
+    }
+
+    @Override
+    public int attachReuseportProgram(long fd, LongList program) {
+        if (!Os.isLinux()) {
+            return SocketCalls.ENOPROTOOPT;
+        }
+        return SocketCalls.attachReuseportProgram(Files.toOsFd(fd), program);
     }
 
     @Override
@@ -105,6 +114,14 @@ public class NetworkFacadeImpl implements NetworkFacade {
     }
 
     @Override
+    public int detachReuseportProgram(long fd) {
+        if (!Os.isLinux()) {
+            return SocketCalls.ENOPROTOOPT;
+        }
+        return SocketCalls.detachReuseportProgram(Files.toOsFd(fd));
+    }
+
+    @Override
     public int errno() {
         return Os.errno();
     }
@@ -165,8 +182,12 @@ public class NetworkFacadeImpl implements NetworkFacade {
     }
 
     @Override
-    public void listen(long serverFd, int backlog) {
-        Net.listen(serverFd, backlog);
+    public int listen(long serverFd, int backlog) {
+        if (Os.isWindows()) {
+            Net.listen(serverFd, backlog);
+            return 0;
+        }
+        return SocketCalls.listen(Files.toOsFd(serverFd), backlog);
     }
 
     @Override

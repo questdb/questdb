@@ -68,6 +68,7 @@ import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.engine.table.parquet.ParquetVersion;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.log.Log;
+import io.questdb.metrics.ConnectionSteeringMetrics;
 import io.questdb.metrics.Counter;
 import io.questdb.metrics.LongGauge;
 import io.questdb.metrics.MetricsConfiguration;
@@ -818,6 +819,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private long httpNetConnectionTimeout;
     private int httpRecvBufferSize;
     private short integerDefaultColumnType;
+    private boolean isNetworkConnectionSteeringEnabled;
     private int jsonQueryConnectionCheckFrequency;
     private int lineDefaultTimestampColumnType;
     private boolean lineLogMessageOnError;
@@ -2583,6 +2585,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                     sharedWorkerSleepTimeout
             );
             placeNetworkPools(properties, env);
+            this.isNetworkConnectionSteeringEnabled = getBoolean(properties, env, PropertyKey.SHARED_NETWORK_WORKER_SPLIT_STEER_CONNECTIONS, false);
 
             final int queryWorkers = configureSharedThreadPool(
                     properties,
@@ -7148,6 +7151,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public ConnectionSteeringMetrics getConnectionSteeringMetrics() {
+            return metrics.connectionSteeringMetrics();
+        }
+
+        @Override
         public ObjHashSet<String> getContextPathExec() {
             return httpContextPathSqlExecute;
         }
@@ -7373,6 +7381,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isBrowserTlsTerminationEnabled() {
             return isBrowserTlsTerminationEnabled;
+        }
+
+        @Override
+        public boolean isConnectionSteeringEnabled() {
+            return isNetworkConnectionSteeringEnabled;
         }
 
         @Override
@@ -7685,6 +7698,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public ConnectionSteeringMetrics getConnectionSteeringMetrics() {
+            return metrics.connectionSteeringMetrics();
+        }
+
+        @Override
         public int getConnectionPoolInitialCapacity() {
             return lineTcpConnectionPoolInitialCapacity;
         }
@@ -7857,6 +7875,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public WorkerPoolConfiguration getWriterWorkerPoolConfiguration() {
             return lineTcpWriterWorkerPoolConfiguration;
+        }
+
+        @Override
+        public boolean isConnectionSteeringEnabled() {
+            return isNetworkConnectionSteeringEnabled;
         }
 
         @Override
@@ -8239,6 +8262,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public ConnectionSteeringMetrics getConnectionSteeringMetrics() {
+            return metrics.connectionSteeringMetrics();
+        }
+
+        @Override
         public int getConnectionPoolInitialCapacity() {
             return pgConnectionPoolInitialCapacity;
         }
@@ -8441,6 +8469,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isDaemonPool() {
             return pgDaemonPool;
+        }
+
+        @Override
+        public boolean isConnectionSteeringEnabled() {
+            return isNetworkConnectionSteeringEnabled;
         }
 
         @Override

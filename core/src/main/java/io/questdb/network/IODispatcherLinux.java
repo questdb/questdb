@@ -25,6 +25,7 @@
 package io.questdb.network;
 
 import io.questdb.std.Misc;
+import org.jetbrains.annotations.Nullable;
 
 public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatcher<C> {
     private final Epoll epoll;
@@ -33,9 +34,11 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
     public IODispatcherLinux(
             IODispatcherConfiguration configuration,
             IOContextFactory<C> ioContextFactory,
-            boolean isPortShared
+            boolean isPortShared,
+            @Nullable ConnectionSteering steering,
+            int group
     ) {
-        super(configuration, ioContextFactory, isPortShared);
+        super(configuration, ioContextFactory, isPortShared, steering, group);
         this.epoll = new Epoll(configuration.getEpollFacade(), configuration.getEventCapacity());
         registerListenerFd();
     }

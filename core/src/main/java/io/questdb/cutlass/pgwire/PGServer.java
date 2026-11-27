@@ -115,7 +115,7 @@ public class PGServer implements Closeable {
                     typesAndSelectCacheLocal
             );
             final int groupCount = IODispatchers.getGroupCount(configuration, sharedPoolNetwork);
-            IODispatchers.createGroups(configuration, contextFactoryLocal, groupCount, dispatchersLocal);
+            IODispatchers.createGroups(configuration, contextFactoryLocal, sharedPoolNetwork, groupCount, dispatchersLocal);
             this.typesAndSelectCache = typesAndSelectCacheLocal;
             this.contextFactory = contextFactoryLocal;
             this.dispatchers = dispatchersLocal;

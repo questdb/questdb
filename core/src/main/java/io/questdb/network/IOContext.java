@@ -39,6 +39,8 @@ public abstract class IOContext<T extends IOContext<T>> implements Mutable, Quie
     private volatile int disconnecting = 0;
     private int disconnectReason;
     private volatile boolean initialized = false;
+    // the stamp ConnectionSteering.onAccepted() gave the connection, for its onDisconnected()
+    private int steeringStamp = -1;
 
     // IMPORTANT: Keep subclass constructors lightweight!
     // Under high load, new context objects are created for each accepted connection.
@@ -75,6 +77,10 @@ public abstract class IOContext<T extends IOContext<T>> implements Mutable, Quie
 
     public Socket getSocket() {
         return socket;
+    }
+
+    public int getSteeringStamp() {
+        return steeringStamp;
     }
 
     public final void init() throws TlsSessionInitFailedException {
@@ -114,6 +120,10 @@ public abstract class IOContext<T extends IOContext<T>> implements Mutable, Quie
 
     public void setHeartbeatId(long heartbeatId) {
         this.heartbeatId = heartbeatId;
+    }
+
+    public void setSteeringStamp(int steeringStamp) {
+        this.steeringStamp = steeringStamp;
     }
 
     /**

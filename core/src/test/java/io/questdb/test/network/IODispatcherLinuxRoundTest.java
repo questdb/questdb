@@ -481,7 +481,8 @@ public class IODispatcherLinuxRoundTest {
         }
 
         @Override
-        public void listen(long serverFd, int backlog) {
+        public int listen(long serverFd, int backlog) {
+            return 0;
         }
 
         @Override
@@ -647,7 +648,7 @@ public class IODispatcherLinuxRoundTest {
         final IntList publishedSizes = new IntList();
 
         TestDispatcher(IODispatcherConfiguration configuration, IOContextFactory<TestContext> ioContextFactory) {
-            super(configuration, ioContextFactory, false);
+            super(configuration, ioContextFactory, false, null, 0);
         }
 
         int pendingSize() {

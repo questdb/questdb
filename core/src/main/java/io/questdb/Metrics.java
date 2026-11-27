@@ -31,6 +31,7 @@ import io.questdb.cutlass.http.processors.JsonQueryMetrics;
 import io.questdb.cutlass.line.LineMetrics;
 import io.questdb.cutlass.pgwire.PGMetrics;
 import io.questdb.cutlass.qwp.server.egress.QwpEgressMetrics;
+import io.questdb.metrics.ConnectionSteeringMetrics;
 import io.questdb.metrics.CpuMetrics;
 import io.questdb.metrics.FiberMetrics;
 import io.questdb.metrics.GCMetrics;
@@ -52,6 +53,7 @@ import org.jetbrains.annotations.NotNull;
 public class Metrics implements Target, Mutable {
     public static final Metrics DISABLED = new Metrics(false, new NullMetricsRegistry());
     public static final Metrics ENABLED = new Metrics(true, new MetricsRegistryImpl());
+    private final ConnectionSteeringMetrics connectionSteeringMetrics;
     private final CpuMetrics cpuMetrics;
     private final FiberMetrics fiberMetrics;
     private final GCMetrics gcMetrics;
@@ -87,6 +89,8 @@ public class Metrics implements Target, Mutable {
         this.pgMetrics = new PGMetrics(metricsRegistry);
         this.fiberMetrics = new FiberMetrics();
         metricsRegistry.addTarget(fiberMetrics);
+        this.connectionSteeringMetrics = new ConnectionSteeringMetrics();
+        metricsRegistry.addTarget(connectionSteeringMetrics);
         this.qwpEgressMetrics = new QwpEgressMetrics(metricsRegistry);
         this.lineMetrics = new LineMetrics(metricsRegistry);
         this.healthCheck = new HealthMetricsImpl(metricsRegistry);
@@ -113,6 +117,10 @@ public class Metrics implements Target, Mutable {
         httpMetrics.clear();
         enabled = true;
         scrapeEnabled = true;
+    }
+
+    public ConnectionSteeringMetrics connectionSteeringMetrics() {
+        return connectionSteeringMetrics;
     }
 
     public void disable() {
