@@ -3912,14 +3912,6 @@ public class TableWriterTest extends AbstractCairoTest {
         });
     }
 
-    private static long readColumnVersionFileVersion(String tableName) {
-        try (ColumnVersionReader columnVersionReader = new ColumnVersionReader(); Path path = new Path()) {
-            path.of(configuration.getDbRoot()).concat(engine.verifyTableName(tableName)).concat(TableUtils.COLUMN_VERSION_FILE_NAME);
-            columnVersionReader.ofRO(configuration.getFilesFacade(), path.$());
-            return columnVersionReader.readUnsafe();
-        }
-    }
-
     private static void appendRow(TableWriter writer, String timestamp, long x) throws NumericException {
         final TableWriter.Row row = writer.newRow(MicrosTimestampDriver.floor(timestamp));
         row.putLong(0, x);
@@ -3997,6 +3989,14 @@ public class TableWriterTest extends AbstractCairoTest {
         r.putLong(8, rnd.nextGeoHashLong(60)); // locationLong
         r.append();
         return ts;
+    }
+
+    private static long readColumnVersionFileVersion(String tableName) {
+        try (ColumnVersionReader columnVersionReader = new ColumnVersionReader(); Path path = new Path()) {
+            path.of(configuration.getDbRoot()).concat(engine.verifyTableName(tableName)).concat(TableUtils.COLUMN_VERSION_FILE_NAME);
+            columnVersionReader.ofRO(configuration.getFilesFacade(), path.$());
+            return columnVersionReader.readUnsafe();
+        }
     }
 
     private long append10KNoSupplier(long ts, Rnd rnd, TableWriter writer) {

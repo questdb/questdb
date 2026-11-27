@@ -939,6 +939,17 @@ public class PartitionCompactionParquetConversionTest extends AbstractCairoTest 
         }
     }
 
+    private static void assertNoStagingDirectory(TableToken token) {
+        try (Path path = new Path()) {
+            final DirectUtf8StringZ name = new DirectUtf8StringZ();
+            final FilesFacade ff = engine.getConfiguration().getFilesFacade();
+            ff.iterateDir(path.of(engine.getConfiguration().getDbRoot()).concat(token.getDirName()).$(), (pUtf8NameZ, _) -> {
+                final String entry = name.of(pUtf8NameZ).toString();
+                Assert.assertFalse("a declined swap must remove its staging directory: " + entry, entry.contains(TableUtils.MERGING_DIR_MARKER));
+            });
+        }
+    }
+
     private static void assertSealedDayConverted(TableToken token, long sealSeqTxn) {
         try (TableReader reader = engine.getReader(token)) {
             final TxReader tx = reader.getTxFile();
@@ -955,17 +966,6 @@ public class PartitionCompactionParquetConversionTest extends AbstractCairoTest 
                         TestUtils.readSeqTxnForVersion(configuration.getFilesFacade(), path.$(), tx.getPartitionParquetFileSize(index))
                 );
             }
-        }
-    }
-
-    private static void assertNoStagingDirectory(TableToken token) {
-        try (Path path = new Path()) {
-            final DirectUtf8StringZ name = new DirectUtf8StringZ();
-            final FilesFacade ff = engine.getConfiguration().getFilesFacade();
-            ff.iterateDir(path.of(engine.getConfiguration().getDbRoot()).concat(token.getDirName()).$(), (pUtf8NameZ, _) -> {
-                final String entry = name.of(pUtf8NameZ).toString();
-                Assert.assertFalse("a declined swap must remove its staging directory: " + entry, entry.contains(TableUtils.MERGING_DIR_MARKER));
-            });
         }
     }
 
