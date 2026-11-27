@@ -284,6 +284,57 @@ public class RegressionR2FunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRegrR2OverflowDenominator() throws Exception {
+        // Values near ±1e153: sumX and sumY are each ~2e306, their product overflows to
+        // +Infinity. Before the fix sumXY² also overflows to +Inf, giving Inf/Inf = NaN.
+        // The split-sqrt fallback correctly returns 1.0 for a perfect positive correlation.
+        assertMemoryLeak(() -> {
+            execute("create table tbl1(x double, y double)");
+            execute("insert into tbl1 values (1e153, 1e153), (-1e153, -1e153)");
+            assertQuery("select regr_r2(y, x) from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("regr_r2\n1.0\n");
+        });
+    }
+
+    @Test
+    public void testRegrR2UnderflowDenominator() throws Exception {
+        // Values near ±1e-150: sumX and sumY are each ~2e-300, their product underflows
+        // to 0.0. Before the fix (sumXY * sumXY) / 0.0 = Infinity or NaN.
+        // The split-sqrt fallback uses two sqrt roundings so the result can be
+        // 0.9999999999999998 (within 2 ULP of 1.0); round() to 10 places confirms 1.0.
+        assertMemoryLeak(() -> {
+            execute("create table tbl1(x double, y double)");
+            execute("insert into tbl1 values (1e-150, 1e-150), (-1e-150, -1e-150)");
+            assertQuery("select round(regr_r2(y, x), 10) regr_r2 from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("regr_r2\n1.0\n");
+        });
+    }
+
+    @Test
+    public void testRegrR2ClampAboveOne() throws Exception {
+        // The split-sqrt path can produce r² marginally above 1.0 due to rounding drift.
+        // For the overflow inputs in testRegrR2OverflowDenominator, the unclamped value
+        // is 1.0000000000000004; the clamp (r2 > 1.0 ? 1.0 : r2) brings it to exactly 1.0.
+        // Verify by asserting the result equals 1.0, not 1.0000000000000004.
+        assertMemoryLeak(() -> {
+            execute("create table tbl1(x double, y double)");
+            // Same overflow-range inputs: without the clamp this would return 1.0000000000000004.
+            execute("insert into tbl1 values (1e153, 1e153), (-1e153, -1e153)");
+            assertQuery("select regr_r2(y, x) = 1.0 is_clamped from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("is_clamped\ntrue\n");
+        });
+    }
+
+    @Test
     public void testRegrR2SomeNull() throws Exception {
         // Null pairs are skipped; remaining 100 rows form a perfect line => r^2 = 1.0
         assertMemoryLeak(() -> {
