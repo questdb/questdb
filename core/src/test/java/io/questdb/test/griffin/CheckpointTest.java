@@ -8115,7 +8115,8 @@ public class CheckpointTest extends AbstractCairoTest {
 
     // A partition: its live row count, the furthest file row a live piece reaches (liveFileExtent), the furthest file
     // row it ever held (e), the file row where its column q starts, and its directory
-    private record CompositeDayLayout(boolean isComposite, long liveRows, long liveFileExtent, long e, long columnTopOfQ, File dir) {
+    private record CompositeDayLayout(boolean isComposite, long liveRows, long liveFileExtent, long e,
+                                      long columnTopOfQ, File dir) {
     }
 
     /**
