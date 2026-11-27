@@ -54,6 +54,8 @@ public final class Chars {
     }
 
     /**
+     * TEMPORARY, revert before merge: makes this PR build run the coverage legs.
+     * <p>
      * Avoid this when possible due to the allocation of a new char array
      * This should be only used when a JDK method forces you to use a byte array
      * <p>
