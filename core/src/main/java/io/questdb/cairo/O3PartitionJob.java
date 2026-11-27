@@ -843,7 +843,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 }
                 // getTxn()+1 is the txn this commit will land on: invisible to readers pinned on the
                 // current one, and droppable by the recovery walk if the commit never gets there.
-                indexWriter.setNextTxnAtSeal(tableWriter.getTxn() + 1L);
+                indexWriter.setNextTxnAtSeal(tableWriter.getTxn() + 1L, tableWriter.getPostingSealSavePointCover());
                 // A no-op on the normal path; it only acts on a stale tail an earlier failure left at or
                 // above lo, which has to go before the same rows are recorded again.
                 indexWriter.rollbackConditionally(lo);
