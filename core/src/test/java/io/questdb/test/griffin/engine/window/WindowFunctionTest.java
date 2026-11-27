@@ -20613,6 +20613,26 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWindowFunctionArgumentRenamedUnknownColumnFails() throws Exception {
+        // qty1 is not a column of trades, though the window function argument qty may pass through under that name.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (id INT, grp SYMBOL, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO trades VALUES
+                        (3, 'a', 15.0, '2024-01-01T00:00:00.000000Z'),
+                        (1, 'b', 25.0, '2024-01-01T00:01:00.000000Z')
+                    """);
+
+            assertQuery("SELECT qty * 10 AS qty, lead(qty) OVER () AS s, qty1 AS z FROM trades")
+                    .noLeakCheck()
+                    .fails(48, "Invalid column: qty1");
+            assertQuery("SELECT qty * 10 AS qty, lead(qty) OVER () AS s, qty1 FROM trades")
+                    .noLeakCheck()
+                    .fails(48, "Invalid column: qty1");
+        });
+    }
+
+    @Test
     public void testWindowFunctionArithmeticAsArgumentToAggregate() throws Exception {
         // Test arithmetic of window functions as argument to regular aggregate
         // sum(sum(id) OVER () + sum(id) OVER ()) should:

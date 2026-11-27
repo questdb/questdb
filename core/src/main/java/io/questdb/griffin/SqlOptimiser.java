@@ -856,6 +856,13 @@ public class SqlOptimiser implements Mutable {
                 && Chars.equals(model.getOrderBy().getQuick(0).token, model.getTimestamp().token);
     }
 
+    // True when the literal column names another column of the projection. The inner virtual model
+    // may also hold a column the optimiser added under a fresh name, such as qty1 for qty.
+    private static boolean isOtherProjectionColumn(IQueryModel model, QueryColumn column) {
+        final QueryColumn named = model.getAliasToColumnMap().get(column.getAst().token);
+        return named != null && named != column;
+    }
+
     private static boolean isPivotInSubquery(IQueryModel model, ExpressionNode node) {
         final ObjList<PivotForColumn> columns = model.getPivotForColumns();
         for (int i = 0, n = columns.size(); i < n; i++) {
@@ -14319,6 +14326,10 @@ public class SqlOptimiser implements Mutable {
                                     (!forceNotUseInnerModel && columnNotExistsInJoinModels(baseModel, qc.getAst().token) &&
                                             innerVirtualModel.getAliasToColumnMap().contains(qc.getAst().token))
                             ) {
+                                if (!isOtherProjectionColumn(model, qc)) {
+                                    // the optimiser added the name, such as qty1 to pass qty to a window function
+                                    throw SqlException.invalidColumn(qc.getAst().position, qc.getAst().token);
+                                }
                                 // column is referencing another column or function on the same projection
                                 // we must not add it to the translating model. This model is inserted between
                                 // the base table and the virtual model, and will not be able to resolve the reference (we
