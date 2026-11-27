@@ -87,6 +87,40 @@ public class PGTickExprPreparedStatementTest extends BasePGTest {
     }
 
     @Test
+    public void testPreparedMonotonicChainFollowsClockChangeOfEachRun() throws Exception {
+        // A statement prepared once with a function of the designated timestamp IN a date variable
+        // literal, which the interval scan selects the rows of without a row filter, selects the rows
+        // of the day of each run in London: the 24 hours from 23:00Z the day before on Saturday
+        // 2024-10-26, and the 25 hours from 23:00Z on Sunday 2024-10-27, when the clocks go back from
+        // 02:00 BST to 01:00 GMT. timestamp_floor() selects the rows of the UTC day. A row every ten
+        // minutes.
+        assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
+            final long saturday = MicrosFormatUtils.parseTimestamp("2024-10-26T12:00:00.000000Z");
+            final long sunday = MicrosFormatUtils.parseTimestamp("2024-10-27T12:00:00.000000Z");
+            setCurrentMicros(saturday);
+            try (Statement statement = connection.createStatement()) {
+                statement.execute("CREATE TABLE base (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                // the four days from 2024-10-25 to 2024-10-28
+                statement.execute("INSERT INTO base SELECT timestamp_sequence('2024-10-25T00:00:00.000000Z', 600_000_000L), 1 FROM long_sequence(576)");
+            }
+            drainWalQueue();
+            try (
+                    PreparedStatement zone = connection.prepareStatement("SELECT count(), min(ts), max(ts) FROM base WHERE to_timezone(ts, 'Europe/London') IN '$today'");
+                    PreparedStatement floor = connection.prepareStatement("SELECT count(), min(ts), max(ts) FROM base WHERE timestamp_floor('h', ts) IN '$today'")
+            ) {
+                for (int i = 0; i < 2; i++) {
+                    currentMicros = saturday;
+                    assertRows(zone, "count[BIGINT],min[TIMESTAMP],max[TIMESTAMP]\n144,2024-10-25 23:00:00.0,2024-10-26 22:50:00.0\n");
+                    assertRows(floor, "count[BIGINT],min[TIMESTAMP],max[TIMESTAMP]\n144,2024-10-26 00:00:00.0,2024-10-26 23:50:00.0\n");
+                    currentMicros = sunday;
+                    assertRows(zone, "count[BIGINT],min[TIMESTAMP],max[TIMESTAMP]\n150,2024-10-26 23:00:00.0,2024-10-27 23:50:00.0\n");
+                    assertRows(floor, "count[BIGINT],min[TIMESTAMP],max[TIMESTAMP]\n144,2024-10-27 00:00:00.0,2024-10-27 23:50:00.0\n");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testPreparedPointInTimeRangeElementSuffixFollowsNowOfEachRun() throws Exception {
         // A statement prepared once applies the day filter of the element of a range between two
         // points in time on the day of each run, with the literal and with a bind variable: #Mon

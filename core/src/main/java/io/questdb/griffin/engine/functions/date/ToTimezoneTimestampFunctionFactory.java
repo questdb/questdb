@@ -37,8 +37,10 @@ import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.MonotonicTimestampFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.IntList;
 import io.questdb.std.Interval;
+import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -147,6 +149,28 @@ public class ToTimezoneTimestampFunctionFactory implements FunctionFactory {
         @Override
         public int invertTimestampInterval(Interval io) {
             return MonotonicTimestampFunction.invertZoneOffsetShift(io, tzRules, timestampDriver, -1);
+        }
+
+        @Override
+        public int invertTimestampIntervals(LongList intervals, int startIndex, Interval scratch) {
+            // to_timezone() returns the local time of the timestamp, so the timestamps whose result
+            // falls in a local interval are the instants whose local time falls in it, which the
+            // conversion of a TICK timezone selects exactly, across the changes of the clocks too.
+            // The conversion would overflow on a local time within a day of the ends of the range.
+            final long margin = timestampDriver.fromHours(24);
+            for (int i = startIndex, n = intervals.size(); i < n; i++) {
+                final long value = intervals.getQuick(i);
+                if (value != Long.MIN_VALUE && value != Long.MAX_VALUE && (value < Long.MIN_VALUE + margin || value > Long.MAX_VALUE - margin)) {
+                    return NONE;
+                }
+            }
+            IntervalUtils.localIntervalsToUtc(tzRules, intervals, startIndex);
+            return EXACT;
+        }
+
+        @Override
+        public boolean isExactForFiniteIntervals(Interval scratch) {
+            return true;
         }
     }
 

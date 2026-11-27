@@ -47,7 +47,9 @@ import io.questdb.std.Numbers;
  * <p>
  * The range comes either from point bounds, or from a {@link CompiledTickExpression} for
  * {@code g(ts) IN 'tick'}, when the TICK expression holds a date variable and so resolves
- * to a different interval on every execution.
+ * to different intervals on every execution. Those intervals are inverted as a list, and where
+ * every function of the chain inverts them exactly, the query keeps no residual filter, see
+ * {@link #invertTickIntervals}.
  * <p>
  * Stored in {@link RuntimeIntervalModel}'s dynamic range list and evaluated under
  * {@link IntervalOperation#INTERSECT_INTERVALS}, mirroring
@@ -60,12 +62,17 @@ public class TimestampMonotonicInverter extends UntypedFunction {
     private final long hiConst;
     private final Interval io = new Interval();
     private final boolean isBetween;
+    // whether the query keeps no residual filter, so the intervals of the TICK expression must invert exactly
+    private final boolean isExact;
     private final Function loBound;
     private final short loBoundAdjustment;
     private final long loConst;
+    // the position of the TICK expression, for the error of an inversion that is not exact
+    private final int position;
     private final CompiledTickExpression tickExpr;
     private final LongList tickIntervals;
     private final TimestampDriver timestampDriver;
+    private boolean isLenient;
 
     public TimestampMonotonicInverter(
             Function head,
@@ -89,17 +96,32 @@ public class TimestampMonotonicInverter extends UntypedFunction {
         this.timestampDriver = timestampDriver;
         this.tickExpr = null;
         this.tickIntervals = null;
+        this.isExact = false;
+        this.position = 0;
     }
 
     /**
      * Inverts {@code g(ts) IN 'tick'}, where {@code tickExpr} is the compiled TICK expression,
      * resolved in the output domain of the chain.
+     *
+     * @param isExact  whether the query keeps no residual filter for the predicate, which the
+     *                 caller decides with {@link #invertTickIntervals}: an inversion that is not
+     *                 exact when the scan opens then fails the query
+     * @param position the position of the TICK expression in the SQL text
      */
-    public TimestampMonotonicInverter(Function head, CompiledTickExpression tickExpr, TimestampDriver timestampDriver) {
+    public TimestampMonotonicInverter(
+            Function head,
+            CompiledTickExpression tickExpr,
+            TimestampDriver timestampDriver,
+            boolean isExact,
+            int position
+    ) {
         this.head = head;
         this.tickExpr = tickExpr;
         this.tickIntervals = new LongList();
         this.timestampDriver = timestampDriver;
+        this.isExact = isExact;
+        this.position = position;
         this.loBound = null;
         this.loBoundAdjustment = 0;
         this.loConst = Long.MIN_VALUE;
@@ -107,6 +129,44 @@ public class TimestampMonotonicInverter extends UntypedFunction {
         this.hiBoundAdjustment = 0;
         this.hiConst = Long.MAX_VALUE;
         this.isBetween = false;
+    }
+
+    /**
+     * Inverts the intervals of a TICK expression, in the output domain of the chain of
+     * {@link MonotonicTimestampFunction}s that {@code head} starts, onto its timestamp, in place,
+     * one function at a time from the outermost: on exit {@code intervals} holds the intervals
+     * of the timestamp whose results fall in any of them, in ascending order and apart. A
+     * duration of zero or less leaves an interval that ends before it starts, which selects no
+     * timestamp. Returns the least exact grade of the functions, see
+     * {@link MonotonicTimestampFunction#invertTimestampIntervals}; after
+     * {@link MonotonicTimestampFunction#NONE} the intervals are undefined.
+     *
+     * @param scratch an interval that the method may overwrite
+     */
+    public static int invertTickIntervals(Function head, LongList intervals, Interval scratch) {
+        int writeIndex = 0;
+        for (int i = 0, n = intervals.size(); i < n; i += 2) {
+            final long lo = intervals.getQuick(i);
+            final long hi = intervals.getQuick(i + 1);
+            if (lo <= hi) {
+                intervals.setQuick(writeIndex++, lo);
+                intervals.setQuick(writeIndex++, hi);
+            }
+        }
+        intervals.setPos(writeIndex);
+        int grade = MonotonicTimestampFunction.EXACT;
+        Function f = head;
+        while (intervals.size() > 0 && f instanceof MonotonicTimestampFunction m) {
+            final int functionGrade = m.invertTimestampIntervals(intervals, 0, scratch);
+            if (functionGrade == MonotonicTimestampFunction.NONE) {
+                return MonotonicTimestampFunction.NONE;
+            }
+            if (functionGrade == MonotonicTimestampFunction.SUPERSET) {
+                grade = MonotonicTimestampFunction.SUPERSET;
+            }
+            f = m.getTimestampArg();
+        }
+        return grade;
     }
 
     @Override
@@ -126,10 +186,11 @@ public class TimestampMonotonicInverter extends UntypedFunction {
     }
 
     /**
-     * Appends a single inverted {@code [lo, hi]} pair to {@code out}, or nothing
-     * when the predicate matches no rows (a NULL bound, an empty preimage, or a TICK
-     * expression that resolves to no interval). The empty case relies on the enclosing
-     * {@code INTERSECT_INTERVALS} to reduce the result to the empty set.
+     * Appends the inverted intervals to {@code out}, in ascending order and apart: a single
+     * {@code [lo, hi]} pair for point bounds, the inversion of each interval for a TICK
+     * expression, or nothing when the predicate matches no rows (a NULL bound, an empty
+     * preimage, or a TICK expression that resolves to no interval). The empty case relies on
+     * the enclosing {@code INTERSECT_INTERVALS} to reduce the result to the empty set.
      */
     public void evaluate(LongList out) {
         if (tickExpr != null) {
@@ -191,6 +252,7 @@ public class TimestampMonotonicInverter extends UntypedFunction {
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         if (tickExpr != null) {
             tickExpr.init(symbolTableSource, executionContext);
+            isLenient = IntervalUtils.isTickEvaluationLenient(executionContext);
         }
         if (loBound != null) {
             loBound.init(symbolTableSource, executionContext);
@@ -218,18 +280,31 @@ public class TimestampMonotonicInverter extends UntypedFunction {
     private void evaluateTickExpr(LongList out) {
         tickIntervals.clear();
         tickExpr.evaluate(tickIntervals);
-        if (tickIntervals.size() == 0) {
-            // the expression resolves to no interval at all, so the predicate matches no rows
+        // the expression may resolve to no interval at all, and then the predicate matches no rows
+        final int grade = invertTickIntervals(head, tickIntervals, io);
+        if (grade == MonotonicTimestampFunction.EXACT) {
+            out.add(tickIntervals);
             return;
         }
-        if (tickIntervals.size() > 2) {
-            // A list is not one range to invert through the chain. Impose no interval and leave the
-            // rows to the residual filter, the same as for a list known at compile time.
-            out.add(Numbers.LONG_NULL, Long.MAX_VALUE);
+        if (!isExact) {
+            if (grade == MonotonicTimestampFunction.SUPERSET) {
+                // the residual filter selects the rows of the wider intervals
+                out.add(tickIntervals);
+            } else {
+                // bounds outside the invertible range: impose no interval, leaving the rows to the
+                // residual filter
+                out.add(Numbers.LONG_NULL, Long.MAX_VALUE);
+            }
             return;
         }
-        io.of(tickIntervals.getQuick(0), tickIntervals.getQuick(1));
-        invert(out);
+        // The query has no residual filter to select the rows of a wider interval from, as the
+        // intervals of the time it compiled at inverted exactly, and only an overflow at the end
+        // of the range makes those of another time not. SQL that the engine runs on its own has no
+        // caller to report it to, and selects nothing, as for a value that does not parse.
+        if (isLenient) {
+            return;
+        }
+        throw CairoException.nonCritical().position(position).put("TICK interval is out of range of the timestamp function");
     }
 
     private void invert(LongList out) {

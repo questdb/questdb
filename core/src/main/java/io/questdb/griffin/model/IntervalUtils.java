@@ -773,6 +773,152 @@ public final class IntervalUtils {
     }
 
     /**
+     * Converts the local intervals from {@code startIndex} on to UTC with the rules of a named
+     * timezone. A local interval stands for the instants whose local time falls in it:
+     * <ul>
+     * <li>Where clocks fall back, local times repeat, and an interval covers both occurrences of
+     * the repeated times in it. When one of its ends repeats, the instants between the two
+     * occurrences of that end fall outside it, so it turns into two intervals, or three when both
+     * of its ends repeat, at different transitions.</li>
+     * <li>Where clocks spring forward, local times are skipped. An interval that starts in the
+     * skipped time starts at the transition, and one that ends in it ends right before the
+     * transition. No instant matches an interval that falls entirely in the skipped time, so the
+     * conversion drops it.</li>
+     * </ul>
+     * So the result never depends on how the local time splits into intervals: a day covers the
+     * same instants as its hours or minutes. An unbounded end, Long.MIN_VALUE or Long.MAX_VALUE,
+     * stays unbounded. The intervals that the conversion adds go after the others, then the
+     * intervals from {@code startIndex} on are sorted and merged.
+     */
+    public static void localIntervalsToUtc(TimeZoneRules tzRules, LongList intervals, int startIndex) {
+        final int size = intervals.size();
+        if (size <= startIndex) {
+            return;
+        }
+        // getNextDST() gives the same transition for every instant from nextTransitionFrom up to the
+        // transition, so the ends that fall there reuse it
+        long nextTransitionFrom = Long.MAX_VALUE;
+        long nextTransition = Long.MIN_VALUE;
+        long offsetAfterNextTransition = 0;
+        // the converted intervals go to writeIndex, and their extra pieces after the others
+        int writeIndex = startIndex;
+        for (int i = startIndex; i < size; i += 2) {
+            final long lo = intervals.getQuick(i);
+            final long hi = intervals.getQuick(i + 1);
+
+            // the first instant whose local time is lo or later
+            long start = Long.MIN_VALUE;
+            // When lo repeats, the instants from the transition to the second occurrence of lo
+            // fall outside the interval
+            long loTransition = Long.MIN_VALUE;
+            long loRepeat = Long.MIN_VALUE;
+            if (lo != Long.MIN_VALUE) {
+                // getLocalOffset() resolves a repeated local time to its first occurrence, and a
+                // skipped one to the offset from before the transition, which no instant has there
+                final long offset = tzRules.getLocalOffset(lo);
+                start = lo - offset;
+                if (tzRules.getOffset(start) != offset) {
+                    // getDstGapOffset() is the distance into the gap, so this is the transition
+                    start -= tzRules.getDstGapOffset(lo);
+                } else {
+                    if (start < nextTransitionFrom || start >= nextTransition) {
+                        nextTransitionFrom = start;
+                        nextTransition = tzRules.getNextDST(start);
+                        offsetAfterNextTransition = nextTransition != Long.MAX_VALUE ? tzRules.getOffset(nextTransition) : offset;
+                    }
+                    if (offsetAfterNextTransition < offset && lo - offsetAfterNextTransition >= nextTransition) {
+                        loTransition = nextTransition;
+                        loRepeat = lo - offsetAfterNextTransition;
+                    }
+                }
+            }
+
+            // the last instant whose local time is hi or earlier
+            long end = Long.MAX_VALUE;
+            // When hi repeats, the instants from the first occurrence of hi to the transition fall
+            // outside the interval
+            long hiFirst = Long.MIN_VALUE;
+            long hiTransition = Long.MIN_VALUE;
+            if (hi != Long.MAX_VALUE) {
+                final long offset = tzRules.getLocalOffset(hi);
+                end = hi - offset;
+                if (tzRules.getOffset(end) != offset) {
+                    // right before the transition
+                    end -= tzRules.getDstGapOffset(hi) + 1;
+                } else {
+                    if (end < nextTransitionFrom || end >= nextTransition) {
+                        nextTransitionFrom = end;
+                        nextTransition = tzRules.getNextDST(end);
+                        offsetAfterNextTransition = nextTransition != Long.MAX_VALUE ? tzRules.getOffset(nextTransition) : offset;
+                    }
+                    if (offsetAfterNextTransition < offset && hi - offsetAfterNextTransition >= nextTransition) {
+                        hiFirst = end;
+                        hiTransition = nextTransition;
+                        end = hi - offsetAfterNextTransition;
+                    }
+                }
+            }
+
+            if (start > end) {
+                // no instant has a local time in the interval, which falls entirely in a gap
+                continue;
+            }
+
+            // The instants between start and end that fall outside the interval: up to two holes,
+            // in order. When both ends repeat at the same transition, their holes are adjacent.
+            final boolean hasLoHole = loRepeat > loTransition;
+            final boolean hasHiHole = hiTransition > hiFirst + 1;
+            long hole1Lo = Long.MAX_VALUE;
+            long hole1Hi = Long.MAX_VALUE;
+            long hole2Lo = Long.MAX_VALUE;
+            long hole2Hi = Long.MAX_VALUE;
+            if (hasLoHole && hasHiHole) {
+                if (loTransition == hiTransition) {
+                    hole1Lo = hiFirst + 1;
+                    hole1Hi = loRepeat - 1;
+                } else {
+                    hole1Lo = loTransition;
+                    hole1Hi = loRepeat - 1;
+                    hole2Lo = hiFirst + 1;
+                    hole2Hi = hiTransition - 1;
+                }
+            } else if (hasLoHole) {
+                hole1Lo = loTransition;
+                hole1Hi = loRepeat - 1;
+            } else if (hasHiHole) {
+                hole1Lo = hiFirst + 1;
+                hole1Hi = hiTransition - 1;
+            }
+
+            intervals.setQuick(writeIndex, start);
+            if (hole1Lo == Long.MAX_VALUE) {
+                intervals.setQuick(writeIndex + 1, end);
+            } else {
+                intervals.setQuick(writeIndex + 1, hole1Lo - 1);
+                if (hole2Lo == Long.MAX_VALUE) {
+                    intervals.add(hole1Hi + 1, end);
+                } else {
+                    intervals.add(hole1Hi + 1, hole2Lo - 1);
+                    intervals.add(hole2Hi + 1, end);
+                }
+            }
+            writeIndex += 2;
+        }
+
+        // move the extra pieces down to the converted intervals
+        final int pieceSize = intervals.size() - size;
+        if (writeIndex < size) {
+            for (int k = 0; k < pieceSize; k++) {
+                intervals.setQuick(writeIndex + k, intervals.getQuick(size + k));
+            }
+            intervals.setPos(writeIndex + pieceSize);
+        }
+        if (pieceSize > 0) {
+            unionBracketExpandedIntervals(intervals, startIndex);
+        }
+    }
+
+    /**
      * Parses a TICK (Temporal Interval Calendar Kit) interval string with bracket expansion,
      * timezone support, and duration suffixes. This method is the main entry point for parsing
      * complex interval expressions that can expand to multiple disjoint time intervals.
@@ -5927,152 +6073,6 @@ public final class IntervalUtils {
             }
         }
         intervals.setPos(writeIndex);
-    }
-
-    /**
-     * Converts the local intervals from {@code startIndex} on to UTC with the rules of a named
-     * timezone. A local interval stands for the instants whose local time falls in it:
-     * <ul>
-     * <li>Where clocks fall back, local times repeat, and an interval covers both occurrences of
-     * the repeated times in it. When one of its ends repeats, the instants between the two
-     * occurrences of that end fall outside it, so it turns into two intervals, or three when both
-     * of its ends repeat, at different transitions.</li>
-     * <li>Where clocks spring forward, local times are skipped. An interval that starts in the
-     * skipped time starts at the transition, and one that ends in it ends right before the
-     * transition. No instant matches an interval that falls entirely in the skipped time, so the
-     * conversion drops it.</li>
-     * </ul>
-     * So the result never depends on how the local time splits into intervals: a day covers the
-     * same instants as its hours or minutes. An unbounded end, Long.MIN_VALUE or Long.MAX_VALUE,
-     * stays unbounded. The intervals that the conversion adds go after the others, then the
-     * intervals from {@code startIndex} on are sorted and merged.
-     */
-    static void localIntervalsToUtc(TimeZoneRules tzRules, LongList intervals, int startIndex) {
-        final int size = intervals.size();
-        if (size <= startIndex) {
-            return;
-        }
-        // getNextDST() gives the same transition for every instant from nextTransitionFrom up to the
-        // transition, so the ends that fall there reuse it
-        long nextTransitionFrom = Long.MAX_VALUE;
-        long nextTransition = Long.MIN_VALUE;
-        long offsetAfterNextTransition = 0;
-        // the converted intervals go to writeIndex, and their extra pieces after the others
-        int writeIndex = startIndex;
-        for (int i = startIndex; i < size; i += 2) {
-            final long lo = intervals.getQuick(i);
-            final long hi = intervals.getQuick(i + 1);
-
-            // the first instant whose local time is lo or later
-            long start = Long.MIN_VALUE;
-            // When lo repeats, the instants from the transition to the second occurrence of lo
-            // fall outside the interval
-            long loTransition = Long.MIN_VALUE;
-            long loRepeat = Long.MIN_VALUE;
-            if (lo != Long.MIN_VALUE) {
-                // getLocalOffset() resolves a repeated local time to its first occurrence, and a
-                // skipped one to the offset from before the transition, which no instant has there
-                final long offset = tzRules.getLocalOffset(lo);
-                start = lo - offset;
-                if (tzRules.getOffset(start) != offset) {
-                    // getDstGapOffset() is the distance into the gap, so this is the transition
-                    start -= tzRules.getDstGapOffset(lo);
-                } else {
-                    if (start < nextTransitionFrom || start >= nextTransition) {
-                        nextTransitionFrom = start;
-                        nextTransition = tzRules.getNextDST(start);
-                        offsetAfterNextTransition = nextTransition != Long.MAX_VALUE ? tzRules.getOffset(nextTransition) : offset;
-                    }
-                    if (offsetAfterNextTransition < offset && lo - offsetAfterNextTransition >= nextTransition) {
-                        loTransition = nextTransition;
-                        loRepeat = lo - offsetAfterNextTransition;
-                    }
-                }
-            }
-
-            // the last instant whose local time is hi or earlier
-            long end = Long.MAX_VALUE;
-            // When hi repeats, the instants from the first occurrence of hi to the transition fall
-            // outside the interval
-            long hiFirst = Long.MIN_VALUE;
-            long hiTransition = Long.MIN_VALUE;
-            if (hi != Long.MAX_VALUE) {
-                final long offset = tzRules.getLocalOffset(hi);
-                end = hi - offset;
-                if (tzRules.getOffset(end) != offset) {
-                    // right before the transition
-                    end -= tzRules.getDstGapOffset(hi) + 1;
-                } else {
-                    if (end < nextTransitionFrom || end >= nextTransition) {
-                        nextTransitionFrom = end;
-                        nextTransition = tzRules.getNextDST(end);
-                        offsetAfterNextTransition = nextTransition != Long.MAX_VALUE ? tzRules.getOffset(nextTransition) : offset;
-                    }
-                    if (offsetAfterNextTransition < offset && hi - offsetAfterNextTransition >= nextTransition) {
-                        hiFirst = end;
-                        hiTransition = nextTransition;
-                        end = hi - offsetAfterNextTransition;
-                    }
-                }
-            }
-
-            if (start > end) {
-                // no instant has a local time in the interval, which falls entirely in a gap
-                continue;
-            }
-
-            // The instants between start and end that fall outside the interval: up to two holes,
-            // in order. When both ends repeat at the same transition, their holes are adjacent.
-            final boolean hasLoHole = loRepeat > loTransition;
-            final boolean hasHiHole = hiTransition > hiFirst + 1;
-            long hole1Lo = Long.MAX_VALUE;
-            long hole1Hi = Long.MAX_VALUE;
-            long hole2Lo = Long.MAX_VALUE;
-            long hole2Hi = Long.MAX_VALUE;
-            if (hasLoHole && hasHiHole) {
-                if (loTransition == hiTransition) {
-                    hole1Lo = hiFirst + 1;
-                    hole1Hi = loRepeat - 1;
-                } else {
-                    hole1Lo = loTransition;
-                    hole1Hi = loRepeat - 1;
-                    hole2Lo = hiFirst + 1;
-                    hole2Hi = hiTransition - 1;
-                }
-            } else if (hasLoHole) {
-                hole1Lo = loTransition;
-                hole1Hi = loRepeat - 1;
-            } else if (hasHiHole) {
-                hole1Lo = hiFirst + 1;
-                hole1Hi = hiTransition - 1;
-            }
-
-            intervals.setQuick(writeIndex, start);
-            if (hole1Lo == Long.MAX_VALUE) {
-                intervals.setQuick(writeIndex + 1, end);
-            } else {
-                intervals.setQuick(writeIndex + 1, hole1Lo - 1);
-                if (hole2Lo == Long.MAX_VALUE) {
-                    intervals.add(hole1Hi + 1, end);
-                } else {
-                    intervals.add(hole1Hi + 1, hole2Lo - 1);
-                    intervals.add(hole2Hi + 1, end);
-                }
-            }
-            writeIndex += 2;
-        }
-
-        // move the extra pieces down to the converted intervals
-        final int pieceSize = intervals.size() - size;
-        if (writeIndex < size) {
-            for (int k = 0; k < pieceSize; k++) {
-                intervals.setQuick(writeIndex + k, intervals.getQuick(size + k));
-            }
-            intervals.setPos(writeIndex + pieceSize);
-        }
-        if (pieceSize > 0) {
-            unionBracketExpandedIntervals(intervals, startIndex);
-        }
     }
 
     static void replaceHiLoInterval(long lo, long hi, short operation, LongList out) {

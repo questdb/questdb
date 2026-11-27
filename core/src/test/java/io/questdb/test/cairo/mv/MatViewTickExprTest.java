@@ -328,6 +328,50 @@ public class MatViewTickExprTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMonotonicChainLiteralRefreshesLikeTimestampLiteral() throws Exception {
+        // A refresh of a view filtered by a function of the timestamp IN a date variable literal,
+        // whose interval scan selects the rows without a row filter, selects the rows that the same
+        // literal on the timestamp itself selects, whichever day "$today" is in a refresh, see
+        // testRowValueDateVariableResolvesLikeLiteral
+        assertMemoryLeak(() -> {
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T03:00:00.000000Z"));
+            execute("CREATE TABLE base (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE MATERIALIZED VIEW literal_view AS (SELECT ts, count() c FROM base WHERE ts IN '$today' SAMPLE BY 1h)");
+            execute("CREATE MATERIALIZED VIEW floor_view AS (SELECT ts, count() c FROM base WHERE timestamp_floor('h', ts) IN '$today' SAMPLE BY 1h)");
+            execute("CREATE MATERIALIZED VIEW zone_view AS (SELECT ts, count() c FROM base WHERE to_timezone(ts, 'UTC') IN '$today' SAMPLE BY 1h)");
+            // a row on the first day of the epoch, on the day before the clock, and on the day of the clock
+            execute("""
+                    INSERT INTO base VALUES
+                    ('1970-01-01T01:00:00.000000Z', 1),
+                    ('2024-01-01T23:00:00.000000Z', 1),
+                    ('2024-01-02T08:00:00.000000Z', 1)
+                    """);
+            drainWalAndMatViewQueues();
+            assertQuery("SELECT view_name, view_status FROM materialized_views() ORDER BY view_name")
+                    .noLeakCheck()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("""
+                            view_name\tview_status
+                            floor_view\tvalid
+                            literal_view\tvalid
+                            zone_view\tvalid
+                            """);
+            // whichever day "$today" is in a refresh, it holds one of the rows
+            assertQuery("SELECT count() FROM floor_view")
+                    .noLeakCheck()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("""
+                            count
+                            1
+                            """);
+            assertSqlCursors("literal_view", "floor_view");
+            assertSqlCursors("literal_view", "zone_view");
+        });
+    }
+
+    @Test
     public void testPointInTimeLiteralWithMalformedTimeFailsCreateAndActsAsNullInRefresh() throws Exception {
         // An element that keeps its own time ignores the time part of the list, which still has to
         // parse: SQL rejects a view and a materialized view whose literal, one that it parses on

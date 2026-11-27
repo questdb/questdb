@@ -422,7 +422,7 @@ public class TickExprEngineJobTest extends AbstractCairoTest {
                         return 0;
                     }
                 };
-                try (TimestampMonotonicInverter inverter = new TimestampMonotonicInverter(head, compile(driver, malformed), driver)) {
+                try (TimestampMonotonicInverter inverter = new TimestampMonotonicInverter(head, compile(driver, malformed), driver, false, 0)) {
                     inverter.init(null, engineJob);
                     intervals.clear();
                     inverter.evaluate(intervals);

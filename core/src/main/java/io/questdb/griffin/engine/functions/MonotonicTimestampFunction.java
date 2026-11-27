@@ -27,7 +27,9 @@ package io.questdb.griffin.engine.functions;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.Interval;
+import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.datetime.TimeZoneRules;
 
@@ -235,6 +237,59 @@ public interface MonotonicTimestampFunction {
      * be constant or runtime-constant.
      */
     Function getTimestampArg();
+
+    /**
+     * Inverts value ranges of this function's result into the ranges of its timestamp argument,
+     * as {@link #invertTimestampInterval(Interval)} inverts one. On entry the intervals of
+     * {@code intervals} from {@code startIndex} on are the closed intervals that this function's
+     * result must fall in, in ascending order, apart and none empty. On exit they are the
+     * intervals that the timestamp argument must fall in, in ascending order and apart. Returns
+     * the least exact grade of the intervals; after {@link #NONE} the intervals from
+     * {@code startIndex} on are undefined.
+     * <p>
+     * The default inverts one interval at a time, drops those that no timestamp maps into, and
+     * joins those that a superset makes overlap.
+     *
+     * @param scratch an interval that the method may overwrite
+     */
+    default int invertTimestampIntervals(LongList intervals, int startIndex, Interval scratch) {
+        int grade = EXACT;
+        int writeIndex = startIndex;
+        for (int i = startIndex, n = intervals.size(); i < n; i += 2) {
+            scratch.of(intervals.getQuick(i), intervals.getQuick(i + 1));
+            final int intervalGrade = invertTimestampInterval(scratch);
+            if (intervalGrade == NONE) {
+                return NONE;
+            }
+            if (intervalGrade == SUPERSET) {
+                grade = SUPERSET;
+            }
+            if (scratch.getLo() <= scratch.getHi()) {
+                intervals.setQuick(writeIndex++, scratch.getLo());
+                intervals.setQuick(writeIndex++, scratch.getHi());
+            }
+        }
+        intervals.setPos(writeIndex);
+        IntervalUtils.sortAndUnionInPlace(intervals, startIndex);
+        return grade;
+    }
+
+    /**
+     * Returns whether {@link #invertTimestampIntervals} grades any finite intervals
+     * {@link #EXACT}, unless an end of an inverted interval would overflow the long range, which
+     * it grades otherwise. A predicate {@code g(ts) IN 'tick'}, whose intervals the scan resolves
+     * when it opens, needs no residual filter when every function of {@code g} returns true here.
+     * <p>
+     * The default holds where {@link #invertTimestampInterval(Interval)} grades an unbounded
+     * interval {@link #EXACT}: its contract grades no bounded interval less exactly, short of
+     * such an overflow.
+     *
+     * @param scratch an interval that the method may overwrite
+     */
+    default boolean isExactForFiniteIntervals(Interval scratch) {
+        scratch.of(Numbers.LONG_NULL, Long.MAX_VALUE);
+        return invertTimestampInterval(scratch) == EXACT;
+    }
 
     /**
      * Nondecreasing on the non-negative domain of a designated timestamp.

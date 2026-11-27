@@ -525,12 +525,19 @@ public class CompiledTickExpression extends UntypedFunction {
      * the UPDATE is acknowledged.
      */
     public void validate(long now) throws SqlException {
-        final LongList intervals = new LongList();
+        validate(now, new LongList());
+    }
+
+    /**
+     * Checks the expression as {@link #validate(long)} does, and appends the intervals that it
+     * evaluates to at the given "now" to outIntervals.
+     */
+    public void validate(long now, LongList outIntervals) throws SqlException {
         this.now = now;
         isLenient = false;
         checks = IntervalUtils.TICK_CHECK_INTERVAL_LIMIT;
         try {
-            evaluate(intervals);
+            evaluate(outIntervals);
         } catch (CairoException e) {
             throw SqlException.$(e.getPosition(), e.getFlyweightMessage());
         } finally {

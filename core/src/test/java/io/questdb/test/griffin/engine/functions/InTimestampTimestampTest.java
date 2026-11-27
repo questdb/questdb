@@ -1522,10 +1522,11 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
         // Whether a range starts after it ends depends on the time the query runs, so it fails then,
         // and not when the query compiles: a statement prepared at 03:00, when the range runs from
         // 09:30 to 03:00, runs at 12:00. With the JIT on, compiling a filter opens its interval scan
-        // to read the symbol tables, which evaluates the range at 03:00: the filter keeps the JIT,
-        // and the filter of a dateadd() of the designated timestamp keeps the Java filter, as the JIT
-        // takes no date variable. The serial filter opens nothing as it compiles. The interval scan
-        // evaluates the range at every open, also on a table without rows.
+        // to read the symbol tables, which evaluates the range at 03:00: the filter keeps the JIT. A
+        // dateadd() of the designated timestamp by a fixed unit leaves no filter of its own, as the
+        // interval scan selects its rows exactly, so the rest of the filter keeps the JIT too. The
+        // serial filter opens nothing as it compiles. The interval scan evaluates the range at every
+        // open, also on a table without rows.
         final int jitMode = sqlExecutionContext.getJitMode();
         final boolean isParallelFilterEnabled = sqlExecutionContext.isParallelFilterEnabled();
         assertMemoryLeak(() -> {
@@ -1545,10 +1546,10 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
                                 {"ts IN '$today + 570m..$now'", "3\t2024-01-02T10:00:00.000000Z\t2024-01-02T12:00:00.000000Z", "Interval forward scan"},
                                 {"ts IN '$today + 570m..$now' OR ts = 0", "3\t2024-01-02T10:00:00.000000Z\t2024-01-02T12:00:00.000000Z", "Interval forward scan"},
                                 // 08:30 to 11:00, an hour earlier
-                                {"dateadd('h', 1, ts) IN '$today + 570m..$now'", "3\t2024-01-02T09:00:00.000000Z\t2024-01-02T11:00:00.000000Z", javaFilter},
+                                {"dateadd('h', 1, ts) IN '$today + 570m..$now'", "3\t2024-01-02T09:00:00.000000Z\t2024-01-02T11:00:00.000000Z", "Interval forward scan"},
                                 // s is 'a' on odd hours
                                 {"ts IN '$today + 570m..$now' AND s = 'a'", "1\t2024-01-02T11:00:00.000000Z\t2024-01-02T11:00:00.000000Z", jitFilter},
-                                {"dateadd('h', 1, ts) IN '$today + 570m..$now' AND s = 'a'", "2\t2024-01-02T09:00:00.000000Z\t2024-01-02T11:00:00.000000Z", javaFilter}
+                                {"dateadd('h', 1, ts) IN '$today + 570m..$now' AND s = 'a'", "2\t2024-01-02T09:00:00.000000Z\t2024-01-02T11:00:00.000000Z", jitFilter}
                         }) {
                             final String sql = "SELECT count(), min(ts), max(ts) FROM t WHERE " + condition[0];
                             setCurrentMicros(NOW_0300);

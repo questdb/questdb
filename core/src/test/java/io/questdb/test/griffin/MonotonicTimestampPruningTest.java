@@ -61,6 +61,27 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
             "2008-06-15T08:30:00.000000Z"  // far from any transition
     };
     private static final String[] DATE_TRUNC_UNITS = {"second", "minute", "hour", "day", "week", "month", "quarter", "year"};
+    // TICK literals that resolve against the clock, the anchor, which sits at a change of the clocks of
+    // some zones, so their local times may repeat, or be skipped, at the ends of the intervals
+    private static final String[] DATE_VARIABLE_TICKS = {
+            "$today",
+            "$yesterday",
+            "$tomorrow",
+            "$now",
+            "$now - 1h..$now",
+            "$now - 3h..$now + 1h",
+            "$today..$now",
+            "$yesterday..$tomorrow",
+            "$todayT00:30;3h",
+            "$todayT01:30;15m",
+            "$todayT[01:15,01:45];10m",
+            "[$yesterday..$tomorrow]T01:30;1h",
+            "[$yesterday, $tomorrow]",
+            "$today#Sun",
+            "$today@Europe/London",
+            "$todayT01:30@America/New_York;1h",
+            "$today + 90m..$today + 150m"
+    };
     private static final String[] ORIGIN_POOL = {"2020-01-01T00:00:00.000000Z", "2022-01-01T03:00:00.000000Z", "2000-06-15T12:00:00.000000Z"};
     private static final int OUT_LONG = 2;
     private static final int OUT_TS = 0;
@@ -1027,6 +1048,9 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
             final int queriesPerTable = 40;
             int sampledPlans = 0;
             int intervalScanHits = 0;
+            // predicates with a date variable TICK literal, and those that keep no row filter
+            int dateVariableTicks = 0;
+            int dateVariableTicksWithoutFilter = 0;
             try {
                 for (int t = 0; t < tables; t++) {
                     final boolean nano = rnd.nextBoolean();
@@ -1064,8 +1088,8 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
                         }
                         final String predicate = buildPredicate(rnd, outKind, expr, data, nano, driver, sink);
                         // 'ts' is the designated timestamp (pushed down); 'ts2' an identical copy the optimizer leaves as a row filter
-                        final String pushSql = "SELECT i, ts FROM x WHERE " + predicate.replace("@", "ts");
-                        final String baseSql = "SELECT i, ts FROM x WHERE " + predicate.replace("@", "ts2");
+                        final String pushSql = "SELECT i, ts FROM x WHERE " + predicate.replace("{ts}", "ts");
+                        final String baseSql = "SELECT i, ts FROM x WHERE " + predicate.replace("{ts}", "ts2");
                         try {
                             assertSqlCursors(baseSql, pushSql);
                         } catch (Throwable th) {
@@ -1078,6 +1102,12 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
                                 intervalScanHits++;
                             }
                         }
+                        if (Chars.contains(predicate, " IN '$") || Chars.contains(predicate, " IN '[$")) {
+                            dateVariableTicks++;
+                            if (!Chars.contains(getPlanSink(pushSql).getSink(), "ilter")) {
+                                dateVariableTicksWithoutFilter++;
+                            }
+                        }
                     }
                     execute("DROP TABLE x");
                 }
@@ -1088,8 +1118,12 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
             LOG.info().$("monotonic pushdown fuzz done [tables=").$(tables)
                     .$(", queriesPerTable=").$(queriesPerTable)
                     .$(", sampledPlans=").$(sampledPlans)
-                    .$(", intervalScanHits=").$(intervalScanHits).$(']').$();
+                    .$(", intervalScanHits=").$(intervalScanHits)
+                    .$(", dateVariableTicks=").$(dateVariableTicks)
+                    .$(", dateVariableTicksWithoutFilter=").$(dateVariableTicksWithoutFilter).$(']').$();
             Assert.assertTrue("the fuzz never engaged the timestamp-function pushdown", intervalScanHits > 0);
+            Assert.assertTrue("the fuzz never dropped the row filter of a date variable TICK literal", dateVariableTicksWithoutFilter > 0);
+            Assert.assertTrue("the fuzz never kept the row filter of a date variable TICK literal", dateVariableTicksWithoutFilter < dateVariableTicks);
         });
     }
 
@@ -1433,33 +1467,48 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
         // when the query runs, as it has no IR, inverts the intervals of each run: each time slot
         // keeps its own extent, the tick calendar keeps what its sessions hold of it, and the
         // duration extends that by an hour, once. On Friday 2025-01-24, XNYS trades from 14:30 to
-        // 21:00Z. dateadd('h', 1, ts) selects the rows an hour before the intervals; with two of
-        // them, the inversion reads every row and the filter selects them. A bind variable selects
-        // the same rows, also for the literals that the IR rejects, which run on the static inversion
-        // as the query compiles, see testInBareTickCalendarLiteralRejectedByIrKeepsStaticInversion.
+        // 21:00Z. dateadd('h', 1, ts) selects the rows an hour before the intervals: the scan reads
+        // the intervals an hour earlier, also two of them, and no filter remains. A bind variable
+        // selects the same rows, also for the literals that the IR rejects, which run on the static
+        // inversion as the query compiles, see
+        // testInBareTickCalendarLiteralRejectedByIrKeepsStaticInversion.
         useTickCalendar();
         assertMemoryLeak(() -> {
             createMinuteTables();
             setCurrentMicros(parseMicros("2025-01-24T12:00:00.000000Z"));
             try {
                 final String select = "SELECT count(), min(ts), max(ts) FROM m WHERE dateadd('h', 1, ts) IN ";
+                // literal, rows, and the intervals that the scan reads, an hour before those of the
+                // literal, for the minutes
                 final String[][] literals = {
                         // the minute at 15:00, an hour longer
-                        {"$todayT[15:00@UTC]#XNYS;1h", "count\tmin\tmax\n61\t2025-01-24T14:00:00.000000Z\t2025-01-24T15:00:00.000000Z\n"},
+                        {
+                                "$todayT[15:00@UTC]#XNYS;1h",
+                                "count\tmin\tmax\n61\t2025-01-24T14:00:00.000000Z\t2025-01-24T15:00:00.000000Z\n",
+                                "[(\"2025-01-24T14:00:00.000000Z\",\"2025-01-24T15:00:59.999999Z\")]"
+                        },
                         // the minutes at 15:00 and 16:00, an hour longer, join
-                        {"$todayT[15..16]:00#XNYS;1h", "count\tmin\tmax\n121\t2025-01-24T14:00:00.000000Z\t2025-01-24T16:00:00.000000Z\n"},
-                        {"$todayT[15..16]:00:00Z#XNYS;1h", "count\tmin\tmax\n121\t2025-01-24T14:00:00.000000Z\t2025-01-24T16:00:00.000000Z\n"},
+                        {
+                                "$todayT[15..16]:00#XNYS;1h",
+                                "count\tmin\tmax\n121\t2025-01-24T14:00:00.000000Z\t2025-01-24T16:00:00.000000Z\n",
+                                "[(\"2025-01-24T14:00:00.000000Z\",\"2025-01-24T16:00:59.999999Z\")]"
+                        },
+                        {"$todayT[15..16]:00:00Z#XNYS;1h", "count\tmin\tmax\n121\t2025-01-24T14:00:00.000000Z\t2025-01-24T16:00:00.000000Z\n", null},
                         // 14:00Z lies before the session, 15:00Z in it
-                        {"$todayT[15..16]:00:00+01:00#XNYS;1h", "count\tmin\tmax\n61\t2025-01-24T14:00:00.000000Z\t2025-01-24T15:00:00.000000Z\n"},
+                        {"$todayT[15..16]:00:00+01:00#XNYS;1h", "count\tmin\tmax\n61\t2025-01-24T14:00:00.000000Z\t2025-01-24T15:00:00.000000Z\n", null},
                         // two intervals
-                        {"$todayT[15:00@UTC,17:00@UTC]#XNYS;1h", "count\tmin\tmax\n122\t2025-01-24T14:00:00.000000Z\t2025-01-24T17:00:00.000000Z\n"}
+                        {
+                                "$todayT[15:00@UTC,17:00@UTC]#XNYS;1h",
+                                "count\tmin\tmax\n122\t2025-01-24T14:00:00.000000Z\t2025-01-24T17:00:00.000000Z\n",
+                                "[(\"2025-01-24T14:00:00.000000Z\",\"2025-01-24T15:00:59.999999Z\"),(\"2025-01-24T16:00:00.000000Z\",\"2025-01-24T17:00:59.999999Z\")]"
+                        }
                 };
                 for (String[] literal : literals) {
                     assertQuery(select + "'" + literal[0] + "'")
                             .noLeakCheck()
                             .noRandomAccess()
                             .expectSize()
-                            .withPlanContaining("filter: dateadd('h',1,ts) in [")
+                            .withPlanContaining("filter: null", literal[2] != null ? "intervals: " + literal[2] : "Interval forward scan on: m")
                             .returns(literal[1]);
                     bindVariableService.clear();
                     bindVariableService.setStr(0, literal[0]);
@@ -1549,8 +1598,8 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
 
     @Test
     public void testInDateVariableListFollowsDayChange() throws Exception {
-        // the expression resolves to two intervals, one a day, which the scan does not narrow to, so
-        // the residual filter selects the rows
+        // the expression resolves to two intervals, one a day, and the scan reads both, with no
+        // residual filter
         setCurrentMicros(parseMicros("2024-01-02T10:00:00.000000Z"));
         try {
             final ObjList<MutationStep> steps = new ObjList<>();
@@ -1673,7 +1722,8 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
         // the intervals of each run: the fixed date keeps its own extent, the tick calendar keeps what its
         // sessions hold of it, and the duration extends what they keep, once. On Monday 2025-01-27, XNYS
         // trades from 14:30 to 21:00Z, as on Friday 2025-01-24. dateadd('h', 1, ts) selects the minutes an
-        // hour before the intervals, on a microsecond and a nanosecond timestamp. A fixed date with a ';' of
+        // hour before the intervals, on a microsecond and a nanosecond timestamp, which the scan reads with
+        // no filter. A fixed date with a ';' of
         // its own and the duration of the list fails the query as it compiles, at the literal, after the
         // inversion as the query compiles declines it.
         useTickCalendar();
@@ -1681,22 +1731,36 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
             createMinuteTables();
             setCurrentMicros(parseMicros("2025-01-27T12:00:00.000000Z"));
             try {
+                // literal, rows, first and last minute, and the first and last instant of each interval
+                // that the scan reads, an hour before those of the literal
                 final String[][] literals = {
                         // each session, an hour longer
-                        {"[$today, 2025-01-24]#XNYS;1h", "900", "2025-01-24T13:30:00.000000", "2025-01-27T20:59:00.000000"},
+                        {
+                                "[$today, 2025-01-24]#XNYS;1h", "900", "2025-01-24T13:30:00.000000", "2025-01-27T20:59:00.000000",
+                                "2025-01-24T13:30:00.000000", "2025-01-24T20:59:59.999999", "2025-01-27T13:30:00.000000", "2025-01-27T20:59:59.999999"
+                        },
                         // the hour from 15:00 of the fixed date, its own duration, and the session of the Monday
-                        {"[$today, 2025-01-24T15:00;1h]#XNYS", "450", "2025-01-24T14:00:00.000000", "2025-01-27T19:59:00.000000"},
+                        {
+                                "[$today, 2025-01-24T15:00;1h]#XNYS", "450", "2025-01-24T14:00:00.000000", "2025-01-27T19:59:00.000000",
+                                "2025-01-24T14:00:00.000000", "2025-01-24T14:59:59.999999", "2025-01-27T13:30:00.000000", "2025-01-27T19:59:59.999999"
+                        },
                         // the minute at 15:00Z as it is, and the session of the Monday
-                        {"[$today, 2025-01-24T[15:00@UTC]]#XNYS;0h", "391", "2025-01-24T14:00:00.000000", "2025-01-27T19:59:00.000000"}
+                        {
+                                "[$today, 2025-01-24T[15:00@UTC]]#XNYS;0h", "391", "2025-01-24T14:00:00.000000", "2025-01-27T19:59:00.000000",
+                                "2025-01-24T14:00:00.000000", "2025-01-24T14:00:59.999999", "2025-01-27T13:30:00.000000", "2025-01-27T19:59:59.999999"
+                        }
                 };
                 for (String[] literal : literals) {
                     for (String table : new String[]{"m", "mn"}) {
-                        final String fraction = table.equals("m") ? "Z" : "000Z";
+                        final boolean isNano = table.equals("mn");
+                        final String fraction = isNano ? "000Z" : "Z";
+                        final String intervals = "intervals: [(\"" + literal[4] + fraction + "\",\"" + literal[5] + (isNano ? "999Z" : "Z")
+                                + "\"),(\"" + literal[6] + fraction + "\",\"" + literal[7] + (isNano ? "999Z" : "Z") + "\")]";
                         assertQuery("SELECT count(), min(ts), max(ts) FROM " + table + " WHERE dateadd('h', 1, ts) IN '" + literal[0] + "'")
                                 .noLeakCheck()
                                 .noRandomAccess()
                                 .expectSize()
-                                .withPlanContaining("filter: dateadd('h',1,ts) in [")
+                                .withPlanContaining("filter: null", intervals)
                                 .returns("count\tmin\tmax\n" + literal[1] + '\t' + literal[2] + fraction + '\t' + literal[3] + fraction + '\n');
                     }
                 }
@@ -2470,8 +2534,12 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
         final int[] bindIdx = {0};
         final boolean canIn = outKind == OUT_TS;
         final int roll = rnd.nextInt(100);
-        if (canIn && roll >= 80) {
-            final int form = rnd.nextInt(10);
+        if (canIn && roll >= 70) {
+            final int form = rnd.nextInt(15);
+            if (form >= 10) {
+                // a literal that resolves against the clock when the scan opens
+                return expr + " IN '" + DATE_VARIABLE_TICKS[rnd.nextInt(DATE_VARIABLE_TICKS.length)] + "'";
+            }
             if (form < 6) {
                 // a quoted partial date is an interval: g(ts) IN '2022-03' spans the whole month
                 return expr + " IN " + randomIntervalString(rnd, data[rnd.nextInt(data.length)], driver, sink);
@@ -2637,7 +2705,7 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
 
     private static String randomTsExpr(Rnd rnd, int depth) {
         if (depth <= 0 || rnd.nextInt(100) < 35) {
-            return "@";
+            return "{ts}";
         }
         final String inner = randomTsExpr(rnd, depth - 1);
         return switch (rnd.nextInt(10)) {
