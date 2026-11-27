@@ -77,11 +77,12 @@ public final class ReceiveLayout {
     }
 
     /**
-     * Predicts each group's share of new connections from a snapshot, through the CPU-to-group
-     * table. A unit processed on a CPU without a group spreads evenly over all groups, as the
-     * kernel's hash does.
+     * Predicts each group's share of new connections from a snapshot, through the CPU table. A unit
+     * processed on a CPU spreads evenly over the groups of the CPU's group set, as the program's
+     * random pick does, and a unit processed on a CPU without groups spreads evenly over all groups,
+     * as the kernel's hash does.
      */
-    public static Prediction predict(Snapshot snapshot, int[] cpuTable, int groupCount) {
+    public static Prediction predict(Snapshot snapshot, SteeringCpuTable cpuTable, int groupCount) {
         if (snapshot.unreadable != null) {
             return Prediction.unreadable(snapshot.unreadable);
         }
@@ -93,17 +94,17 @@ public final class ReceiveLayout {
                 final int[] cpus = nic.units.getQuick(u);
                 if (nic.isRps) {
                     for (int cpu : cpus) {
-                        addShare(nicShares, groupOf(cpuTable, cpu), 1.0 / cpus.length);
+                        addShare(nicShares, cpuTable, cpuTable.getGroupSet(cpu), 1.0 / cpus.length);
                     }
                 } else {
-                    final int group = groupOf(cpuTable, cpus[0]);
+                    final int groupSet = cpuTable.getGroupSet(cpus[0]);
                     for (int cpu : cpus) {
-                        if (groupOf(cpuTable, cpu) != group) {
+                        if (cpuTable.getGroupSet(cpu) != groupSet) {
                             return Prediction.unreadable("the CPUs " + CpuTopology.formatCpuList(cpus) + " of interrupt "
                                     + nic.labels.getQuick(u) + " of " + nic.name + " map to different groups");
                         }
                     }
-                    addShare(nicShares, group, 1.0);
+                    addShare(nicShares, cpuTable, groupSet, 1.0);
                 }
             }
             for (int g = 0; g < groupCount; g++) {
@@ -163,9 +164,12 @@ public final class ReceiveLayout {
         }
     }
 
-    private static void addShare(double[] shares, int group, double share) {
-        if (group >= 0) {
-            shares[group] += share;
+    private static void addShare(double[] shares, SteeringCpuTable cpuTable, int groupSet, double share) {
+        if (groupSet >= 0) {
+            final int[] groups = cpuTable.getGroups(groupSet);
+            for (int group : groups) {
+                shares[group] += share / groups.length;
+            }
         } else {
             for (int g = 0; g < shares.length; g++) {
                 shares[g] += share / shares.length;
@@ -187,10 +191,6 @@ public final class ReceiveLayout {
 
     private static String formatIPv4(int ipv4) {
         return (ipv4 >>> 24) + "." + ((ipv4 >>> 16) & 0xFF) + '.' + ((ipv4 >>> 8) & 0xFF) + '.' + (ipv4 & 0xFF);
-    }
-
-    private static int groupOf(int[] cpuTable, int cpu) {
-        return cpu < cpuTable.length ? cpuTable[cpu] : SteeringCpuTable.NO_GROUP;
     }
 
     // a kernel CPU mask such as 00000000,0000ff00, most significant word first

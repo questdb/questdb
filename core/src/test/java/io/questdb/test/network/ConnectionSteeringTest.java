@@ -124,6 +124,41 @@ public class ConnectionSteeringTest {
     }
 
     @Test
+    public void testClosedGroupRedirectsToItsSibling() {
+        twoSockets(8, 8);
+        try (ConnectionSteering steering = createSharingSockets(5_000)) {
+            listenAll(steering, 4);
+            steering.check();
+            // the order is [0, 1, 3]: socket 1's CPUs go to group 3's listener only
+            steering.closeListener(2, fd(2));
+            assertOrder(steering, 0, 1, 3);
+            final LongList program = nf.lastProgram();
+            assertPicks(program, 0, 8, 0, 1);
+            assertPicks(program, 8, 16, 2);
+        }
+    }
+
+    @Test
+    public void testClosedGroupWithNoGroupAcceptingFallsBackToTheHash() {
+        twoSockets(8, 8);
+        try (ConnectionSteering steering = create(2, 5_000, "6.8.0")) {
+            listenAll(steering, 2);
+            steering.check();
+            // group 1 stays at its limit and group 0 closes: socket 0's CPUs have no listener of
+            // their own and no group to go to, so the hash places them; group 1 keeps its CPUs
+            steering.onPause(1, 0);
+            steering.tick(1, 1_000);
+            steering.closeListener(0, fd(0));
+            assertOrder(steering, 1);
+            final LongList program = nf.lastProgram();
+            for (int cpu = 0; cpu < 8; cpu++) {
+                Assert.assertEquals("cpu " + cpu, -1, CbpfInterpreter.run(program, cpu, 0));
+            }
+            assertPicks(program, 8, 16, 0);
+        }
+    }
+
+    @Test
     public void testCloseMovesTheLastListenerIntoTheFreedSlot() {
         threeSockets();
         try (ConnectionSteering steering = create(3, 5_000, "6.8.0")) {
@@ -196,6 +231,55 @@ public class ConnectionSteeringTest {
             steering.closeListener(0, fd(0));
             Assert.assertEquals(attaches, nf.attachCount);
             Assert.assertEquals(REASON_UNSUPPORTED, steering.getReason());
+        }
+    }
+
+    @Test
+    public void testGroupsSharingASocketKeepItAtTheLimit() {
+        twoSockets(8, 8);
+        try (ConnectionSteering steering = createSharingSockets(5_000)) {
+            listenAll(steering, 4);
+            steering.check();
+            for (int g = 0; g < 4; g++) {
+                steering.onPause(g, 0);
+                steering.tick(g, 1_000);
+                Assert.assertTrue(isRedirected(steering, g));
+            }
+            // with no group accepting, each socket's CPUs keep the listeners of the socket's groups
+            final LongList program = nf.lastProgram();
+            assertPicks(program, 0, 8, 0, 1);
+            assertPicks(program, 8, 16, 2, 3);
+        }
+    }
+
+    @Test
+    public void testGroupsSharingASocketPickAmongThem() {
+        twoSockets(8, 8);
+        try (ConnectionSteering steering = createSharingSockets(5_000)) {
+            listenAll(steering, 4);
+            steering.check();
+            Assert.assertEquals(REASON_NONE, steering.getReason());
+            // socket 0's CPUs pick the listener of group 0 or 1, socket 1's that of group 2 or 3
+            final LongList program = nf.lastProgram();
+            assertPicks(program, 0, 8, 0, 1);
+            assertPicks(program, 8, 16, 2, 3);
+        }
+    }
+
+    @Test
+    public void testGroupsSharingASocketPickByListenerIndex() {
+        twoSockets(8, 8);
+        try (ConnectionSteering steering = createSharingSockets(5_000)) {
+            listenAll(steering, 4);
+            steering.check();
+            // group 0 closes and reopens: the order is [3, 1, 2, 0]
+            steering.closeListener(0, fd(0));
+            Assert.assertEquals(0, steering.listen(0, fd(0) + 100, 16));
+            assertOrder(steering, 3, 1, 2, 0);
+            final LongList program = nf.lastProgram();
+            // groups 0 and 1 are at indices 3 and 1, groups 2 and 3 at indices 2 and 0
+            assertPicks(program, 0, 8, 1, 3);
+            assertPicks(program, 8, 16, 0, 2);
         }
     }
 
@@ -307,6 +391,22 @@ public class ConnectionSteeringTest {
     }
 
     @Test
+    public void testLayoutCheckLimitWithGroupsSharingASocket() {
+        // 9 of 16 interrupts on socket 0 give each of its two groups 28.1%, under the limit of 30%;
+        // 10 of 16 give 31.3%, over it
+        twoSockets(9, 7);
+        try (ConnectionSteering steering = createSharingSockets(5_000)) {
+            listenAll(steering, 4);
+            steering.check();
+            Assert.assertEquals(REASON_NONE, steering.getReason());
+            fixture.effectiveAffinity(109, "0");
+            steering.check();
+            Assert.assertEquals(REASON_LAYOUT_CHECK_FAILED, steering.getReason());
+            Assert.assertEquals(-1, CbpfInterpreter.run(nf.lastProgram(), 0, 0));
+        }
+    }
+
+    @Test
     public void testLayoutUnreadable() {
         fixture.cpus(sockets(8, 8), 16);
         fixture.virtualNic("lo");
@@ -413,6 +513,27 @@ public class ConnectionSteeringTest {
     }
 
     @Test
+    public void testOfflineAndUngroupedCpusFallBackToTheHash() {
+        // groups on sockets 0 and 1; socket 2's CPUs 16-23 host no group, CPUs 24-27 are offline
+        final int[] sockets = new int[24];
+        for (int i = 0; i < 24; i++) {
+            sockets[i] = i / 8;
+        }
+        fixture.cpus(sockets, 28);
+        fixture.nic("eth0", 2).irq("eth0", 100, "0").irq("eth0", 101, "9");
+        try (ConnectionSteering steering = create(2, 5_000, "6.8.0")) {
+            listenAll(steering, 2);
+            steering.check();
+            Assert.assertEquals(REASON_NONE, steering.getReason());
+            final LongList program = nf.lastProgram();
+            assertSteers(program, 0, 1);
+            for (int cpu = 16; cpu < 28; cpu++) {
+                Assert.assertEquals("cpu " + cpu, -1, CbpfInterpreter.run(program, cpu, 0));
+            }
+        }
+    }
+
+    @Test
     public void testOnlineCpusChangeRebuildsTheTable() {
         twoSockets(8, 8);
         try (ConnectionSteering steering = create(2, 5_000, "6.8.0")) {
@@ -427,6 +548,53 @@ public class ConnectionSteeringTest {
             fixture.cpus(sockets, 17);
             steering.check();
             Assert.assertEquals(1, CbpfInterpreter.run(nf.lastProgram(), 16, 0));
+        }
+    }
+
+    @Test
+    public void testPausedGroupRedirectsToItsSibling() {
+        twoSockets(8, 8);
+        try (ConnectionSteering steering = createSharingSockets(5_000)) {
+            listenAll(steering, 4);
+            steering.check();
+
+            // group 0 at its limit: socket 0's CPUs go to group 1 only
+            steering.onPause(0, 0);
+            steering.tick(0, 1_000);
+            assertPicks(nf.lastProgram(), 0, 8, 1);
+            assertPicks(nf.lastProgram(), 8, 16, 2, 3);
+
+            // group 1 at its limit too: socket 0's CPUs go to the groups that accept, on socket 1
+            steering.onPause(1, 0);
+            steering.tick(1, 1_000);
+            assertPicks(nf.lastProgram(), 0, 8, 2, 3);
+            assertPicks(nf.lastProgram(), 8, 16, 2, 3);
+
+            // group 0 accepts again: socket 0's CPUs come back to it once the delay passes
+            steering.onResume(0, 2_000);
+            steering.tick(0, 3_000);
+            assertPicks(nf.lastProgram(), 0, 8, 0);
+            assertPicks(nf.lastProgram(), 8, 16, 2, 3);
+        }
+    }
+
+    @Test
+    public void testPicksOfDifferentSizes() {
+        // three groups on each socket; with group 3 at its limit, socket 0's CPUs pick among three
+        // listeners and socket 1's among two
+        twoSockets(8, 8);
+        final int[] socket0 = {0, 1, 2, 3, 4, 5, 6, 7};
+        final int[] socket1 = {8, 9, 10, 11, 12, 13, 14, 15};
+        final int[][] groupCpus = {socket0, socket0, socket0, socket1, socket1, socket1};
+        try (ConnectionSteering steering = new ConnectionSteering("test", 6, groupCpus, nf, topology(), layout(), 0, 5_000, "6.8.0", null)) {
+            listenAll(steering, 6);
+            steering.check();
+            Assert.assertEquals(REASON_NONE, steering.getReason());
+            steering.onPause(3, 0);
+            steering.tick(3, 1_000);
+            final LongList program = nf.lastProgram();
+            assertPicks(program, 0, 8, 0, 1, 2);
+            assertPicks(program, 8, 16, 4, 5);
         }
     }
 
@@ -569,6 +737,27 @@ public class ConnectionSteeringTest {
         Assert.assertEquals(expected.toString(), actual.toString());
     }
 
+    // CPUs from firstCpu to lastCpu - 1 reach each of the listener indices for an equal share of
+    // the random numbers, and no other listener
+    private static void assertPicks(LongList program, int firstCpu, int lastCpu, int... indices) {
+        final int randomCount = 12 * indices.length;
+        for (int cpu = firstCpu; cpu < lastCpu; cpu++) {
+            final int[] hits = new int[8];
+            for (int random = 0; random < randomCount; random++) {
+                final int index = CbpfInterpreter.run(program, cpu, random);
+                Assert.assertTrue("cpu " + cpu + " reached listener " + index, index >= 0 && index < hits.length);
+                hits[index]++;
+            }
+            for (int index = 0; index < hits.length; index++) {
+                boolean isExpected = false;
+                for (int expected : indices) {
+                    isExpected |= expected == index;
+                }
+                Assert.assertEquals("cpu " + cpu + ", listener " + index, isExpected ? 12 : 0, hits[index]);
+            }
+        }
+    }
+
     // socket 0's CPUs reach listener index0, socket 1's index1
     private static void assertSteers(LongList program, int index0, int index1) {
         for (int cpu = 0; cpu < 8; cpu++) {
@@ -610,6 +799,25 @@ public class ConnectionSteeringTest {
             }
         }
         return new ConnectionSteering("test", groupCount, groupCpus, nf, topology(), layout(), 0, queueTimeoutMs, kernel, null);
+    }
+
+    // two groups on each socket of twoSockets(): groups 0 and 1 on CPUs 0-7, groups 2 and 3 on CPUs
+    // 8-15, as the split of 4 groups over 2 sockets places them
+    private ConnectionSteering createSharingSockets(long queueTimeoutMs) {
+        final int[] socket0 = {0, 1, 2, 3, 4, 5, 6, 7};
+        final int[] socket1 = {8, 9, 10, 11, 12, 13, 14, 15};
+        return new ConnectionSteering(
+                "test",
+                4,
+                new int[][]{socket0, socket0, socket1, socket1},
+                nf,
+                topology(),
+                layout(),
+                0,
+                queueTimeoutMs,
+                "6.8.0",
+                null
+        );
     }
 
     private ReceiveLayout layout() {

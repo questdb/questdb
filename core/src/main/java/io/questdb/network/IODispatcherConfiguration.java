@@ -129,7 +129,7 @@ public interface IODispatcherConfiguration {
 
     /**
      * Whether a server whose pool is split into worker groups steers each new connection to the
-     * listener of the group on the socket that processes its packets
+     * listener of a group on the socket that processes its packets
      * ({@code shared.network.worker.split.steer.connections}).
      */
     default boolean isConnectionSteeringEnabled() {

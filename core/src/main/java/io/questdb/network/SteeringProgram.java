@@ -26,6 +26,7 @@
 package io.questdb.network;
 
 import io.questdb.std.LongList;
+import io.questdb.std.ObjList;
 
 /**
  * Builds the classic BPF program that picks a listener of a port's {@code SO_REUSEPORT} group for
@@ -33,9 +34,9 @@ import io.questdb.std.LongList;
  * and the program returns the index of the listener that CPU's SYNs should reach. An index at or
  * past the group's listener count makes the kernel fall back to its hash.
  * <p>
- * The input gives each CPU number a target: a listener index, {@link #TARGET_OUT_OF_RANGE},
- * {@link #TARGET_REDIRECT} for a random pick among the redirect indices, or {@link #TARGET_OFFLINE}
- * for a CPU that processes no SYN. The program has one of two forms:
+ * The input gives each CPU number a target: a listener index, {@link #TARGET_OUT_OF_RANGE}, a pick
+ * ({@link #pickTarget(int)}) for a random choice among several listener indices, or
+ * {@link #TARGET_OFFLINE} for a CPU that processes no SYN. The program has one of two forms:
  * <ul>
  *     <li>a chain over the CPU ranges that share a target: for each range, a jump past the next
  *     instruction when the CPU is above the range's upper bound, then a return of the range's index.
@@ -44,8 +45,9 @@ import io.questdb.std.LongList;
  *     CPUs alternately across sockets, the CPU number modulo the period and a return per residue,
  *     with offline CPUs fitting any residue.</li>
  * </ul>
- * The builder emits the shorter form. A redirected range jumps to a shared block after either form,
- * which loads a random number, takes it modulo the redirect count and returns the matching index.
+ * The builder emits the shorter form. A range or residue whose target is a pick jumps to that pick's
+ * block, which follows either form: it loads a random number, takes it modulo the pick's listener
+ * count and returns the matching index.
  * <p>
  * Each instruction is a {@code struct sock_filter} packed into a long as it lies in little-endian
  * memory: the code in bits 0 to 15, {@code jt} in 16 to 23, {@code jf} in 24 to 31 and {@code k} in
@@ -63,9 +65,10 @@ public final class SteeringProgram {
     public static final int SKF_AD_CPU = 36;
     public static final int SKF_AD_OFF = -0x1000;
     public static final int SKF_AD_RANDOM = 56;
-    public static final int TARGET_OFFLINE = -3;
+    public static final int TARGET_OFFLINE = -2;
     public static final int TARGET_OUT_OF_RANGE = -1;
-    public static final int TARGET_REDIRECT = -2;
+    // pick p is the target TARGET_FIRST_PICK - p
+    private static final int TARGET_FIRST_PICK = -3;
 
     private SteeringProgram() {
     }
@@ -73,36 +76,43 @@ public final class SteeringProgram {
     /**
      * Builds the program into {@code program}, which it clears first.
      *
-     * @param targets        the target of each CPU number, from 0 to {@code targets.length - 1}
-     * @param period         the period of the modulo form, at least 2 for it to apply
-     * @param redirects      the listener indices of {@link #TARGET_REDIRECT}, of which there are at
-     *                       least two when any CPU's target is a redirect
-     * @param redirectCount  how many of {@code redirects} apply
+     * @param targets the target of each CPU number, from 0 to {@code targets.length - 1}
+     * @param period  the period of the modulo form, at least 2 for it to apply
+     * @param picks   the listener indices of each pick, at least two per pick
      */
-    public static void build(int[] targets, int period, int[] redirects, int redirectCount, LongList program) {
+    public static void build(int[] targets, int period, ObjList<int[]> picks, LongList program) {
         program.clear();
-        boolean hasRedirect = false;
-        for (int target : targets) {
-            if (target == TARGET_REDIRECT) {
-                hasRedirect = true;
-                break;
+        for (int p = 0, n = picks.size(); p < n; p++) {
+            if (picks.getQuick(p).length < 2) {
+                throw new IllegalArgumentException("a pick needs at least two listeners [pick=" + p
+                        + ", listeners=" + picks.getQuick(p).length + ']');
             }
         }
-        if (hasRedirect && redirectCount < 2) {
-            throw new IllegalArgumentException("a redirect needs at least two listeners [redirectCount=" + redirectCount + ']');
+        for (int target : targets) {
+            if (target <= TARGET_FIRST_PICK && getPick(target) >= picks.size()) {
+                throw new IllegalArgumentException("unknown pick [pick=" + getPick(target) + ", picks=" + picks.size() + ']');
+            }
         }
 
         final int rangeCount = countRanges(targets);
         final int chainLength = rangeCount == 0 ? 1 : 2 * rangeCount + 2;
         final int[] residueTargets = period >= 2 ? residueTargets(targets, period) : null;
         final int moduloLength = 2 * period + 1;
-        if (residueTargets != null && moduloLength < chainLength) {
-            emitModulo(residueTargets, moduloLength, program);
-        } else {
-            emitChain(targets, rangeCount, chainLength, program);
+        final boolean isModulo = residueTargets != null && moduloLength < chainLength;
+        // each pick's block starts where the previous one ends, after the chosen form
+        final int[] pickStarts = new int[picks.size()];
+        int start = isModulo ? moduloLength : chainLength;
+        for (int p = 0, n = picks.size(); p < n; p++) {
+            pickStarts[p] = start;
+            start += 2 * picks.getQuick(p).length + 1;
         }
-        if (hasRedirect) {
-            emitRedirect(redirects, redirectCount, program);
+        if (isModulo) {
+            emitModulo(residueTargets, pickStarts, program);
+        } else {
+            emitChain(targets, rangeCount, pickStarts, program);
+        }
+        for (int p = 0, n = picks.size(); p < n; p++) {
+            emitPick(picks.getQuick(p), program);
         }
     }
 
@@ -136,6 +146,13 @@ public final class SteeringProgram {
         return (code & 0xFFFFL) | (jt & 0xFFL) << 16 | (jf & 0xFFL) << 24 | (k & 0xFFFF_FFFFL) << 32;
     }
 
+    /**
+     * The target of a random choice among the listener indices of pick {@code pick}.
+     */
+    public static int pickTarget(int pick) {
+        return TARGET_FIRST_PICK - pick;
+    }
+
     private static int chainTarget(int target) {
         return target == TARGET_OFFLINE ? TARGET_OUT_OF_RANGE : target;
     }
@@ -158,7 +175,7 @@ public final class SteeringProgram {
         return count;
     }
 
-    private static void emitChain(int[] targets, int rangeCount, int chainLength, LongList program) {
+    private static void emitChain(int[] targets, int rangeCount, int[] pickStarts, LongList program) {
         if (rangeCount == 0) {
             program.add(instruction(CODE_RET_K, 0, 0, OUT_OF_RANGE_INDEX));
             return;
@@ -173,41 +190,46 @@ public final class SteeringProgram {
                 hi++;
             }
             program.add(instruction(CODE_JMP_JGT_K, 1, 0, hi));
-            emitReturn(target, chainLength, program);
+            emitReturn(target, pickStarts, program);
             emitted++;
             cpu = hi + 1;
         }
         program.add(instruction(CODE_RET_K, 0, 0, OUT_OF_RANGE_INDEX));
     }
 
-    private static void emitModulo(int[] residueTargets, int moduloLength, LongList program) {
+    private static void emitModulo(int[] residueTargets, int[] pickStarts, LongList program) {
         final int period = residueTargets.length;
         program.add(instruction(CODE_LD_W_ABS, 0, 0, SKF_AD_OFF + SKF_AD_CPU));
         program.add(instruction(CODE_ALU_MOD_K, 0, 0, period));
         for (int r = 0; r < period - 1; r++) {
             program.add(instruction(CODE_JMP_JEQ_K, 0, 1, r));
-            emitReturn(residueTargets[r], moduloLength, program);
+            emitReturn(residueTargets[r], pickStarts, program);
         }
-        emitReturn(residueTargets[period - 1], moduloLength, program);
+        emitReturn(residueTargets[period - 1], pickStarts, program);
     }
 
-    private static void emitRedirect(int[] redirects, int redirectCount, LongList program) {
+    // a block of 2 * indices.length + 1 instructions that returns one of the indices at random
+    private static void emitPick(int[] indices, LongList program) {
         program.add(instruction(CODE_LD_W_ABS, 0, 0, SKF_AD_OFF + SKF_AD_RANDOM));
-        program.add(instruction(CODE_ALU_MOD_K, 0, 0, redirectCount));
-        for (int i = 0; i < redirectCount - 1; i++) {
+        program.add(instruction(CODE_ALU_MOD_K, 0, 0, indices.length));
+        for (int i = 0; i < indices.length - 1; i++) {
             program.add(instruction(CODE_JMP_JEQ_K, 0, 1, i));
-            program.add(instruction(CODE_RET_K, 0, 0, redirects[i]));
+            program.add(instruction(CODE_RET_K, 0, 0, indices[i]));
         }
-        program.add(instruction(CODE_RET_K, 0, 0, redirects[redirectCount - 1]));
+        program.add(instruction(CODE_RET_K, 0, 0, indices[indices.length - 1]));
     }
 
-    // a return of the target's index, or a jump to the redirect block that starts at redirectStart
-    private static void emitReturn(int target, int redirectStart, LongList program) {
-        if (target == TARGET_REDIRECT) {
-            program.add(instruction(CODE_JMP_JA, 0, 0, redirectStart - program.size() - 1));
+    // a return of the target's index, or a jump to the block of the target's pick
+    private static void emitReturn(int target, int[] pickStarts, LongList program) {
+        if (target <= TARGET_FIRST_PICK) {
+            program.add(instruction(CODE_JMP_JA, 0, 0, pickStarts[getPick(target)] - program.size() - 1));
         } else {
             program.add(instruction(CODE_RET_K, 0, 0, target < 0 ? OUT_OF_RANGE_INDEX : target));
         }
+    }
+
+    private static int getPick(int target) {
+        return TARGET_FIRST_PICK - target;
     }
 
     // the target of each residue of the CPU number modulo the period, or null when the targets

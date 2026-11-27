@@ -481,6 +481,40 @@ public class IODispatcherGroupsTest {
     }
 
     @Test
+    public void testSteeringPicksAmongGroupsSharingACpuSet() throws Exception {
+        assumeSteeringWorks();
+        assertMemoryLeak(() -> {
+            final int port = pickFreePort();
+            final ObjList<IODispatcher<TestContext>> dispatchers = new ObjList<>();
+            // groups 0 and 1 on CPU 0, groups 2 and 3 on CPU 1
+            IODispatchers.createGroups(steeringConfiguration(port, 1000), TestContext::new, 4, new int[][]{{0}, {0}, {1}, {1}}, dispatchers);
+            try {
+                // the program picks one of the CPU's two groups at random per connection, so all
+                // of a CPU's connections land on one of them with probability 2^-39
+                final long[] fromCpu0 = connectFromCpu(port, 0, SPREAD_CONNECTIONS);
+                try {
+                    awaitPairCounts(dispatchers, SPREAD_CONNECTIONS, 0);
+                    Assert.assertTrue(dispatchers.getQuick(0).getConnectionCount() > 0);
+                    Assert.assertTrue(dispatchers.getQuick(1).getConnectionCount() > 0);
+                    final long[] fromCpu1 = connectFromCpu(port, 1, SPREAD_CONNECTIONS);
+                    try {
+                        awaitPairCounts(dispatchers, SPREAD_CONNECTIONS, SPREAD_CONNECTIONS);
+                        Assert.assertTrue(dispatchers.getQuick(2).getConnectionCount() > 0);
+                        Assert.assertTrue(dispatchers.getQuick(3).getConnectionCount() > 0);
+                    } finally {
+                        close(fromCpu1);
+                    }
+                } finally {
+                    close(fromCpu0);
+                }
+                awaitPairCounts(dispatchers, 0, 0);
+            } finally {
+                free(dispatchers);
+            }
+        });
+    }
+
+    @Test
     public void testSteeringRedirectsFromAGroupAtItsLimit() throws Exception {
         assumeSteeringWorks();
         assertMemoryLeak(() -> {
@@ -569,6 +603,26 @@ public class IODispatcherGroupsTest {
                     "connection counts did not reach [" + first + ", " + second + "]: ["
                             + dispatchers.getQuick(0).getConnectionCount() + ", "
                             + dispatchers.getQuick(1).getConnectionCount() + ']',
+                    System.nanoTime() < deadline
+            );
+            runOnce(dispatchers);
+        }
+    }
+
+    // waits until groups 0 and 1 hold first connections between them, and groups 2 and 3 second
+    private static void awaitPairCounts(ObjList<IODispatcher<TestContext>> dispatchers, int first, int second) {
+        final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
+        while (true) {
+            final int count0 = dispatchers.getQuick(0).getConnectionCount();
+            final int count1 = dispatchers.getQuick(1).getConnectionCount();
+            final int count2 = dispatchers.getQuick(2).getConnectionCount();
+            final int count3 = dispatchers.getQuick(3).getConnectionCount();
+            if (count0 + count1 == first && count2 + count3 == second) {
+                return;
+            }
+            Assert.assertTrue(
+                    "connection counts did not reach [" + first + ", " + second + "] per pair: ["
+                            + count0 + ", " + count1 + ", " + count2 + ", " + count3 + ']',
                     System.nanoTime() < deadline
             );
             runOnce(dispatchers);

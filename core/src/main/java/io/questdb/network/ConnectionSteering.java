@@ -31,6 +31,7 @@ import io.questdb.metrics.ConnectionSteeringMetrics;
 import io.questdb.std.CpuTopology;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
+import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.Nullable;
@@ -44,16 +45,18 @@ import java.util.concurrent.atomic.AtomicLongArray;
 import java.util.concurrent.locks.ReentrantLock;
 
 /**
- * Steers each new connection on one port to the listener of the worker group on the socket whose
- * CPU processes the connection's SYN, through a classic BPF program attached to the port's
- * {@code SO_REUSEPORT} group ({@link SteeringProgram}).
+ * Steers each new connection on one port to the listener of a worker group on the socket whose CPU
+ * processes the connection's SYN, through a classic BPF program attached to the port's
+ * {@code SO_REUSEPORT} group ({@link SteeringProgram}). When several groups run on that socket, the
+ * program picks one of them at random for each connection ({@link SteeringCpuTable}).
  * <p>
  * The dispatchers of the port's groups open and close their listeners through this class, which
  * tracks the kernel's listener order under one lock per port: a listen appends a listener, and a
  * close moves the last listener into the freed slot. Every change rebuilds the program from the
  * port's full state and attaches it, and the kernel swaps programs atomically. A group whose
- * listener has stayed paused at its connection limit for the redirect delay, or has closed, sends
- * its CPUs' connections to the groups that accept.
+ * listener has stayed paused at its connection limit for the redirect delay, or has closed, stops
+ * taking connections: its CPUs' connections go to the other groups of their group set that accept,
+ * or, when none of them accepts, to the port's groups that accept.
  * <p>
  * A periodic check, on a thread of its own, predicts each group's share of new connections from
  * the receive layout ({@link ReceiveLayout}) and steers only while no group's predicted share
@@ -115,13 +118,15 @@ public final class ConnectionSteering implements QuietCloseable {
     // the group of each listener index, in the kernel's order
     private final IntList order = new IntList();
     private final long[] pausedSinceMs;
+    private final IntList pickScratch = new IntList();
+    // the listener indices of each random pick of the program, ascending
+    private final ObjList<int[]> picks = new ObjList<>();
     private final LongList program = new LongList();
     private final long redirectDelayMs;
     private final boolean[] redirected;
-    private final int[] redirects;
     private final CpuTopology topology;
     private volatile long attachCount;
-    private int[] cpuTable = new int[0];
+    private SteeringCpuTable cpuTable = SteeringCpuTable.EMPTY;
     private volatile int generation;
     private boolean isAttachFailing;
     private volatile boolean isClosing;
@@ -133,7 +138,6 @@ public final class ConnectionSteering implements QuietCloseable {
     private volatile int permanentReason;
     private volatile int policyReason;
     private @Nullable String predictionSignature;
-    private int redirectCount;
     private int[] targets = new int[0];
     private volatile @Nullable Thread thread;
     private @Nullable String tripSignature;
@@ -170,7 +174,6 @@ public final class ConnectionSteering implements QuietCloseable {
         this.listenerFds = new long[groupCount];
         Arrays.fill(listenerFds, -1);
         this.redirected = new boolean[groupCount];
-        this.redirects = new int[groupCount];
         this.guardCounts = new AtomicLongArray(groupCount);
         this.openCounts = new AtomicIntegerArray(groupCount);
         this.redirectDelayMs = Math.min(MAX_REDIRECT_DELAY_MS, queueTimeoutMs / 2);
@@ -571,6 +574,14 @@ public final class ConnectionSteering implements QuietCloseable {
         return true;
     }
 
+    // adds the listener index of the group to the pick scratch, unless the group has no listener
+    private void addListenerIndex(int group) {
+        final int index = order.indexOf(group, 0, order.size());
+        if (index >= 0) {
+            pickScratch.add(index);
+        }
+    }
+
     // attaches the program to the port's group through any of its listeners, or returns the errno
     private int attach(LongList prog) {
         final int rc = nf.attachReuseportProgram(listenerFds[order.getQuick(0)], prog);
@@ -611,41 +622,86 @@ public final class ConnectionSteering implements QuietCloseable {
         }
     }
 
-    private void computeTargets(boolean isSteering) {
-        if (targets.length != cpuTable.length) {
-            targets = new int[cpuTable.length];
+    // The target of a group set's CPUs: the listeners of the set's groups that accept. When none of
+    // them accepts, the port's groups that accept take the set's connections; when no group of the
+    // port accepts, the set's own listeners hold them in their backlogs until a slot frees up.
+    private int computeGroupSetTarget(int[] groups) {
+        pickScratch.clear();
+        for (int group : groups) {
+            if (!redirected[group]) {
+                addListenerIndex(group);
+            }
         }
+        if (pickScratch.size() == 0) {
+            for (int i = 0, n = order.size(); i < n; i++) {
+                if (!redirected[order.getQuick(i)]) {
+                    pickScratch.add(i);
+                }
+            }
+        }
+        if (pickScratch.size() == 0) {
+            for (int group : groups) {
+                addListenerIndex(group);
+            }
+        }
+        final int count = pickScratch.size();
+        if (count == 0) {
+            return SteeringProgram.TARGET_OUT_OF_RANGE;
+        }
+        if (count == 1) {
+            return pickScratch.getQuick(0);
+        }
+        // ascending, so that group sets with the same listeners share one pick
+        for (int i = 1; i < count; i++) {
+            final int index = pickScratch.getQuick(i);
+            int j = i - 1;
+            while (j >= 0 && pickScratch.getQuick(j) > index) {
+                pickScratch.setQuick(j + 1, pickScratch.getQuick(j));
+                j--;
+            }
+            pickScratch.setQuick(j + 1, index);
+        }
+        for (int p = 0, n = picks.size(); p < n; p++) {
+            final int[] pick = picks.getQuick(p);
+            if (pick.length == count && isSameIndices(pick)) {
+                return SteeringProgram.pickTarget(p);
+            }
+        }
+        picks.add(pickScratch.toArray());
+        return SteeringProgram.pickTarget(picks.size() - 1);
+    }
+
+    private void computeTargets(boolean isSteering) {
+        if (targets.length != cpuTable.size()) {
+            targets = new int[cpuTable.size()];
+        }
+        picks.clear();
         if (!isSteering) {
             Arrays.fill(targets, SteeringProgram.TARGET_OUT_OF_RANGE);
             return;
         }
-        redirectCount = 0;
-        for (int i = 0, n = order.size(); i < n; i++) {
-            if (!redirected[order.getQuick(i)]) {
-                redirects[redirectCount++] = i;
-            }
+        final int[] groupSetTargets = new int[cpuTable.getGroupSetCount()];
+        for (int s = 0; s < groupSetTargets.length; s++) {
+            groupSetTargets[s] = computeGroupSetTarget(cpuTable.getGroups(s));
         }
-        final int[] groupTargets = new int[groupCount];
-        for (int g = 0; g < groupCount; g++) {
-            final int index = order.indexOf(g, 0, order.size());
-            if (index >= 0 && !redirected[g]) {
-                groupTargets[g] = index;
-            } else if (redirectCount == 0) {
-                groupTargets[g] = index >= 0 ? index : SteeringProgram.TARGET_OUT_OF_RANGE;
-            } else if (redirectCount == 1) {
-                groupTargets[g] = redirects[0];
-            } else {
-                groupTargets[g] = SteeringProgram.TARGET_REDIRECT;
-            }
-        }
-        for (int cpu = 0; cpu < cpuTable.length; cpu++) {
-            final int group = cpuTable[cpu];
-            targets[cpu] = switch (group) {
+        for (int cpu = 0; cpu < targets.length; cpu++) {
+            final int groupSet = cpuTable.getGroupSet(cpu);
+            targets[cpu] = switch (groupSet) {
                 case SteeringCpuTable.OFFLINE -> SteeringProgram.TARGET_OFFLINE;
                 case SteeringCpuTable.NO_GROUP -> SteeringProgram.TARGET_OUT_OF_RANGE;
-                default -> groupTargets[group];
+                default -> groupSetTargets[groupSet];
             };
         }
+    }
+
+    // whether the pick scratch holds the same listener indices as the pick of the same length
+    private boolean isSameIndices(int[] pick) {
+        for (int i = 0; i < pick.length; i++) {
+            if (pick[i] != pickScratch.getQuick(i)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private long readOptmemMax() {
@@ -663,7 +719,9 @@ public final class ConnectionSteering implements QuietCloseable {
         }
         final boolean isSteering = policyReason == REASON_NONE;
         computeTargets(isSteering);
-        SteeringProgram.build(targets, groupCount, redirects, redirectCount, program);
+        // with one group set per socket, CPUs numbered alternately across the sockets repeat their
+        // targets with a period of the group set count
+        SteeringProgram.build(targets, cpuTable.getGroupSetCount(), picks, program);
         final boolean isTooLarge = isSteering && SteeringProgram.estimateKernelBytes(program.size()) > optmemMax;
         if (isTooLarge != isProgramTooLarge) {
             isProgramTooLarge = isTooLarge;

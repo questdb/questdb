@@ -26,77 +26,141 @@
 package io.questdb.network;
 
 import io.questdb.std.CpuTopology;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
 
 import java.util.Arrays;
 
 /**
- * Maps each CPU number to the worker group whose listener should take the connections whose SYN
- * that CPU processes.
+ * Maps each CPU number to the group set whose listeners should take the connections whose SYN that
+ * CPU processes. A group set is the ascending list of the worker groups among which the steering
+ * program picks at random; CPUs that map to the same groups share one group set.
  * <ul>
- *     <li>A CPU in exactly one group's CPU set maps to that group.</li>
- *     <li>Any other online CPU maps to the group on its socket, when its socket hosts exactly one
- *     group. A group's sockets are those of its online CPUs. In production each group's set is its
- *     socket's allowed CPUs, so this maps the CPUs of the socket that the process may not use,
- *     where interrupts and RPS can still run.</li>
+ *     <li>A CPU in the CPU sets of one or more groups maps to those groups.</li>
+ *     <li>Any other online CPU maps to the groups on its socket, where a group's sockets are those
+ *     of its online CPUs. In production the set of every group on a socket is that socket's allowed
+ *     CPUs, so this maps the CPUs of the socket that the process may not use, where interrupts and
+ *     RPS can still run.</li>
  *     <li>Any other online CPU maps to {@link #NO_GROUP}, and an offline CPU to {@link #OFFLINE}.</li>
  * </ul>
  */
 public final class SteeringCpuTable {
+    public static final SteeringCpuTable EMPTY = new SteeringCpuTable(new int[0], new ObjList<>());
     public static final int NO_GROUP = -1;
     public static final int OFFLINE = -3;
+    private final int[] cpuSets;
+    private final ObjList<int[]> groupSets;
 
-    private SteeringCpuTable() {
+    private SteeringCpuTable(int[] cpuSets, ObjList<int[]> groupSets) {
+        this.cpuSets = cpuSets;
+        this.groupSets = groupSets;
     }
 
     /**
-     * Builds the table, indexed by CPU number, over every possible CPU number and every CPU of the
-     * groups' sets.
+     * Builds the table over every possible CPU number and every CPU of the groups' sets.
      */
-    public static int[] build(int[][] groupCpus, CpuTopology.OnlineCpus online) {
+    public static SteeringCpuTable build(int[][] groupCpus, CpuTopology.OnlineCpus online) {
         final int[] onlineCpus = online.getCpus();
         final int[] onlineSockets = online.getSockets();
+        final int groupCount = groupCpus.length;
         int size = online.getPossibleCount();
         for (int[] cpus : groupCpus) {
             for (int cpu : cpus) {
                 size = Math.max(size, cpu + 1);
             }
         }
-        final int[] table = new int[size];
-        Arrays.fill(table, OFFLINE);
 
-        // the group of each CPU in exactly one group's set, or -2 for a CPU in several sets
-        final int[] owner = new int[size];
-        Arrays.fill(owner, NO_GROUP);
-        for (int g = 0; g < groupCpus.length; g++) {
+        // isInSet[cpu * groupCount + g]: group g's set holds CPU cpu
+        final boolean[] isInSet = new boolean[size * groupCount];
+        for (int g = 0; g < groupCount; g++) {
             for (int cpu : groupCpus[g]) {
-                owner[cpu] = owner[cpu] == NO_GROUP || owner[cpu] == g ? g : -2;
+                isInSet[cpu * groupCount + g] = true;
             }
         }
 
-        // the group each socket hosts, or -2 when it hosts several
+        // isOnSocket[socket * groupCount + g]: group g has an online CPU on the socket
         int maxSocket = -1;
         for (int socket : onlineSockets) {
             maxSocket = Math.max(maxSocket, socket);
         }
-        final int[] socketGroup = new int[maxSocket + 1];
-        Arrays.fill(socketGroup, NO_GROUP);
+        final boolean[] isOnSocket = new boolean[(maxSocket + 1) * groupCount];
         for (int i = 0; i < onlineCpus.length; i++) {
-            final int group = owner[onlineCpus[i]];
-            final int socket = onlineSockets[i];
-            if (group != NO_GROUP) {
-                socketGroup[socket] = socketGroup[socket] == NO_GROUP || socketGroup[socket] == group ? group : -2;
+            for (int g = 0; g < groupCount; g++) {
+                if (isInSet[onlineCpus[i] * groupCount + g]) {
+                    isOnSocket[onlineSockets[i] * groupCount + g] = true;
+                }
             }
         }
 
+        final int[] cpuSets = new int[size];
+        Arrays.fill(cpuSets, OFFLINE);
+        final ObjList<int[]> groupSets = new ObjList<>();
+        final IntList groups = new IntList();
         for (int i = 0; i < onlineCpus.length; i++) {
             final int cpu = onlineCpus[i];
-            if (owner[cpu] >= 0) {
-                table[cpu] = owner[cpu];
-            } else {
-                final int group = socketGroup[onlineSockets[i]];
-                table[cpu] = group >= 0 ? group : NO_GROUP;
+            groups.clear();
+            for (int g = 0; g < groupCount; g++) {
+                if (isInSet[cpu * groupCount + g]) {
+                    groups.add(g);
+                }
+            }
+            if (groups.size() == 0) {
+                final int socket = onlineSockets[i];
+                for (int g = 0; g < groupCount; g++) {
+                    if (isOnSocket[socket * groupCount + g]) {
+                        groups.add(g);
+                    }
+                }
+            }
+            cpuSets[cpu] = groups.size() > 0 ? intern(groupSets, groups) : NO_GROUP;
+        }
+        return new SteeringCpuTable(cpuSets, groupSets);
+    }
+
+    /**
+     * The group set of CPU {@code cpu}, {@link #NO_GROUP} for a CPU without groups or past the
+     * table, or {@link #OFFLINE}.
+     */
+    public int getGroupSet(int cpu) {
+        return cpu < cpuSets.length ? cpuSets[cpu] : NO_GROUP;
+    }
+
+    public int getGroupSetCount() {
+        return groupSets.size();
+    }
+
+    /**
+     * The groups of group set {@code groupSet}, in ascending order.
+     */
+    public int[] getGroups(int groupSet) {
+        return groupSets.getQuick(groupSet);
+    }
+
+    /**
+     * The number of CPU numbers the table covers, from 0.
+     */
+    public int size() {
+        return cpuSets.length;
+    }
+
+    // the index of the group set that holds exactly these groups, which it adds when there is none
+    private static int intern(ObjList<int[]> groupSets, IntList groups) {
+        for (int s = 0, n = groupSets.size(); s < n; s++) {
+            final int[] groupSet = groupSets.getQuick(s);
+            if (groupSet.length == groups.size()) {
+                boolean isSame = true;
+                for (int i = 0; i < groupSet.length; i++) {
+                    if (groupSet[i] != groups.getQuick(i)) {
+                        isSame = false;
+                        break;
+                    }
+                }
+                if (isSame) {
+                    return s;
+                }
             }
         }
-        return table;
+        groupSets.add(groups.toArray());
+        return groupSets.size() - 1;
     }
 }

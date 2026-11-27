@@ -27,6 +27,7 @@ package io.questdb.test.network;
 
 import io.questdb.network.ReceiveLayout;
 import io.questdb.network.SteeringCpuTable;
+import io.questdb.std.CpuTopology;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Rule;
@@ -34,8 +35,14 @@ import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
 public class ReceiveLayoutTest {
-    // CPUs 0-7 on socket 0 map to group 0, CPUs 8-15 on socket 1 to group 1, CPUs 16-17 to none
-    private static final int[] TABLE = {0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, SteeringCpuTable.NO_GROUP, SteeringCpuTable.NO_GROUP};
+    private static final int[] SOCKET_0_CPUS = {0, 1, 2, 3, 4, 5, 6, 7};
+    private static final int[] SOCKET_1_CPUS = {8, 9, 10, 11, 12, 13, 14, 15};
+    // groups 0 and 1 on socket 0's CPUs 0-7, groups 2 and 3 on socket 1's CPUs 8-15, and CPUs
+    // 16-17 on socket 2 without groups
+    private static final SteeringCpuTable FOUR_GROUPS = table(SOCKET_0_CPUS, SOCKET_0_CPUS, SOCKET_1_CPUS, SOCKET_1_CPUS);
+    // group 0 on socket 0's CPUs 0-7, group 1 on socket 1's CPUs 8-15, and CPUs 16-17 on socket 2
+    // without groups
+    private static final SteeringCpuTable TABLE = table(SOCKET_0_CPUS, SOCKET_1_CPUS);
     @Rule
     public TemporaryFolder temp = new TemporaryFolder();
     private SysfsFixture fixture;
@@ -109,9 +116,54 @@ public class ReceiveLayoutTest {
     }
 
     @Test
+    public void testGroupsSharingASocket() {
+        // each socket's share splits evenly between its two groups
+        fixture.nic("eth0", 16);
+        for (int i = 0; i < 16; i++) {
+            fixture.irq("eth0", 100 + i, Integer.toString(i));
+        }
+        final ReceiveLayout.Prediction prediction = predictFourGroups();
+        Assert.assertEquals("eth0 25.0%/25.0%/25.0%/25.0%", prediction.getSignature());
+        Assert.assertEquals(0.25, prediction.getMaxShare(), 1e-9);
+    }
+
+    @Test
+    public void testGroupsSharingASocketUnevenly() {
+        // 10 of 16 interrupts on socket 0 give each of its groups 31.25%
+        fixture.nic("eth0", 16);
+        for (int i = 0; i < 16; i++) {
+            fixture.irq("eth0", 100 + i, i < 10 ? "0" : "9");
+        }
+        final ReceiveLayout.Prediction prediction = predictFourGroups();
+        Assert.assertEquals("eth0 31.3%/31.3%/18.8%/18.8%", prediction.getSignature());
+        Assert.assertEquals(0.3125, prediction.getMaxShare(), 1e-9);
+    }
+
+    @Test
+    public void testGroupsSharingASocketWithAnUngroupedCpu() {
+        // an interrupt on CPU 16, which has no group, spreads over all four groups
+        fixture.nic("eth0", 2).irq("eth0", 100, "0").irq("eth0", 101, "16");
+        Assert.assertEquals("eth0 37.5%/37.5%/12.5%/12.5%", predictFourGroups().getSignature());
+    }
+
+    @Test
+    public void testGroupsSharingASocketWithRps() {
+        // RPS spreads each queue over CPUs 0-15, a sixteenth to each CPU
+        fixture.nic("eth0", 2).rps("eth0", 0, "ffff").rps("eth0", 1, "ffff");
+        Assert.assertEquals("eth0 25.0%/25.0%/25.0%/25.0%", predictFourGroups().getSignature());
+    }
+
+    @Test
     public void testInterruptCpusInDifferentGroups() {
         fixture.nic("eth0", 1).irq("eth0", 100, "6-9");
         assertUnreadable(predict(0), "the CPUs 6-9 of interrupt 100 of eth0 map to different groups");
+    }
+
+    @Test
+    public void testInterruptCpusInOneGroupSet() {
+        // an interrupt whose CPUs span socket 0 maps to its two groups as one group set
+        fixture.nic("eth0", 2).irq("eth0", 100, "0-7").irq("eth0", 101, "9");
+        Assert.assertEquals("eth0 25.0%/25.0%/25.0%/25.0%", predictFourGroups().getSignature());
     }
 
     @Test
@@ -237,8 +289,25 @@ public class ReceiveLayoutTest {
         Assert.assertTrue(unreadable, unreadable.contains(expected));
     }
 
+    // the table of groups on the given CPUs, over CPUs 0-7 on socket 0, 8-15 on socket 1 and 16-17
+    // on socket 2
+    private static SteeringCpuTable table(int[]... groupCpus) {
+        final int[] cpus = new int[18];
+        final int[] sockets = new int[18];
+        for (int cpu = 0; cpu < 18; cpu++) {
+            cpus[cpu] = cpu;
+            sockets[cpu] = cpu / 8;
+        }
+        return SteeringCpuTable.build(groupCpus, new CpuTopology.OnlineCpus(cpus, sockets, 18));
+    }
+
     private ReceiveLayout.Prediction predict(int bindIPv4) {
         final ReceiveLayout layout = new ReceiveLayout(fixture.getProcRoot(), fixture.getSysRoot(), _ -> null);
         return ReceiveLayout.predict(layout.read(bindIPv4), TABLE, 2);
+    }
+
+    private ReceiveLayout.Prediction predictFourGroups() {
+        final ReceiveLayout layout = new ReceiveLayout(fixture.getProcRoot(), fixture.getSysRoot(), _ -> null);
+        return ReceiveLayout.predict(layout.read(0), FOUR_GROUPS, 4);
     }
 }

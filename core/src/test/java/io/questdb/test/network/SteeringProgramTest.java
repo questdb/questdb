@@ -27,18 +27,23 @@ package io.questdb.test.network;
 
 import io.questdb.network.SteeringProgram;
 import io.questdb.std.LongList;
+import io.questdb.std.ObjList;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.util.function.IntUnaryOperator;
 
 import static io.questdb.network.SteeringProgram.*;
 
 public class SteeringProgramTest {
+    private static final ObjList<int[]> NO_PICKS = new ObjList<>();
     private static final int OUT = TARGET_OUT_OF_RANGE;
 
     @Test
     public void testAllOutOfRangeIsASingleReturn() {
         final LongList program = new LongList();
-        SteeringProgram.build(new int[]{OUT, OUT, TARGET_OFFLINE, OUT}, 2, new int[0], 0, program);
+        SteeringProgram.build(new int[]{OUT, OUT, TARGET_OFFLINE, OUT}, 2, NO_PICKS, program);
         Assert.assertEquals(1, program.size());
         Assert.assertEquals(-1, CbpfInterpreter.run(program, 0, 0));
         Assert.assertEquals(-1, CbpfInterpreter.run(program, 1000, 0));
@@ -54,7 +59,7 @@ public class SteeringProgramTest {
         // offline CPUs fit any residue
         targets[7] = TARGET_OFFLINE;
         final LongList program = new LongList();
-        SteeringProgram.build(targets, 2, new int[0], 0, program);
+        SteeringProgram.build(targets, 2, NO_PICKS, program);
         Assert.assertEquals(5, program.size());
         Assert.assertEquals(CODE_ALU_MOD_K, getCode(program.getQuick(1)));
         for (int cpu = 0; cpu < targets.length; cpu++) {
@@ -63,15 +68,15 @@ public class SteeringProgramTest {
     }
 
     @Test
-    public void testAlternatingNumberingWithRedirect() {
-        // three groups numbered in rotation; group 2 redirects to listeners 0 and 1
+    public void testAlternatingNumberingWithPick() {
+        // three groups numbered in rotation; group 2's CPUs pick listener 0 or 1
         final int[] targets = new int[12];
         for (int cpu = 0; cpu < targets.length; cpu++) {
             final int group = cpu % 3;
-            targets[cpu] = group == 2 ? TARGET_REDIRECT : group;
+            targets[cpu] = group == 2 ? pickTarget(0) : group;
         }
         final LongList program = new LongList();
-        SteeringProgram.build(targets, 3, new int[]{0, 1}, 2, program);
+        SteeringProgram.build(targets, 3, picks(new int[]{0, 1}), program);
         Assert.assertEquals(CODE_ALU_MOD_K, getCode(program.getQuick(1)));
         for (int cpu = 0; cpu < targets.length; cpu++) {
             if (cpu % 3 == 2) {
@@ -90,7 +95,7 @@ public class SteeringProgramTest {
         // CPUs 0-3 -> 0, 4-5 out of range, 6-7 -> 0, 8-11 -> 1, 12-13 offline, 14 -> 1
         final int[] targets = {0, 0, 0, 0, OUT, OUT, 0, 0, 1, 1, 1, 1, TARGET_OFFLINE, TARGET_OFFLINE, 1};
         final LongList program = new LongList();
-        SteeringProgram.build(targets, 2, new int[0], 0, program);
+        SteeringProgram.build(targets, 2, NO_PICKS, program);
         // load, 6 ranges of 2 instructions, final return
         Assert.assertEquals(1 + 2 * 6 + 1, program.size());
         for (int cpu = 0; cpu < targets.length; cpu++) {
@@ -106,7 +111,7 @@ public class SteeringProgramTest {
     public void testChainOmitsTrailingOutOfRange() {
         final int[] targets = {1, 1, 0, 0, OUT, OUT, TARGET_OFFLINE};
         final LongList program = new LongList();
-        SteeringProgram.build(targets, 2, new int[0], 0, program);
+        SteeringProgram.build(targets, 2, NO_PICKS, program);
         Assert.assertEquals(1 + 2 * 2 + 1, program.size());
         for (int cpu = 0; cpu < 10; cpu++) {
             final int expected = cpu < 2 ? 1 : cpu < 4 ? 0 : -1;
@@ -122,7 +127,7 @@ public class SteeringProgramTest {
             targets[cpu] = cpu < 96 ? 1 : 0;
         }
         final LongList program = new LongList();
-        SteeringProgram.build(targets, 2, new int[0], 0, program);
+        SteeringProgram.build(targets, 2, NO_PICKS, program);
         Assert.assertEquals(CODE_JMP_JGT_K, getCode(program.getQuick(1)));
         Assert.assertEquals(6, program.size());
         for (int cpu = 0; cpu < targets.length; cpu++) {
@@ -150,25 +155,24 @@ public class SteeringProgramTest {
     }
 
     @Test
-    public void testRedirectNeedsTwoListeners() {
+    public void testPickNeedsTwoListeners() {
         try {
-            SteeringProgram.build(new int[]{TARGET_REDIRECT, 0}, 2, new int[]{0}, 1, new LongList());
+            SteeringProgram.build(new int[]{pickTarget(0), 0}, 2, picks(new int[]{0}), new LongList());
             Assert.fail();
         } catch (IllegalArgumentException e) {
-            Assert.assertTrue(e.getMessage().contains("at least two"));
+            TestUtils.assertContains(e.getMessage(), "a pick needs at least two listeners [pick=0, listeners=1]");
         }
     }
 
     @Test
-    public void testRedirectSpreadsOverAcceptingListeners() {
-        // three groups on contiguous CPUs; group 0 at its limit redirects to listeners 2 and 0
+    public void testPickSpreadsOverItsListeners() {
+        // three groups on contiguous CPUs; group 0 at its limit sends its CPUs to listeners 2 and 0
         final int[] targets = new int[12];
         for (int cpu = 0; cpu < 12; cpu++) {
-            targets[cpu] = cpu < 4 ? TARGET_REDIRECT : cpu < 8 ? 2 : 0;
+            targets[cpu] = cpu < 4 ? pickTarget(0) : cpu < 8 ? 2 : 0;
         }
-        final int[] redirects = {2, 0};
         final LongList program = new LongList();
-        SteeringProgram.build(targets, 3, redirects, 2, program);
+        SteeringProgram.build(targets, 3, picks(new int[]{2, 0}), program);
         final int[] hits = new int[3];
         for (int random = 0; random < 1000; random++) {
             hits[CbpfInterpreter.run(program, 1, random)]++;
@@ -181,13 +185,79 @@ public class SteeringProgramTest {
     }
 
     @Test
-    public void testRedirectWithThreeTargets() {
-        final int[] targets = {TARGET_REDIRECT, TARGET_REDIRECT, 0, 1, 2};
-        final int[] redirects = {0, 1, 2};
+    public void testPickWithThreeListeners() {
+        final int[] targets = {pickTarget(0), pickTarget(0), 0, 1, 2};
         final LongList program = new LongList();
-        SteeringProgram.build(targets, 4, redirects, 3, program);
+        SteeringProgram.build(targets, 4, picks(new int[]{0, 1, 2}), program);
         for (int random = 0; random < 9; random++) {
             Assert.assertEquals(random % 3, CbpfInterpreter.run(program, 0, random));
         }
+    }
+
+    @Test
+    public void testPicksPerSocketWithAlternatingNumbering() {
+        // two groups per socket, CPUs numbered alternately across two sockets: even CPUs pick
+        // listener 0 or 1, odd CPUs listener 2 or 3
+        final int[] targets = new int[192];
+        for (int cpu = 0; cpu < targets.length; cpu++) {
+            targets[cpu] = pickTarget(cpu % 2);
+        }
+        final LongList program = new LongList();
+        SteeringProgram.build(targets, 2, picks(new int[]{0, 1}, new int[]{2, 3}), program);
+        // load, modulo, a jump per residue with a test before the first, and a block of 5 per pick
+        Assert.assertEquals(5 + 5 + 5, program.size());
+        Assert.assertEquals(CODE_ALU_MOD_K, getCode(program.getQuick(1)));
+        assertPicks(program, targets.length, cpu -> cpu % 2 == 0 ? 0 : 2);
+    }
+
+    @Test
+    public void testPicksPerSocketWithContiguousNumbering() {
+        // two groups per socket over two sockets of 96 CPUs: CPUs 0-95 pick listener 0 or 1, CPUs
+        // 96-191 listener 2 or 3
+        final int[] targets = new int[192];
+        for (int cpu = 0; cpu < targets.length; cpu++) {
+            targets[cpu] = pickTarget(cpu < 96 ? 0 : 1);
+        }
+        final LongList program = new LongList();
+        SteeringProgram.build(targets, 2, picks(new int[]{0, 1}, new int[]{2, 3}), program);
+        // load, two ranges of 2 instructions, final return, and a block of 5 per pick
+        Assert.assertEquals(6 + 5 + 5, program.size());
+        Assert.assertEquals(CODE_JMP_JGT_K, getCode(program.getQuick(1)));
+        assertPicks(program, targets.length, cpu -> cpu < 96 ? 0 : 2);
+        // CPUs past the table fall back to the hash
+        Assert.assertEquals(-1, CbpfInterpreter.run(program, 192, 0));
+    }
+
+    @Test
+    public void testUnknownPick() {
+        try {
+            SteeringProgram.build(new int[]{pickTarget(0), pickTarget(1)}, 2, picks(new int[]{0, 1}), new LongList());
+            Assert.fail();
+        } catch (IllegalArgumentException e) {
+            TestUtils.assertContains(e.getMessage(), "unknown pick [pick=1, picks=1]");
+        }
+    }
+
+    // each CPU reaches the two listeners from firstListener(cpu) on, half the random numbers each
+    private static void assertPicks(LongList program, int cpuCount, IntUnaryOperator firstListener) {
+        for (int cpu = 0; cpu < cpuCount; cpu++) {
+            final int first = firstListener.applyAsInt(cpu);
+            final int[] hits = new int[4];
+            for (int random = 0; random < 100; random++) {
+                hits[CbpfInterpreter.run(program, cpu, random)]++;
+            }
+            for (int index = 0; index < hits.length; index++) {
+                final int expected = index == first || index == first + 1 ? 50 : 0;
+                Assert.assertEquals("cpu " + cpu + ", listener " + index, expected, hits[index]);
+            }
+        }
+    }
+
+    private static ObjList<int[]> picks(int[]... indices) {
+        final ObjList<int[]> picks = new ObjList<>();
+        for (int[] pick : indices) {
+            picks.add(pick);
+        }
+        return picks;
     }
 }
