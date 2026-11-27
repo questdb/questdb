@@ -2059,7 +2059,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             ) {
                 admin.setAllowNonDeterministicFunction(false);
                 for (SqlExecutionContextImpl context : new SqlExecutionContextImpl[]{admin, refreshContext}) {
-                    context.setTableFunctionView(new SqlExecutionContext.TableFunctionView(viewDefinition));
+                    context.setTableFunctionView(new SqlExecutionContext.TableFunctionView(viewDefinition, false));
                     try {
                         assertParseFails(
                                 "list_objects(tracked_arg())",

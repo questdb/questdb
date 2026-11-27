@@ -25,10 +25,12 @@
 package io.questdb.test.cairo.view;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.file.BlockFileReader;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableMetadata;
@@ -37,6 +39,8 @@ import io.questdb.cairo.view.ViewState;
 import io.questdb.cairo.view.ViewStateStoreImpl;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.std.LongList;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
@@ -49,6 +53,9 @@ import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.BeforeClass;
+
+import java.util.TreeMap;
+import java.util.TreeSet;
 
 import static io.questdb.cairo.SqlJitMode.JIT_MODE_DISABLED;
 import static org.junit.Assert.*;
@@ -236,6 +243,54 @@ class AbstractViewTest extends AbstractCairoTest {
         Assert.assertFalse(engine.verifyTableName(tableName).isWal());
     }
 
+    // A principal that reads a view, and a base table through it, only on the authority of the view: it is
+    // denied SELECT on the columns of every table, and the error lists the columns the read needs.
+    static SqlExecutionContext denyBaseTableSelectContext() {
+        return new SqlExecutionContextImpl(engine, 1).with(
+                new DenyBaseTableSelectSecurityContext(),
+                bindVariableService,
+                null,
+                -1,
+                null
+        );
+    }
+
+    // A principal that may read everything but the view of the name, which it is denied SELECT on.
+    static SqlExecutionContext denyViewSelectContext(String viewName) {
+        return new SqlExecutionContextImpl(engine, 1).with(
+                new DenyViewSelectSecurityContext(viewName),
+                bindVariableService,
+                null,
+                -1,
+                null
+        );
+    }
+
+    // the dependencies of the view, the tables and the columns of each, sorted
+    static String dependenciesOf(String viewName) {
+        final ViewDefinition viewDefinition = getViewDefinition(viewName);
+        Assert.assertNotNull(viewDefinition);
+        return dependenciesOf(viewDefinition.getDependencies());
+    }
+
+    // the tables of the dependencies, and the columns of each, sorted
+    static String dependenciesOf(LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies) {
+        final TreeMap<String, TreeSet<String>> sorted = new TreeMap<>();
+        final ObjList<CharSequence> tableNames = dependencies.keys();
+        for (int i = 0, n = tableNames.size(); i < n; i++) {
+            final LowerCaseCharSequenceHashSet columnNames = dependencies.get(tableNames.getQuick(i));
+            final TreeSet<String> columns = new TreeSet<>();
+            for (int j = 0, m = columnNames.getKeyCount(); j < m; j++) {
+                final CharSequence columnName = columnNames.getKey(j);
+                if (columnName != null) {
+                    columns.add(columnName.toString());
+                }
+            }
+            sorted.put(tableNames.getQuick(i).toString(), columns);
+        }
+        return sorted.toString();
+    }
+
     @NotNull
     static String getView1DefinitionSql() {
         final ViewDefinition viewDefinition = getViewDefinition(VIEW1);
@@ -347,5 +402,62 @@ class AbstractViewTest extends AbstractCairoTest {
         assertViewDefinition(viewName, viewQuery, expectedDependencies);
         assertViewDefinitionFile(viewName, viewQuery);
         assertViewState(viewName);
+    }
+
+    private static final class DenyBaseTableSelectSecurityContext extends AllowAllSecurityContext {
+        @Override
+        public void authorizeSelect(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
+            final CairoException e = CairoException.nonCritical()
+                    .put("permission denied [table=").put(tableToken.getTableName())
+                    .put(", columns=");
+            for (int i = 0, n = columnNames.size(); i < n; i++) {
+                if (i > 0) {
+                    e.put(',');
+                }
+                e.put(columnNames.getQuick(i));
+            }
+            throw e.put(']');
+        }
+    }
+
+    private static final class DenyViewSelectSecurityContext extends AllowAllSecurityContext {
+        private final String viewName;
+
+        private DenyViewSelectSecurityContext(String viewName) {
+            this.viewName = viewName;
+        }
+
+        @Override
+        public void authorizeSelect(ViewDefinition viewDefinition) {
+            if (viewDefinition.getViewToken().getTableName().equals(viewName)) {
+                throw CairoException.authorization().put("permission denied [view=").put(viewName).put(']');
+            }
+        }
+    }
+
+    /**
+     * Grants everything, and counts the reads of a table: a plan authorizes the read of the columns of a table as
+     * it opens the cursor of a scan of the table.
+     */
+    static final class ReadCountingSecurityContext extends AllowAllSecurityContext {
+        private final String tableName;
+        private int readCount;
+
+        ReadCountingSecurityContext(String tableName) {
+            this.tableName = tableName;
+        }
+
+        @Override
+        public void authorizeSelect(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
+            if (tableName.equals(tableToken.getTableName())) {
+                readCount++;
+            }
+        }
+
+        int takeReadCount() {
+            final int count = readCount;
+            readCount = 0;
+            return count;
+        }
     }
 }

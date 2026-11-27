@@ -46,6 +46,17 @@ import org.jetbrains.annotations.NotNull;
  * tables and columns a view references for dependency management and schema validation.
  */
 public class ViewDefinition implements Mutable {
+    /**
+     * Marks a column of {@link #getDependencies()} that the view lends only to a read that sets none of its
+     * OVERRIDABLE variables: a column that only a read whose plan differs from the plan of the view's own SELECT
+     * scans, such as one that keeps a sub-query whole and returns none of its columns, and a column the view's own
+     * SELECT reads through another view that lends it only to such reads, when that SELECT sets none of the other
+     * view's variables. A read that sets a variable can make the view read any column the variable's position sees,
+     * so it reads such a column as the reader. Column names cannot hold the marker.
+     */
+    public static final char OTHER_READ_COLUMN_PREFIX = '?';
+    // every column of the table, lent as the columns OTHER_READ_COLUMN_PREFIX marks
+    public static final String OTHER_READ_WILDCARD = "?*";
     public static final String VIEW_DEFINITION_FILE_NAME = "_view";
     public static final int VIEW_DEFINITION_FORMAT_EXTRA_MSG_TYPE = 1;
     public static final int VIEW_DEFINITION_FORMAT_MSG_TYPE = 0;
@@ -60,7 +71,10 @@ public class ViewDefinition implements Mutable {
      *   <li>"table2" → {"b", "y"}</li>
      * </ul>
      * Used for tracking view invalidation when underlying tables change,
-     * cycle detection, and schema validation.
+     * cycle detection, and schema validation. A reader of the view needs no permission on the columns
+     * listed for a table, {@code *} standing for every column of it. A column marked with
+     * {@link #OTHER_READ_COLUMN_PREFIX}, and {@link #OTHER_READ_WILDCARD}, are lent only to a read
+     * that sets none of the view's OVERRIDABLE variables.
      */
     private final LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies = new LowerCaseCharSequenceObjHashMap<>();
     private boolean isAudited;

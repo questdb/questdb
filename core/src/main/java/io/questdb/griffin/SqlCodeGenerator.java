@@ -66,6 +66,7 @@ import io.questdb.cairo.sql.SingleSymbolFilter;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameReduceTaskFactory;
@@ -1629,6 +1630,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return false;
     }
 
+    // A table that took the name of the one a model was optimised on, even with the same metadata version, has
+    // columns the model does not know of, so the statement compiles again, as it does for a table whose metadata
+    // changed. A model that names no table it enumerated has no table id.
+    private static void checkTableOfModel(IQueryModel model, TableToken tableToken) {
+        final int tableId = model.getTableId();
+        if (tableId > -1 && tableId != tableToken.getTableId()) {
+            throw TableReferenceOutOfDateException.ofReplacedTable(tableToken, tableId, tableToken.getTableId());
+        }
+    }
+
     private static void coerceRuntimeConstantType(Function func, int type, SqlExecutionContext context, CharSequence message, int pos) throws SqlException {
         if (isUndefined(func.getType())) {
             func.assignType(type, context.getBindVariableService());
@@ -2167,6 +2178,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return advice.size() == 1
                 && metadataA.getColumnIndexQuiet(advice.getQuick(0).token) == timestampIndex
                 && directionMatchesScan(getOrderByDirectionOrDefault(model, 0), scanDirection);
+    }
+
+    // whether the statement sets an OVERRIDABLE variable of the view a scan reads through, see SqlParser
+    private static boolean isViewReadOverridden(ExpressionNode viewExpr) {
+        if (viewExpr == null) {
+            return false;
+        }
+        // SqlParser.compileViewQuery() stamps the name of every view it expands, and only it names a view of a model
+        assert viewExpr.tableFunctionView != null;
+        return viewExpr.tableFunctionView.isReadOverridden();
     }
 
     /**
@@ -8885,6 +8906,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     ORDER_DESC,
                     getViewName(viewExpr),
                     getViewPosition(viewExpr),
+                    isViewReadOverridden(viewExpr),
                     model.isUpdate()
             );
         } else {
@@ -8895,6 +8917,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     ORDER_DESC,
                     getViewName(viewExpr),
                     getViewPosition(viewExpr),
+                    isViewReadOverridden(viewExpr),
                     model.isUpdate()
             );
         }
@@ -11817,6 +11840,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         && tableModel.getLatestBy().size() == 0) {
                     TableToken tableToken = executionContext.getTableTokenIfExists(tableModel.getTableName());
                     if (tableToken != null) {
+                        checkTableOfModel(tableModel, tableToken);
                         try (TableReader reader = executionContext.getReader(tableToken, tableModel.getMetadataVersion())) {
                             TableRecordMetadata tableMeta = reader.getMetadata();
                             int colIdx = SqlUtil.getColumnIndexQuiet(tableMeta, colName);
@@ -11903,6 +11927,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 ORDER_ASC,
                                                 getViewName(viewExpr),
                                                 getViewPosition(viewExpr),
+                                                isViewReadOverridden(viewExpr),
                                                 tableModel.isUpdate()
                                         );
                                     } else {
@@ -11913,6 +11938,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 ORDER_ASC,
                                                 getViewName(viewExpr),
                                                 getViewPosition(viewExpr),
+                                                isViewReadOverridden(viewExpr),
                                                 tableModel.isUpdate()
                                         );
                                     }
@@ -14116,6 +14142,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         // The live-view layer wraps it in a LiveViewRecordCursorFactory that
         // pins the in-memory tier at cursor-open and routes by seam_ts.
         final TableToken tableToken = executionContext.getTableToken(tableName);
+        checkTableOfModel(model, tableToken);
         RecordCursorFactory result;
         if (model.isUpdate() && !executionContext.isWalApplication() && executionContext.getCairoEngine().isWalTable(tableToken)) {
             // two phase update execution, this is client-side branch. It has to execute against the sequencer metadata
@@ -14403,6 +14430,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         order,
                         getViewName(viewExpr),
                         getViewPosition(viewExpr),
+                        isViewReadOverridden(viewExpr),
                         model.isUpdate()
                 );
                 intervalHitsOnlyOnePartition = intervalModel.allIntervalsHitOnePartition();
@@ -14414,6 +14442,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         order,
                         getViewName(viewExpr),
                         getViewPosition(viewExpr),
+                        isViewReadOverridden(viewExpr),
                         model.isUpdate()
                 );
                 intervalHitsOnlyOnePartition = reader.getPartitionedBy() == PartitionBy.NONE;
@@ -14911,6 +14940,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     order,
                     getViewName(viewExpr),
                     getViewPosition(viewExpr),
+                    isViewReadOverridden(viewExpr),
                     model.isUpdate()
             );
             RowCursorFactory rowCursorFactory = new PageFrameRowCursorFactory(order);
@@ -14949,6 +14979,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 ORDER_DESC,
                                 getViewName(viewExpr),
                                 getViewPosition(viewExpr),
+                                isViewReadOverridden(viewExpr),
                                 model.isUpdate()
                         ),
                         listColumnFilterA.getColumnIndexFactored(0),
@@ -14970,6 +15001,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 ORDER_DESC,
                                 getViewName(viewExpr),
                                 getViewPosition(viewExpr),
+                                isViewReadOverridden(viewExpr),
                                 model.isUpdate()
                         ),
                         latestByColumnIndex,
@@ -14999,6 +15031,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             ORDER_DESC,
                             getViewName(viewExpr),
                             getViewPosition(viewExpr),
+                            isViewReadOverridden(viewExpr),
                             model.isUpdate()
                     ),
                     partitionByColumnIndexes,
@@ -15019,6 +15052,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         ORDER_DESC,
                         getViewName(viewExpr),
                         getViewPosition(viewExpr),
+                        isViewReadOverridden(viewExpr),
                         model.isUpdate()
                 ),
                 RecordSinkFactory.getInstance(configuration, asm, queryMeta, listColumnFilterA),

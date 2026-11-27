@@ -44,6 +44,55 @@ import org.jetbrains.annotations.TestOnly;
 
 public interface SqlCompiler extends QuietCloseable, Mutable {
 
+    /**
+     * Adds to the dependency map of a view the columns that the reads of the view read and the plan of the view's
+     * own SELECT does not, see {@link SqlUtil.ViewWildcardSources#hasReadPlannedOtherwise()}. The plan of the
+     * view's own SELECT reads only the columns of a sub-query, CTE or view the view selects, and those its timestamp
+     * and its order need. A read that names only outputs of the view whose columns do not need such a sub-query
+     * gives it no columns to keep, when only the SELECT lists above the sub-query give it columns: the SELECT
+     * joins it without a key, such as with a CROSS JOIN, or an ASOF, LT or SPLICE JOIN without ON, or selects from
+     * it alone. The plan of such a read computes every column of the sub-query, as the plan of
+     * {@code SELECT n FROM v} does for a view {@code SELECT count() n, sum(a) s FROM (SELECT * FROM x)}. A read that
+     * filters on outputs of the view scans no more than reads that name those outputs: the SELECT that defines an
+     * output applies the filter to the output, and gives the model under it no column by the name of the output, see
+     * {@code SqlOptimiser.propagateTopDownColumns0()}. A read
+     * that counts the rows of the view drops the ORDER BY of a sub-query, and a temporal join or a SAMPLE BY that
+     * took its timestamp from it takes the timestamp of the source of the sub-query instead. A read that places the
+     * view on a side of a join other than the first keeps the ORDER BY of every sub-query instead, also one the plan
+     * of the view's own SELECT drops because a SELECT above it orders the rows again, see
+     * {@code SqlOptimiser.isOrderByCleared()}. This compiles the SELECT again, as a sub-query of a read that counts
+     * its rows, with every sub-query some read leaves without columns kept whole, and either every ORDER BY a read
+     * that counts the rows drops dropped, or, with isOrderByKept, every ORDER BY kept. It collects what that plan
+     * reads, including a {@code *} for each wildcard it keeps whole, and adds those columns marked, see
+     * {@link SqlUtil#addOtherReadDependencies}: the view lends them only to a read that sets none of its OVERRIDABLE
+     * variables, which could otherwise read any of them through the view.
+     * Nothing opens the plan of that read, which would check the permission of the principal on what it reads, so
+     * this checks that the principal may read the columns it reads from the tables the SELECT reads itself, and it
+     * adds no column that a view the SELECT reads lends to no read of the SELECT, such as one that view lends only
+     * to the reads that set none of its OVERRIDABLE variables when the SELECT sets one, see
+     * {@link SqlUtil#collectTableColumnReads}.
+     * Call it on a compiler of its own after the SELECT of the view is optimised and before its plan is
+     * generated, with what that compile recorded: this takes the values of the PIVOT IN sub-queries from it
+     * rather than running them again, and finds a table out of date when it scans one of another id than that
+     * compile, and a view out of date when it expands another definition of it than that compile, see
+     * {@link SqlUtil.ViewCompileRecord}.
+     *
+     * @param viewSql          the SELECT of the view
+     * @param executionContext the context to compile the SELECT in, whose principal records the view
+     * @param dependencies     the dependency map of the view, which this adds to
+     * @param compileRecord    what the compile that optimised the SELECT of the view to plan it recorded
+     * @param isOrderByKept    whether the compile keeps the ORDER BY of every sub-query, as a read that places the
+     *                         view on a side of a join other than the first does, rather than drops it, as a read
+     *                         that counts the rows of the view does
+     */
+    void collectOtherReadDependencies(
+            CharSequence viewSql,
+            SqlExecutionContext executionContext,
+            LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies,
+            SqlUtil.ViewCompileRecord compileRecord,
+            boolean isOrderByKept
+    ) throws SqlException;
+
     CompiledQuery compile(CharSequence sqlText, SqlExecutionContext ctx) throws SqlException;
 
     void compileBatch(CharSequence batchText, SqlExecutionContext sqlExecutionContext, BatchCallback batchCallback) throws Exception;
@@ -109,18 +158,6 @@ public interface SqlCompiler extends QuietCloseable, Mutable {
     ExecutionModel generateExecutionModel(CharSequence sqlText, SqlExecutionContext executionContext) throws SqlException;
 
     /**
-     * Parses and optimises the SELECT of a view like {@link #generateExecutionModel}, and collects the
-     * tables and columns it reads into {@code outDependencies}, replacing what the map held. The set is
-     * the one CREATE VIEW records, so a caller that stores a view definition grants the view the same
-     * authority CREATE VIEW would.
-     */
-    ExecutionModel generateViewExecutionModel(
-            CharSequence viewSql,
-            SqlExecutionContext executionContext,
-            LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> outDependencies
-    ) throws SqlException;
-
-    /**
      * Parses a single expression text into an {@link ExpressionNode} tree without
      * running it through the optimiser. Useful when callers persist expression
      * fragments and need to recompile them later against a known
@@ -152,6 +189,46 @@ public interface SqlCompiler extends QuietCloseable, Mutable {
             @Transient IQueryModel queryModel,
             @Transient SqlExecutionContext executionContext,
             boolean generateProgressLogger
+    ) throws SqlException;
+
+    /**
+     * Parses and optimises the SELECT of a view, like {@link #generateExecutionModel}, and collects its
+     * dependencies: the objects it names, see {@link SqlUtil#collectTableAndColumnReferences}, and the
+     * columns it reads from each table, see {@link SqlUtil#collectTableColumnReads}, those of the reads of
+     * the view the plan of the SELECT does not read included, see {@link #collectOtherReadDependencies}.
+     * The set is the one CREATE VIEW records, so a caller that stores a view definition grants the view
+     * the same authority CREATE VIEW would.
+     *
+     * @param viewSql          the SELECT of the view
+     * @param executionContext the context to compile the SELECT in
+     * @param dependencies     the dependency map of the view, whose content this replaces
+     * @return the optimised model of the SELECT
+     */
+    ExecutionModel generateViewExecutionModel(
+            CharSequence viewSql,
+            SqlExecutionContext executionContext,
+            LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies
+    ) throws SqlException;
+
+    /**
+     * Compiles the SELECT of a view as a query of its own, which requires no order of its result, and returns its
+     * plan, whose metadata CREATE VIEW records for the view. The plan CREATE VIEW generates keeps the order a reader
+     * of the view requires, and its metadata can differ, such as by the designated timestamp. This takes the values of
+     * the PIVOT IN sub-queries from what the compile that planned the SELECT recorded, rather than running the
+     * sub-queries again, and finds a view out of date when it expands another definition of it, or another set of
+     * views, than that compile, see {@link SqlUtil.ViewCompileRecord}. It retries nothing: a table or a view out of
+     * date reaches the caller, which compiles the SELECT again, this compile included. Call it on a compiler of its
+     * own.
+     *
+     * @param viewSql          the SELECT of the view
+     * @param executionContext the context to compile the SELECT in
+     * @param compileRecord    what the compile that planned the SELECT of the view recorded
+     * @return the plan of the SELECT as a query of its own, which the caller owns
+     */
+    RecordCursorFactory generateViewMetadataFactory(
+            CharSequence viewSql,
+            SqlExecutionContext executionContext,
+            SqlUtil.ViewCompileRecord compileRecord
     ) throws SqlException;
 
     BytecodeAssembler getAsm();

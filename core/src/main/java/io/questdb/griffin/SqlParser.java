@@ -75,6 +75,7 @@ import io.questdb.griffin.model.ViewAuditModel;
 import io.questdb.griffin.model.WindowExpression;
 import io.questdb.griffin.model.WindowJoinContext;
 import io.questdb.griffin.model.WithClauseModel;
+import io.questdb.std.BoolList;
 import io.questdb.std.BufferWindowCharSequence;
 import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.Chars;
@@ -247,6 +248,18 @@ public class SqlParser {
     private final ObjList<IQueryModel> viewAuditWithModels = new ObjList<>();
     private final IntList viewAuditWithReads = new IntList();
     private final ObjectPool<GenericLexer> viewLexers;
+    // Per view the parser is expanding, outermost first: the declarations in effect where the statement, or the body
+    // of a view that reads it, reads the view. Their values reach the body of the view: one replaces the value of a
+    // variable the view declares OVERRIDABLE, and one the body reads under a name the view does not declare is the
+    // value it reads, see QueryModel.copyDeclsFrom().
+    private final ObjList<LowerCaseCharSequenceObjHashMap<ExpressionNode>> viewReadDecls = new ObjList<>();
+    // At the same index as viewReadDecls: whether a value has reached a variable of the view, or of a view it reads,
+    // from those declarations or from the declarations in effect where a view it reads is read, see flagViewReads()
+    // and SqlExecutionContext.TableFunctionView.isReadOverridden().
+    private final BoolList viewReadOverrides = new BoolList();
+    // The declarations whose values set a variable of a view they read, which flag the reads of the views around the
+    // declaration only when a read takes the value, see parseDeclare() and flagDeclaredValueRead().
+    private final ObjList<ExpressionNode> viewReadOverridingDecls = new ObjList<>();
     private final SqlParserCallback viewSqlParserCallback = new SqlParserCallback() {
     };
     // The views whose bodies the parser is expanding at the current parse position, outermost
@@ -276,6 +289,10 @@ public class SqlParser {
     // What the statement's copies of declared values cost, as countDeclaredValueNodes() counts
     // it, see MAX_DECLARED_VARIABLE_NODES.
     private int declaredVariableNodeCount;
+    // The first view frame expanded inside the CTE definition or the declared value being parsed, or zero outside one.
+    // The parse flags the reads of the views around the definition or the value only when a read takes it, see
+    // flagViewReads().
+    private int deferredViewReadFrameLo;
     private int digit;
     // Track tables currently being wrapped by the row-expiry filter, so the synthetic inner
     // "SELECT * FROM t WHERE ..." resolves "t" as a plain table instead of recursing forever.
@@ -300,6 +317,9 @@ public class SqlParser {
     // Designated timestamp column of the table whose EXPIRE ROWS predicate was last looked up (set by
     // lookupExpiryPredicate), so the keep-filter rewrite can null-safely flip only timestamp comparisons.
     private CharSequence expiryTimestampColumnName;
+    // Whether the CTE definition or the declared value being parsed sets a variable of a view it reads, which flags
+    // the reads of the views around it once a read takes it, see deferredViewReadFrameLo.
+    private boolean isDeferredViewReadOverridden;
     private boolean isParsingExpiryPredicate;
     // For each table (by id) whose EXPIRE ROWS policy this parse read straight from the table metadata while a
     // SET/DROP EXPIRE was still in flight: the metadata version that read saw. The optimiser compares it
@@ -317,6 +337,9 @@ public class SqlParser {
     private boolean subQueryMode = false;
     // Number of view bodies compileViewQuery() is expanding at the current parse position.
     private int viewExpansionDepth;
+    // The first index of viewReadDecls a value the parser reads can reach. parseDeclaredQuery() parses a copy of a
+    // sub-query the statement declared as text of the statement, which reaches none of the views it sits in.
+    private int viewReadFrameLo;
     // Where the statement's text reads the outermost view compileViewQuery() is expanding.
     private int viewReferencePosition;
     // The body parseViewSql() last parsed, for a caller that inspects it before the statement runs.
@@ -1411,8 +1434,14 @@ public class SqlParser {
         expiringTablesBeingExpanded.clear();
         auditedViewDepth = 0;
         viewExpansionDepth = 0;
+        viewReadDecls.clear();
+        viewReadFrameLo = 0;
+        viewReadOverrides.clear();
+        viewReadOverridingDecls.clear();
         viewReferencePosition = 0;
         viewTextLength = 0;
+        deferredViewReadFrameLo = 0;
+        isDeferredViewReadOverridden = false;
     }
 
     /**
@@ -1509,6 +1538,9 @@ public class SqlParser {
 
         // Track that we're compiling this view
         viewsBeingCompiled.add(viewName);
+        // The values of the declarations in effect where the view is read reach its body, see compileViewQuery() below.
+        viewReadDecls.add(model.getDecls());
+        viewReadOverrides.add(false);
         if (viewExpansionDepth++ == 0) {
             viewReferencePosition = viewPosition;
         }
@@ -1526,6 +1558,8 @@ public class SqlParser {
             // the body's parse moved the digit from 1 to where it is now
             digit = readDigit + digit - 1;
             viewExpansionDepth--;
+            viewReadDecls.popLast();
+            viewReadOverrides.setPos(viewReadOverrides.size() - 1);
             viewsBeingCompiled.popLast();
         }
     }
@@ -1542,10 +1576,22 @@ public class SqlParser {
         } finally {
             idleViewLexers.add(viewLexer);
         }
+        // The views the body reads were expanded with it, and the body has read the values it takes from the
+        // declarations in effect where each view the parser is expanding is read, see flagDeclaredValueRead(). Every
+        // branch of a set operation takes the value of a variable its own DECLARE block marks OVERRIDABLE, see
+        // parseDml(), so the variables of every branch count, not only those of the first.
+        for (IQueryModel branch = viewModel; branch != null; branch = branch.getUnionModel()) {
+            flagOverridableVariablesSet(branch.getOverridableDecls());
+        }
+        // The scans of a view the body reads in its FROM clause read through the outermost such view, see
+        // setViewNameExpr(), whose flag counts the values that reach any of them, see flagViewReads(). A view read in
+        // a sub-query of an expression keeps its own name and flag, which count the values that reach it or a view it
+        // reads.
+        final boolean isReadOverridden = viewReadOverrides.getLast();
         final ExpressionNode viewExpr = literal(viewDefinition.getViewToken().getTableName(), viewPosition);
         // the definition the model is expanded from, whose dependencies the view's authority covers,
         // see TableUtils.getTableFunctionView()
-        viewExpr.tableFunctionView = new SqlExecutionContext.TableFunctionView(viewDefinition);
+        viewExpr.tableFunctionView = new SqlExecutionContext.TableFunctionView(viewDefinition, isReadOverridden);
         viewModel.setOriginatingViewNameExpr(viewExpr);
         viewModel.setViewNameExpr(viewExpr);
         return viewModel;
@@ -2691,6 +2737,66 @@ public class SqlParser {
         return EXPIRE_BOUNDARY_NONE;
     }
 
+    // Flags the reads of the views the parser is expanding, see flagViewReads(), when the declarations in effect where
+    // one of them is read give a value to one of the variables, which the innermost of them declares OVERRIDABLE. A
+    // view declares few variables, while the declarations in effect where it is read hold those of the statement and of
+    // every view around the read, so this looks each variable up in the declarations, rather than each declaration up
+    // in the variables.
+    private void flagOverridableVariablesSet(LowerCaseCharSequenceHashSet variableNames) {
+        if (variableNames.size() == 0) {
+            return;
+        }
+        for (int i = 0, n = variableNames.getKeyCount(); i < n; i++) {
+            final CharSequence variableName = variableNames.getKey(i);
+            if (variableName != null && isDeclaredWhereViewIsRead(variableName)) {
+                flagViewReads();
+                return;
+            }
+        }
+    }
+
+    // Flags the reads of the views the parser is expanding, see flagViewReads(), when a read takes, under the name, the
+    // value decl: a value whose parse set a variable of a view the value reads, see parseDeclare(), or one that the
+    // declarations in effect where one of the views is read hold, which the body of the innermost of them reads under
+    // a variable the view declares OVERRIDABLE, or under a name the view does not declare, which its body takes from
+    // where it is read unchecked, see QueryModel.copyDeclsFrom(). The read takes the value in an expression, see
+    // RewriteDeclaredVariablesInExpressionVisitor, or in place of a table, such as one named like the variable, see
+    // parseFromClause() and parseSelectFrom().
+    private void flagDeclaredValueRead(CharSequence name, @Nullable ExpressionNode decl) {
+        if (decl == null) {
+            return;
+        }
+        if (viewReadOverridingDecls.contains(decl)) {
+            flagViewReads();
+            return;
+        }
+        for (int i = viewReadFrameLo, n = viewReadDecls.size(); i < n; i++) {
+            if (viewReadDecls.getQuick(i).get(name) == decl) {
+                flagViewReads();
+                return;
+            }
+        }
+    }
+
+    // Flags the read of every view the parser is expanding, from viewReadFrameLo on, as one that sets a variable of
+    // the view or of a view it reads: a value has reached the body of the innermost of them, which each of them reads.
+    // An outer view counts it also when the body of a view it reads, rather than the statement, supplies the value.
+    // The scans of the views its FROM clause reads read through the outer view, see setViewNameExpr(), and its
+    // dependencies may predate the variable: when a view it reads declares the variable OVERRIDABLE only after they
+    // were recorded, they lend, marked, columns that a read setting the variable has to read with the permission of the
+    // reader, see ViewDefinition.OTHER_READ_COLUMN_PREFIX.
+    private void flagViewReads() {
+        if (viewReadFrameLo < deferredViewReadFrameLo) {
+            isDeferredViewReadOverridden = true;
+        }
+        // Views expanded inside a CTE definition or a declared value need their flags now; the enclosing views need
+        // them only if a read takes the definition or the value. Keep looking up declarations in all reachable frames
+        // while deferring those flags.
+        for (int i = Math.max(viewReadFrameLo, deferredViewReadFrameLo), n = viewReadOverrides.size(); i < n; i++) {
+            viewReadOverrides.setQuick(i, true);
+        }
+    }
+
     private void generateColumnAlias(GenericLexer lexer, QueryColumn qc, boolean hasFrom) throws SqlException {
         CharSequence token = qc.getAst().token;
         if (qc.getAst().isWildcard() && !hasFrom) {
@@ -2745,6 +2851,16 @@ public class SqlParser {
                 return true;
             }
             throw SqlException.$(lexer.lastTokenPosition(), "'row' expected");
+        }
+        return false;
+    }
+
+    // whether the declarations where one of the views the parser is expanding is read give the variable a value
+    private boolean isDeclaredWhereViewIsRead(CharSequence variableName) {
+        for (int i = viewReadFrameLo, n = viewReadDecls.size(); i < n; i++) {
+            if (viewReadDecls.getQuick(i).contains(variableName)) {
+                return true;
+            }
         }
         return false;
     }
@@ -5787,6 +5903,13 @@ public class SqlParser {
 
             final ExpressionNode expr;
             final int valueQueriesLo = declaredValueQueryModels.size();
+            // The value sets the variables of the views it reads for itself. It sets them for the views around the
+            // declaration only when a read takes the value, as a CTE definition does, see flagDeclaredValueRead().
+            final int enclosingDeferredViewReadFrameLo = deferredViewReadFrameLo;
+            final boolean isEnclosingDeferredViewReadOverridden = isDeferredViewReadOverridden;
+            final boolean isValueViewReadOverridden;
+            deferredViewReadFrameLo = viewReadOverrides.size();
+            isDeferredViewReadOverridden = false;
             declaredValueDepth++;
             try {
                 if (isValueListRhs) {
@@ -5833,8 +5956,11 @@ public class SqlParser {
                         throw errUnexpected(lexer, tok, "unexpected bind expression");
                     }
                 }
+                isValueViewReadOverridden = isDeferredViewReadOverridden;
             } finally {
                 declaredValueDepth--;
+                deferredViewReadFrameLo = enclosingDeferredViewReadFrameLo;
+                isDeferredViewReadOverridden = isEnclosingDeferredViewReadOverridden;
             }
 
             addDeclaredQueries(expr.rhs, lexer.getContent(), valueQueriesLo);
@@ -5843,6 +5969,9 @@ public class SqlParser {
             declaredValueQueryModels.setPos(valueQueriesLo);
             declaredValueQueryDigits.setPos(valueQueriesLo);
             model.getDecls().put(tok, expr);
+            if (isValueViewReadOverridden) {
+                viewReadOverridingDecls.add(expr);
+            }
             if (isAudited) {
                 model.getAuditedDecls().add(tok);
             }
@@ -5936,9 +6065,20 @@ public class SqlParser {
         // digit the read found comes back however the parse ends.
         final int readDigit = digit;
         digit = declaredQueryDigits.getQuick(index);
+        // A sub-query the statement declared reads views as the statement does, wherever a view reads
+        // the copy: the copy is text of the statement, so the values it reads reach none of the views it
+        // sits in, and a view it reads takes the copy's declarations where it reads the view, see
+        // viewReadDecls. The views the read sits in come back however the parse ends. A sub-query a view
+        // declared is text of that view, whose values reach the view.
+        final boolean isStatementQuery = viewDepth == 0;
+        final int readViewReadFrameLo = viewReadFrameLo;
+        if (isStatementQuery) {
+            viewReadFrameLo = viewReadDecls.size();
+        }
         try {
             return parseAsSubQuery(queryLexer, declaredQueryWithClauses.getQuick(index), false, sqlParserCallback, declaredQueryModels.getQuick(index).getDecls(), false);
         } finally {
+            viewReadFrameLo = readViewReadFrameLo;
             digit = readDigit;
             idleViewLexers.add(queryLexer);
             subQueryMode = isSubQueryMode;
@@ -6449,6 +6589,10 @@ public class SqlParser {
                 tok = setModelAliasAndTimestamp(lexer, model);
                 // expect "(" in case of sub-query
             } else if (Chars.equals(tok, '(') || declaredQuery != null) {
+                if (declaredQuery != null) {
+                    // the sub-query the statement declared takes the place of a table a view reads
+                    flagDeclaredValueRead(tok, model.getDecls().get(tok));
+                }
                 IQueryModel proposedNested = declaredQuery != null
                         ? takeDeclaredQuery(declaredQuery, sqlParserCallback)
                         : parseAsSubQueryAndExpectClosingBrace(lexer, masterModel.getWithClauses(), false, sqlParserCallback, model.getDecls());
@@ -8382,7 +8526,9 @@ public class SqlParser {
         if (model.getDecls().contains(expr.token)) {
             if (expr.type == ExpressionNode.LITERAL) {
                 // replace it if so
-                expr = model.getDecls().get(expr.token).rhs;
+                final ExpressionNode decl = model.getDecls().get(expr.token);
+                flagDeclaredValueRead(expr.token, decl);
+                expr = decl.rhs;
             } else {
                 throw SqlException.$(lexer.lastTokenPosition(), "expected literal table name or subquery");
             }
@@ -8959,6 +9105,9 @@ public class SqlParser {
     ) throws SqlException {
         IQueryModel m = wcm.popModel();
         if (m != null) {
+            if (wcm.isViewReadOverridden()) {
+                flagViewReads();
+            }
             // The definition parsed before whatever this reference sits in began, so its reads
             // are counted here, as the reads of the copy a later reference parses are.
             final int index = viewAuditWithModels.indexOf(m);
@@ -9019,7 +9168,19 @@ public class SqlParser {
             WithClauseModel wcm = withClauseModelPool.next();
             final int definitionDigit = digit;
             final int firstViewAuditRead = viewAuditTrace.size();
-            final IQueryModel definitionModel = parseAsSubQueryAndExpectClosingBrace(lexer, model, false, sqlParserCallback, decls);
+            final int enclosingDeferredViewReadFrameLo = deferredViewReadFrameLo;
+            final boolean isEnclosingDeferredViewReadOverridden = isDeferredViewReadOverridden;
+            final IQueryModel definitionModel;
+            final boolean isDefinitionViewReadOverridden;
+            deferredViewReadFrameLo = viewReadOverrides.size();
+            isDeferredViewReadOverridden = false;
+            try {
+                definitionModel = parseAsSubQueryAndExpectClosingBrace(lexer, model, false, sqlParserCallback, decls);
+                isDefinitionViewReadOverridden = isDeferredViewReadOverridden;
+            } finally {
+                deferredViewReadFrameLo = enclosingDeferredViewReadFrameLo;
+                isDeferredViewReadOverridden = isEnclosingDeferredViewReadOverridden;
+            }
             if (viewAuditTrace.size() > firstViewAuditRead) {
                 // for the reference that takes this model, see parseWith()
                 viewAuditWithModels.add(definitionModel);
@@ -9033,7 +9194,7 @@ public class SqlParser {
                 visibleCtes = withClausesCopyPool.next();
                 visibleCtes.putAll(model);
             }
-            wcm.of(lo + 1, visibleCtes, definitionModel);
+            wcm.of(lo + 1, visibleCtes, definitionModel, isDefinitionViewReadOverridden);
             // For every later reference, see parseWith(). The declarations stay as the definition's
             // parse saw them: they belong to the query that holds this WITH, whose DECLARE block
             // comes ahead of the WITH, and a statement's top-level WITH has none.
@@ -10568,7 +10729,9 @@ public class SqlParser {
                 // one before twice double the copies with every level, in a pool that keeps them
                 // until clear(). The parser refuses the reference whose copy would take the
                 // statement past its budget, before copying anything.
-                final ExpressionNode value = decls.get(node.token).rhs;
+                final ExpressionNode decl = decls.get(node.token);
+                flagDeclaredValueRead(node.token, decl);
+                final ExpressionNode value = decl.rhs;
                 final int countedLo = declaredVariableNodeCount;
                 countDeclaredValueNodes(value);
                 if (declaredVariableNodeCount > MAX_DECLARED_VARIABLE_NODES) {

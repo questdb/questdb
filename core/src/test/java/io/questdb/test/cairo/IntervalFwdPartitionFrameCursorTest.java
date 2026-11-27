@@ -640,6 +640,7 @@ public class IntervalFwdPartitionFrameCursorTest extends AbstractCairoTest {
                             ORDER_ASC,
                             null,
                             0,
+                            false,
                             false
                     );
                     final PartitionFrameCursor cursor = factory.getCursor(executionContext, columnIndexes, ORDER_ASC)
@@ -1052,6 +1053,7 @@ public class IntervalFwdPartitionFrameCursorTest extends AbstractCairoTest {
                             ORDER_ASC,
                             null,
                             0,
+                            false,
                             false
                     );
                     final PartitionFrameCursor cursor = factory.getCursor(executionContext, columnIndexes, ORDER_ASC)

@@ -37,13 +37,18 @@ import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 abstract class AbstractPartitionFrameCursorFactory implements PartitionFrameCursorFactory {
     private final ObjList<CharSequence> columnNames = new ObjList<>();
+    // whether the statement sets an OVERRIDABLE variable of the view the scan reads through, see authorizeSelect()
+    private final boolean isViewReadOverridden;
     private final RecordMetadata metadata;
     private final long metadataVersion;
+    // a column name with ViewDefinition.OTHER_READ_COLUMN_PREFIX, to look it up in the dependencies of the view
+    private final StringSink otherReadColumnName = new StringSink();
     private final TableToken tableToken;
     private final boolean updateQuery;
     private final String viewName;
@@ -57,6 +62,7 @@ abstract class AbstractPartitionFrameCursorFactory implements PartitionFrameCurs
             RecordMetadata metadata,
             @Nullable String viewName,
             int viewPosition,
+            boolean isViewReadOverridden,
             boolean updateQuery
     ) {
         this.tableToken = tableToken;
@@ -64,6 +70,7 @@ abstract class AbstractPartitionFrameCursorFactory implements PartitionFrameCurs
         this.metadata = metadata;
         this.viewName = viewName;
         this.viewPosition = viewPosition;
+        this.isViewReadOverridden = isViewReadOverridden;
         this.updateQuery = updateQuery;
     }
 
@@ -133,11 +140,15 @@ abstract class AbstractPartitionFrameCursorFactory implements PartitionFrameCurs
             // table - either a dependency-collector gap missed the reference, or the base table was
             // renamed after the view was created. Fail safe: treat the table as not covered by the
             // view, so every column read here requires explicit per-column SELECT on the base table.
-            if (depCols == null || !depCols.contains("*")) {
+            // A statement that sets an OVERRIDABLE variable of the view can make it read any column
+            // the variable sees, so it reads the columns the view lends only to other reads as the
+            // reader, see ViewDefinition.OTHER_READ_COLUMN_PREFIX.
+            final boolean isOtherReadLent = depCols != null && !isViewReadOverridden;
+            if (depCols == null || !(depCols.contains("*") || (isOtherReadLent && depCols.contains(ViewDefinition.OTHER_READ_WILDCARD)))) {
                 columnNames.clear();
                 for (int i = 0, n = columnIndexes.size(); i < n; i++) {
                     final String columnName = metadata.getColumnName(columnIndexes.getQuick(i));
-                    if (depCols == null || !depCols.contains(columnName)) {
+                    if (depCols == null || !(depCols.contains(columnName) || (isOtherReadLent && isOtherReadColumn(depCols, columnName)))) {
                         columnNames.add(columnName);
                     }
                 }
@@ -177,5 +188,11 @@ abstract class AbstractPartitionFrameCursorFactory implements PartitionFrameCurs
             }
         }
         return reader;
+    }
+
+    private boolean isOtherReadColumn(LowerCaseCharSequenceHashSet depCols, CharSequence columnName) {
+        otherReadColumnName.clear();
+        otherReadColumnName.put(ViewDefinition.OTHER_READ_COLUMN_PREFIX).put(columnName);
+        return depCols.contains(otherReadColumnName);
     }
 }

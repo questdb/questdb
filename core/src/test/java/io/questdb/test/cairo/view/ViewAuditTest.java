@@ -321,8 +321,8 @@ public class ViewAuditTest extends AbstractCairoTest {
             markViewAudited("v");
             // Defining a second view over an audited one is a read of it: rows leave the audited
             // view either way, and the statement that copies them out is the one that has to say
-            // so. The column-type probe CREATE VIEW runs over its own body is a different thing
-            // and is suppressed separately - see isMetadataProbe.
+            // so. CREATE VIEW itself opens no cursor of its body, see
+            // testViewStatementsOpenNoCursorOfTheirSelect().
             assertRecordsOneAuditOf("v", "CREATE VIEW v2 AS (SELECT s FROM v)");
         });
     }
@@ -522,14 +522,12 @@ public class ViewAuditTest extends AbstractCairoTest {
             execute("CREATE TABLE trades (ts TIMESTAMP, s SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
             drainWalQueue();
 
-            // Each statement opens a cursor over its SELECT only to check it, and hands nobody a
+            // The statement opens a cursor over its SELECT only to check it, and hands nobody a
             // row, so Enterprise must not record a read of v at that open. A statement that runs
-            // inside an outer probe hands the flag back raised, not clear.
+            // inside an outer probe hands the flag back raised, not clear. The view statements
+            // open no cursor of their SELECT, see testViewStatementsOpenNoCursorOfTheirSelect().
             for (boolean isOuterMetadataProbe : new boolean[]{false, true}) {
                 final String suffix = isOuterMetadataProbe ? "_outer" : "";
-                assertCursorOpenIsAMetadataProbe("CREATE VIEW v_probe" + suffix + " AS (SELECT s FROM v)", isOuterMetadataProbe);
-                drainWalAndViewQueues();
-                assertCursorOpenIsAMetadataProbe("ALTER VIEW v_probe" + suffix + " AS (SELECT s FROM v WHERE s != 'z')", isOuterMetadataProbe);
                 assertCursorOpenIsAMetadataProbe(
                         "CREATE MATERIALIZED VIEW mv_probe" + suffix + """
                                  AS (
@@ -547,14 +545,12 @@ public class ViewAuditTest extends AbstractCairoTest {
             createBaseTableAndView();
             markViewAudited("v");
             execute("CREATE TABLE trades (ts TIMESTAMP, s SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE VIEW v_plain AS (SELECT s FROM t)");
             drainWalAndViewQueues();
 
+            // the view statements open no cursor to fail, see testViewStatementsOpenNoCursorOfTheirSelect()
             auditedPlanCursorOpens = new ObjList<>();
             isAuditedPlanCursorOpenRefused = true;
             try {
-                assertFailedCursorOpenClearsTheProbe("CREATE VIEW v_refused AS (SELECT s FROM v)");
-                assertFailedCursorOpenClearsTheProbe("ALTER VIEW v_plain AS (SELECT s FROM v)");
                 assertFailedCursorOpenClearsTheProbe("""
                         CREATE MATERIALIZED VIEW mv_refused AS (
                             SELECT ts, max(price) price FROM trades WHERE s IN (SELECT s FROM v) SAMPLE BY 1d
@@ -565,10 +561,8 @@ public class ViewAuditTest extends AbstractCairoTest {
                 sqlExecutionContext.setMetadataProbe(false);
             }
 
-            // None of the statements got past the failed open.
-            assertNull(engine.getTableTokenIfExists("v_refused"));
+            // the statement did not get past the failed open
             assertNull(engine.getTableTokenIfExists("mv_refused"));
-            assertEquals("SELECT s FROM t", engine.getViewGraph().getViewDefinition(engine.getTableTokenIfExists("v_plain")).getViewSql());
         });
     }
 
@@ -1436,6 +1430,70 @@ public class ViewAuditTest extends AbstractCairoTest {
             } finally {
                 auditedPlanCursorOpens = null;
             }
+        });
+    }
+
+    @Test
+    public void testViewStatementsOpenNoCursorOfTheirSelect() throws Exception {
+        assertMemoryLeak(() -> {
+            createBaseTableAndView();
+            markViewAudited("v");
+            execute("CREATE VIEW v_altered AS (SELECT s FROM t)");
+            drainWalAndViewQueues();
+
+            // A view statement checks the reads of its SELECT by name and opens no cursor of its plan, which
+            // would do the work of the open, such as ranking every value of the symbol that a sub-query under an
+            // aggregate is ordered by. Every cursor open fails, so a statement that opened one would fail.
+            final String[] statements = {
+                    // an aggregate over a sub-query ordered by a symbol, an order a read of the view keeps
+                    "CREATE VIEW v_sorted AS (SELECT s, count() c FROM (SELECT * FROM v ORDER BY s))",
+                    // CREATE VIEW compiles the SELECT once more for the metadata of the view
+                    "CREATE VIEW IF NOT EXISTS v_window AS (SELECT s, count() OVER () c FROM (SELECT * FROM v ORDER BY s))",
+                    "CREATE OR REPLACE VIEW v_replaced AS (SELECT s FROM v)",
+                    // CREATE OR REPLACE VIEW of an existing view alters it
+                    "CREATE OR REPLACE VIEW v_replaced AS (SELECT s FROM v WHERE s != 'z')",
+                    "ALTER VIEW v_altered AS (SELECT s, count() c FROM (SELECT * FROM v ORDER BY s))"
+            };
+            auditedPlanCursorOpens = new ObjList<>();
+            isAuditedPlanCursorOpenRefused = true;
+            try {
+                for (String sql : statements) {
+                    execute(sql);
+                    assertEquals("wrong audited plan cursor opens for [" + sql + "]", "", join(auditedPlanCursorOpens));
+                }
+            } finally {
+                isAuditedPlanCursorOpenRefused = false;
+                auditedPlanCursorOpens = null;
+            }
+            drainWalAndViewQueues();
+
+            for (String viewName : new String[]{"v_sorted", "v_altered"}) {
+                assertQuery("SELECT * FROM " + viewName + " ORDER BY s")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                s\tc
+                                a\t1
+                                b\t1
+                                """);
+            }
+            assertQuery("SELECT * FROM v_window ORDER BY s")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            s\tc
+                            a\t2
+                            b\t2
+                            """);
+            assertQuery("SELECT * FROM v_replaced ORDER BY s")
+                    .noLeakCheck()
+                    .returns("""
+                            s
+                            a
+                            b
+                            """);
+            final ViewDefinition replaced = engine.getViewGraph().getViewDefinition(engine.getTableTokenIfExists("v_replaced"));
+            assertEquals("SELECT s FROM v WHERE s != 'z'", replaced.getViewSql());
         });
     }
 

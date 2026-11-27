@@ -715,6 +715,7 @@ public class PageFrameTimestampRangeCursorTest extends AbstractCairoTest {
                 ORDER_ASC,
                 null,
                 0,
+                false,
                 false
         );
     }
@@ -765,6 +766,7 @@ public class PageFrameTimestampRangeCursorTest extends AbstractCairoTest {
                         ORDER_ASC,
                         null,
                         0,
+                        false,
                         false
                 ),
                 new PageFrameRowCursorFactory(ORDER_ASC),
