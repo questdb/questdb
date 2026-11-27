@@ -152,7 +152,7 @@ final class SortFactoryGenerator {
         boolean isLimitTransferred = false;
         try {
             final SortPlan.Algorithm algorithm = sort.getAlgorithm();
-            if (algorithm == SortPlan.Algorithm.INPUT_ORDER || algorithm == SortPlan.Algorithm.TIMESTAMP_DECLARATION) {
+            if (algorithm.isInputOrder()) {
                 isInputTransferred = true;
                 final RecordCursorFactory ordered = algorithm == SortPlan.Algorithm.INPUT_ORDER ? base
                         : declareTimestamp(base, PhysicalProperties.timestampIndex(sort));
@@ -184,10 +184,9 @@ final class SortFactoryGenerator {
                 case COPIED_LIMITED -> {
                     assert bounds != null;
                     final LogicalPlan child = sort.getChild();
-                    final PhysicalProperties.ScanDirection direction = PhysicalProperties.scanDirection(child);
                     final int firstKeyIndex = Math.abs(firstKey) - 1;
                     final boolean isPresorted = PhysicalProperties.timestampIndex(child) == firstKeyIndex
-                            && (direction == PhysicalProperties.ScanDirection.FORWARD || direction == PhysicalProperties.ScanDirection.BACKWARD);
+                            && PhysicalProperties.orderOf(child, firstKeyIndex) != PhysicalProperties.ScanDirection.OTHER;
                     isInputTransferred = true;
                     isLimitTransferred = true;
                     return generateSort(metadata, base, keys, bounds, isPresorted ? firstKeyIndex : -1, true, true, valueMaxBytes);

@@ -120,6 +120,11 @@ public class LongSequenceFunctionFactory implements FunctionFactory {
             return cursor;
         }
 
+        @Override
+        public int getOrderedColumnIndex() {
+            return 0;
+        }
+
         // The produced relation is always 1..N; deterministic by construction.
         @Override
         public boolean isNonDeterministic() {

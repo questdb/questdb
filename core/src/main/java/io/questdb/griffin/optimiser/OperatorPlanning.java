@@ -31,9 +31,9 @@ import io.questdb.cairo.sql.TableAccessInfo;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlKeywords;
-import io.questdb.griffin.engine.functions.MonotonicTimestampFunctionFactory;
 import io.questdb.griffin.engine.groupby.SampleByFillRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.SortKeyEncoder;
+import io.questdb.griffin.model.WindowExpression;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.BoundExpressionRewriter;
@@ -191,7 +191,7 @@ final class OperatorPlanning implements Mutable {
             return false;
         }
         LogicalPlan source = input;
-        while (isRowPassedThrough(source)) {
+        while (PhysicalProperties.isRowPassedThrough(source)) {
             source = source.inputAt(0);
         }
         boolean isCopied = false;
@@ -226,12 +226,27 @@ final class OperatorPlanning implements Mutable {
      */
     private static LogicalPlan copyTarget(LogicalPlan plan, boolean isRandomAccessRead) {
         while (PlanToFactoryRules.copyRejectedColumn(plan.getOutput()) >= 0) {
-            plan = isRowPassedThrough(plan) ? plan.inputAt(0) : plan instanceof JoinPlan join ? join.getOrderedInputs().getQuick(0).getInput() : null;
+            plan = PhysicalProperties.isRowPassedThrough(plan) ? plan.inputAt(0) : plan instanceof JoinPlan join ? join.getOrderedInputs().getQuick(0).getInput() : null;
             if (plan == null || !isCopyNeeded(plan, isRandomAccessRead)) {
                 return null;
             }
         }
         return plan;
+    }
+
+    /**
+     * The algorithm of a single-key sort whose input emits its rows in the order of the key, see
+     * {@link #isKeyOrdered}, null for any other sort: the sort keeps the input's order, see
+     * {@link SortPlan.Algorithm#INPUT_ORDER}, when it designates no other timestamp than the input, and declares its own
+     * designated timestamp over the input otherwise, see {@link SortPlan.Algorithm#TIMESTAMP_DECLARATION}.
+     */
+    private static SortPlan.Algorithm deliveredSortAlgorithm(SortPlan sort) {
+        if (sort.getColumnIds().size() != 1 || !isKeyOrdered(sort)) {
+            return null;
+        }
+        final int sortedIndex = sort.getOutput().getTimestampIndex();
+        return sortedIndex < 0 || sortedIndex == PhysicalProperties.timestampIndex(sort.getChild())
+                ? SortPlan.Algorithm.INPUT_ORDER : SortPlan.Algorithm.TIMESTAMP_DECLARATION;
     }
 
     private static boolean hasEarlyExit(ObjList<FunctionExpression> aggregates) {
@@ -253,8 +268,7 @@ final class OperatorPlanning implements Mutable {
             switch (plan) {
                 case ProjectPlan project when PlanToFactoryRules.projectionFactory(project) == PlanToFactoryRules.ProjectionFactory.SELECTION ->
                         plan = project.getChild();
-                case SortPlan sort when sort.getAlgorithm() == SortPlan.Algorithm.INPUT_ORDER
-                        || sort.getAlgorithm() == SortPlan.Algorithm.TIMESTAMP_DECLARATION -> plan = sort.getChild();
+                case SortPlan sort when sort.getAlgorithm() != null && sort.getAlgorithm().isInputOrder() -> plan = sort.getChild();
                 case LimitPlan limit when limit.getApplication() == LimitPlan.Application.INPUT ->
                         plan = limit.getChild();
                 case JoinPlan join when join.getOrderedInputs().size() == 1 ->
@@ -324,6 +338,20 @@ final class OperatorPlanning implements Mutable {
     }
 
     /**
+     * Whether the plan follows the order advice of its ordered input, see {@link PhysicalProperties#orderedInput}: a
+     * folded filter, a LIMIT its input applies, a projection, a sort that keeps the input order, a window and a window
+     * join do; a DISTINCT, a set operation and any other filter or LIMIT do not.
+     */
+    private static boolean isAdvicePassed(LogicalPlan plan) {
+        return switch (plan) {
+            case FilterPlan filter -> filter.getAlgorithm() != null && filter.getAlgorithm().isFolded();
+            case LimitPlan limit -> limit.getApplication() == LimitPlan.Application.INPUT;
+            case DistinctPlan _, SetOperationPlan _ -> false;
+            default -> true;
+        };
+    }
+
+    /**
      * True when a consumer that reads the rows of the plan by row id, {@code isRandomAccessRead}, or again, reads a
      * copy of them, see {@link #copyRows}.
      */
@@ -382,6 +410,16 @@ final class OperatorPlanning implements Mutable {
     }
 
     /**
+     * True when the input of the sort emits its rows in the order of the sort's first key, see
+     * {@link PhysicalProperties#orderOf}.
+     */
+    private static boolean isKeyOrdered(SortPlan sort) {
+        final LogicalPlan input = sort.getChild();
+        return PhysicalProperties.orderOf(input, input.getOutput().getColumnIndexById(sort.getColumnIds().getQuick(0)))
+                == PhysicalProperties.ScanDirection.of(sort.getDirections().getQuick(0));
+    }
+
+    /**
      * Whether a capability an algorithm choice reads holds; the plan must carry it.
      */
     private static boolean isKnownYes(PhysicalProperties.Capability capability) {
@@ -430,23 +468,6 @@ final class OperatorPlanning implements Mutable {
                 final BoundExpression limit = scan.getCoveredFilterLimit();
                 yield !scan.hasCoveringBackup() && (limit == null || scan.getIndexKeys().size() == 1 || !LogicalPlans.mayBeNegativeLimit(limit));
             }
-            default -> false;
-        };
-    }
-
-    /**
-     * True when the plan passes on rows of its only input, which a copy of its rows may hold instead: a filter, a
-     * LIMIT over no sort, a sort that keeps the input order and a projection that selects or computes its columns.
-     */
-    private static boolean isRowPassedThrough(LogicalPlan plan) {
-        return switch (plan) {
-            case FilterPlan _ -> true;
-            case LimitPlan limit -> !LogicalPlans.hasSortUnderStableProjects(limit.getChild());
-            case SortPlan sort ->
-                    sort.getAlgorithm() == SortPlan.Algorithm.INPUT_ORDER || sort.getAlgorithm() == SortPlan.Algorithm.TIMESTAMP_DECLARATION;
-            case ProjectPlan project ->
-                    PlanToFactoryRules.projectionFactory(project) == PlanToFactoryRules.ProjectionFactory.VIRTUAL
-                            || PlanToFactoryRules.projectionFactory(project) == PlanToFactoryRules.ProjectionFactory.SELECTION;
             default -> false;
         };
     }
@@ -968,21 +989,23 @@ final class OperatorPlanning implements Mutable {
 
     /**
      * True when the key never decreases along the input rows of the grouping: a TIMESTAMP, LONG or INT that reads, of
-     * its own type or through calls that keep its order, see {@link MonotonicTimestampFunctionFactory#orderSource}, a
-     * column the input is ordered by, see {@link PhysicalProperties#isOrderedBy}: forward, or backward under a GROUP BY
-     * that reads the page frames of its input in the order it picks.
+     * its own type or through calls that keep its order, see {@link LogicalPlans#orderSource}, a column the input
+     * emits in order, see {@link PhysicalProperties#orderOf}: forward, or backward under a parallel GROUP BY, which
+     * reads the page frames of its base in the order it picks.
      */
-    private static boolean isAscendingKey(GroupingPlan grouping, BoundExpression key, boolean isFrameOrderPicked) {
+    private static boolean isAscendingKey(GroupingPlan grouping, BoundExpression key, boolean isParallel) {
         final int keyType = key.getDataType();
         if (!ColumnType.isTimestamp(keyType) && keyType != ColumnType.LONG && keyType != ColumnType.INT) {
             return false;
         }
-        final ColumnExpression source = MonotonicTimestampFunctionFactory.orderSource(key);
+        final ColumnExpression source = LogicalPlans.orderSource(key);
         final LogicalPlan input = grouping.getChild();
         final int index = source == null ? -1 : input.getOutput().getColumnIndexById(source.getColumnId());
-        return index >= 0 && source.getDataType() == input.getOutput().getColumnType(index)
-                && (PhysicalProperties.isOrderedBy(input, index, PhysicalProperties.ScanDirection.FORWARD)
-                || isFrameOrderPicked && PhysicalProperties.isOrderedBy(input, index, PhysicalProperties.ScanDirection.BACKWARD));
+        if (index < 0 || source.getDataType() != input.getOutput().getColumnType(index)) {
+            return false;
+        }
+        final PhysicalProperties.ScanDirection order = PhysicalProperties.orderOf(input, index);
+        return order == PhysicalProperties.ScanDirection.FORWARD || isParallel && order == PhysicalProperties.ScanDirection.BACKWARD;
     }
 
     /**
@@ -1281,13 +1304,10 @@ final class OperatorPlanning implements Mutable {
         }
         final LogicalPlan input = latest.getChild();
         final LogicalPlan base = PlanToFactoryRules.latestByBase(latest);
-        boolean isAscending = false;
-        final boolean isOrderDeclaredOnly = base instanceof ProjectPlan project && project.hasTimestampDeclaration()
-                && PhysicalProperties.timestampSource(project) < 0;
-        if (latest.isTimestampOrderInherited() && !isOrderDeclaredOnly
-                && input.getOutput().getColumnIndexById(latest.getTimestampColumnId()) == PhysicalProperties.timestampIndex(base)) {
+        final boolean isAscending = latest.isTimestampOrderInherited() && PhysicalProperties.orderOf(input,
+                input.getOutput().getColumnIndexById(latest.getTimestampColumnId())) == PhysicalProperties.ScanDirection.FORWARD;
+        if (isAscending) {
             readOrder(base, false, true);
-            isAscending = PhysicalProperties.scanDirection(base) == PhysicalProperties.ScanDirection.FORWARD;
         }
         final boolean isCopied = copyRowsForReread(base, RowCopy.RANDOM_ACCESS);
         latest.setAlgorithm(isCopied || !isRandomAccess(base) ? LatestByPlan.Algorithm.MATERIALIZED
@@ -1356,7 +1376,7 @@ final class OperatorPlanning implements Mutable {
         final boolean isOrderDelivered = keyOrderAlgorithm != null
                 || !isRowIdSortRequired(sort) && isAdviceFollowed(input) && PlanToFactoryRules.hasAdvisedInput(input);
         final SortPlan.Algorithm deliveredAlgorithm = keyOrderAlgorithm != null ? keyOrderAlgorithm : SortPlan.Algorithm.INPUT_ORDER;
-        if (keyOrderAlgorithm != null) {
+        if (keyOrderAlgorithm != null || isTimestampOrdered) {
             readOrder(input, false, true);
         }
         if (isInputLimit(input)) {
@@ -1455,7 +1475,7 @@ final class OperatorPlanning implements Mutable {
         final LogicalPlan left = operation.getLeft();
         final LogicalPlan right = operation.getRight();
         final int rightTimestampIndex = PhysicalProperties.timestampIndex(right);
-        PhysicalProperties.ScanDirection rightDirection = PhysicalProperties.scanDirection(right);
+        PhysicalProperties.ScanDirection rightDirection = PhysicalProperties.orderOf(right, orderIndex);
         SortPlan.Algorithm rightSort = null;
         if (operation.isTimestampOrderPushable(orderIndex) && !(LogicalPlans.skipProjects(right) instanceof SortPlan)
                 && rightTimestampIndex == orderIndex) {
@@ -1469,7 +1489,7 @@ final class OperatorPlanning implements Mutable {
         if (orderIndex == PhysicalProperties.timestampIndex(left) && orderIndex == rightTimestampIndex
                 && left.getOutput().getColumnType(orderIndex) == right.getOutput().getColumnType(orderIndex)) {
             readOrder(left, false, true);
-            if (PhysicalProperties.scanDirection(left) == requested) {
+            if (PhysicalProperties.orderOf(left, orderIndex) == requested) {
                 if (rightSort == null) {
                     readOrder(right, false, true);
                 }
@@ -1563,6 +1583,7 @@ final class OperatorPlanning implements Mutable {
         final boolean isAdviceFollowed = isAdviceFollowed(input) && PlanToFactoryRules.hasAdvisedInput(input);
         final int timestampIndex = PhysicalProperties.timestampIndex(input);
         final PhysicalProperties.ScanDirection direction = PhysicalProperties.scanDirection(input);
+        final PhysicalProperties.ScanDirection timestampOrder = PhysicalProperties.orderOf(input, timestampIndex);
         boolean isDirectionRead = false;
         for (int i = 0, n = window.getSpecs().size(); i < n; i++) {
             final WindowSpec spec = window.getSpecs().getQuick(i);
@@ -1570,8 +1591,8 @@ final class OperatorPlanning implements Mutable {
             final boolean isTimestampKey = order.size() == 1
                     && (queryOrder.size() < 2 || (window.getFunctions().getQuick(i).getFunctionFlags() & BoundExpression.ORDERED_INPUT) != 0)
                     && input.getOutput().getColumnIndexById(order.getQuick(0)) == timestampIndex;
-            final boolean isOrderDelivered = isAdviceFollowed && spec.isOrderedByQueryOrder(queryOrder)
-                    || isTimestampKey && direction == PhysicalProperties.ScanDirection.of(spec.getOrderByDirections().getQuick(0));
+            final boolean isOrderDelivered = isAdviceFollowed && spec.isOrderedByQueryOrder(queryOrder) || isTimestampKey
+                    && (spec.getFramingMode() == WindowExpression.FRAMING_RANGE ? direction : timestampOrder) == PhysicalProperties.ScanDirection.of(spec.getOrderByDirections().getQuick(0));
             spec.setOrderDelivered(isOrderDelivered);
             isDirectionRead |= isTimestampKey || isOrderDelivered;
         }
@@ -1695,39 +1716,13 @@ final class OperatorPlanning implements Mutable {
         if (!isAdviceRead && !isDirectionRead) {
             return;
         }
-        switch (plan) {
-            case FilterPlan filter -> {
-                if (PlanToFactoryRules.isFusedFilter(filter)) {
-                    return;
-                }
-                readOrder(filter.getChild(), isAdviceRead && filter.getAlgorithm().isFolded(), isDirectionRead);
-            }
-            case ProjectPlan project -> readOrder(project.getChild(), isAdviceRead, isDirectionRead);
-            case SortPlan sort -> {
-                if (sort.getAlgorithm() == SortPlan.Algorithm.INPUT_ORDER || sort.getAlgorithm() == SortPlan.Algorithm.TIMESTAMP_DECLARATION) {
-                    readOrder(sort.getChild(), isAdviceRead, isDirectionRead);
-                }
-            }
-            case LimitPlan limit -> {
-                if (limit.getApplication() != LimitPlan.Application.SORT) {
-                    readOrder(limit.getChild(), isAdviceRead && limit.getApplication() == LimitPlan.Application.INPUT, isDirectionRead);
-                }
-            }
-            case DistinctPlan distinct -> {
-                if (distinct.getAlgorithm() == DistinctPlan.Algorithm.TIME_SERIES) {
-                    readOrder(distinct.getChild(), false, isDirectionRead);
-                }
-            }
-            case WindowPlan window -> readOrder(window.getChild(), isAdviceRead, isDirectionRead);
-            case WindowJoinPlan windowJoin -> readOrder(windowJoin.getMaster(), isAdviceRead, isDirectionRead);
-            case JoinPlan join -> readJoinOrder(join, join.getOrderedInputs().size(), isAdviceRead, isDirectionRead);
-            case SetOperationPlan operation -> {
-                if (!operation.getOperation().isUnion()) {
-                    readOrder(operation.getLeft(), false, isDirectionRead);
-                }
-            }
-            default -> {
-            }
+        if (plan instanceof JoinPlan join) {
+            readJoinOrder(join, join.getOrderedInputs().size(), isAdviceRead, isDirectionRead);
+            return;
+        }
+        final LogicalPlan input = PhysicalProperties.orderedInput(plan);
+        if (input != null) {
+            readOrder(input, isAdviceRead && isAdvicePassed(plan), isDirectionRead);
         }
     }
 
@@ -2211,38 +2206,12 @@ final class OperatorPlanning implements Mutable {
     }
 
     /**
-     * The algorithm of a single-key sort whose input emits its rows in the order of the key, null for any other sort:
-     * the sort keeps the input's order, see {@link SortPlan.Algorithm#INPUT_ORDER}, when the key is the input's
-     * designated timestamp in the input's direction, or when the input is ordered by the key, see
-     * {@link PhysicalProperties#isOrderedBy}, and the sort designates no other timestamp than the input; it declares its
-     * own designated timestamp over the input when it designates another, see
-     * {@link SortPlan.Algorithm#TIMESTAMP_DECLARATION}.
-     */
-    static SortPlan.Algorithm deliveredSortAlgorithm(SortPlan sort) {
-        if (sort.getColumnIds().size() != 1) {
-            return null;
-        }
-        if (isTimestampOrdered(sort)) {
-            return SortPlan.Algorithm.INPUT_ORDER;
-        }
-        final LogicalPlan input = sort.getChild();
-        final int keyIndex = input.getOutput().getColumnIndexById(sort.getColumnIds().getQuick(0));
-        if (!PhysicalProperties.isOrderedBy(input, keyIndex, PhysicalProperties.ScanDirection.of(sort.getDirections().getQuick(0)))) {
-            return null;
-        }
-        final int sortedIndex = sort.getOutput().getTimestampIndex();
-        return sortedIndex < 0 || sortedIndex == PhysicalProperties.timestampIndex(input)
-                ? SortPlan.Algorithm.INPUT_ORDER : SortPlan.Algorithm.TIMESTAMP_DECLARATION;
-    }
-
-    /**
-     * True when the input of the sort emits its rows in the order of the sort's first key: that key is the input's
-     * designated timestamp, in the input's scan direction.
+     * True when the input of the sort emits its rows in the order of the sort's first key, see {@link #isKeyOrdered},
+     * and that key is its designated timestamp.
      */
     static boolean isTimestampOrdered(SortPlan sort) {
         final LogicalPlan input = sort.getChild();
-        return input.getOutput().getColumnIndexById(sort.getColumnIds().getQuick(0)) == PhysicalProperties.timestampIndex(input)
-                && PhysicalProperties.scanDirection(input) == PhysicalProperties.ScanDirection.of(sort.getDirections().getQuick(0));
+        return input.getOutput().getColumnIndexById(sort.getColumnIds().getQuick(0)) == PhysicalProperties.timestampIndex(input) && isKeyOrdered(sort);
     }
 
     /**

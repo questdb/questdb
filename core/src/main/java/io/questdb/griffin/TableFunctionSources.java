@@ -222,7 +222,7 @@ public final class TableFunctionSources implements Closeable, Mutable {
         plan.setExternalDataSource(factory.usesExternalDataSource());
         plan.setDeterministic(!factory.isNonDeterministic());
         plan.setPhysicalProperties(factory.recordCursorSupportsRandomAccess(), factory.supportsPageFrameCursor(),
-                PhysicalProperties.ScanDirection.of(factory.getScanDirection()), SqlUtil.isLongSequence(factory));
+                PhysicalProperties.ScanDirection.of(factory.getScanDirection()), factory.getOrderedColumnIndex(), SqlUtil.isLongSequence(factory));
     }
 
     private static TableToken existingShowTable(QueryModel model, SqlExecutionContext executionContext, Path path) throws SqlException {

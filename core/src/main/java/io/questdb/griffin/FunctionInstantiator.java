@@ -795,7 +795,7 @@ public final class FunctionInstantiator implements Mutable {
                         && (BoundExpression.functionFlags(function) & (flags | ~BoundExpression.STABLE_WITHIN_EXECUTION)) != flags) {
                     throw new IllegalStateException("bound function semantics have changed");
                 }
-                if (ParanoiaState.PLAN_PARANOIA_MODE && !isDeclaredTimestampOrder(call, function)) {
+                if (ParanoiaState.PLAN_PARANOIA_MODE && !isDeclaredTimestampOrder(call, function, frame.functions)) {
                     throw new IllegalStateException("declared timestamp order differs from the built function");
                 }
                 return function;
@@ -844,14 +844,27 @@ public final class FunctionInstantiator implements Mutable {
     }
 
     /**
-     * Whether the timestamp order a monotonic timestamp factory declares for the call, see
-     * {@link MonotonicTimestampFunctionFactory#preservesTimestampOrder}, holds for the function built for it: a declared
-     * order holds for the built function, and when every argument but the timestamp argument is a constant, the
-     * declaration answers as the built function does.
+     * Whether the timestamp order a monotonic timestamp factory declares for the call holds for the function built for
+     * it over {@code arguments}: the order the binder recorded is the declared one, see
+     * {@link FunctionExpression#getOrderArgumentIndex}, a declared identity is the built timestamp argument itself, see
+     * {@link MonotonicTimestampFunctionFactory#isIdentity}, a declared order holds for the built function, see
+     * {@link MonotonicTimestampFunctionFactory#preservesTimestampOrder}, and when every argument but the timestamp
+     * argument is a constant, the declaration answers as the built function does.
      */
-    private boolean isDeclaredTimestampOrder(FunctionExpression call, Function function) throws SqlException {
+    private boolean isDeclaredTimestampOrder(FunctionExpression call, Function function, ObjList<Function> arguments) throws SqlException {
+        final int orderIndex = call.getOrderArgumentIndex();
+        if (orderIndex >= 0 && orderIndex != MonotonicTimestampFunctionFactory.orderArgumentIndex(call, constantArguments)) {
+            return false;
+        }
         final MonotonicTimestampFunctionFactory factory = MonotonicTimestampFunctionFactory.of(call);
-        if (factory == null || !(function instanceof MonotonicTimestampFunction monotonic)) {
+        if (factory == null) {
+            return true;
+        }
+        final int timestampIndex = factory.getTimestampArgumentIndex(call, constantArguments);
+        if (timestampIndex >= 0 && factory.isIdentity(call, constantArguments) && function != arguments.getQuick(timestampIndex)) {
+            return false;
+        }
+        if (!(function instanceof MonotonicTimestampFunction monotonic)) {
             return true;
         }
         final boolean isDeclared = factory.preservesTimestampOrder(call, constantArguments);
@@ -859,7 +872,6 @@ public final class FunctionInstantiator implements Mutable {
         if (isDeclared && !isBuilt) {
             return false;
         }
-        final int timestampIndex = factory.getTimestampArgumentIndex(call, constantArguments);
         for (int i = 0, n = call.getArgumentCount(); i < n; i++) {
             final BoundExpression argument = call.argumentAt(i);
             if (i != timestampIndex && !(argument instanceof ConstantExpression) && !(argument instanceof TypeExpression)) {

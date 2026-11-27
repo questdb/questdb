@@ -978,8 +978,8 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                 "from x " +
                 "where k > '1970-01-04' and s in ('a') " +
                 "sample by 1h")
+                .noRandomAccess()
                 .timestamp("k")
-                .expectSize()
                 .returns("""
                         k\ts\tlat\tlon
                         1970-01-04T00:00:00.000000000Z\ta\t70.00560222114518\t168.04971262491318
@@ -990,8 +990,8 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                 "from x " +
                 "where k > '1970-01-04' and s in ('a') " +
                 "sample by 1h align to calendar")
+                .noRandomAccess()
                 .timestamp("k")
-                .expectSize()
                 .returns("""
                         k\ts\tlat\tlon
                         1970-01-04T00:00:00.000000000Z\ta\t70.00560222114518\t168.04971262491318
@@ -1017,8 +1017,8 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                 "from xx " +
                 "where k in '1970-01-01T00:00:00.000000000Z;30m;5h;10' and s in ('a')" +
                 "sample by 2h align to calendar")
+                .noRandomAccess()
                 .timestamp("k")
-                .expectSize()
                 .returns("k\ts\tlat\tlon\n");
     }
 
@@ -1134,9 +1134,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         timestamp_sequence(0, 10 * 60 * 1000000L) k
                         from
                         long_sequence(150)
-                        """,
-                true,
-                true
+                        """
         );
     }
 
@@ -1228,10 +1226,10 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                 "from xx " +
                 "where k in '1970-01-01T00:00:00.000000000Z;30m;5h;10' and s in ('a')" +
                 "sample by 2h align to calendar")
+                .noRandomAccess()
                 .ddl("create table xx (lat double, lon double, s symbol, k timestamp_ns)" +
                         ", index(s capacity 256) timestamp(k) partition by DAY")
                 .timestamp("k")
-                .expectSize()
                 .returns("k\ts\tlat\tlon\n");
 
         assertSampleByIndexQuery(
@@ -1275,9 +1273,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         timestamp_sequence(0, 10 * 60 * 1000000L) k
                         from
                         long_sequence(150)
-                        """,
-                true,
-                true
+                        """
         );
 
         assertWithSymbolColumnTop(
@@ -1301,9 +1297,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         select k, s, first(lat) lat, last(lon) lon\s
                         from xx\s
                         where k > '1970-01-01' and s = null\s
-                        sample by 2h align to calendar""",
-                true,
-                true
+                        sample by 2h align to calendar"""
         );
     }
 
@@ -1324,8 +1318,8 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                 "from xx " +
                 "where k in '1970-01-01T00:00:00.000000000Z;30m;5h;10' and s in ('a')" +
                 "sample by 2h align to calendar")
+                .noRandomAccess()
                 .timestamp("k")
-                .expectSize()
                 .returns("k\ts\tlat\tlon\n");
     }
 
@@ -1401,9 +1395,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         timestamp_sequence(0, 10 * 60 * 1000000L) k
                         from
                         long_sequence(180)
-                        """,
-                true,
-                true
+                        """
         );
     }
 
@@ -1468,10 +1460,10 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                 "from xx " +
                 "where k in '1970-01-01T00:00:00.000000000Z;30m;5h;10' and s in ('a')" +
                 "sample by 2h align to calendar")
+                .noRandomAccess()
                 .ddl("create table xx (lat double, lon double, s symbol, k timestamp_ns)" +
                         ", index(s capacity 256) timestamp(k) partition by DAY")
                 .timestamp("k")
-                .expectSize()
                 .returns("k\ts\tlat\tlon\n");
 
         assertSampleByIndexQuery(
@@ -1495,9 +1487,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         timestamp_sequence(0, 10 * 60 * 1000000L) k
                         from
                         long_sequence(180)
-                        """,
-                true,
-                true
+                        """
         );
 
         assertWithSymbolColumnTop(
@@ -1510,9 +1500,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                 "select k, s, first(lat) lat, first(lon) lon " +
                         "from xx " +
                         "where k > '1970-01-01T21:00' and s = null " +
-                        "sample by 2h align to calendar",
-                true,
-                true
+                        "sample by 2h align to calendar"
         );
     }
 
@@ -1535,6 +1523,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                 """;
 
         assertQuery(forceNoIndexQuery)
+                .noRandomAccess()
                 .ddl("create table x as " +
                         "(" +
                         "select" +
@@ -1546,12 +1535,11 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "   long_sequence(100)" +
                         "),index(s) timestamp(k) partition by DAY")
                 .timestamp("k")
-                .expectSize()
                 .returns(expected);
 
         assertQuery(query)
+                .noRandomAccess()
                 .timestamp("k")
-                .expectSize()
                 .returns(expected);
     }
 
@@ -2050,9 +2038,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "   timestamp_sequence_ns('2021-03-26T20:30:00.000000000Z', 13 * 60 * 1000000000L) k" +
                         "   from" +
                         "   long_sequence(1000)" +
-                        "),index(s) timestamp(k)",
-                true,
-                true
+                        "),index(s) timestamp(k)"
         );
     }
 
@@ -2115,9 +2101,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "   timestamp_sequence_ns('2020-10-23 20:30:00.000000000Z', 259 * 1000000000L) k" +
                         "   from" +
                         "   long_sequence(1000)" +
-                        "),index(s) timestamp(k)",
-                true,
-                true
+                        "),index(s) timestamp(k)"
         );
     }
 
@@ -2912,8 +2896,8 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     from xx
                     where s = null
                     sample by 1h""")
+                    .noRandomAccess()
                     .noLeakCheck()
-                    .expectSize()
                     .timestamp("k")
                     .returns(expected);
         });
@@ -4858,7 +4842,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                 "WHERE ts BETWEEN '2023-05-16T00:00:00.00Z' AND '2023-05-16T00:10:00.00Z' " +
                 "AND s2 = ('foo') " +
                 "SAMPLE BY 5m ALIGN TO CALENDAR;")
-                .expectSize()
+                .noRandomAccess()
                 .returns("""
                         time\ts1\tdd
                         2023-05-16T00:04:00.000000000Z\ta\tnull
@@ -4886,15 +4870,14 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     " where id = 'A' sample by 15m ALIGN to CALENDAR")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort light
+                            Stream Group By
                               keys: [time]
-                                GroupBy vectorized: false
-                                  keys: [time]
-                                  values: [last(lat),last(lon)]
-                                    DeferredSingleSymbolFilterPageFrame
-                                        Index forward scan on: id deferred: true
-                                          filter: id='A'
-                                        Frame forward scan on: pos
+                              keyFunctions: [timestamp_floor_utc('15m',time)]
+                              values: [last(lat),last(lon)]
+                                DeferredSingleSymbolFilterPageFrame
+                                    Index forward scan on: id deferred: true
+                                      filter: id='A'
+                                    Frame forward scan on: pos
                             """);
         });
     }
@@ -4916,15 +4899,15 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     " where id = 'A' sample by 15m ALIGN to CALENDAR")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort light
-                              keys: [time]
-                                GroupBy vectorized: false
-                                  keys: [id,time,ts]
-                                  values: [last(lat),last(lon)]
-                                    DeferredSingleSymbolFilterPageFrame
-                                        Index forward scan on: id deferred: true
-                                          filter: id='A'
-                                        Frame forward scan on: pos
+                            Stream Group By
+                              segmentKey: timestamp_floor_utc('15m',time)
+                              keys: [id,time,ts]
+                              keyFunctions: [timestamp_floor_utc('15m',time)]
+                              values: [last(lat),last(lon)]
+                                DeferredSingleSymbolFilterPageFrame
+                                    Index forward scan on: id deferred: true
+                                      filter: id='A'
+                                    Frame forward scan on: pos
                             """);
         });
     }
@@ -4946,15 +4929,15 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     " where id = 'A' sample by 15m ALIGN to CALENDAR")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort light
-                              keys: [time]
-                                GroupBy vectorized: false
-                                  keys: [time,type]
-                                  values: [last(lat),last(lon)]
-                                    DeferredSingleSymbolFilterPageFrame
-                                        Index forward scan on: id deferred: true
-                                          filter: id='A'
-                                        Frame forward scan on: pos
+                            Stream Group By
+                              segmentKey: timestamp_floor_utc('15m',time)
+                              keys: [time,type]
+                              keyFunctions: [timestamp_floor_utc('15m',time)]
+                              values: [last(lat),last(lon)]
+                                DeferredSingleSymbolFilterPageFrame
+                                    Index forward scan on: id deferred: true
+                                      filter: id='A'
+                                    Frame forward scan on: pos
                             """);
 
             assertQuery("select   id, time, type, last(lat) lat, last(lon) lon " +
@@ -4962,15 +4945,15 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     " where id = 'A' sample by 15m ALIGN to CALENDAR")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort light
-                              keys: [time]
-                                GroupBy vectorized: false
-                                  keys: [id,time,type]
-                                  values: [last(lat),last(lon)]
-                                    DeferredSingleSymbolFilterPageFrame
-                                        Index forward scan on: id deferred: true
-                                          filter: id='A'
-                                        Frame forward scan on: pos
+                            Stream Group By
+                              segmentKey: timestamp_floor_utc('15m',time)
+                              keys: [id,time,type]
+                              keyFunctions: [timestamp_floor_utc('15m',time)]
+                              values: [last(lat),last(lon)]
+                                DeferredSingleSymbolFilterPageFrame
+                                    Index forward scan on: id deferred: true
+                                      filter: id='A'
+                                    Frame forward scan on: pos
                             """);
         });
     }
@@ -4991,15 +4974,15 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     " where id = 'A' sample by 15m ALIGN to CALENDAR")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort light
-                              keys: [time]
-                                GroupBy vectorized: false
-                                  keys: [id,time,geo6]
-                                  values: [last(lat),last(lon)]
-                                    DeferredSingleSymbolFilterPageFrame
-                                        Index forward scan on: id deferred: true
-                                          filter: id='A'
-                                        Frame forward scan on: pos
+                            Stream Group By
+                              segmentKey: timestamp_floor_utc('15m',time)
+                              keys: [id,time,geo6]
+                              keyFunctions: [timestamp_floor_utc('15m',time)]
+                              values: [last(lat),last(lon)]
+                                DeferredSingleSymbolFilterPageFrame
+                                    Index forward scan on: id deferred: true
+                                      filter: id='A'
+                                    Frame forward scan on: pos
                             """);
 
             assertQuery("select   id, time, lat, last(lat) lastlat, last(lon) lon " +
@@ -5007,15 +4990,15 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     " where id = 'A' sample by 15m ALIGN to CALENDAR")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort light
-                              keys: [time]
-                                GroupBy vectorized: false
-                                  keys: [id,time,lat]
-                                  values: [last(lat),last(lon)]
-                                    DeferredSingleSymbolFilterPageFrame
-                                        Index forward scan on: id deferred: true
-                                          filter: id='A'
-                                        Frame forward scan on: pos
+                            Stream Group By
+                              segmentKey: timestamp_floor_utc('15m',time)
+                              keys: [id,time,lat]
+                              keyFunctions: [timestamp_floor_utc('15m',time)]
+                              values: [last(lat),last(lon)]
+                                DeferredSingleSymbolFilterPageFrame
+                                    Index forward scan on: id deferred: true
+                                      filter: id='A'
+                                    Frame forward scan on: pos
                             """);
         });
     }
@@ -5063,7 +5046,6 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "union all " +
                         "select '1970-01-01T01:01:00.000000000Z'::timestamp, 'A', 101, 101, #zzzzzz from long_sequence(1)")
                 .timestamp("time")
-                .expectSize()
                 .returns("id\ttime\tgeo6\tlat\tlon\n", """
                         id\ttime\tgeo6\tlat\tlon
                         A\t1970-01-01T00:00:00.000000000Z\tzzzzzz\t13.0\t13.0

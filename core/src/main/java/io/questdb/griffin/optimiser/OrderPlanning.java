@@ -505,8 +505,9 @@ final class OrderPlanning implements OptimiserPass {
                     // a LATEST BY that does not scan a table reads its input twice, in ascending designated timestamp
                     // order: the latest row of each key, then the rows at their positions, which the input must
                     // deliver in the same order again
-                    require(PlanToFactoryRules.latestByBase(latest), requirements.next().inputOf(requirement)
-                            .orderBy(latest.getTimestampColumnId(), SortDirection.ASCENDING));
+                    final LogicalPlan base = PlanToFactoryRules.latestByBase(latest);
+                    require(base, requirements.next().inputOf(requirement).orderBy(base == latest.getChild() ? latest.getTimestampColumnId()
+                            : LogicalPlans.projectedSourceColumnId((ProjectPlan) latest.getChild(), latest.getTimestampColumnId()), SortDirection.ASCENDING));
                 }
             }
             case SampleByPlan sample -> requireNothing(PlanToFactoryRules.sampleByBase(sample), requirement);
@@ -705,10 +706,7 @@ final class OrderPlanning implements OptimiserPass {
                 if (project.hasTimestampDeclaration()) {
                     isInputRowOrderRequired = true;
                 }
-                inputOrderColumnId = LogicalPlans.projectedSourceColumnId(project, orderColumnId);
-                if (inputOrderColumnId < 0) {
-                    inputOrderColumnId = LogicalPlans.orderSourceColumnId(project, orderColumnId);
-                }
+                inputOrderColumnId = LogicalPlans.requestedSourceColumnId(project, orderColumnId);
                 inputDirection = inputOrderColumnId < 0 ? null : direction;
                 input.topK(LogicalPlans.projectedSourceColumnId(project, requirement.getTopKColumnId()), requirement.getTopK());
                 final boolean isOrdered = !requirement.getOrder().isEmpty();

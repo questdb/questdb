@@ -29,7 +29,6 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.SymbolKeyExtractor;
-import io.questdb.griffin.engine.functions.MonotonicTimestampFunctionFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntIntHashMap;
@@ -1043,12 +1042,24 @@ public final class LogicalPlans {
     }
 
     /**
-     * The input column whose order the projection's output column {@code columnId} keeps, see
-     * {@link MonotonicTimestampFunctionFactory#orderSource}, read as that column's own type; -1 for none.
+     * The column whose order the values of the expression keep: the expression itself when it is a column, else the
+     * column under calls each of which keeps the order of an argument, see {@link FunctionExpression#getOrderArgumentIndex};
+     * null for any other expression.
+     */
+    public static ColumnExpression orderSource(BoundExpression expression) {
+        while (expression instanceof FunctionExpression call && call.getOrderArgumentIndex() >= 0) {
+            expression = call.argumentAt(call.getOrderArgumentIndex());
+        }
+        return expression instanceof ColumnExpression column ? column : null;
+    }
+
+    /**
+     * The input column whose order the projection's output column {@code columnId} keeps, see {@link #orderSource},
+     * read as that column's own type; -1 for none.
      */
     public static int orderSourceColumnId(ProjectPlan project, int columnId) {
         final int index = project.getOutput().getColumnIndexById(columnId);
-        final ColumnExpression source = index < 0 ? null : MonotonicTimestampFunctionFactory.orderSource(project.getExpressions().getQuick(index));
+        final ColumnExpression source = index < 0 ? null : orderSource(project.getExpressions().getQuick(index));
         if (source == null) {
             return -1;
         }
@@ -1083,6 +1094,16 @@ public final class LogicalPlans {
     public static int projectedSourceColumnId(ProjectPlan project, int columnId) {
         final ColumnExpression column = passedColumn(project, columnId);
         return column == null ? -1 : column.getColumnId();
+    }
+
+    /**
+     * The input column an order of the projection's output column {@code columnId} is an order of: the column the
+     * projection selects, see {@link #projectedSourceColumnId}, else the column whose order it keeps, see
+     * {@link #orderSourceColumnId}; -1 for none.
+     */
+    public static int requestedSourceColumnId(ProjectPlan project, int columnId) {
+        final int sourceId = projectedSourceColumnId(project, columnId);
+        return sourceId >= 0 ? sourceId : orderSourceColumnId(project, columnId);
     }
 
     /**

@@ -92,97 +92,19 @@ public final class PhysicalProperties {
     }
 
     /**
-     * Whether the factory emits its rows with the values of the column at {@code columnIndex} never decreasing
-     * ({@link ScanDirection#FORWARD}) or never increasing ({@link ScanDirection#BACKWARD}), as the plan proves it: the
-     * designated timestamp of a table read page frame by page frame, the x of long_sequence(), the key of a stream
-     * GROUP BY, the bucket of a SAMPLE BY or a fill and the first key of a sort, through the operators that keep the
-     * order of their input and the projections that keep the column's order, see
-     * {@link LogicalPlans#orderSourceColumnId}. Unlike {@link #timestampIndex}, a TIMESTAMP clause proves
-     * no order, and neither does an index read, which emits the rows of each key in turn.
+     * Whether the plan passes on the rows of its ordered input themselves, see {@link #orderedInput}, which a copy of
+     * either holds alike: a filter, a LIMIT the sort under it does not apply, a sort that keeps its input's order and a
+     * projection the window factories do not build.
      */
-    public static boolean isOrderedBy(LogicalPlan plan, int columnIndex, ScanDirection direction) {
-        while (columnIndex >= 0) {
-            switch (plan) {
-                case ProjectPlan project -> {
-                    columnIndex = project.getChild().getOutput().getColumnIndexById(
-                            LogicalPlans.orderSourceColumnId(project, project.getOutput().getColumnId(columnIndex)));
-                    plan = project.getChild();
-                }
-                case FilterPlan filter -> {
-                    columnIndex = inputColumnIndex(filter, filter.getChild(), columnIndex);
-                    plan = filter.getChild();
-                }
-                case LimitPlan limit -> {
-                    columnIndex = inputColumnIndex(limit, limit.getChild(), columnIndex);
-                    plan = limit.getChild();
-                }
-                case WindowPlan window -> {
-                    columnIndex = inputColumnIndex(window, window.getChild(), columnIndex);
-                    plan = window.getChild();
-                }
-                case WindowJoinPlan windowJoin -> {
-                    columnIndex = inputColumnIndex(windowJoin, windowJoin.getMaster(), columnIndex);
-                    plan = windowJoin.getMaster();
-                }
-                case DistinctPlan distinct -> {
-                    if (distinct.getAlgorithm() != DistinctPlan.Algorithm.TIME_SERIES) {
-                        return false;
-                    }
-                    columnIndex = inputColumnIndex(distinct, distinct.getChild(), columnIndex);
-                    plan = distinct.getChild();
-                }
-                case SortPlan sort -> {
-                    final OutputSchema input = sort.getChild().getOutput();
-                    if (input.getColumnIndexById(sort.getColumnIds().getQuick(0)) == columnIndex) {
-                        return ScanDirection.of(sort.getDirections().getQuick(0)) == direction;
-                    }
-                    if (sort.getAlgorithm() != SortPlan.Algorithm.INPUT_ORDER && sort.getAlgorithm() != SortPlan.Algorithm.TIMESTAMP_DECLARATION) {
-                        return false;
-                    }
-                    columnIndex = inputColumnIndex(sort, sort.getChild(), columnIndex);
-                    plan = sort.getChild();
-                }
-                case JoinPlan join -> {
-                    final LogicalPlan master = join.getOrderedInputs().getQuick(0).getInput();
-                    if (columnIndex != joinTimestamp(join, join.getOrderedInputs().size()) || scanDirection(join) != direction) {
-                        return false;
-                    }
-                    columnIndex = inputColumnIndex(join, master, columnIndex);
-                    plan = master;
-                }
-                case SetOperationPlan operation -> {
-                    if (operation.getOperation() == SetOperationKind.UNION_ALL) {
-                        return operation.isMerged() && columnIndex == operation.getOutput().getColumnIndexById(operation.getRequestedOrderColumnId())
-                                && ScanDirection.of(operation.getRequestedOrderDirection()) == direction
-                                && isOrderedBy(operation.getLeft(), columnIndex, direction) && isOrderedBy(operation.getRight(), columnIndex, direction);
-                    }
-                    if (operation.getOperation().isUnion() || operation.isCastRequired()) {
-                        return false;
-                    }
-                    columnIndex = inputColumnIndex(operation, operation.getLeft(), columnIndex);
-                    plan = operation.getLeft();
-                }
-                case AggregatePlan aggregate -> {
-                    return isStream(aggregate) && columnIndex == aggregate.getStreamKeyIndex()
-                            && direction == (aggregate.isStreamBackward() ? ScanDirection.BACKWARD : ScanDirection.FORWARD);
-                }
-                case SampleByPlan _, FillPlan _ -> {
-                    return direction == ScanDirection.FORWARD && columnIndex == plan.getOutput().getTimestampIndex();
-                }
-                case ScanPlan scan -> {
-                    final OutputSchema output = scan.getOutput();
-                    return scan.getAccessPath() == ScanPlan.AccessPath.PAGE_FRAMES && columnIndex == scanTimestampIndex(scan)
-                            && output.getTimestampColumnId() == scan.getNativeTimestampColumnId() && scanDirection(scan) == direction;
-                }
-                case FunctionSourcePlan source -> {
-                    return source.isLongSequence() && columnIndex == 0 && direction == ScanDirection.FORWARD;
-                }
-                default -> {
-                    return false;
-                }
-            }
-        }
-        return false;
+    public static boolean isRowPassedThrough(LogicalPlan plan) {
+        return switch (plan) {
+            case FilterPlan _ -> true;
+            case LimitPlan limit -> limit.getApplication() != LimitPlan.Application.SORT;
+            case SortPlan sort -> sort.getAlgorithm() != null && sort.getAlgorithm().isInputOrder();
+            case ProjectPlan project -> PlanToFactoryRules.projectionFactory(project) == PlanToFactoryRules.ProjectionFactory.VIRTUAL
+                    || PlanToFactoryRules.projectionFactory(project) == PlanToFactoryRules.ProjectionFactory.SELECTION;
+            default -> false;
+        };
     }
 
     /**
@@ -224,29 +146,126 @@ public final class PhysicalProperties {
     }
 
     /**
-     * Whether the rows of the plan are the rows of a stream GROUP BY, read through projections, filters, LIMITs, sorts
-     * that keep the input order, the left input of EXCEPT and INTERSECT and copies that only replay them, without a
-     * copy that gives them row ids, see {@link LogicalPlan#getOutputCopy()}. A copy of such rows, such as a sort's,
-     * stands in for the map of a hash GROUP BY, which only the query memory limit bounds.
+     * The order the factory emits the values of the column at {@code columnIndex} in, as the plan proves it:
+     * {@link ScanDirection#FORWARD} when they never decrease, {@link ScanDirection#BACKWARD} when they never increase and
+     * {@link ScanDirection#OTHER} otherwise. A table's own designated timestamp, in the direction the scan reports for
+     * it, a column a source function declares ordered, the key of a stream GROUP BY, the first key of a sort that sorts
+     * and the column a UNION ALL merges by start an order. A LATEST BY that reads a table keeps the order of the table's
+     * timestamp, one that reads its input again the input's order, and one that reads it by row id, in map order, none. A
+     * SAMPLE BY bucket and a fill that does not sort keep the order of their timestamp, a projection the order of the column its calls keep the order of, see
+     * {@link LogicalPlans#orderSourceColumnId}, and any other plan the order of its ordered input, see
+     * {@link #orderedInput}. A TIMESTAMP clause starts none: it only designates the column.
      */
-    public static boolean readsStreamRows(LogicalPlan plan) {
-        while (plan.getOutputCopy() == null || !plan.getOutputCopy().isRandomAccess()) {
+    public static ScanDirection orderOf(LogicalPlan plan, int columnIndex) {
+        while (columnIndex >= 0) {
+            final LogicalPlan input;
             switch (plan) {
-                case AggregatePlan aggregate -> {
-                    return isStream(aggregate);
+                case ScanPlan scan -> {
+                    return columnIndex == scanTimestampIndex(scan) && scan.getOutput().getTimestampColumnId() == scan.getNativeTimestampColumnId()
+                            ? ordered(scanDirection(scan)) : ScanDirection.OTHER;
                 }
-                case ProjectPlan project when PlanToFactoryRules.projectionFactory(project) != PlanToFactoryRules.ProjectionFactory.WINDOW
-                        && PlanToFactoryRules.projectionFactory(project) != PlanToFactoryRules.ProjectionFactory.WINDOW_JOIN ->
-                        plan = project.getChild();
-                case FilterPlan filter -> plan = filter.getChild();
-                case LimitPlan limit -> plan = limit.getChild();
-                case SortPlan sort when sort.getAlgorithm() == SortPlan.Algorithm.INPUT_ORDER
-                        || sort.getAlgorithm() == SortPlan.Algorithm.TIMESTAMP_DECLARATION -> plan = sort.getChild();
-                case SetOperationPlan operation when !operation.getOperation().isUnion() -> plan = operation.getLeft();
+                case FunctionSourcePlan source -> {
+                    return source.getRecordName() == null && source.getSourceColumnIndexes().getQuick(columnIndex) == source.getOrderedColumnIndex()
+                            ? ordered(source.getScanDirection()) : ScanDirection.OTHER;
+                }
+                case AggregatePlan aggregate -> {
+                    if (!isStream(aggregate) || columnIndex != aggregate.getStreamKeyIndex()) {
+                        return ScanDirection.OTHER;
+                    }
+                    assert aggregate.getOutput().getColumnType(columnIndex) == aggregate.getGroupingExpressions().getQuick(columnIndex).getDataType();
+                    return aggregate.isStreamBackward() ? ScanDirection.BACKWARD : ScanDirection.FORWARD;
+                }
+                case SortPlan sort when sort.getAlgorithm() == null || !sort.getAlgorithm().isInputOrder() -> {
+                    return sort.getChild().getOutput().getColumnIndexById(sort.getColumnIds().getQuick(0)) == columnIndex
+                            ? ScanDirection.of(sort.getDirections().getQuick(0)) : ScanDirection.OTHER;
+                }
+                case SetOperationPlan operation when operation.getOperation() == SetOperationKind.UNION_ALL -> {
+                    return operation.isMerged() && columnIndex == operation.getOutput().getColumnIndexById(operation.getRequestedOrderColumnId())
+                            ? ScanDirection.of(operation.getRequestedOrderDirection()) : ScanDirection.OTHER;
+                }
+                case LatestByPlan latest -> {
+                    final ScanPlan scan = PlanToFactoryRules.latestByScan(latest);
+                    input = scan != null ? scan : latest.getChild();
+                    final int inputIndex = input.getOutput().getColumnIndexById(latest.getOutput().getColumnId(columnIndex));
+                    if (scan != null) {
+                        return inputIndex == scanTimestampIndex(scan) && scan.getOutput().getTimestampColumnId() == scan.getNativeTimestampColumnId()
+                                ? ordered(scanDirection(latest)) : ScanDirection.OTHER;
+                    }
+                    if (latest.getAlgorithm() != LatestByPlan.Algorithm.MATERIALIZED) {
+                        return ScanDirection.OTHER;
+                    }
+                    columnIndex = inputIndex;
+                }
+                case SampleByPlan sample -> {
+                    if (columnIndex != sample.getOutput().getTimestampIndex()) {
+                        return ScanDirection.OTHER;
+                    }
+                    input = sample.getChild();
+                    columnIndex = sample.isTimestampRequired() ? timestampIndex(input) : input.getOutput().getColumnIndexById(sample.getTimestampColumnId());
+                }
+                case FillPlan fill -> {
+                    input = fill.getChild();
+                    final int bucketIndex = input.getOutput().getColumnIndexById(fill.getTimestampColumnId());
+                    if (columnIndex != fill.getOutput().getColumnIndexById(fill.getTimestampColumnId())) {
+                        return ScanDirection.OTHER;
+                    }
+                    if (fill.getAlgorithm() == FillPlan.Algorithm.SORTED) {
+                        return ScanDirection.FORWARD;
+                    }
+                    columnIndex = bucketIndex;
+                }
+                case ProjectPlan project -> {
+                    input = project.getChild();
+                    columnIndex = input.getOutput().getColumnIndexById(LogicalPlans.orderSourceColumnId(project, project.getOutput().getColumnId(columnIndex)));
+                }
                 default -> {
-                    return false;
+                    input = orderedInput(plan);
+                    if (input == null) {
+                        return ScanDirection.OTHER;
+                    }
+                    final OutputSchema output = plan.getOutput();
+                    final int inputIndex = plan instanceof SetOperationPlan ? columnIndex : input.getOutput().getColumnIndexById(output.getColumnId(columnIndex));
+                    columnIndex = inputIndex >= 0 && input.getOutput().getColumnType(inputIndex) == output.getColumnType(columnIndex) ? inputIndex : -1;
                 }
             }
+            plan = input;
+        }
+        return ScanDirection.OTHER;
+    }
+
+    /**
+     * The input whose rows the plan emits in their order: the only input of a filter, a projection, a DISTINCT, a
+     * window, a LIMIT and a sort that keeps its input's order, the master of a window join and of a join that keeps
+     * the order of its master, see {@link #masterOrder}, and the left input of EXCEPT and INTERSECT; null for any other
+     * plan.
+     */
+    public static @Nullable LogicalPlan orderedInput(LogicalPlan plan) {
+        return switch (plan) {
+            case FilterPlan filter -> filter.getChild();
+            case ProjectPlan project -> project.getChild();
+            case DistinctPlan distinct -> distinct.getChild();
+            case WindowPlan window -> window.getChild();
+            case LimitPlan limit -> limit.getChild();
+            case SortPlan sort -> sort.getAlgorithm() != null && sort.getAlgorithm().isInputOrder() ? sort.getChild() : null;
+            case WindowJoinPlan windowJoin -> windowJoin.getMaster();
+            case JoinPlan join -> masterOrder(join, join.getOrderedInputs().size()) == Capability.YES ? join.getOrderedInputs().getQuick(0).getInput() : null;
+            case SetOperationPlan operation -> operation.getOperation().isUnion() ? null : operation.getLeft();
+            default -> null;
+        };
+    }
+
+    /**
+     * Whether the rows of the plan are the rows of a stream GROUP BY, read through the plans that pass on the rows of
+     * their ordered input, see {@link #isRowPassedThrough}, and the left input of EXCEPT and INTERSECT, without a copy
+     * that gives them row ids, see {@link LogicalPlan#getOutputCopy()}. A copy of such rows, such as a sort's, stands
+     * in for the map of a hash GROUP BY, which only the query memory limit bounds.
+     */
+    public static boolean readsStreamRows(LogicalPlan plan) {
+        while (plan != null && (plan.getOutputCopy() == null || !plan.getOutputCopy().isRandomAccess())) {
+            if (plan instanceof AggregatePlan aggregate) {
+                return isStream(aggregate);
+            }
+            plan = isRowPassedThrough(plan) || plan instanceof SetOperationPlan ? orderedInput(plan) : null;
         }
         return false;
     }
@@ -782,13 +801,6 @@ public final class PhysicalProperties {
         return false;
     }
 
-    /**
-     * The index in the output of {@code input} of the column at {@code columnIndex} of {@code plan}, -1 for none.
-     */
-    private static int inputColumnIndex(LogicalPlan plan, LogicalPlan input, int columnIndex) {
-        return input.getOutput().getColumnIndexById(plan.getOutput().getColumnId(columnIndex));
-    }
-
     private static Capability isLightLatestBy(LatestByPlan latest) {
         return latest.getAlgorithm() == null ? Capability.UNKNOWN : Capability.of(latest.getAlgorithm() != LatestByPlan.Algorithm.MATERIALIZED);
     }
@@ -815,7 +827,7 @@ public final class PhysicalProperties {
         if (algorithm == null || sortedLimit != null && sortedLimit.getApplication() == null) {
             return Capability.UNKNOWN;
         }
-        return Capability.of(sortedLimit == null ? algorithm == SortPlan.Algorithm.INPUT_ORDER || algorithm == SortPlan.Algorithm.TIMESTAMP_DECLARATION
+        return Capability.of(sortedLimit == null ? algorithm.isInputOrder()
                 : sortedLimit.getApplication() == LimitPlan.Application.INPUT && algorithm == SortPlan.Algorithm.INPUT_ORDER);
     }
 
@@ -954,6 +966,31 @@ public final class PhysicalProperties {
         return step.getAlgorithm() == null ? Capability.UNKNOWN : Capability.of(step.getAlgorithm() == JoinInput.Algorithm.MARKOUT);
     }
 
+    /**
+     * Whether the first {@code inputCount} ordered inputs of the join emit their rows in the order of the join's master,
+     * see {@link #masterOrder(JoinInput)}.
+     */
+    private static Capability masterOrder(JoinPlan join, int inputCount) {
+        Capability isKept = Capability.YES;
+        for (int i = 1; i < inputCount; i++) {
+            isKept = and(isKept, masterOrder(join.getOrderedInputs().getQuick(i)));
+        }
+        return isKept;
+    }
+
+    /**
+     * Whether the step emits its rows in the order of its master, with the master's values: a markout join does, and
+     * any other step that neither NULL-extends its master nor lets the smaller input drive it, see
+     * {@link JoinInput#isSmallerDriven}. A SPLICE or key-less RIGHT or FULL step still reports the direction of its
+     * timestamp, see {@link #join}, but the rows it NULL-extends break the order of every master column.
+     */
+    private static Capability masterOrder(JoinInput step) {
+        if (step.getAlgorithm() == null) {
+            return Capability.UNKNOWN;
+        }
+        return or(markout(step), Capability.of(!step.getJoinType().isMasterNulling() && !step.isSmallerDriven()));
+    }
+
     private static int merge(int left, int right) {
         int properties = left;
         for (int shift = RANDOM_ACCESS; shift <= LONG_SEQUENCE; shift += 2) {
@@ -1085,6 +1122,13 @@ public final class PhysicalProperties {
     }
 
     /**
+     * The direction when the rows follow one, else {@link ScanDirection#OTHER}.
+     */
+    private static ScanDirection ordered(ScanDirection direction) {
+        return direction == ScanDirection.FORWARD || direction == ScanDirection.BACKWARD ? direction : ScanDirection.OTHER;
+    }
+
+    /**
      * Only the interpolating SAMPLE BY factory supports random access.
      */
     private static Capability sampleByRandomAccess(SampleByPlan sample) {
@@ -1204,7 +1248,7 @@ public final class PhysicalProperties {
      */
     private static int sortedLimit(SortPlan sort, LimitPlan limit) {
         final int input = derive(sort.getChild(), null);
-        final boolean isInputOrder = sort.getAlgorithm() == SortPlan.Algorithm.INPUT_ORDER;
+        final boolean isInputOrder = sort.getAlgorithm() != null && sort.getAlgorithm().isInputOrder();
         return switch (limit.getApplication()) {
             case INPUT -> isInputOrder ? input : sorted(sort, input, Capability.NO);
             case OPERATOR, MASTER_SUFFIX -> isInputOrder ? limited(input) : sorted(sort, input, Capability.YES);
@@ -1216,7 +1260,8 @@ public final class PhysicalProperties {
     /**
      * The table the sorted LIMIT over the sort under {@code plan}, read through stable projections, reports: the
      * input's when the input delivers the order and applies the LIMIT, so no sort runs, and the parallel top-K's, which
-     * reports the table of the page frames it reads unless it builds a projection over itself; none for a sort.
+     * reports the table of the page frames it reads unless it builds a projection over itself other than one that only
+     * declares the timestamp the top-K designates; none for a sort.
      */
     private static TableToken sortedLimitTableToken(LogicalPlan plan, LimitPlan limit) {
         if (plan instanceof ProjectPlan project) {
@@ -1226,7 +1271,8 @@ public final class PhysicalProperties {
         final SortPlan sort = (SortPlan) plan;
         return switch (sort.getAlgorithm()) {
             case PARALLEL_TOP_K, PARALLEL_FILTERED_TOP_K -> {
-                if (PlanToFactoryRules.parallelTopKProjection(sort) != null) {
+                final ProjectPlan projection = PlanToFactoryRules.parallelTopKProjection(sort);
+                if (projection != null && !LogicalPlans.isTimestampDeclarationOnly(projection)) {
                     yield null;
                 }
                 final LogicalPlan source = PlanToFactoryRules.parallelTopKSource(sort);

@@ -42,6 +42,7 @@ public final class FunctionSourcePlan extends LogicalPlan {
     private boolean isProjectable;
     private boolean isRandomAccess;
     private RequirementFact nonDeterministicFact;
+    private int orderedColumnIndex = -1;
     private CharSequence recordName;
     private PhysicalProperties.ScanDirection scanDirection = PhysicalProperties.ScanDirection.UNKNOWN;
 
@@ -58,6 +59,7 @@ public final class FunctionSourcePlan extends LogicalPlan {
         isProjectable = false;
         isRandomAccess = false;
         nonDeterministicFact = null;
+        orderedColumnIndex = -1;
         recordName = null;
         scanDirection = PhysicalProperties.ScanDirection.UNKNOWN;
     }
@@ -69,6 +71,7 @@ public final class FunctionSourcePlan extends LogicalPlan {
         isLongSequence = source.isLongSequence;
         isPageFrameSupported = source.isPageFrameSupported;
         isRandomAccess = source.isRandomAccess;
+        orderedColumnIndex = source.orderedColumnIndex;
         scanDirection = source.scanDirection;
     }
 
@@ -89,6 +92,14 @@ public final class FunctionSourcePlan extends LogicalPlan {
      */
     public RequirementFact getNonDeterministicFact() {
         return nonDeterministicFact;
+    }
+
+    /**
+     * The column of the source factory whose values follow the order the factory emits its rows in, see
+     * {@link #getScanDirection()}, or -1 for none.
+     */
+    public int getOrderedColumnIndex() {
+        return orderedColumnIndex;
     }
 
     /**
@@ -195,10 +206,11 @@ public final class FunctionSourcePlan extends LogicalPlan {
      * Records the physical properties of the source factory.
      */
     public void setPhysicalProperties(boolean isRandomAccess, boolean isPageFrameSupported, PhysicalProperties.ScanDirection scanDirection,
-                                      boolean isLongSequence) {
+                                      int orderedColumnIndex, boolean isLongSequence) {
         this.isRandomAccess = isRandomAccess;
         this.isPageFrameSupported = isPageFrameSupported;
         this.scanDirection = scanDirection;
+        this.orderedColumnIndex = orderedColumnIndex;
         this.isLongSequence = isLongSequence;
     }
 
@@ -223,6 +235,7 @@ public final class FunctionSourcePlan extends LogicalPlan {
         visitor.fact("isProjectable", isProjectable);
         visitor.fact("isRandomAccess", isRandomAccess);
         visitor.fact("nonDeterministicFact", nonDeterministicFact);
+        visitor.fact("orderedColumnIndex", orderedColumnIndex);
         visitor.fact("recordName", recordName);
         visitor.fact("scanDirection", scanDirection);
     }

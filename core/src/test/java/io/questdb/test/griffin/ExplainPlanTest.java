@@ -1693,15 +1693,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     """)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort light
-                              keys: [ts]
-                                GroupBy vectorized: false
-                                  keys: [ts,id]
-                                  values: [last(val)]
-                                    DeferredSingleSymbolFilterPageFrame
-                                        Index forward scan on: id deferred: true
-                                          filter: id='XXX'
-                                        Frame forward scan on: tab
+                            Stream Group By
+                              segmentKey: timestamp_floor_utc('15m',ts)
+                              keys: [ts,id]
+                              keyFunctions: [timestamp_floor_utc('15m',ts)]
+                              values: [last(val)]
+                                DeferredSingleSymbolFilterPageFrame
+                                    Index forward scan on: id deferred: true
+                                      filter: id='XXX'
+                                    Frame forward scan on: tab
                             """);
 
         });
@@ -5230,7 +5230,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQuery("select a, s, ts, ts2 from (select * from a2 timestamp(ts2)) latest on ts2 partition by s")
                 .ddl("create table a2 ( a int, s symbol index, ts timestamp, ts2 timestamp) timestamp(ts);")
                 .assertsPlan("""
-                        LatestBy light order_by_timestamp: true
+                        LatestBy light order_by_timestamp: false
                             PageFrame
                                 Row forward scan
                                 Frame forward scan on: a2
@@ -9061,16 +9061,16 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                Encode sort light
-                                  keys: [ts]
-                                    GroupBy vectorized: false
-                                      keys: [sym,ts]
-                                      values: [first(i),last(s),first(l)]
-                                        DeferredSingleSymbolFilterPageFrame
-                                            Index forward scan on: sym deferred: true
-                                              filter: sym='S'
-                                            Interval forward scan on: a
-                                              intervals: [("1970-01-01T00:00:00.000001Z","1970-01-01T00:00:00.000099Z")]
+                                Stream Group By
+                                  segmentKey: timestamp_floor_utc('1h',ts)
+                                  keys: [sym,ts]
+                                  keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                  values: [first(i),last(s),first(l)]
+                                    DeferredSingleSymbolFilterPageFrame
+                                        Index forward scan on: sym deferred: true
+                                          filter: sym='S'
+                                        Interval forward scan on: a
+                                          intervals: [("1970-01-01T00:00:00.000001Z","1970-01-01T00:00:00.000099Z")]
                             """);
         });
     }

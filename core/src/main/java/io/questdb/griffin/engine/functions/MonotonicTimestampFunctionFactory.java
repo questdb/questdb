@@ -32,18 +32,15 @@ import io.questdb.griffin.FunctionFactoryDescriptor;
 import io.questdb.griffin.FunctionInstantiator;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.plan.logical.BoundExpression;
-import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.std.Chars;
-import io.questdb.std.FiberLocal;
 import io.questdb.std.Interval;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.str.StringSink;
-import org.jetbrains.annotations.Nullable;
 
 /**
  * Declared by a factory whose {@code newInstance} can build a {@link MonotonicTimestampFunction}: answers, from a
@@ -71,32 +68,16 @@ public interface MonotonicTimestampFunctionFactory {
     }
 
     /**
-     * The column whose order the values of the expression keep: the expression itself when it is a column, else the
-     * column under calls each of which keeps the order of its timestamp argument, see {@link #preservesTimestampOrder},
-     * or is that argument, see {@link #isIdentity}; null for any other expression. A constant argument that does not
-     * convert keeps no order: the generator reports it when it builds the call.
+     * The argument whose order the function built for the call keeps, see {@link #preservesTimestampOrder}, or which
+     * it is, see {@link #isIdentity}; -1 for none, see {@link FunctionExpression#getOrderArgumentIndex()}.
      */
-    static @Nullable ColumnExpression orderSource(BoundExpression expression) {
-        final ConstantArguments arguments = ConstantArguments.LOCAL.get();
-        try {
-            while (true) {
-                if (expression instanceof ColumnExpression column) {
-                    return column;
-                }
-                final MonotonicTimestampFunctionFactory factory = of(expression);
-                if (factory == null) {
-                    return null;
-                }
-                final FunctionExpression call = (FunctionExpression) expression;
-                final int index = factory.getTimestampArgumentIndex(call, arguments);
-                if (index < 0 || !factory.preservesTimestampOrder(call, arguments) && !factory.isIdentity(call, arguments)) {
-                    return null;
-                }
-                expression = call.argumentAt(index);
-            }
-        } catch (SqlException e) {
-            return null;
+    static int orderArgumentIndex(FunctionExpression call, ConstantArguments arguments) throws SqlException {
+        final MonotonicTimestampFunctionFactory factory = of(call);
+        if (factory == null) {
+            return -1;
         }
+        final int index = factory.getTimestampArgumentIndex(call, arguments);
+        return index >= 0 && (factory.preservesTimestampOrder(call, arguments) || factory.isIdentity(call, arguments)) ? index : -1;
     }
 
     /**
@@ -150,7 +131,6 @@ public interface MonotonicTimestampFunctionFactory {
      * value as the built function does. The binder folds every constant argument to a {@link ConstantExpression}.
      */
     final class ConstantArguments {
-        private static final FiberLocal<ConstantArguments> LOCAL = new FiberLocal<>(ConstantArguments::new);
         private static final int MAX_CACHED_CONSTANTS = 64;
         private final ObjList<Function> functions = new ObjList<>();
         private final ObjectPool<ConstantExpression> values = new ObjectPool<>(ConstantExpression.FACTORY, 4);
