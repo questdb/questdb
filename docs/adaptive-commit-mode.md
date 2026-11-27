@@ -359,9 +359,10 @@ Found while this mode was built, reproduced on the current release line, and fil
 ### 8.1 What changes in `nosync`, `async` and `sync`
 
 - **Torn-file detection** runs in every mode (section 2). The historical measurements found no extra per-commit
-  system call for the checksum work and about 9 µs on the first reader (four file-size checks). WAL column length
-  guards also refresh a cached length when the committed range grows past it. Each V1 sequencer open scans from
-  its hint, and a torn tail that it cuts is flushed in every mode; mode-switch rescans are described in section 8.
+  system call for the checksum work and about 9 µs on the first reader (four file-size checks). It does not cover
+  WAL segment column files: `sync` and `adaptive` flush them before the transaction is sequenced, while a power
+  loss in `nosync` or `async` can leave them torn (section 1). Each V1 sequencer open scans from its hint, and a
+  torn tail that it cuts is flushed in every mode; mode-switch rescans are described in section 8.
   In `nosync` and `async` a clean close of a sequencer (shutdown, the release of an idle table's sequencer, DROP
   TABLE) flushes its V1 log once, one `fdatasync`, when the log holds records no flush covered, so the next start
   reads only the log's header. After a crash, a kill or a power loss the next start checks the records written
