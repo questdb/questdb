@@ -447,7 +447,8 @@ steps:
     env:
       QDB_TEST_WINDOWS_SYMLINKS: "1"
       LD_PRELOAD: $(Build.SourcesDirectory)/core/src/main/bin/linux-x86-64/libjemalloc.so
-    timeoutInMinutes: 55
+    # Below the 80-minute job timeout of the coverage legs, less their setup and pre-build.
+    timeoutInMinutes: 70
     # succeeded() explicitly: see "Compile with Maven" above.
     condition: |
       and(

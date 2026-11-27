@@ -87,7 +87,9 @@ jobs:
           javadoc_profile: ""
     pool:
       name: $(poolName)
-    timeoutInMinutes: 60
+    # 80, not 60: under coverage linux-griffin-root and linux-other take over 55 minutes
+    # (build 293582), and these legs are the only test legs of a PR build.
+    timeoutInMinutes: 80
     variables:
       SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.SOURCE_CODE_CHANGED']]
       RUST_SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.RUST_SOURCE_CODE_CHANGED']]
