@@ -9941,6 +9941,92 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testOverKeywordAtEndOfExpression() throws Exception {
+        final String keywordError = "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"over\"";
+        final String[][] queries = {
+                // 'over' starts an operand: the literal reaches the keyword check
+                {"select x from tab order by over", "27", keywordError},
+                {"select x from tab order by OVER", "27", "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"OVER\""},
+                {"select x from tab order by over ", "27", keywordError},
+                {"select x from tab order by over\n", "27", keywordError},
+                {"select x from tab order by over -- comment", "27", keywordError},
+                {"select x from tab order by over /* comment */", "27", keywordError},
+                {"select x from tab order by over;", "27", keywordError},
+                {"select x from tab order by x, over", "30", keywordError},
+                {"select x from tab where x > over", "28", keywordError},
+                {"select x from tab where x > over ", "28", keywordError},
+                {"select x from tab where x > over -- comment", "28", keywordError},
+                {"select x from tab where (x > over", "29", keywordError},
+                {"select x from tab where x in (1, over", "33", keywordError},
+                {"select x from tab group by over", "27", keywordError},
+                {"select x from tab limit over", "24", keywordError},
+                {"select x from tab a join tab b on a.x = over", "40", keywordError},
+                {"select * from (select x from tab order by over", "42", keywordError},
+                {"select over", "7", keywordError},
+                {"select over ", "7", keywordError},
+                {"select x + over", "11", keywordError},
+                {"select -over", "8", keywordError},
+                {"select abs(over", "11", keywordError},
+                // 'over' follows a complete operand: the caller rejects the token
+                {"select x from tab order by x over", "29", "unexpected token [over]"},
+                {"select x from tab order by x OVER", "29", "unexpected token [OVER]"},
+                {"select x from tab order by x over ", "29", "unexpected token [over]"},
+                {"select x from tab order by x over\n", "29", "unexpected token [over]"},
+                {"select x from tab order by x over -- comment", "29", "unexpected token [over]"},
+                {"select x from tab order by x over /* comment */", "29", "unexpected token [over]"},
+                {"select x from tab where x > 1 over", "30", "unexpected token [over]"},
+                {"select x from tab where x > 1 over ", "30", "unexpected token [over]"},
+                {"select x from tab group by x over", "29", "unexpected token [over]"},
+                {"select x from tab a join tab b on a.x = b.x over", "44", "unexpected token [over]"},
+                {"select x from tab where (x over", "27", "dangling literal"},
+        };
+        for (String[] query : queries) {
+            assertSyntaxError(
+                    query[0],
+                    Integer.parseInt(query[1]),
+                    query[2],
+                    modelOf("tab").col("x", ColumnType.INT).col("over", ColumnType.LONG)
+            );
+        }
+    }
+
+    @Test
+    public void testOverKeywordBeforeAnotherToken() throws Exception {
+        // the error names 'over', not the token after it
+        final String keywordError = "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"over\"";
+        final String[][] queries = {
+                {"select x from tab order by over limit 1", "27", keywordError},
+                {"select x from tab order by over desc", "27", keywordError},
+                {"select x from tab order by over, x", "27", keywordError},
+                {"select x from tab where x > over limit 1", "28", keywordError},
+                {"select x from tab where x > over order by x", "28", keywordError},
+                {"select over from tab", "7", keywordError},
+                {"select x, over from tab", "10", keywordError},
+                {"select x from tab order by over(", "27", "Nested window functions are not currently supported."},
+                {"select x from tab order by x over (", "29", "Nested window functions' context are not currently supported."},
+        };
+        for (String[] query : queries) {
+            assertSyntaxError(
+                    query[0],
+                    Integer.parseInt(query[1]),
+                    query[2],
+                    modelOf("tab").col("x", ColumnType.INT).col("over", ColumnType.LONG)
+            );
+        }
+    }
+
+    @Test
+    public void testOverKeywordQuotedAsColumnName() throws Exception {
+        assertQuery("select x from tab where x > \"over\" order by \"over\"")
+                .ddl("create table tab as (select x::int x, 2 - x \"over\" from long_sequence(3))")
+                .returns("""
+                        x
+                        3
+                        2
+                        """);
+    }
+
+    @Test
     public void testPGCastToDate() throws Exception {
         assertQuery("select '2021-01-26'::date")
                 .expectSize()
