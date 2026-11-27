@@ -567,6 +567,19 @@ public final class IntervalUtils {
     }
 
     /**
+     * Returns the number of pooled objects - expansion sinks, merge ranges and pending steps - that
+     * the tick expressions of the calling thread or fiber took from their pools and have not returned.
+     * A parse, compile or evaluation returns every object it takes, also when it fails, so the count
+     * is the same before and after it. Capture it before on the same thread and assert on the delta.
+     */
+    @TestOnly
+    public static int getPooledObjectsInUseCountForTesting() {
+        return tlExpansionSinks.get().getOutieCount()
+                + tlMergeRanges.get().getOutieCount()
+                + tlPendingSteps.get().getOutieCount();
+    }
+
+    /**
      * Returns the number of intervals that the merges of own extents sorted, merged, moved or compared
      * since the class loaded: of the fixed dates of a list with a tick calendar and a duration, as
      * {@link #compileTickExpr} expands them, and of the dates of such a list that
@@ -4558,42 +4571,42 @@ public final class IntervalUtils {
                 // the timezone, per-element first, then the global fallback. A slot with its own
                 // timezone clips after the timezone, in UTC.
                 final int slotTzLo = tzLo >= 0 ? tzLo : globalTzLo;
-                final PendingSteps slotSteps;
-                if (isClipped || isDayFiltered || slotTzLo >= 0) {
-                    slotSteps = tlPendingSteps.get().next();
-                    slotSteps.parent = pendingSteps;
-                    slotSteps.startAt(outSizeBeforeElement);
-                    slotSteps.tzSeq = tzLo >= 0 ? seq : globalTzSeq;
-                    slotSteps.tzLo = slotTzLo;
-                    slotSteps.tzHi = tzLo >= 0 ? tzHi : globalTzHi;
-                    if (isDayFiltered) {
-                        slotSteps.isDayFiltered = true;
-                        slotSteps.dayFilterMask = enclosingSteps.dayFilterMask;
-                        slotSteps.isMultiDayIgnored = enclosingSteps.isMultiDayIgnored;
-                    }
-                    if (isClipped) {
-                        slotSteps.isClipped = true;
-                        if (tzLo >= 0) {
-                            // The slot keeps the instants whose local time in the timezone of the
-                            // range falls between the range endpoints. Where clocks fall back, an
-                            // endpoint repeats, so these instants can form up to three windows.
-                            slotSteps.isClippedInUtc = true;
-                            final LongList clipWindows = slotSteps.clipWindows;
-                            clipWindows.clear();
-                            clipWindows.add(enclosingSteps.clipLo, enclosingSteps.clipHi);
-                            if (enclosingSteps.tzLo >= 0) {
-                                applyTimezoneToIntervals(timestampDriver, configuration, clipWindows, 0, enclosingSteps.tzSeq, enclosingSteps.tzLo, enclosingSteps.tzHi, errorPos);
+                final PendingSteps slotSteps = isClipped || isDayFiltered || slotTzLo >= 0 ? tlPendingSteps.get().next() : null;
+                // the finally below returns the steps to the pool, also when the timezone of the
+                // range fails to convert the clip of the slot
+                try {
+                    if (slotSteps != null) {
+                        slotSteps.parent = pendingSteps;
+                        slotSteps.startAt(outSizeBeforeElement);
+                        slotSteps.tzSeq = tzLo >= 0 ? seq : globalTzSeq;
+                        slotSteps.tzLo = slotTzLo;
+                        slotSteps.tzHi = tzLo >= 0 ? tzHi : globalTzHi;
+                        if (isDayFiltered) {
+                            slotSteps.isDayFiltered = true;
+                            slotSteps.dayFilterMask = enclosingSteps.dayFilterMask;
+                            slotSteps.isMultiDayIgnored = enclosingSteps.isMultiDayIgnored;
+                        }
+                        if (isClipped) {
+                            slotSteps.isClipped = true;
+                            if (tzLo >= 0) {
+                                // The slot keeps the instants whose local time in the timezone of
+                                // the range falls between the range endpoints. Where clocks fall
+                                // back, an endpoint repeats, so these instants can form up to three
+                                // windows.
+                                slotSteps.isClippedInUtc = true;
+                                final LongList clipWindows = slotSteps.clipWindows;
+                                clipWindows.clear();
+                                clipWindows.add(enclosingSteps.clipLo, enclosingSteps.clipHi);
+                                if (enclosingSteps.tzLo >= 0) {
+                                    applyTimezoneToIntervals(timestampDriver, configuration, clipWindows, 0, enclosingSteps.tzSeq, enclosingSteps.tzLo, enclosingSteps.tzHi, errorPos);
+                                }
+                            } else {
+                                slotSteps.clipLo = enclosingSteps.clipLo;
+                                slotSteps.clipHi = enclosingSteps.clipHi;
                             }
-                        } else {
-                            slotSteps.clipLo = enclosingSteps.clipLo;
-                            slotSteps.clipHi = enclosingSteps.clipHi;
                         }
                     }
-                } else {
-                    slotSteps = null;
-                }
 
-                try {
                     if (hasSuffixBrackets) {
                         // Suffix has brackets - need recursive expansion
                         // Find where the date part ends (before semicolon) in the expanded string

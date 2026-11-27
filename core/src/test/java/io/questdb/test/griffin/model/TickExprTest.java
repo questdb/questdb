@@ -47,6 +47,7 @@ import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.TestTimestampType;
 import io.questdb.test.tools.TestUtils;
+import org.junit.After;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Before;
@@ -248,6 +249,8 @@ public class TickExprTest {
     private final LongList b = new LongList();
     private final LongList out = new LongList();
     private final TestTimestampType timestampType;
+    // the pooled objects that the tick expressions of this thread held when the test started
+    private int pooledObjectsInUse;
 
     public TickExprTest(TestTimestampType timestampType) {
         this.timestampType = timestampType;
@@ -294,6 +297,14 @@ public class TickExprTest {
         a.clear();
         b.clear();
         out.clear();
+        pooledObjectsInUse = IntervalUtils.getPooledObjectsInUseCountForTesting();
+    }
+
+    @After
+    public void tearDown() {
+        // every parse, compile and evaluation of the test returned the pooled objects it took, also
+        // those that failed
+        Assert.assertEquals("pooled objects in use", pooledObjectsInUse, IntervalUtils.getPooledObjectsInUseCountForTesting());
     }
 
     @Test
@@ -7468,6 +7479,52 @@ public class TickExprTest {
     }
 
     @Test
+    public void testDateVariableRangeMalformedZoneWithSlotZoneFails() throws SqlException {
+        // A slot of a time list with a timezone of its own converts the clip of its range of days,
+        // which a point in time clips, to UTC with the timezone of the range element, or else of the
+        // list, before the slot expands. A timezone that does not parse fails the expression there,
+        // in the parser, which SQL uses for a bind variable or the value of a row, and in the
+        // compiled form, which parses an expression with a timezone of an element on every
+        // evaluation, and parses the timezone of the list as it compiles. Each failure returns the
+        // pooled objects that it took, however often it repeats, and the parser keeps working.
+        final long ten = timestampType.getDriver().parseFloorLiteral("2024-01-02T10:00:00.000000Z");
+        // the expression, the error, and the error of the compiled form as it compiles, if any
+        final String[][] cases = {
+                // the timezone of the element, on a range from a point in time, to one, and from a
+                // shifted one, with a second slot
+                {"[$now..$tomorrow@Bogus/Zone]T[09:00@UTC]", "invalid timezone: Bogus/Zone", null},
+                {"[$yesterday..$now@Bogus/Zone]T[09:00@UTC]", "invalid timezone: Bogus/Zone", null},
+                {"[$now - 2h..$tomorrow@Bogus/Zone]T[09:00@UTC,10:00@+02:00]", "invalid timezone: Bogus/Zone", null},
+                // an offset out of range
+                {"[$now..$tomorrow@+25:00]T[09:00@UTC]", "invalid timezone: +25:00", null},
+                // the timezone of the list
+                {"[$now..$tomorrow]T[09:00@UTC]@Bogus/Zone", "invalid timezone: Bogus/Zone", "invalid timezone: Bogus/Zone"},
+                // a duration, a day filter, an element before the range, and letter case
+                {"[$now..$tomorrow@Bogus/Zone]T[09:00@UTC];1h", "invalid timezone: Bogus/Zone", null},
+                {"[$now..$tomorrow@Bogus/Zone]T[09:00@UTC]#workday", "invalid timezone: Bogus/Zone", null},
+                {"[$today, $now..$tomorrow@Bogus/Zone]T[09:00@UTC]", "invalid timezone: Bogus/Zone", null},
+                {"[$NOW..$Tomorrow@BOGUS/ZONE]T[09:00@UTC]", "invalid timezone: BOGUS/ZONE", null},
+                // a first slot without a timezone of its own, which the timezone of the range
+                // converts after the clip
+                {"[$now..$tomorrow@Bogus/Zone]T[09:00,10:00@UTC]", "invalid timezone: Bogus/Zone", null}
+        };
+        for (String[] c : cases) {
+            for (int i = 0; i < 3; i++) {
+                final int inUseCount = IntervalUtils.getPooledObjectsInUseCountForTesting();
+                assertParsedAndCompiledFail(c[0], ten, c[1], c[2]);
+                Assert.assertEquals(c[0], inUseCount, IntervalUtils.getPooledObjectsInUseCountForTesting());
+            }
+        }
+        // with a timezone that parses, London on UTC in January, the clip keeps the slot of the next
+        // day only, as the 09:00 of the day of "now" lies before 10:00
+        assertParsedAndCompiledWithNow(
+                "[{lo=2024-01-03T09:00:00.000000Z, hi=2024-01-03T09:00:59.999999Z}]",
+                "[$now..$tomorrow@Europe/London]T[09:00@UTC]",
+                "2024-01-02T10:00:00.000000Z"
+        );
+    }
+
+    @Test
     public void testDateVariableRangeMissingNumberAfterOperator() {
         // Missing number after + operator
         assertBracketIntervalError("[$today+..$today+5d]", "Expected number after operator");
@@ -13286,10 +13343,17 @@ public class TickExprTest {
          */
         void check(String expression, boolean isMalformed) {
             checkCount++;
+            final int pooledObjectsInUse = IntervalUtils.getPooledObjectsInUseCountForTesting();
             try {
                 check0(expression, isMalformed);
             } catch (AssertionError | RuntimeException e) {
                 throw new AssertionError("tick expression: " + expression, e);
+            }
+            // every parse, compile and evaluation returned the pooled objects it took, also those
+            // that failed
+            final int keptCount = IntervalUtils.getPooledObjectsInUseCountForTesting() - pooledObjectsInUse;
+            if (keptCount != 0) {
+                fail(expression, "keeps " + keptCount + " pooled objects in use");
             }
         }
 

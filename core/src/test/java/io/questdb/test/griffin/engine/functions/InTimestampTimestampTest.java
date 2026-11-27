@@ -33,6 +33,7 @@ import io.questdb.cairo.TickCalendarServiceFactory;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.jit.JitUtil;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.ObjList;
@@ -1153,6 +1154,50 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
             assertTickExprMatches("$yesterday + 12h..$today", "36\t2024-01-01T12:00:00.000000Z\t2024-01-02T23:00:00.000000Z");
             assertTickExprMatches("$today + 6h..$today + 24h", "19\t2024-01-02T06:00:00.000000Z\t2024-01-03T00:00:00.000000Z");
             assertTickExprMatches("$today..$now", "11\t2024-01-02T00:00:00.000000Z\t2024-01-02T10:00:00.000000Z");
+        });
+    }
+
+    @Test
+    public void testDateVariableRangeMalformedZoneWithSlotZoneFailsInEveryContext() throws Exception {
+        // A slot of a time list with a timezone of its own converts the clip of its range of days,
+        // which "now" clips, with the timezone of the range first, which does not parse here. The
+        // query fails at the position of the expression wherever it holds it, a prepared query fails
+        // on every run that binds the expression and keeps working on the runs after them, and no
+        // failure keeps pooled objects of the parser.
+        assertMemoryLeak(() -> {
+            createContextTables();
+            final String malformed = "[$now..$tomorrow@Bogus/Zone]T[09:00@UTC]";
+            // London keeps UTC in January: the slots at 09:00 of the day of "now" and of the next day
+            final String wellFormed = "[$now..$tomorrow@Europe/London]T[09:00@UTC]";
+            try {
+                setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T03:00:00.000000Z"));
+                final int inUseCount = IntervalUtils.getPooledObjectsInUseCountForTesting();
+                assertTickExprFailsInEveryContext(malformed, "invalid timezone: Bogus/Zone", malformed, "invalid timezone: Bogus/Zone");
+                Assert.assertEquals(inUseCount, IntervalUtils.getPooledObjectsInUseCountForTesting());
+
+                final String expected = "count\tmin\tmax\n2\t2024-01-02T09:00:00.000000Z\t2024-01-03T09:00:00.000000Z\n";
+                final String prepared = "SELECT count(), min(ts), max(ts) FROM t WHERE ts IN $1";
+                bindVariableService.clear();
+                bindVariableService.setStr(0, wellFormed);
+                try (RecordCursorFactory factory = select(prepared)) {
+                    assertFactory(factory).withContext(sqlExecutionContext).noRandomAccess().expectSize().returns(expected);
+                    bindVariableService.setStr(0, malformed);
+                    for (int i = 0; i < 2; i++) {
+                        try (RecordCursor ignore = factory.getCursor(sqlExecutionContext)) {
+                            Assert.fail("the run with " + malformed + " should fail");
+                        } catch (SqlException | CairoException e) {
+                            TestUtils.assertEquals("invalid timezone: Bogus/Zone", e.getFlyweightMessage());
+                            Assert.assertEquals(prepared.indexOf("$1"), e.getPosition());
+                        }
+                    }
+                    bindVariableService.setStr(0, wellFormed);
+                    assertFactory(factory).withContext(sqlExecutionContext).noRandomAccess().expectSize().returns(expected);
+                }
+                Assert.assertEquals(inUseCount, IntervalUtils.getPooledObjectsInUseCountForTesting());
+            } finally {
+                bindVariableService.clear();
+                setCurrentMicros(-1);
+            }
         });
     }
 

@@ -34,6 +34,7 @@ import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.engine.ops.UpdateOperation;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.Utf8String;
@@ -733,6 +734,53 @@ public class WalTickExprTest extends AbstractCairoTest {
                 assertUpdateAppliedWithSecondRowValue("[$tomorrow..$today@Bogus/Zone, $today]", "ts IN " + column, "21221");
                 assertUpdateAppliedWithSecondRowValue("[$tomorrow..$today@Bogus/Zone, $today]", "ts NOT IN " + column, "12112");
             }
+        });
+    }
+
+    @Test
+    public void testRowValuesWithMalformedRangeZoneKeepNoPooledObjects() throws Exception {
+        // A slot of a time list with a timezone of its own converts the clip of its range of days,
+        // which "now" clips, with the timezone of the range first, which does not parse here. WAL
+        // apply parses the value of each row and treats each one that fails as null, and each
+        // failed parse returns the pooled objects that it took, so the apply keeps none of them,
+        // however many rows hold such a value.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T03:00:00.000000Z"));
+            final String malformed = "[$now..$tomorrow@Bogus/Zone]T[09:00@UTC]";
+            final int inUseCount = IntervalUtils.getPooledObjectsInUseCountForTesting();
+            for (String column : new String[]{"s", "vc"}) {
+                // with a timezone that parses, London on UTC in January, the value of the second
+                // row holds its 09:00
+                assertUpdateAppliedWithSecondRowValue("[$now..$tomorrow@Europe/London]T[09:00@UTC]", "ts IN " + column, "22221");
+                assertUpdateAppliedWithSecondRowValue(malformed, "ts IN " + column, "21221");
+                assertUpdateAppliedWithSecondRowValue(malformed, "ts NOT IN " + column, "12112");
+            }
+            Assert.assertEquals(inUseCount, IntervalUtils.getPooledObjectsInUseCountForTesting());
+
+            // every row of the table holds the value
+            execute("CREATE TABLE every_row (ts TIMESTAMP, s STRING, vc VARCHAR, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO every_row SELECT timestamp_sequence('2024-01-02', 60_000_000L), '" + malformed + "', '"
+                    + malformed + "', 1 FROM long_sequence(1_000)");
+            drainWalQueue();
+            update("UPDATE every_row SET v = 2 WHERE ts IN s OR ts IN vc");
+            update("UPDATE every_row SET v = v + 10 WHERE ts NOT IN s AND ts NOT IN vc");
+            drainWalQueue();
+            Assert.assertFalse("table is suspended", engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("every_row")));
+            assertQuery("SELECT v, count() FROM every_row ORDER BY v")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            v\tcount
+                            11\t1000
+                            """);
+            Assert.assertEquals(inUseCount, IntervalUtils.getPooledObjectsInUseCountForTesting());
+
+            // a query that a user runs fails on the value, and keeps no pooled object either
+            for (String column : new String[]{"s", "vc"}) {
+                final String sql = "SELECT count() FROM every_row WHERE ts IN " + column;
+                assertExceptionNoLeakCheck(sql, sql.length() - column.length(), "invalid timezone: Bogus/Zone");
+            }
+            Assert.assertEquals(inUseCount, IntervalUtils.getPooledObjectsInUseCountForTesting());
         });
     }
 

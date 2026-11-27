@@ -58,7 +58,9 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TestTickCalendarService;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
+import org.junit.After;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
 
 import static io.questdb.test.griffin.GriffinParserTestUtils.intervalToString;
@@ -86,6 +88,8 @@ public class TickExprEngineJobTest extends AbstractCairoTest {
     private int fuzzRejectedSuffixCount;
     private int fuzzUnknownDayFilterOnReversedRangeCount;
     private int fuzzUnknownUnitNotParsedCount;
+    // the pooled objects that the tick expressions of this thread held when the test started
+    private int pooledObjectsInUse;
 
     /**
      * A context for SQL that the engine runs on its own, such as WAL apply: a tick expression
@@ -100,6 +104,18 @@ public class TickExprEngineJobTest extends AbstractCairoTest {
         };
         context.with(engine.getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext(), new BindVariableServiceImpl(configuration));
         return context;
+    }
+
+    @After
+    public void assertNoPooledObjectsKept() {
+        // every evaluation of the test returned the pooled objects of the parser that it took, also
+        // those that failed or that an engine job treated as null
+        Assert.assertEquals("pooled objects in use", pooledObjectsInUse, IntervalUtils.getPooledObjectsInUseCountForTesting());
+    }
+
+    @Before
+    public void capturePooledObjectsInUse() {
+        pooledObjectsInUse = IntervalUtils.getPooledObjectsInUseCountForTesting();
     }
 
     @Test
