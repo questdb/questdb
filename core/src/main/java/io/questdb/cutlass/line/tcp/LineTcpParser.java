@@ -329,6 +329,19 @@ public class LineTcpParser implements QuietCloseable {
                     appendByte = true;
                     nextValueCanBeOpenQuote = false;
                     break;
+
+                case '#':
+                    if (entityHandler == ENTITY_HANDLER_TABLE) {
+                        ParseResult skipResult = skipMeasurement(bufHi);
+                        if (skipResult == ParseResult.MEASUREMENT_COMPLETE) {
+                            startNextMeasurement();
+                            break;
+                        }
+                        return skipResult;
+                    }
+                    appendByte = true;
+                    nextValueCanBeOpenQuote = false;
+                    break;
             }
 
             if (appendByte) {
@@ -1041,7 +1054,7 @@ public class LineTcpParser implements QuietCloseable {
     }
 
     static {
-        char[] chars = new char[]{'\n', '\r', '=', ',', ' ', '\\', '"', '\0', '/'};
+        char[] chars = new char[]{'\n', '\r', '=', ',', ' ', '\\', '"', '\0', '/', '#'};
         controlBytes = new boolean[256];
         for (char ch : chars) {
             controlBytes[ch] = true;
