@@ -562,6 +562,8 @@ public class NanosFormatCompilerTest {
 
         assertFormat("09, 915", "dd, yyy", "1915-04-09T00:00:00.147963258Z");
         assertFormat("781", "yyy", "1781-04-09T00:00:00.753852147Z");
+
+        assertFormat("09, 000", "dd, yyy", "2000-04-09T00:00:00.258147963Z");
     }
 
     @Test
@@ -571,6 +573,9 @@ public class NanosFormatCompilerTest {
 
         assertFormat("09, 81", "dd, yy", "1981-04-09T00:00:00.741963258Z");
         assertFormat("91", "yy", "1991-04-09T00:00:00.852147369Z");
+
+        assertFormat("09, 00", "dd, yy", "2000-04-09T00:00:00.741963258Z");
+        assertFormat("00", "yy", "2100-04-09T00:00:00.852147369Z");
     }
 
     @Test

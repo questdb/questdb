@@ -595,6 +595,9 @@ public class TimestampFormatCompilerTest {
 
         assertFormat("09, 777", "dd, yyy", "0777-04-09T00:00:00.000Z");
         assertFormat("099", "yyy", "0099-04-09T00:00:00.000Z");
+
+        assertFormat("09, 000", "dd, yyy", "2000-04-09T00:00:00.000Z");
+        assertFormat("000", "yyy", "1000-04-09T00:00:00.000Z");
     }
 
     @Test
@@ -604,6 +607,9 @@ public class TimestampFormatCompilerTest {
 
         assertFormat("09, 07", "dd, yy", "0007-04-09T00:00:00.000Z");
         assertFormat("07", "yy", "0007-04-09T00:00:00.000Z");
+
+        assertFormat("09, 00", "dd, yy", "2000-04-09T00:00:00.000Z");
+        assertFormat("00", "yy", "1900-04-09T00:00:00.000Z");
     }
 
     @Test
