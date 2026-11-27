@@ -102,8 +102,17 @@ public abstract class AbstractReusedServerQwpEgressTest extends AbstractBootstra
         // A fresh chunk pair for each test, from the Rnd the test draws its data from, so the
         // one pair of seeds a test logs replays both.
         random = oneSeedPairCheck.getRandom();
+        // recvChunk drives the incremental request parser, which is offset sensitive, and
+        // requests are small -- keep the 1-byte draw.
         recvChunk = 1 + random.nextInt(500);
-        sendChunk = 1 + random.nextInt(500);
+        // sendChunk is floored, as in AbstractQwpBootstrapTest. HttpResponseSink#sendBuffer
+        // ships at most sendChunk bytes per event-loop pass and parks in between, so a 1-byte
+        // draw costs a dispatcher round trip per byte. A test that streams ~1 MB then takes tens
+        // of seconds instead of under one, and can overrun the 60 s query.timeout on a slow CI
+        // agent. The floor still splits every batch, and the send resume path only advances a
+        // byte pointer, so a finer split adds no coverage. Tests that need a 1-byte split pin
+        // sendChunk themselves.
+        sendChunk = 64 + random.nextInt(437);
     }
 
     /**

@@ -41,7 +41,8 @@ import org.junit.runner.notification.Failure;
  * logs the seeds of its Rnds, which {@code -Dfuzz.s0} and {@code -Dfuzz.s1} pass back to replay a
  * failing run. The override seeds every Rnd alike, so it replays only a test that draws from one
  * Rnd: both base classes draw the chunks and the data of a test from the Rnd {@link OneSeedPairCheck}
- * seeds for it, and fail a test or a test class that seeds another Rnd.
+ * seeds for it, and fail a test or a test class that seeds another Rnd. Both also floor the send
+ * chunk they draw, which a test that streams megabytes needs to finish in time.
  * <p>
  * Not an AbstractTest itself: it runs such tests through {@link JUnitCore}, and the two would share
  * the static test root.
@@ -51,6 +52,8 @@ public class QwpBootstrapSeedReplayTest {
     static volatile boolean isEnabled;
     private static final String REPLAY_NOTE = "; -Dfuzz.s0 and -Dfuzz.s1 seed every Rnd alike, so they can replay"
             + " a test only if it draws from random alone";
+    // the send chunk the last Draws or ReusedServerDraws probe drew
+    private static volatile int drawnSendChunk;
     // what the last Draws or ReusedServerDraws probe drew
     private static volatile String draws;
 
@@ -115,6 +118,11 @@ public class QwpBootstrapSeedReplayTest {
     }
 
     @Test
+    public void testReusedServerSendChunkFloored() {
+        assertSendChunkFloored(ReusedServerDraws.class);
+    }
+
+    @Test
     public void testSecondRandomInBaseSetUpFails() {
         // the Rnd counts for the test, though a base class of another nest seeds it
         assertFailsForOwnRandom(SecondRandomInBaseSetUp.class);
@@ -123,6 +131,11 @@ public class QwpBootstrapSeedReplayTest {
     @Test
     public void testSeedsReplayEveryDraw() {
         assertSeedsReplayEveryDraw(Draws.class);
+    }
+
+    @Test
+    public void testSendChunkFloored() {
+        assertSendChunkFloored(Draws.class);
     }
 
     private static Result assertFailsForOwnRandom(Class<?> probe) {
@@ -178,6 +191,22 @@ public class QwpBootstrapSeedReplayTest {
         }
     }
 
+    private static void assertSendChunkFloored(Class<?> probe) {
+        // These seeds draw 1 from 1 + nextInt(500). HttpResponseSink parks after every send
+        // chunk, so a 1-byte chunk streams a response one dispatcher round trip per byte.
+        final String s0 = System.getProperty("fuzz.s0");
+        final String s1 = System.getProperty("fuzz.s1");
+        try {
+            System.setProperty("fuzz.s0", "203");
+            System.setProperty("fuzz.s1", "1_700_000_000_000");
+            final String probeDraws = runDraws(probe);
+            Assert.assertTrue(probeDraws, drawnSendChunk >= 64 && drawnSendChunk <= 500);
+        } finally {
+            restoreProperty("fuzz.s0", s0);
+            restoreProperty("fuzz.s1", s1);
+        }
+    }
+
     private static void restoreProperty(String name, String value) {
         if (value != null) {
             System.setProperty(name, value);
@@ -196,6 +225,7 @@ public class QwpBootstrapSeedReplayTest {
     }
 
     private static String runDraws(Class<?> probe) {
+        drawnSendChunk = 0;
         draws = null;
         assertPasses(run(probe));
         return draws;
@@ -207,6 +237,7 @@ public class QwpBootstrapSeedReplayTest {
         @Test
         public void test() {
             Assume.assumeTrue(isEnabled);
+            drawnSendChunk = sendChunk;
             draws = "recvChunk=" + recvChunk + ", sendChunk=" + sendChunk
                     + ", isReadAheadWillNeed=" + isReadAheadWillNeed + ", isReadAheadCold=" + isReadAheadCold
                     + ", data=" + random.nextLong() + ", " + random.nextLong();
@@ -292,6 +323,7 @@ public class QwpBootstrapSeedReplayTest {
         @Test
         public void test() {
             Assume.assumeTrue(isEnabled);
+            drawnSendChunk = sendChunk;
             draws = "recvChunk=" + recvChunk + ", sendChunk=" + sendChunk
                     + ", data=" + random.nextLong() + ", " + random.nextLong();
         }

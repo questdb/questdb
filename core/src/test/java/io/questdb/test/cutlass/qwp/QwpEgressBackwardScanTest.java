@@ -1464,8 +1464,9 @@ public class QwpEgressBackwardScanTest extends AbstractReusedServerQwpEgressTest
 
     /**
      * Boots a server with this test's fragmentation chunks plus {@code extraEnv}, retrying
-     * while another server still holds the fixed test ports. The send chunk is floored at 64
-     * bytes: HttpResponseSink parks after every chunk, and these tests stream megabytes.
+     * while another server still holds the fixed test ports. These tests stream megabytes and
+     * HttpResponseSink parks after every send chunk, so they rely on the base class flooring
+     * the send chunk at 64 bytes.
      */
     private TestServerMain startServer(String... extraEnv) {
         return startServer(new ReadAheadFilesFacade(isReadAheadWillNeed), extraEnv);
@@ -1477,7 +1478,7 @@ public class QwpEgressBackwardScanTest extends AbstractReusedServerQwpEgressTest
         env[0] = PropertyKey.DEBUG_HTTP_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE.getEnvVarName();
         env[1] = Integer.toString(recvChunk);
         env[2] = PropertyKey.DEBUG_HTTP_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE.getEnvVarName();
-        env[3] = Integer.toString(Math.max(64, sendChunk));
+        env[3] = Integer.toString(sendChunk);
         System.arraycopy(extraEnv, 0, env, 4, extraEnv.length);
         return startServerWithRetry(() -> startWithEnvVariables(ff, env));
     }
