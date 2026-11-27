@@ -34,6 +34,17 @@ package io.questdb.griffin.engine.table.parquet;
 public class ParquetMetadataWriter {
 
     /**
+     * Drops the dedup sort section from the {@code _pm} footer that describes a parquet file of
+     * {@code parquetFileSize} bytes: every row group then makes no dedup sort claim. It appends a footer, fsyncs it
+     * and commits it through the header; a replay that finds no section in that footer changes nothing.
+     *
+     * @param parquetMetaFd   file descriptor of the {@code _pm} file (read-write)
+     * @param parquetFileSize size of the parquet file the footer describes
+     * @throws io.questdb.cairo.CairoException on error
+     */
+    public static native void dropDedupSortVersions(int parquetMetaFd, long parquetFileSize);
+
+    /**
      * Reads parquet metadata from the file descriptor {@code parquetFd},
      * generates the {@code _pm} metadata file, and writes it to
      * {@code parquetMetaFd}.

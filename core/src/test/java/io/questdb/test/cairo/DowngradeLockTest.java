@@ -30,6 +30,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.ColumnVersionWriter;
 import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.cairo.RecoveryCoordinator;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
@@ -50,6 +51,11 @@ import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Test;
 
+import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -63,6 +69,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
  */
 public class DowngradeLockTest extends AbstractCairoTest {
     private static final String NON_WAL_TABLE = "create table t (ts timestamp, v long) timestamp(ts) partition by day bypass wal";
+    // The _pm footer flags of the dedup sort section and of the index row map section.
+    private static final long PM_DEDUP_SORT_BIT = 1L << 2;
+    private static final long PM_INDEX_ROW_MAP_BIT = 1L << 32;
     private static final String WAL_TABLE = "create table t (ts timestamp, v long) timestamp(ts) partition by day wal";
 
     @Test
@@ -181,6 +190,88 @@ public class DowngradeLockTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDowngradeStartDropsParquetDedupSortSection() throws Exception {
+        // The dedup sort section of a _pm footer (bit 2) sits before the index row map (bit 32). An older release
+        // that knows the map, not the section, would read the map from the start of the section and write that wrong
+        // map with its next O3 commit. A downgrade start leaves each footer with the map only, and its own writes
+        // add no section.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        assertMemoryLeak(() -> {
+            final TableToken token = createParquetPartitionWithBothSections();
+            final long nameTxn = parquetPartitionNameTxn(token);
+            final String indexRowMap = pmIndexRowMap(token);
+
+            try (Path path = new Path()) {
+                tablePath(path, token);
+                downgradeStart(token);
+                Assert.assertEquals(ColumnType.VERSION, metaStorageVersion(path));
+                assertOlderReleaseOpens(path);
+                Assert.assertEquals(PM_INDEX_ROW_MAP_BIT, pmSectionFlags(token));
+                Assert.assertEquals(indexRowMap, pmIndexRowMap(token));
+
+                // Running again changes nothing.
+                engine.getTableSequencerAPI().resetForReboot(token);
+                new RecoveryCoordinator(engine).recover();
+                Assert.assertEquals(PM_INDEX_ROW_MAP_BIT, pmSectionFlags(token));
+                Assert.assertEquals(indexRowMap, pmIndexRowMap(token));
+
+                // The O3 commits of the downgrade start add no section.
+                execute("insert into t values ('a', 600, '2024-01-01T09:00:00.000000Z'), ('d', 601, '2024-01-01T10:30:00.000000Z')");
+                drainWalQueue();
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+                Assert.assertEquals(nameTxn, parquetPartitionNameTxn(token));
+                Assert.assertEquals(ColumnType.VERSION, metaStorageVersion(path));
+                Assert.assertEquals(PM_INDEX_ROW_MAP_BIT, pmSectionFlags(token));
+
+                // The way back up: the O3 commits add the section again.
+                setProperty(PropertyKey.CAIRO_COMMIT_MODE_ADAPTIVE_DOWNGRADE, "false");
+                engine.getTableSequencerAPI().resetForReboot(token);
+                new RecoveryCoordinator(engine).recover();
+                execute("insert into t values ('b', 700, '2024-01-01T11:00:00.000000Z'), ('a', 701, '2024-01-01T11:00:00.000000Z')");
+                drainWalQueue();
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+                Assert.assertEquals(nameTxn, parquetPartitionNameTxn(token));
+                Assert.assertEquals(ColumnType.DOWNGRADE_LOCKED_STORAGE_VERSION, metaStorageVersion(path));
+                Assert.assertEquals(PM_DEDUP_SORT_BIT | PM_INDEX_ROW_MAP_BIT, pmSectionFlags(token));
+                assertQuery("select * from t where s = 'a'").timestamp("ts").returns("""
+                        s\tv\tts
+                        a\t1\t2024-01-01T01:00:00.000000Z
+                        a\t4\t2024-01-01T04:00:00.000000Z
+                        a\t501\t2024-01-01T05:00:00.000000Z
+                        a\t7\t2024-01-01T07:00:00.000000Z
+                        a\t600\t2024-01-01T09:00:00.000000Z
+                        a\t10\t2024-01-01T10:00:00.000000Z
+                        a\t701\t2024-01-01T11:00:00.000000Z
+                        a\t99\t2024-01-02T00:00:00.000000Z
+                        """);
+                assertQuery("select * from t order by ts, s").timestamp("ts").expectSize().returns("""
+                        s\tv\tts
+                        a\t1\t2024-01-01T01:00:00.000000Z
+                        b\t2\t2024-01-01T02:00:00.000000Z
+                        c\t3\t2024-01-01T03:00:00.000000Z
+                        a\t4\t2024-01-01T04:00:00.000000Z
+                        a\t501\t2024-01-01T05:00:00.000000Z
+                        b\t500\t2024-01-01T05:00:00.000000Z
+                        \t6\t2024-01-01T06:00:00.000000Z
+                        a\t7\t2024-01-01T07:00:00.000000Z
+                        c\t502\t2024-01-01T07:30:00.000000Z
+                        b\t8\t2024-01-01T08:00:00.000000Z
+                        a\t600\t2024-01-01T09:00:00.000000Z
+                        c\t9\t2024-01-01T09:00:00.000000Z
+                        a\t10\t2024-01-01T10:00:00.000000Z
+                        d\t601\t2024-01-01T10:30:00.000000Z
+                        a\t701\t2024-01-01T11:00:00.000000Z
+                        b\t700\t2024-01-01T11:00:00.000000Z
+                        c\t12\t2024-01-01T12:00:00.000000Z
+                        a\t99\t2024-01-02T00:00:00.000000Z
+                        """);
+            }
+        });
+    }
+
+    @Test
     public void testDowngradeStartFailureLeavesTableLocked() throws Exception {
         final AtomicBoolean isCvReadFailing = new AtomicBoolean();
         final AtomicBoolean isMetaWriteFailing = new AtomicBoolean();
@@ -276,6 +367,48 @@ public class DowngradeLockTest extends AbstractCairoTest {
                 Assert.assertEquals(0, cvMagicCount(path));
                 assertOlderReleaseOpens(path);
                 assertQuery("t").timestamp("ts").expectSize().returns("ts\tv\n2024-09-01T00:00:00.000000Z\t12\n");
+            }
+        });
+    }
+
+    @Test
+    public void testDowngradeStartFailureOnParquetMetadataLeavesTableLocked() throws Exception {
+        final AtomicBoolean isParquetMetaOpenFailing = new AtomicBoolean();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRWExisting(LPSZ name) {
+                if (isParquetMetaOpenFailing.get() && Utf8s.endsWithAscii(name, TableUtils.PARQUET_METADATA_FILE_NAME)) {
+                    return -1;
+                }
+                return super.openRWExisting(name);
+            }
+        };
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        assertMemoryLeak(ff, () -> {
+            final TableToken token = createParquetPartitionWithBothSections();
+            final String indexRowMap = pmIndexRowMap(token);
+            try (Path path = new Path()) {
+                tablePath(path, token);
+
+                // _pm cannot be opened: the start fails, and the table keeps the lock and its section.
+                isParquetMetaOpenFailing.set(true);
+                try {
+                    downgradeStart(token);
+                    Assert.fail("the downgrade start must fail when it cannot open _pm");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "could not open _pm");
+                }
+                isParquetMetaOpenFailing.set(false);
+                Assert.assertEquals(ColumnType.DOWNGRADE_LOCKED_STORAGE_VERSION, metaStorageVersion(path));
+                assertOlderReleaseRefuses(path);
+                Assert.assertEquals(PM_DEDUP_SORT_BIT | PM_INDEX_ROW_MAP_BIT, pmSectionFlags(token));
+
+                // The next downgrade start finishes the job.
+                downgradeStart(token);
+                Assert.assertEquals(ColumnType.VERSION, metaStorageVersion(path));
+                assertOlderReleaseOpens(path);
+                Assert.assertEquals(PM_INDEX_ROW_MAP_BIT, pmSectionFlags(token));
+                Assert.assertEquals(indexRowMap, pmIndexRowMap(token));
             }
         });
     }
@@ -451,6 +584,26 @@ public class DowngradeLockTest extends AbstractCairoTest {
                 Assert.assertEquals("the downgrade start must remove every _cv trailer, named or not", 0, cvMagicCount(path));
                 assertOlderReleaseOpens(path);
                 assertQuery("t").timestamp("ts").expectSize().returns("ts\tv\n2024-09-01T00:00:00.000000Z\t12\n");
+            }
+        });
+    }
+
+    @Test
+    public void testDowngradeStartSkipsMissingParquetMetadata() throws Exception {
+        // A parquet partition without a local _pm has no footer to change: the start unlocks the table and creates
+        // no _pm.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        assertMemoryLeak(() -> {
+            final TableToken token = createParquetPartitionWithBothSections();
+            try (Path path = new Path(); Path pmPath = new Path()) {
+                tablePath(path, token);
+                parquetMetadataPath(pmPath, token);
+                Assert.assertTrue(configuration.getFilesFacade().removeQuiet(pmPath.$()));
+
+                downgradeStart(token);
+                Assert.assertEquals(ColumnType.VERSION, metaStorageVersion(path));
+                assertOlderReleaseOpens(path);
+                Assert.assertFalse("the downgrade start must not create a missing _pm", configuration.getFilesFacade().exists(pmPath.$()));
             }
         });
     }
@@ -783,6 +936,71 @@ public class DowngradeLockTest extends AbstractCairoTest {
         }
     }
 
+    /**
+     * The {@code _pm} of the first partition, as {@code _txn} names it.
+     */
+    private static Path parquetMetadataPath(Path path, TableToken token) {
+        try (TableReader reader = engine.getReader(token)) {
+            TableUtils.setPathForParquetPartitionMetadata(
+                    tablePath(path, token),
+                    reader.getMetadata().getTimestampType(),
+                    reader.getPartitionedBy(),
+                    reader.getTxFile().getPartitionTimestampByIndex(0),
+                    reader.getTxFile().getPartitionNameTxn(0)
+            );
+            return path;
+        }
+    }
+
+    private static long parquetPartitionNameTxn(TableToken token) {
+        try (TableReader reader = engine.getReader(token)) {
+            Assert.assertTrue(reader.getTxFile().isPartitionParquet(0));
+            return reader.getTxFile().getPartitionNameTxn(0);
+        }
+    }
+
+    /**
+     * The index row count and the first index row of each row group, as the first partition's {@code _pm} holds them.
+     */
+    private static String pmIndexRowMap(TableToken token) {
+        try (TableReader reader = engine.getReader(token)) {
+            reader.openPartition(0);
+            final ParquetMetaFileReader pm = reader.getAndInitParquetPartitionDecoder(0).metadata();
+            Assert.assertTrue(pm.hasIndexRowMap());
+            final StringBuilder sink = new StringBuilder().append(pm.getIndexRowCount()).append(':');
+            long rowGroupStartRow = 0;
+            for (int i = 0, n = pm.getRowGroupCount(); i < n; i++) {
+                sink.append(' ').append(pm.getRowGroupIndexRowLo(i, rowGroupStartRow));
+                rowGroupStartRow += pm.getRowGroupSize(i);
+            }
+            return sink.toString();
+        }
+    }
+
+    /**
+     * The dedup sort and index row map flags of the {@code _pm} footer that describes the first partition's parquet
+     * file, found as a reader finds it: the footer chain is walked back from the committed size until a footer names
+     * that parquet file size.
+     */
+    private static long pmSectionFlags(TableToken token) throws IOException {
+        final long parquetFileSize;
+        try (TableReader reader = engine.getReader(token); Path path = new Path()) {
+            parquetFileSize = reader.getTxFile().getPartitionParquetFileSize(0);
+            parquetMetadataPath(path, token);
+            final ByteBuffer pm = ByteBuffer.wrap(Files.readAllBytes(Paths.get(path.toString()))).order(ByteOrder.LITTLE_ENDIAN);
+            int size = (int) pm.getLong(0);
+            while (true) {
+                final int footer = size - Integer.BYTES - pm.getInt(size - Integer.BYTES);
+                if (pm.getLong(footer) + pm.getInt(footer + 8) + 8 == parquetFileSize) {
+                    return pm.getLong(footer + 32) & (PM_DEDUP_SORT_BIT | PM_INDEX_ROW_MAP_BIT);
+                }
+                final int prevSize = (int) pm.getLong(footer + 24);
+                Assert.assertTrue("no _pm footer names the parquet file size", prevSize > 0 && prevSize < size);
+                size = prevSize;
+            }
+        }
+    }
+
     private static Path tablePath(Path path, TableToken token) {
         return path.of(configuration.getDbRoot()).concat(token);
     }
@@ -881,6 +1099,45 @@ public class DowngradeLockTest extends AbstractCairoTest {
                         """);
             }
         });
+    }
+
+    /**
+     * A dedup table with an indexed symbol whose parquet partition 2024-01-01 an O3 commit updated in place: the
+     * partition's {@code _pm} footer holds both the dedup sort section and the index row map.
+     */
+    private TableToken createParquetPartitionWithBothSections() throws Exception {
+        // Small row groups and permissive rewrite thresholds keep the O3 merge in place.
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, "1.0");
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, Long.MAX_VALUE);
+        execute("create table t (s symbol index, v int, ts timestamp) timestamp(ts) partition by day wal dedup upsert keys(ts, s)");
+        execute("""
+                insert into t values
+                ('a', 1, '2024-01-01T01:00:00.000000Z'), ('b', 2, '2024-01-01T02:00:00.000000Z'),
+                ('c', 3, '2024-01-01T03:00:00.000000Z'), ('a', 4, '2024-01-01T04:00:00.000000Z'),
+                ('b', 5, '2024-01-01T05:00:00.000000Z'), (null, 6, '2024-01-01T06:00:00.000000Z'),
+                ('a', 7, '2024-01-01T07:00:00.000000Z'), ('b', 8, '2024-01-01T08:00:00.000000Z'),
+                ('c', 9, '2024-01-01T09:00:00.000000Z'), ('a', 10, '2024-01-01T10:00:00.000000Z'),
+                ('b', 11, '2024-01-01T11:00:00.000000Z'), ('c', 12, '2024-01-01T12:00:00.000000Z'),
+                ('a', 99, '2024-01-02T00:00:00.000000Z')
+                """);
+        drainWalQueue();
+        execute("alter table t convert partition to parquet list '2024-01-01'");
+        drainWalQueue();
+        final TableToken token = engine.verifyTableName("t");
+        final long nameTxn = parquetPartitionNameTxn(token);
+        execute("""
+                insert into t values
+                ('b', 500, '2024-01-01T05:00:00.000000Z'),
+                ('a', 501, '2024-01-01T05:00:00.000000Z'),
+                ('c', 502, '2024-01-01T07:30:00.000000Z')
+                """);
+        drainWalQueue();
+        engine.releaseAllWriters();
+        engine.releaseAllReaders();
+        Assert.assertEquals("the O3 merge must update the parquet partition in place", nameTxn, parquetPartitionNameTxn(token));
+        Assert.assertEquals(PM_DEDUP_SORT_BIT | PM_INDEX_ROW_MAP_BIT, pmSectionFlags(token));
+        return token;
     }
 
     /**

@@ -5021,10 +5021,15 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
      * they do for the types listed below: the NULL of each, if it has one, is a single value, which the decoder
      * restores. FLOAT and DOUBLE are among them although the encoder stores every NaN as a NULL and the decoder gives
      * one NaN for a NULL: WAL apply compares every NaN as that one NaN. A type that is not listed makes no claim.
+     * <p>
+     * A downgrade start ({@link CairoConfiguration#isCommitModeAdaptiveDowngrade()}) makes no claim either: an older
+     * release that does not know the {@code _pm} dedup sort section reads the index row map after it from the wrong
+     * offset, so that start drops the section from every local parquet partition and writes none itself.
      */
     private static long getParquetDedupSortVersion(TableWriter tableWriter) {
         final long commitDedupSortVersion = tableWriter.getCommitDedupSortVersion();
-        if (commitDedupSortVersion == PartitionGeometryFile.DEDUP_SORT_VERSION_UNSET) {
+        if (commitDedupSortVersion == PartitionGeometryFile.DEDUP_SORT_VERSION_UNSET
+                || tableWriter.getConfiguration().isCommitModeAdaptiveDowngrade()) {
             return ParquetMetaFileReader.DEDUP_SORT_VERSION_UNSET;
         }
         final TableRecordMetadata metadata = tableWriter.getMetadata();

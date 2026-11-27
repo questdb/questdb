@@ -113,6 +113,63 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetMetad
 }
 
 fn set_base_seq_txn(file: &mut File, parquet_file_size: u64, seq_txn: i64) -> ParquetResult<()> {
+    let seq_txn = SeqTxn::new(seq_txn);
+    append_footer(
+        file,
+        parquet_file_size,
+        |reader| reader.seq_txn() == Some(seq_txn),
+        |update| {
+            update.seq_txn(seq_txn);
+        },
+    )
+}
+
+/// Drops the dedup sort section from the `_pm` footer that describes a parquet file of
+/// `parquet_file_size` bytes, appending a footer and committing it through the header. Throws a
+/// `CairoException` on error.
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetMetadataWriter_dropDedupSortVersions(
+    mut env: JNIEnv,
+    _class: JClass,
+    parquet_meta_fd: i32,
+    parquet_file_size: i64,
+) {
+    let env = &mut env;
+    if parquet_file_size < 0 {
+        let err = parquet_meta_err!(
+            ParquetMetaErrorKind::InvalidValue,
+            "negative parquet file size: {}",
+            parquet_file_size
+        );
+        return err.into_cairo_exception().throw::<()>(env);
+    }
+    // Java owns the fd: ManuallyDrop keeps Rust from closing it.
+    let mut file = ManuallyDrop::new(unsafe { File::from_raw_fd_i32(parquet_meta_fd) });
+    if let Err(mut err) = drop_dedup_sort_versions(&mut file, parquet_file_size as u64) {
+        err.add_context("error in ParquetMetadataWriter.dropDedupSortVersions");
+        err.into_cairo_exception().throw::<()>(env)
+    }
+}
+
+fn drop_dedup_sort_versions(file: &mut File, parquet_file_size: u64) -> ParquetResult<()> {
+    append_footer(
+        file,
+        parquet_file_size,
+        |reader| !reader.footer_feature_flags().has_dedup_sort_version(),
+        |update| {
+            update.inherit_seq_txn().drop_dedup_sort_versions();
+        },
+    )
+}
+
+/// Appends a copy of the footer that describes `parquet_file_size`, changed by `update`, and commits
+/// it through the header. Appends nothing when `is_done` holds for that footer.
+fn append_footer(
+    file: &mut File,
+    parquet_file_size: u64,
+    is_done: impl FnOnce(&ParquetMetaReader) -> bool,
+    update: impl FnOnce(&mut ParquetMetaUpdateWriter),
+) -> ParquetResult<()> {
     // 1. Resolve the footer of `parquet_file_size` below the committed size the header holds.
     // SAFETY: Java holds the writer lock over the partition, and the map is dropped before any write.
     let mmap = unsafe { Mmap::map(&*file) }.map_err(ParquetError::from)?;
@@ -132,10 +189,9 @@ fn set_base_seq_txn(file: &mut File, parquet_file_size: u64, seq_txn: i64) -> Pa
     let reader = ParquetMetaReader::from_file_size(&mmap[..], resolved_size)?;
     reader.verify_checksum()?;
 
-    // 2. A replay after the header write keeps the stamp it finds. That write's final fsync may
+    // 2. A replay after the header write keeps the footer it finds. That write's final fsync may
     // have failed and left the page clean: dirty it with the same bytes so this fsync reaches disk.
-    let seq_txn = SeqTxn::new(seq_txn);
-    if reader.seq_txn() == Some(seq_txn) {
+    if is_done(&reader) {
         drop(mmap);
         file.seek(SeekFrom::Start(off as u64))
             .map_err(ParquetError::from)?;
@@ -145,10 +201,10 @@ fn set_base_seq_txn(file: &mut File, parquet_file_size: u64, seq_txn: i64) -> Pa
         return Ok(());
     }
 
-    // 3. Append a footer with the stamp, preserving any newer footer past the resolved one.
-    let mut update = ParquetMetaUpdateWriter::new(&mmap[..], resolved_size)?;
-    update.seq_txn(seq_txn);
-    let (append_bytes, new_parquet_meta_file_size) = update.finish_appending_at(committed_size)?;
+    // 3. Append the changed footer, preserving any newer footer past the resolved one.
+    let mut writer = ParquetMetaUpdateWriter::new(&mmap[..], resolved_size)?;
+    update(&mut writer);
+    let (append_bytes, new_parquet_meta_file_size) = writer.finish_appending_at(committed_size)?;
     drop(mmap);
     file.seek(SeekFrom::Start(committed_size))
         .map_err(ParquetError::from)?;
@@ -441,6 +497,89 @@ mod tests {
             .open(pm.path())
             .unwrap();
         set_base_seq_txn(&mut file, parquet_size, 7).unwrap();
+        assert_eq!(std::fs::read(pm.path()).unwrap(), bytes);
+    }
+
+    // Appends to `write_pm(7)` a footer with both the dedup sort section and the index row map: a
+    // sorted block in front of the reused one. It describes an 8456-byte parquet file.
+    fn write_pm_with_dedup_sort_and_index_row_map() -> (tempfile::NamedTempFile, u64) {
+        let (pm, _) = write_pm(7);
+        let mut bytes = std::fs::read(pm.path()).unwrap();
+        let base_size = bytes.len() as u64;
+        let mut update = ParquetMetaUpdateWriter::new(&bytes, base_size).unwrap();
+        let mut row_group = RowGroupBlockBuilder::new(1);
+        row_group.set_num_rows(4);
+        row_group.set_dedup_sort_version(3);
+        row_group.set_dedup_sort_keys(vec![1, 2], vec![3]);
+        update.replace_row_group(0, row_group).unwrap();
+        update.reuse_row_group(1, 0).unwrap();
+        update.parquet_footer(8192, 256).seq_txn(SeqTxn::new(9));
+        let (append, new_size) = update.finish().unwrap();
+        bytes.extend_from_slice(&append);
+        bytes[..8].copy_from_slice(&new_size.to_le_bytes());
+        std::fs::write(pm.path(), &bytes).unwrap();
+        (pm, 8192 + 256 + 8)
+    }
+
+    // An index row map: the index row count and the first index row of each row group.
+    type IndexRowMap = Option<(u64, Vec<u64>)>;
+
+    // The committed footer: whether it has the dedup sort section, its index row map and seqTxn.
+    fn committed_footer(file: &tempfile::NamedTempFile) -> (bool, IndexRowMap, Option<SeqTxn>) {
+        let bytes = std::fs::read(file.path()).unwrap();
+        let committed = u64::from_le_bytes(bytes[0..8].try_into().unwrap());
+        let reader = ParquetMetaReader::from_file_size(&bytes, committed).unwrap();
+        reader.verify_checksum().unwrap();
+        let footer = reader.footer();
+        let index_row_map = footer.index_row_count().map(|count| {
+            let lows = (0..reader.row_group_count() as usize)
+                .map(|i| footer.row_group_index_row_lo(i).unwrap().unwrap())
+                .collect();
+            (count, lows)
+        });
+        (
+            footer.feature_flags().has_dedup_sort_version(),
+            index_row_map,
+            reader.seq_txn(),
+        )
+    }
+
+    #[test]
+    fn drop_dedup_sort_versions_keeps_index_row_map() {
+        let (pm, parquet_size) = write_pm_with_dedup_sort_and_index_row_map();
+        let index_row_map = Some((14, vec![10, 0]));
+        assert_eq!(
+            committed_footer(&pm),
+            (true, index_row_map.clone(), Some(SeqTxn::new(9)))
+        );
+        let mut file = File::options()
+            .read(true)
+            .write(true)
+            .open(pm.path())
+            .unwrap();
+
+        drop_dedup_sort_versions(&mut file, parquet_size).unwrap();
+
+        assert_eq!(
+            committed_footer(&pm),
+            (false, index_row_map, Some(SeqTxn::new(9)))
+        );
+        // A replay finds no section and appends nothing.
+        let bytes = std::fs::read(pm.path()).unwrap();
+        drop_dedup_sort_versions(&mut file, parquet_size).unwrap();
+        assert_eq!(std::fs::read(pm.path()).unwrap(), bytes);
+    }
+
+    #[test]
+    fn drop_dedup_sort_versions_refuses_an_unknown_parquet_size() {
+        let (pm, parquet_size) = write_pm_with_dedup_sort_and_index_row_map();
+        let bytes = std::fs::read(pm.path()).unwrap();
+        let mut file = File::options()
+            .read(true)
+            .write(true)
+            .open(pm.path())
+            .unwrap();
+        assert!(drop_dedup_sort_versions(&mut file, parquet_size + 1).is_err());
         assert_eq!(std::fs::read(pm.path()).unwrap(), bytes);
     }
 

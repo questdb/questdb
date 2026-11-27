@@ -379,6 +379,8 @@ pub struct ParquetMetaUpdateWriter<'a> {
     prior_index_row_count: u64,
     /// Set by [`Self::drop_index_row_map`]: the new footer carries the identity map.
     is_index_row_map_dropped: bool,
+    /// Set by [`Self::drop_dedup_sort_versions`]: the new footer carries no dedup sort section.
+    is_dedup_sort_dropped: bool,
 }
 
 enum RowGroupEntry {
@@ -504,6 +506,7 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
             prior_index_row_lo,
             prior_index_row_count,
             is_index_row_map_dropped: false,
+            is_dedup_sort_dropped: false,
         })
     }
 
@@ -528,6 +531,14 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
                 RowGroupEntry::New(builder) => builder.dedup_sort_keys().clone(),
             })
             .collect()
+    }
+
+    /// Writes no dedup sort section (`DEDUP_SORT_VERSION_BIT`) whatever the row groups claim: every row group
+    /// makes no claim. A downgrade start drops the section, since a release that does not know the bit parses
+    /// the sections after it from the wrong offset.
+    pub fn drop_dedup_sort_versions(&mut self) -> &mut Self {
+        self.is_dedup_sort_dropped = true;
+        self
     }
 
     /// Writes the identity index row map whatever the row groups do: index rows start over as partition rows.
@@ -896,8 +907,13 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
         };
         fb.set_scratchpad_entries(effective_scratchpad);
         fb.validate_scratchpad()?;
-        fb.set_dedup_sort_versions(self.resolve_dedup_sort_versions());
-        fb.set_dedup_sort_keys(self.resolve_dedup_sort_keys());
+        if self.is_dedup_sort_dropped {
+            fb.set_dedup_sort_versions(Vec::new());
+            fb.set_dedup_sort_keys(Vec::new());
+        } else {
+            fb.set_dedup_sort_versions(self.resolve_dedup_sort_versions());
+            fb.set_dedup_sort_keys(self.resolve_dedup_sort_keys());
+        }
         fb.validate_dedup_sort_versions()?;
         fb.set_index_row_map(if self.is_index_row_map_dropped {
             None
@@ -1276,6 +1292,51 @@ mod tests {
             dedup_sort_versions_of(&third, third_size),
             (false, vec![-1, -1, -1])
         );
+    }
+
+    #[test]
+    fn dedup_sort_versions_dropped_keep_index_row_map() {
+        let (original, size) = make_simple_file();
+        // A footer with both sections: a sorted block in front of the reused one shifts its index rows.
+        let (first, first_size) = index_row_map_apply(&original, size, |u| {
+            let mut rg = index_row_map_rg(200);
+            rg.set_dedup_sort_version(3);
+            rg.set_dedup_sort_keys(vec![1, 2], vec![3, 4, 5]);
+            u.replace_row_group(0, rg).unwrap();
+            u.reuse_row_group(1, 0).unwrap();
+        });
+        assert_eq!(
+            dedup_sort_versions_of(&first, first_size),
+            (true, vec![3, -1])
+        );
+        let index_row_map = index_row_map_of(&first, first_size);
+        assert_eq!(index_row_map, Some((1200, vec![1000, 0])));
+
+        let (second, second_size) = index_row_map_apply(&first, first_size, |u| {
+            let mut tail = index_row_map_rg(10);
+            tail.set_dedup_sort_version(3);
+            tail.set_dedup_sort_keys(vec![6], vec![7]);
+            u.add_row_group(tail);
+            u.drop_dedup_sort_versions();
+        });
+        assert_eq!(
+            dedup_sort_versions_of(&second, second_size),
+            (false, vec![-1, -1, -1])
+        );
+        assert_eq!(
+            dedup_sort_keys_of(&second, second_size),
+            vec![None, None, None]
+        );
+        assert_eq!(
+            index_row_map_of(&second, second_size),
+            Some((1210, vec![1000, 0, 1200]))
+        );
+        // The earlier snapshot keeps its sections.
+        assert_eq!(
+            dedup_sort_versions_of(&second, first_size),
+            (true, vec![3, -1])
+        );
+        assert_eq!(index_row_map_of(&second, first_size), index_row_map);
     }
 
     fn dedup_sort_keys_of(file: &[u8], file_size: u64) -> Vec<Option<(Vec<u8>, Vec<u8>)>> {

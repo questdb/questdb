@@ -32,6 +32,7 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.wal.WalUtils;
+import io.questdb.griffin.engine.table.parquet.ParquetMetadataWriter;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Files;
@@ -219,19 +220,70 @@ public class RecoveryCoordinator {
         }
     }
 
-    // Clears the dedup sorted bit of every partition in _txn and makes that durable. Returns false, and the table stays
-    // locked, when _txn has a torn live area: its writer repairs that on open, and the next downgrade start unlocks it.
-    private boolean clearDedupSortedBits(TableToken token, Path txnPath) {
+    // Drops the dedup sort section from the _pm footer of each local parquet partition, then clears the dedup sorted
+    // bit of every partition in _txn, and makes both durable. path is at _txn on entry and is left at the table root.
+    // Returns false, and the table stays locked, when _txn has a torn live area: its writer repairs that on open, and
+    // the next downgrade start unlocks it.
+    private boolean clearDedupSortedBits(TableToken token, Path path, int tableRootLen) {
         try (TxWriter txWriter = new TxWriter(ff, configuration)) {
-            txWriter.ofRW(txnPath.$(), true);
+            txWriter.ofRW(path.$(), true);
             if (txWriter.getTornLiveVersion() > -1) {
                 LOG.advisory().$("table stays locked for downgrade, its _txn has a torn live area [table=").$(token).I$();
                 return false;
             }
+            dropParquetDedupSortVersions(txWriter, path, tableRootLen);
             if (txWriter.clearPartitionsDedupSortedAndCommit()) {
                 LOG.info().$("cleared dedup sorted bits for downgrade [table=").$(token).I$();
             }
             return true;
+        }
+    }
+
+    // The dedup sort section of a _pm footer (flag bit 2) sits before the index row map section (bit 32). 10.2.0 knows
+    // the map, not the section, and its Rust reader walks the sections forward skipping only those it knows: it would
+    // read the map from the start of the section, and its O3 update would write that wrong map into the partition.
+    // So each local parquet partition gets a footer without the section; a missing claim only costs the key-ordered
+    // read. A missing _pm is skipped (remote _pm files stay as they are), and so is a read-only partition, which no
+    // release writes into. So is a Delta partition: 10.2.0 refuses a table that holds one, and its _pm, once base
+    // compaction adopts a base into it, has no footer for the parquet size in _txn. The delta-write bit is never
+    // cleared in place, so the table can open in 10.2.0 only after the partition is dropped. path is left at the
+    // table root.
+    private void dropParquetDedupSortVersions(TxReader txReader, Path path, int tableRootLen) {
+        TableReaderMetadata metadata = null;
+        try {
+            for (int i = 0, n = txReader.getPartitionCount(); i < n; i++) {
+                if (!txReader.isPartitionParquet(i) || txReader.isPartitionReadOnly(i) || txReader.isPartitionDeltaActive(i)) {
+                    continue;
+                }
+                if (metadata == null) {
+                    metadata = new TableReaderMetadata(configuration);
+                    metadata.loadMetadata(path.trimTo(tableRootLen).concat(TableUtils.META_FILE_NAME).$());
+                }
+                TableUtils.setPathForParquetPartitionMetadata(
+                        path.trimTo(tableRootLen),
+                        metadata.getTimestampType(),
+                        metadata.getPartitionBy(),
+                        txReader.getPartitionTimestampByIndex(i),
+                        txReader.getPartitionNameTxn(i)
+                );
+                // openRW would bring back a missing _pm as an empty one, which no footer describes.
+                final long fd = ff.openRWExisting(path.$());
+                if (fd < 0) {
+                    final int errno = ff.errno();
+                    if (!ff.exists(path.$())) {
+                        continue;
+                    }
+                    throw CairoException.critical(errno).put("could not open _pm [path=").put(path).put(']');
+                }
+                try {
+                    ParquetMetadataWriter.dropDedupSortVersions(Files.toOsFd(fd), txReader.getPartitionParquetFileSize(i));
+                } finally {
+                    ff.close(fd);
+                }
+            }
+        } finally {
+            Misc.free(metadata);
+            path.trimTo(tableRootLen);
         }
     }
 
@@ -1024,7 +1076,7 @@ public class RecoveryCoordinator {
             return;
         }
         path.trimTo(tableRootLen).concat(TableUtils.TXN_FILE_NAME);
-        if (ff.exists(path.$()) && !clearDedupSortedBits(token, path)) {
+        if (ff.exists(path.$()) && !clearDedupSortedBits(token, path, tableRootLen)) {
             return;
         }
         path.trimTo(tableRootLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME);
@@ -1050,13 +1102,15 @@ public class RecoveryCoordinator {
 
     /**
      * The way back to an older release. For every table whose {@code _meta} carries the downgrade lock
-     * ({@link ColumnType#isDowngradeLockedStorageVersion}): clears the dedup sorted bit of every partition in
-     * {@code _txn}, which an older binary keeps when it writes the partition's rows, and every {@code _cv}
-     * checksum trailer, so an older binary that rewrites an area in place leaves no magic next to data it never
-     * checksummed, then drops the lock from {@code _meta}, so the older binary opens the table. Bits and trailers
-     * first and durable, lock last: a crash in between leaves the table locked, and the next downgrade start
-     * repeats this. Runs before any writer opens, on a start with {@code cairo.commit.mode.adaptive.downgrade=true}
-     * only, which sets no bit and writes no trailer itself.
+     * ({@link ColumnType#isDowngradeLockedStorageVersion}): drops the dedup sort section from the {@code _pm} footer
+     * of each local parquet partition, since an older binary reads the index row map after it from the wrong offset,
+     * clears the dedup sorted bit of every partition in {@code _txn}, which an older binary keeps when it writes the
+     * partition's rows, and every {@code _cv} checksum trailer, so an older binary that rewrites an area in place
+     * leaves no magic next to data it never checksummed, then drops the lock from {@code _meta}, so the older binary
+     * opens the table. Footers, bits and trailers first and durable, lock last: a crash in between leaves the table
+     * locked, and the next downgrade start repeats this. Runs before any writer opens, on a start with
+     * {@code cairo.commit.mode.adaptive.downgrade=true} only, which sets no bit, writes no dedup sort section and no
+     * trailer itself.
      */
     private void unlockTablesForDowngrade(ObjHashSet<TableToken> tokens, Path path) {
         final long tempMem8b = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
