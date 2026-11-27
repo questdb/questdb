@@ -295,9 +295,6 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
         Function.init(keyExcludedValueFunctions, pageFrameCursor, executionContext, null);
         recalculateIncludedValues(pageFrameCursor);
         cursor.of(pageFrameCursor, executionContext);
-        if (filter != null) {
-            filter.init(cursor, executionContext);
-        }
         return cursor;
     }
 }

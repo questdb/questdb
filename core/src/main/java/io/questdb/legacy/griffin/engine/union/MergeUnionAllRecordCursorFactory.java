@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.union.AbstractSetRecordCursorFactory;
 import io.questdb.legacy.cairo.sql.LegacyRecordCursorFactory;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;

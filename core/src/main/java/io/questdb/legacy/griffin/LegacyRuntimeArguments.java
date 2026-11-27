@@ -79,11 +79,11 @@ public final class LegacyRuntimeArguments {
 
     /**
      * The bounds of a LIMIT whose functions master's factories took apart, null without either, which takes the
-     * functions.
+     * functions. Master defaults a missing lo bound to 0, which the bounds read as {@code LIMIT 0}, so a caller passes
+     * the functions only for a query that has a LIMIT.
      */
     public static @Nullable LimitBounds limitBounds(@Nullable Function lo, @Nullable Function hi, int position) {
         if (lo == null) {
-            // master defaults a missing lo bound to 0, so only a LIMIT with neither bound comes without one
             assert hi == null;
             return null;
         }

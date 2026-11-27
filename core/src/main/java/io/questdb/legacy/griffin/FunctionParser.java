@@ -1398,7 +1398,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     //
                     // output of a cast() function is always the 2nd argument in a function signature
                     if (argIdx != 1 || !SqlKeywords.isCastKeyword(node.token)) {
-                        int overloadDistance = ColumnType.overloadDistance(argTypeTag, sigArgTypeTag); // NULL to any is 0
+                        int overloadDistance = LegacyOverloads.overloadDistance(argTypeTag, sigArgTypeTag); // NULL to any is 0
 
                         if (argTypeTag == ColumnType.STRING && sigArgTypeTag == ColumnType.CHAR) {
                             if (arg.isConstant()) {

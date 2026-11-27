@@ -5066,8 +5066,9 @@ class LateralJoinRewriter implements Mutable {
         ExpressionNode wrapped = expressionNodePool.next().of(
                 ExpressionNode.FUNCTION, "__lateral_limit", 0, limit.position
         );
-        wrapped.paramCount = 1;
-        wrapped.rhs = limit;
+        wrapped.paramCount = 2;
+        wrapped.lhs = limit;
+        wrapped.rhs = expressionNodePool.next().of(ExpressionNode.CONSTANT, "null", 0, limit.position);
         return wrapped;
     }
 

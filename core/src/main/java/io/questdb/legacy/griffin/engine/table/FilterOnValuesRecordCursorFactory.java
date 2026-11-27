@@ -242,9 +242,6 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
         findDuplicates();
 
         cursor.of(pageFrameCursor, sqlExecutionContext);
-        if (filter != null) {
-            filter.init(cursor, sqlExecutionContext);
-        }
         return cursor;
     }
 }

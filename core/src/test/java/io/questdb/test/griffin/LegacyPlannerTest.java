@@ -383,6 +383,106 @@ public class LegacyPlannerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSharedCodeKeepsMastersResults() throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_SQL_LEGACY_PLANNER_ENABLED, "true");
+            execute("CREATE TABLE l256 (l LONG256, i INT, j LONG)");
+            execute("INSERT INTO l256 VALUES ('0x05', 5, 5), ('0x0100000000000000000000000000000000000000000000000000000000000005', 7, 7)");
+            final String bothRows = """
+                    l\ti\tj
+                    0x05\t5\t5
+                    0x0100000000000000000000000000000000000000000000000000000000000005\t7\t7
+                    """;
+            assertLegacyRows("SELECT * FROM l256 WHERE l = i", """
+                    l\ti\tj
+                    0x05\t5\t5
+                    """);
+            assertLegacyRows("SELECT * FROM l256 WHERE l = j", """
+                    l\ti\tj
+                    0x05\t5\t5
+                    """);
+            assertLegacyRows("SELECT * FROM l256 WHERE l = 5", bothRows);
+            assertLegacyRows("SELECT * FROM l256 WHERE l < 0", "l\ti\tj\n");
+            assertLegacyRows("SELECT l + 1 FROM l256", """
+                    column
+                    6
+                    6
+                    """);
+            assertLegacyRows("SELECT nullif(l, 5) FROM l256", """
+                    nullif
+                    null
+                    null
+                    """);
+            assertLegacyRows("SELECT abs(l) FROM l256", """
+                    abs
+                    5
+                    5
+                    """);
+
+            execute("CREATE TABLE x AS (SELECT x % 40 k FROM long_sequence(100))");
+            assertLegacyRows("SELECT count() FROM (SELECT DISTINCT k, max(k) OVER () m FROM x)", """
+                    count
+                    40
+                    """);
+            assertLegacyRows("SELECT DISTINCT k, max(k) OVER () m FROM x LIMIT 3", """
+                    k\tm
+                    1\t39
+                    2\t39
+                    3\t39
+                    """);
+            assertLegacyRows("SELECT DISTINCT k, max(k) OVER () m FROM x LIMIT 2, 4", """
+                    k\tm
+                    3\t39
+                    4\t39
+                    """);
+            assertLegacyRows("SELECT DISTINCT k, max(k) OVER () m FROM x LIMIT -2", """
+                    k\tm
+                    39\t39
+                    0\t39
+                    """);
+
+            assertLegacyRows("SELECT 2 x UNION ALL SELECT 1 INTERSECT SELECT 1 FROM long_sequence(1) ORDER BY 1", """
+                    x
+                    1
+                    """);
+            assertLegacyRows("SELECT x FROM long_sequence(3) EXCEPT SELECT x FROM long_sequence(1) ORDER BY 1 DESC", """
+                    x
+                    3
+                    2
+                    """);
+
+            execute("CREATE TABLE orders (id INT, n INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, 2, '2024-01-01T00:00:00.000000Z'),
+                    (2, 1, '2024-01-01T01:00:00.000000Z'),
+                    (3, null, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 1, 10.0, '2024-01-01T00:10:00.000000Z'),
+                    (2, 1, 20.0, '2024-01-01T00:20:00.000000Z'),
+                    (3, 1, 30.0, '2024-01-01T00:30:00.000000Z'),
+                    (4, 2, 40.0, '2024-01-01T01:10:00.000000Z'),
+                    (5, 2, 50.0, '2024-01-01T01:20:00.000000Z'),
+                    (6, 3, 60.0, '2024-01-01T02:10:00.000000Z')
+                    """);
+            assertLegacyRows("""
+                    SELECT o.id, t.qty
+                    FROM orders o
+                    JOIN LATERAL (SELECT qty FROM trades WHERE order_id = o.id ORDER BY qty LIMIT o.n) t
+                    ORDER BY o.id, t.qty
+                    """, """
+                    id\tqty
+                    1\t10.0
+                    1\t20.0
+                    2\t40.0
+                    """);
+        });
+    }
+
+    @Test
     public void testServerPropertySelectsPlanner() throws Exception {
         assertMemoryLeak(() -> {
             Assert.assertFalse(new DefaultCairoConfiguration(root).isSqlLegacyPlannerEnabled());
@@ -421,6 +521,7 @@ public class LegacyPlannerTest extends AbstractCairoTest {
         final Pattern imports = Pattern.compile("^import (io\\.questdb\\.[\\w.]+);", Pattern.MULTILINE);
         final Pattern comments = Pattern.compile("/\\*.*?\\*/|//[^\n]*", Pattern.DOTALL);
         final StringSink violations = new StringSink();
+        final Map<String, List<String>> sharedSubclasses = new HashMap<>();
         try (Stream<Path> files = Files.walk(root)) {
             for (Path file : (Iterable<Path>) files.filter(f -> f.toString().endsWith(".java") && !f.startsWith(legacy))::iterator) {
                 final String path = root.relativize(file).toString().replace(File.separatorChar, '/');
@@ -430,8 +531,7 @@ public class LegacyPlannerTest extends AbstractCairoTest {
                 }
                 final String source = comments.matcher(Files.readString(file)).replaceAll("");
                 final List<String> names = new ArrayList<>();
-                final int slash = path.lastIndexOf('/');
-                final List<String> samePackage = forkedByPackage.get("io.questdb" + (slash < 0 ? "" : '.' + path.substring(0, slash).replace('/', '.')));
+                final List<String> samePackage = forkedByPackage.get(packageOf(path));
                 if (samePackage != null) {
                     names.addAll(samePackage);
                 }
@@ -444,14 +544,36 @@ public class LegacyPlannerTest extends AbstractCairoTest {
                 }
                 for (int i = 0, n = names.size(); i < n; i++) {
                     final String name = names.get(i);
-                    if (Pattern.compile("instanceof\\s+" + name + "\\b|\\(\\s*" + name + "\\s*\\)\\s*[\\w(]").matcher(source).find()
-                            && !TYPE_CHECKS_OF_NEW_PLANNER_OBJECTS.contains(path + '#' + name)) {
+                    if (isTypeChecked(source, name) && !TYPE_CHECKS_OF_NEW_PLANNER_OBJECTS.contains(path + '#' + name)) {
                         violations.put(path).put(" checks ").put(name).put('\n');
+                    }
+                    final String subclass = subclassOf(source, name);
+                    if (subclass != null && !forkedByPackage.getOrDefault(packageOf(path), List.of()).contains(subclass)) {
+                        sharedSubclasses.computeIfAbsent(name, k -> new ArrayList<>()).add(subclass);
+                    }
+                }
+            }
+        }
+        // A legacy type check on a forked class misses the shared subclasses of the shared class, which the legacy
+        // planner builds as well.
+        try (Stream<Path> files = Files.walk(legacy)) {
+            for (Path file : (Iterable<Path>) files.filter(f -> f.toString().endsWith(".java"))::iterator) {
+                final String path = legacy.relativize(file).toString().replace(File.separatorChar, '/');
+                final String source = comments.matcher(Files.readString(file)).replaceAll("");
+                for (Map.Entry<String, List<String>> entry : sharedSubclasses.entrySet()) {
+                    final String name = entry.getKey();
+                    final String pkg = forkedByFqn.entrySet().stream().filter(e -> e.getValue().equals(name)).map(e -> e.getKey().substring(0, e.getKey().lastIndexOf('.'))).findFirst().orElseThrow();
+                    final boolean isForkInScope = packageOf(path).equals(pkg) || source.contains("import io.questdb.legacy." + pkg.substring("io.questdb.".length()) + '.' + name + ';');
+                    if (isForkInScope && isTypeChecked(source, name)) {
+                        violations.put("legacy/").put(path).put(" checks the fork of ").put(name).put(", not ").put(entry.getValue().toString()).put('\n');
                     }
                 }
             }
         }
         TestUtils.assertEquals("", violations);
+        // the shared compiler casts the operations either planner compiles to the shared types
+        Assert.assertTrue(io.questdb.griffin.engine.ops.CreateViewOperation.class.isAssignableFrom(io.questdb.legacy.griffin.engine.ops.CreateViewOperation.class));
+        Assert.assertTrue(io.questdb.griffin.engine.ops.CreateMatViewOperation.class.isAssignableFrom(io.questdb.legacy.griffin.engine.ops.CreateMatViewOperation.class));
     }
 
     @Test
@@ -526,6 +648,41 @@ public class LegacyPlannerTest extends AbstractCairoTest {
             Assert.assertEquals(expected, compiler.isCompiledByLegacyPlanner());
             Assert.assertEquals(expected ? compilesBefore + 1 : compilesBefore, COMPILER_FACTORY.getLegacyCompiles());
         }
+    }
+
+    private static boolean isTypeChecked(String source, String name) {
+        return Pattern.compile("instanceof\\s+" + name + "\\b|\\(\\s*" + name + "\\s*\\)\\s*[\\w(]|\\bcase\\s+" + name + "\\s+\\w+\\s*(?:->|:|when)"
+                + "|[!=]=\\s*" + name + "\\.class\\b|\\b" + name + "\\.class\\s*(?:[!=]=|\\.isInstance|\\.isAssignableFrom|\\.cast)").matcher(source).find();
+    }
+
+    // The class or interface of the source that extends or implements the named type, past type parameters and arguments.
+    private static String subclassOf(String source, String name) {
+        final Matcher declaration = Pattern.compile("\\b(?:class|interface)\\s+(\\w+)\\s*(?:<[^{]*?>)?\\s*((?:extends|implements)[^{]*)\\{").matcher(source);
+        final Pattern type = Pattern.compile("\\b" + name + "\\b");
+        while (declaration.find()) {
+            String supertypes = declaration.group(2);
+            for (String previous = null; !supertypes.equals(previous); ) {
+                previous = supertypes;
+                supertypes = supertypes.replaceAll("<[^<>]*>", "");
+            }
+            if (type.matcher(supertypes).find()) {
+                return declaration.group(1);
+            }
+        }
+        return null;
+    }
+
+    private static String packageOf(String path) {
+        final int slash = path.lastIndexOf('/');
+        return "io.questdb" + (slash < 0 ? "" : '.' + path.substring(0, slash).replace('/', '.'));
+    }
+
+    private static void assertLegacyRows(String sql, String expected) throws SqlException {
+        final int compilesBefore = COMPILER_FACTORY.getLegacyCompiles();
+        final StringSink actual = new StringSink();
+        printSql(sql, actual);
+        Assert.assertEquals(sql, compilesBefore + 1, COMPILER_FACTORY.getLegacyCompiles());
+        TestUtils.assertEquals(sql, expected, actual);
     }
 
     private static void assertPlannersAgree(String sql) throws SqlException {

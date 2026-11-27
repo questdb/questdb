@@ -306,6 +306,7 @@ import io.questdb.griffin.engine.table.PageFrameRowCursorFactory;
 import io.questdb.griffin.engine.table.PostingIndexDistinctRecordCursorFactory;
 import io.questdb.griffin.engine.table.SelectedRecordCursorFactory;
 import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
+import io.questdb.griffin.engine.union.AbstractSetRecordCursorFactory;
 import io.questdb.griffin.engine.union.ExceptAllRecordCursorFactory;
 import io.questdb.griffin.engine.union.ExceptRecordCursorFactory;
 import io.questdb.griffin.engine.union.IntersectAllRecordCursorFactory;
@@ -378,7 +379,6 @@ import io.questdb.legacy.griffin.engine.table.LegacyVirtualRecordCursorFactory;
 import io.questdb.legacy.griffin.engine.table.PushdownFilterExtractor;
 import io.questdb.legacy.griffin.engine.table.RuntimeConstGateRecordCursorFactory;
 import io.questdb.legacy.griffin.engine.table.SymbolPatternIndexRecordCursorFactory;
-import io.questdb.legacy.griffin.engine.union.AbstractSetRecordCursorFactory;
 import io.questdb.legacy.griffin.engine.union.MergeUnionAllRecordCursorFactory;
 import io.questdb.legacy.griffin.engine.union.MergeUnionAllRecordCursorFactoryBuilder;
 import io.questdb.legacy.griffin.engine.window.LiveViewCheckpointFunctionCompiler;
@@ -11798,7 +11798,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // materialised, and a LIMIT expression can own native memory. The constructor assigns
             // both fields before anything that can throw and frees them through close() on its own
             // failure, so ownership transfers at the call - null them out first.
-            if (model.getOrderBy().size() == 0) {
+            if (model.getOrderBy().size() == 0 && (model.getLimitLo() != null || model.getLimitHi() != null)) {
                 limitLoFunc = getLoFunction(model, executionContext);
                 limitHiFunc = getHiFunction(model, executionContext);
             }
