@@ -274,37 +274,41 @@ public final class PlanToFactoryRules {
     }
 
     /**
-     * How the factory of the plan reads the rows of its input {@code index}, an ordered position for a join, as
-     * {@link #readInput} gives them, which decides whether it reads a copy of them, see
-     * {@link LogicalPlan#getOutputCopy()}. A join reads its master by row id for a SPLICE or markout step, its slave by
-     * row id for a SPLICE, light hash or light temporal step, and for an ASOF or LT step over a slave column its
-     * full-fat join cannot carry, see {@link #fullFatTemporalRejectedColumn}; it reads an input again for each row of
-     * another for a nested loop, see {@link JoinInput#isSlaveRewound()}, and before a step that reads its master again,
-     * see {@link JoinInput#isMasterRewound()}, unless it hashes that input once, see {@link #isSlaveRereadOnRewind}. A
-     * HORIZON JOIN reads its master by row id; a fill reads its input by row id for PREV values, see
-     * {@link #isPrevRowRead}, and the base of a SAMPLE BY with keys once more; a LATEST BY that does not scan a table
-     * reads its base once more or by row id; a LIMIT operator that may count from the last row reads its input once
-     * more. A join step, a fill, a LATEST BY and a LIMIT read as far as operator planning decided them.
+     * How the factory of the plan reads the rows of its input {@code index}, the node {@link #accessedInput} gives, which
+     * decides whether it reads a copy of them, see {@link LogicalPlan#getOutputCopy()}. A join reads its master by row
+     * id for a SPLICE or markout first step, its slave by row id for a SPLICE, light hash or light temporal step, and,
+     * before operator planning decides the step, for an ASOF or LT step over a slave column its full-fat join cannot
+     * carry, see {@link #fullFatTemporalRejectedColumn}; it reads an input again for each row of another for a nested
+     * loop, see {@link JoinInput#isSlaveRewound()}, and before a step that reads its master again, see
+     * {@link JoinInput#isMasterRewound()}, unless a rewind does not read that input again, see
+     * {@link #isSlaveRereadOnRewind}. A serial HORIZON JOIN, or the aggregate that builds one, reads the master by row
+     * id; a fill reads its input by row id for PREV values, see {@link #isPrevRowRead}, and the base of a SAMPLE BY
+     * with keys once more; a LATEST BY that does not scan a table reads its base once more or by row id; a LIMIT
+     * operator that may count from the last row reads its input once more. The other consumers read as far as operator
+     * planning decided them, and an undecided one reads each input once.
      */
-    public static InputRead inputRead(LogicalPlan plan, int index) {
+    public static InputAccess inputAccess(LogicalPlan plan, int index) {
         return switch (plan) {
-            case JoinPlan join -> joinInputRead(join.getOrderedInputs(), index);
-            case HorizonJoinPlan _ -> index == 0 ? InputRead.BY_ROW_ID : InputRead.ONCE;
+            case JoinPlan join -> joinInputAccess(join.getOrderedInputs(), index);
+            case HorizonJoinPlan horizon -> index == 0 && horizon.getAlgorithm() == HorizonJoinPlan.Algorithm.SERIAL
+                    ? InputAccess.BY_ROW_ID : InputAccess.ONCE;
+            case AggregatePlan aggregate when aggregateFactory(aggregate) == AggregateFactory.HORIZON ->
+                    aggregate.getAlgorithm() == AggregatePlan.Algorithm.SERIAL ? InputAccess.BY_ROW_ID : InputAccess.ONCE;
             case FillPlan fill -> switch (fill.getAlgorithm()) {
                 case SAMPLE_BY_ROWS ->
-                        isKeyedSampleBy((SampleByPlan) fill.getChild()) ? InputRead.REREAD : InputRead.ONCE;
-                case INPUT_ORDER -> isPrevRowRead(fill) ? InputRead.BY_ROW_ID : InputRead.ONCE;
-                case null, default -> InputRead.ONCE;
+                        isKeyedSampleBy((SampleByPlan) fill.getChild()) ? InputAccess.REREAD : InputAccess.ONCE;
+                case INPUT_ORDER -> isPrevRowRead(fill) ? InputAccess.BY_ROW_ID : InputAccess.ONCE;
+                case null, default -> InputAccess.ONCE;
             };
             case LatestByPlan latest -> switch (latest.getAlgorithm()) {
-                case MATERIALIZED -> InputRead.REREAD;
-                case LIGHT, ASCENDING_LIGHT -> InputRead.BY_ROW_ID;
-                case null -> InputRead.ONCE;
+                case MATERIALIZED -> InputAccess.REREAD;
+                case LIGHT, ASCENDING_LIGHT -> InputAccess.BY_ROW_ID;
+                case null -> InputAccess.ONCE;
             };
             case LimitPlan limit -> limit.getApplication() == LimitPlan.Application.OPERATOR
                     && (LogicalPlans.mayBeNegativeLimit(limit.getLo()) || limit.getHi() != null && LogicalPlans.mayBeNegativeLimit(limit.getHi()))
-                    ? InputRead.REREAD : InputRead.ONCE;
-            default -> InputRead.ONCE;
+                    ? InputAccess.REREAD : InputAccess.ONCE;
+            default -> InputAccess.ONCE;
         };
     }
 
@@ -322,6 +326,38 @@ public final class PlanToFactoryRules {
      */
     public static boolean isHorizonWithinSlotCap(HorizonJoinPlan horizon) {
         return (long) horizon.getOffsetValues().size() * horizon.getSlaves().size() <= MAX_HORIZON_SLOTS_PER_MASTER_ROW;
+    }
+
+    /**
+     * True when a node the generator builds into the factory of the plan, rather than alone, carries a copy of its
+     * rows, see {@link LogicalPlan#getOutputCopy()}, which no factory would hold: the projections and the sort a sorted
+     * LIMIT builds, the window or window join a projection builds and the HORIZON JOIN an aggregate builds.
+     */
+    public static boolean isInlineInputCopied(LogicalPlan plan) {
+        return switch (plan) {
+            case LimitPlan limit when LogicalPlans.hasSortUnderStableProjects(limit.getChild()) -> {
+                LogicalPlan node = limit.getChild();
+                while (node instanceof ProjectPlan && node.getOutputCopy() == null) {
+                    node = node.inputAt(0);
+                }
+                yield node.getOutputCopy() != null;
+            }
+            case ProjectPlan project when projectionFactory(project) == ProjectionFactory.WINDOW
+                    || projectionFactory(project) == ProjectionFactory.WINDOW_JOIN ->
+                    project.getChild().getOutputCopy() != null;
+            case AggregatePlan aggregate when aggregateFactory(aggregate) == AggregateFactory.HORIZON ->
+                    aggregate.getChild().getOutputCopy() != null;
+            default -> false;
+        };
+    }
+
+    /**
+     * True when the factory of the plan, which reads its input again, see {@link #inputAccess}, gives its own consumer
+     * the row ids of the input's rows, so it has random access exactly where its input does: a LATEST BY that keeps a
+     * copy of the latest row of each key and reads its base again for the rows at their positions.
+     */
+    public static boolean isInputRowIdPassedOn(LogicalPlan plan) {
+        return plan instanceof LatestByPlan latest && latest.getAlgorithm() == LatestByPlan.Algorithm.MATERIALIZED;
     }
 
     /**
@@ -378,11 +414,6 @@ public final class PlanToFactoryRules {
     }
 
     /**
-     * True when the temporal join step matches on keys: a sole key pairing the master's designated timestamp, at
-     * {@code masterTimestampIndex} of {@code masterOutput}, with the slave's, at {@code slaveTimestampIndex}, adds no
-     * key, and the generator drops it.
-     */
-    /**
      * True when the SAMPLE BY groups by a key besides its bucket.
      */
     public static boolean isKeyedSampleBy(SampleByPlan sample) {
@@ -395,6 +426,11 @@ public final class PlanToFactoryRules {
         return false;
     }
 
+    /**
+     * True when the temporal join step matches on keys: a sole key pairing the master's designated timestamp, at
+     * {@code masterTimestampIndex} of {@code masterOutput}, with the slave's, at {@code slaveTimestampIndex}, adds no
+     * key, and the generator drops it.
+     */
     public static boolean isKeyedTemporalJoin(JoinInput step, OutputSchema masterOutput, int masterTimestampIndex, int slaveTimestampIndex) {
         final ObjList<JoinKey> keys = step.getKeys();
         if (keys.size() != 1) {
@@ -446,10 +482,6 @@ public final class PlanToFactoryRules {
     }
 
     /**
-     * True when the page frames of the scan follow the order advice of its consumer: a backward scan delivers its
-     * designated timestamp descending and no other key, so it follows a consumer that orders by that key alone.
-     */
-    /**
      * Whether the fill reads the row it takes a PREV value from again by row id: a fill without keys that repeats the
      * PREV value of a column it cannot cache in a slot. The keyed fill copies such rows itself as it finds its keys.
      */
@@ -478,6 +510,10 @@ public final class PlanToFactoryRules {
         return false;
     }
 
+    /**
+     * True when the page frames of the scan follow the order advice of its consumer: a backward scan delivers its
+     * designated timestamp descending and no other key, so it follows a consumer that orders by that key alone.
+     */
     public static boolean isPageFrameAdviceFollowed(ScanPlan scan) {
         final SortKeys order = scan.getRequestedOrder();
         return scan.getScanDirection() == SortDirection.DESCENDING && order.size() == 1
@@ -549,10 +585,11 @@ public final class PlanToFactoryRules {
 
     /**
      * True when rewinding the join reads the input of the step again: every step but an UNNEST, which reads no input,
-     * and a full-fat hash join, which keeps the slave rows it hashed once.
+     * a full-fat hash join, which keeps the slave rows it hashed once, and a step whose slave the generator empties,
+     * see {@link #isSlaveEmptied}, which never reads it.
      */
     public static boolean isSlaveRereadOnRewind(JoinInput step) {
-        return step.getInput() != null && step.getAlgorithm() != JoinInput.Algorithm.HASH;
+        return step.getInput() != null && step.getAlgorithm() != JoinInput.Algorithm.HASH && !isSlaveEmptied(step);
     }
 
     /**
@@ -744,55 +781,52 @@ public final class PlanToFactoryRules {
     }
 
     /**
-     * The input the generator builds a SAMPLE BY over: its input, without a projection that only declares the
-     * designated timestamp unless the SAMPLE BY reads the timestamp that projection declares.
+     * The node whose rows the factory of the plan reads as its input {@code index}, see {@link #inputAccess}: the
+     * ordered input of a join, the master of the HORIZON JOIN an aggregate builds, the base of a LATEST BY, the base of
+     * the SAMPLE BY a fill reads the cursor of, see {@link FillPlan.Algorithm#SAMPLE_BY_ROWS}, the input of the sort a
+     * sorted LIMIT builds when the sort keeps the input order, and input {@code index} otherwise.
      */
-    /**
-     * The node whose rows the factory of the plan reads as its input {@code index}, see {@link #inputRead}: the
-     * ordered input of a join, the base of a LATEST BY, the base of the SAMPLE BY a fill reads the cursor of, see
-     * {@link FillPlan.Algorithm#SAMPLE_BY_ROWS}, the input of the sort a sorted LIMIT builds when the sort keeps the
-     * input order, and input {@code index} otherwise.
-     */
-    public static LogicalPlan readInput(LogicalPlan plan, int index) {
+    public static LogicalPlan accessedInput(LogicalPlan plan, int index) {
         return switch (plan) {
             case JoinPlan join -> join.getOrderedInputs().getQuick(index).getInput();
+            case AggregatePlan aggregate when aggregateFactory(aggregate) == AggregateFactory.HORIZON ->
+                    ((HorizonJoinPlan) aggregate.getChild()).getMaster();
             case LatestByPlan latest -> latestByBase(latest);
             case FillPlan fill when fill.getAlgorithm() == FillPlan.Algorithm.SAMPLE_BY_ROWS ->
                     sampleByBase((SampleByPlan) fill.getChild());
             case LimitPlan limit when LogicalPlans.hasSortUnderStableProjects(limit.getChild())
                     && LogicalPlans.skipProjects(limit.getChild()) instanceof SortPlan sort
-                    && (sort.getAlgorithm() == SortPlan.Algorithm.INPUT_ORDER || sort.getAlgorithm() == SortPlan.Algorithm.TIMESTAMP_DECLARATION) ->
-                    sort.getChild();
+                    && sort.getAlgorithm() != null && sort.getAlgorithm().isInputOrder() -> sort.getChild();
             default -> plan.inputAt(index);
         };
     }
 
     /**
-     * The input {@code index} among those the factory of the plan reads again when it rewinds, null past the last: the
-     * master of a join and every slave a rewind reads again, see {@link #isSlaveRereadOnRewind}; both inputs of UNION
-     * and UNION ALL and the left input of EXCEPT and INTERSECT, which hash their right input once; every input of any
-     * other operator.
+     * The number of inputs {@link #accessedInput} indexes: the ordered inputs of a join, including an UNNEST step,
+     * which reads none, and the inputs of any other plan.
      */
-    public static LogicalPlan rewoundInput(LogicalPlan plan, int index) {
-        switch (plan) {
-            case JoinPlan join -> {
-                final ObjList<JoinInput> ordered = join.getOrderedInputs();
-                for (int i = 0, n = ordered.size(); i < n; i++) {
-                    if ((i == 0 || isSlaveRereadOnRewind(ordered.getQuick(i))) && index-- == 0) {
-                        return ordered.getQuick(i).getInput();
-                    }
-                }
-                return null;
-            }
-            case SetOperationPlan operation -> {
-                return index == 0 ? operation.getLeft() : index == 1 && operation.getOperation().isUnion() ? operation.getRight() : null;
-            }
-            default -> {
-                return index < plan.inputCount() ? plan.inputAt(index) : null;
-            }
-        }
+    public static int accessedInputCount(LogicalPlan plan) {
+        return plan instanceof JoinPlan join ? join.getOrderedInputs().size() : plan.inputCount();
     }
 
+    /**
+     * True when the factory of the plan reads its input {@code index}, see {@link #accessedInput}, again when it
+     * rewinds: the master of a join and every slave a rewind reads again, see {@link #isSlaveRereadOnRewind}; both
+     * inputs of UNION and UNION ALL and the left input of EXCEPT and INTERSECT, which hash their right input once; every
+     * input of any other operator.
+     */
+    public static boolean isRewoundInput(LogicalPlan plan, int index) {
+        return switch (plan) {
+            case JoinPlan join -> index == 0 || isSlaveRereadOnRewind(join.getOrderedInputs().getQuick(index));
+            case SetOperationPlan operation -> index == 0 || operation.getOperation().isUnion();
+            default -> true;
+        };
+    }
+
+    /**
+     * The input the generator builds a SAMPLE BY over: its input, without a projection that only declares the
+     * designated timestamp unless the SAMPLE BY reads the timestamp that projection declares.
+     */
     public static LogicalPlan sampleByBase(SampleByPlan sample) {
         final LogicalPlan sampled = sample.getChild();
         return sample.isTimestampRequired() ? sampled : timestampDeclarationBase(sampled);
@@ -923,25 +957,27 @@ public final class PlanToFactoryRules {
                 && limit.getHi() == null && limit.getLo() instanceof ConstantExpression lo && LogicalPlans.limitValue(lo) == 1;
     }
 
-    private static InputRead joinInputRead(ObjList<JoinInput> ordered, int index) {
+    private static InputAccess joinInputAccess(ObjList<JoinInput> ordered, int index) {
         if (index == 0) {
             final JoinInput first = ordered.size() > 1 ? ordered.getQuick(1) : null;
             if (first != null && (first.getJoinType() == JoinKind.SPLICE || first.getAlgorithm() == JoinInput.Algorithm.MARKOUT)) {
-                return InputRead.BY_ROW_ID;
+                return InputAccess.BY_ROW_ID;
             }
-            return isMasterRewoundAfter(ordered, 0) ? InputRead.REWOUND : InputRead.ONCE;
+            return isMasterRewoundAfter(ordered, 0) ? InputAccess.REWOUND : InputAccess.ONCE;
         }
         final JoinInput step = ordered.getQuick(index);
         if (step.getInput() == null || isSlaveEmptied(step)) {
-            return InputRead.ONCE;
+            return InputAccess.ONCE;
         }
         final JoinKind joinType = step.getJoinType();
         final JoinInput.Algorithm algorithm = step.getAlgorithm();
-        if (joinType == JoinKind.SPLICE || algorithm == JoinInput.Algorithm.LIGHT_HASH || algorithm == JoinInput.Algorithm.TEMPORAL
-                || (joinType == JoinKind.ASOF || joinType == JoinKind.LT) && fullFatTemporalRejectedColumn(step) >= 0) {
-            return InputRead.BY_ROW_ID;
+        final boolean isReadByRowId = algorithm != null
+                ? algorithm == JoinInput.Algorithm.SPLICE || algorithm == JoinInput.Algorithm.LIGHT_HASH || algorithm == JoinInput.Algorithm.TEMPORAL
+                : joinType == JoinKind.SPLICE || (joinType == JoinKind.ASOF || joinType == JoinKind.LT) && fullFatTemporalRejectedColumn(step) >= 0;
+        if (isReadByRowId) {
+            return InputAccess.BY_ROW_ID;
         }
-        return step.isSlaveRewound() || isSlaveRereadOnRewind(step) && isMasterRewoundAfter(ordered, index) ? InputRead.REWOUND : InputRead.ONCE;
+        return step.isSlaveRewound() || isSlaveRereadOnRewind(step) && isMasterRewoundAfter(ordered, index) ? InputAccess.REWOUND : InputAccess.ONCE;
     }
 
     /**
@@ -997,9 +1033,9 @@ public final class PlanToFactoryRules {
     }
 
     /**
-     * How a factory reads the rows of one of its inputs, see {@link #inputRead}.
+     * How a factory reads the rows of one of its inputs, see {@link #inputAccess}.
      */
-    public enum InputRead {
+    public enum InputAccess {
         /**
          * Reads the rows once, in order.
          */

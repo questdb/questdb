@@ -464,7 +464,7 @@ final class OrderPlanning implements OptimiserPass {
     /**
      * Records what the consumer of {@code plan} requires, see {@link OrderRequirement}, and pushes it on to the inputs.
      * A consumer that reads its input by row id - the slave of a join step that reads it so, see
-     * {@link PlanToFactoryRules#inputRead}, the master of a SPLICE join and the master of a HORIZON JOIN - needs an input
+     * {@link PlanToFactoryRules#inputAccess}, the master of a SPLICE join and the master of a HORIZON JOIN - needs an input
      * a merged UNION ALL does not provide, so a set operation it reads through projections, filters, limits and sorts
      * gets no order request, and the sort over it sorts. A sort it reads so records it with the nearest plan above that
      * may read the page frames of the rows instead, see {@link SortPlan#isRowIdRead}, and sorts rows that arrive in its
@@ -520,7 +520,7 @@ final class OrderPlanning implements OptimiserPass {
                 // Expansion counts output rows, not master rows. Neither LIMIT nor a requested
                 // descending output order may cross it; every operand needs temporal row order.
                 require(horizon.getMaster(), requirements.next().inputOf(requirement)
-                        .randomAccessRequired(PlanToFactoryRules.inputRead(horizon, 0) == PlanToFactoryRules.InputRead.BY_ROW_ID, horizon).rowOrderRequired(true));
+                        .randomAccessRequired(true, horizon).rowOrderRequired(true));
                 for (int i = 1, n = horizon.inputCount(); i < n; i++) {
                     require(horizon.inputAt(i), requirements.next().inputOf(requirement).rowOrderRequired(true));
                 }
@@ -543,7 +543,7 @@ final class OrderPlanning implements OptimiserPass {
         aggregate.setRequestedTopK(requirement.getTopKColumnId(), requirement.getTopK());
         if (aggregate.getChild() instanceof HorizonJoinPlan horizon) {
             require(horizon.getMaster(), requirements.next().inputOf(requirement)
-                    .randomAccessRequired(PlanToFactoryRules.inputRead(horizon, 0) == PlanToFactoryRules.InputRead.BY_ROW_ID, aggregate));
+                    .randomAccessRequired(true, aggregate));
             for (int i = 0, n = horizon.getSlaves().size(); i < n; i++) {
                 requireNothing(horizon.getSlaves().getQuick(i).getInput(), requirement);
             }
@@ -581,10 +581,10 @@ final class OrderPlanning implements OptimiserPass {
         final int orderColumnId = requirement.getOrderColumnId();
         final LimitPlan limit = requirement.getLimit();
         final boolean isOrdered = !requirement.getOrder().isEmpty();
-        final PlanToFactoryRules.InputRead masterRead = PlanToFactoryRules.inputRead(join, 0);
+        final PlanToFactoryRules.InputAccess masterRead = PlanToFactoryRules.inputAccess(join, 0);
         final OrderRequirement masterRequirement = requirements.next().inputOf(requirement)
-                .rewound(masterRead == PlanToFactoryRules.InputRead.REWOUND)
-                .randomAccessRequired(masterRead == PlanToFactoryRules.InputRead.BY_ROW_ID, null);
+                .rewound(masterRead == PlanToFactoryRules.InputAccess.REWOUND)
+                .randomAccessRequired(masterRead == PlanToFactoryRules.InputAccess.BY_ROW_ID, null);
         if (isMasterOrderPreserved && orderColumnId >= 0 && masterOutput.getColumnIndexById(orderColumnId) >= 0) {
             masterRequirement.orderBy(orderColumnId, requirement.getDirection()).order(requirement, masterOutput)
                     .rowOrderRequired(requirement.isRowOrderRequired());
@@ -603,9 +603,9 @@ final class OrderPlanning implements OptimiserPass {
             if (joinType != JoinKind.UNNEST) {
                 final boolean isLimited = !isOrdered && limit != null && i == n - 1 && joinType == JoinKind.CROSS
                         && step.getPostJoinFilter() == null && limit.getLo() instanceof ConstantExpression;
-                final PlanToFactoryRules.InputRead read = PlanToFactoryRules.inputRead(join, i);
-                require(step.getInput(), requirements.next().inputOf(requirement).joinSlave(read == PlanToFactoryRules.InputRead.BY_ROW_ID)
-                        .rewound(read == PlanToFactoryRules.InputRead.REWOUND)
+                final PlanToFactoryRules.InputAccess read = PlanToFactoryRules.inputAccess(join, i);
+                require(step.getInput(), requirements.next().inputOf(requirement).joinSlave(read == PlanToFactoryRules.InputAccess.BY_ROW_ID)
+                        .rewound(read == PlanToFactoryRules.InputAccess.REWOUND)
                         .limit(isLimited ? limit : null).rowOrderRequired(joinType.isTemporal() || requirement.isRowOrderRequired()));
             }
         }

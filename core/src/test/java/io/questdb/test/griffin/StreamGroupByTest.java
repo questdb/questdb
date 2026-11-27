@@ -974,6 +974,33 @@ public class StreamGroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRereadSkipsEmptiedSlave() throws Exception {
+        run((engine, compiler, context) -> {
+            engine.execute("CREATE TABLE trades AS (SELECT timestamp_sequence('2024-01-01', 7_000_000) ts, ('S' || (x % 5))::SYMBOL sym, x % 97 price "
+                    + "FROM long_sequence(600)) TIMESTAMP(ts) PARTITION BY DAY", context);
+            engine.execute("CREATE TABLE notes AS (SELECT ('S' || (x % 5))::SYMBOL sym, x note FROM long_sequence(20))", context);
+            final String bars = "SELECT ts, sym, sum(price) total FROM trades SAMPLE BY 1m";
+            final String emptied = "SELECT t.ts, t.sym, t.price, b.total FROM trades t LEFT JOIN (" + bars + ") b ON t.sym = b.sym AND 1 = 0";
+            for (String sql : new String[]{
+                    "SELECT * FROM (" + emptied + ") LIMIT -2",
+                    "SELECT n.note, e.ts, e.price, e.total FROM notes n CROSS JOIN (" + emptied + ") e ORDER BY n.note, e.ts LIMIT 3",
+                    "SELECT * FROM ((" + emptied + ") LATEST ON ts PARTITION BY sym) ORDER BY sym"
+            }) {
+                context.setStreamGroupByEnabled(false);
+                final String expected = compileAndRead(compiler, context, sql);
+                context.setStreamGroupByEnabled(true);
+                final String plan = compileAndRead(compiler, context, "EXPLAIN " + sql);
+                Assert.assertTrue(plan, plan.contains("Empty table") && !plan.contains("Materialize"));
+                try (RecordCursorFactory factory = compiler.compile(sql, context).getRecordCursorFactory()) {
+                    for (int pass = 0; pass < 2; pass++) {
+                        Assert.assertEquals(sql, expected, read(factory, context));
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testLatestOnCopiesOnlyStreamInputs() throws Exception {
         run((engine, compiler, context) -> {
             engine.execute("CREATE TABLE trades AS (SELECT timestamp_sequence('2024-01-01', 7_000_000) ts, ('S' || (x % 5))::SYMBOL sym, x % 97 price "

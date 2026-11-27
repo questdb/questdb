@@ -251,12 +251,15 @@ final class PhysicalChoiceVerifier {
     }
 
     /**
-     * Whether the join step reads its master back by row id, which requires a master with random access: a markout
-     * join, a SPLICE join, and a light hash join that hashes its master.
+     * Whether the join step at ordered position {@code position} reads the join of the inputs before it back by row id,
+     * which requires that join to have random access: a light hash join that hashes its master, and a markout or SPLICE
+     * join after the first step. The read of the first input by a first step is the join's read of that input, see
+     * {@link PlanToFactoryRules#inputAccess}.
      */
-    private static boolean isMasterReadByRowId(JoinInput step) {
-        return step.getAlgorithm() == JoinInput.Algorithm.MARKOUT || step.getAlgorithm() == JoinInput.Algorithm.SPLICE
-                || step.isAlgorithmDecided() && step.getBuildSide() == BuildSide.MASTER;
+    private static boolean isJoinedMasterReadByRowId(JoinInput step, int position) {
+        final JoinInput.Algorithm algorithm = step.getAlgorithm();
+        return step.isAlgorithmDecided() && step.getBuildSide() == BuildSide.MASTER
+                || position > 1 && (algorithm == JoinInput.Algorithm.MARKOUT || algorithm == JoinInput.Algorithm.SPLICE);
     }
 
     /**
@@ -297,6 +300,15 @@ final class PhysicalChoiceVerifier {
      */
     private static boolean isRegenerable(AggregatePlan producer) {
         return !isSharedReader(producer) && producer.getChild().walkTopDown(ONCE_GENERATED);
+    }
+
+    /**
+     * Whether operator planning decided how the plan reads its input {@code index}, see
+     * {@link PlanToFactoryRules#inputAccess}: a join reads an input as the step that reads it decides, and its master as
+     * its first step decides; any other plan reads its inputs as far as it decided.
+     */
+    private static boolean isReadDecided(LogicalPlan plan, int index) {
+        return !(plan instanceof JoinPlan join) || join.getOrderedInputs().getQuick(Math.max(index, 1)).getAlgorithm() != null;
     }
 
     /**
@@ -421,14 +433,6 @@ final class PhysicalChoiceVerifier {
     }
 
     /**
-     * Whether the join step reads its slave back by row id, which requires a slave with random access: a light hash
-     * join, a linear temporal join and a SPLICE join.
-     */
-    private static boolean isSlaveReadByRowId(JoinInput.Algorithm algorithm) {
-        return algorithm == JoinInput.Algorithm.LIGHT_HASH || algorithm == JoinInput.Algorithm.TEMPORAL || algorithm == JoinInput.Algorithm.SPLICE;
-    }
-
-    /**
      * Whether the ASOF join step steals the filter of its slave, whose factory under the filter serves time frames.
      */
     private static boolean isTimeFrameFilterStolen(JoinInput step, boolean isPlanned) {
@@ -470,9 +474,6 @@ final class PhysicalChoiceVerifier {
         return true;
     }
 
-    /**
-     * Checks a HORIZON JOIN that reads its master by row id, which requires a master with random access.
-     */
     private static String joinSteps(JoinPlan join, boolean isPlanned) {
         final ObjList<JoinInput> ordered = join.getOrderedInputs();
         final ObjList<JoinInput> steps = ordered.size() > 0 ? ordered : join.getInputs();
@@ -497,40 +498,30 @@ final class PhysicalChoiceVerifier {
     }
 
     /**
-     * Checks the copies of the rows of the node's inputs: an input the node reads again, see
-     * {@link PlanToFactoryRules#inputRead}, computes no rows again where a copy could hold them, see
-     * {@link #isRecomputedOnRewind}, and a node the generator builds into the node's factory carries no copy: the sort
-     * and the projections a sorted LIMIT builds, the window or window join a projection builds and the HORIZON JOIN an
-     * aggregate builds.
+     * Checks how the node reads its inputs, see {@link PlanToFactoryRules#inputAccess}: an input it decided to read by
+     * row id, see {@link #isReadDecided}, has random access, of its own or from its copy, and one it reads again
+     * computes no rows again where a copy could hold them, see {@link #isRecomputedOnRewind}. A node the generator builds into the node's factory
+     * carries no copy, see {@link PlanToFactoryRules#isInlineInputCopied}.
      */
-    private static String inputCopies(LogicalPlan plan) {
-        final int inputCount = plan instanceof JoinPlan join ? join.getOrderedInputs().size() : plan.inputCount();
-        for (int i = 0; i < inputCount; i++) {
-            final PlanToFactoryRules.InputRead read = PlanToFactoryRules.inputRead(plan, i);
-            if ((read == PlanToFactoryRules.InputRead.REREAD || read == PlanToFactoryRules.InputRead.REWOUND)
-                    && isRecomputedOnRewind(PlanToFactoryRules.readInput(plan, i))) {
-                return PlanVerifier.INPUT_RECOMPUTED;
+    private static String inputReads(LogicalPlan plan, boolean isPlanned) {
+        for (int i = 0, n = PlanToFactoryRules.accessedInputCount(plan); i < n; i++) {
+            final LogicalPlan input = PlanToFactoryRules.accessedInput(plan, i);
+            switch (PlanToFactoryRules.inputAccess(plan, i)) {
+                case BY_ROW_ID -> {
+                    if (isReadDecided(plan, i) && isUnsatisfied(PhysicalProperties.supportsRandomAccess(input), isPlanned)) {
+                        return PlanVerifier.INPUT_RANDOM_ACCESS;
+                    }
+                }
+                case REREAD, REWOUND -> {
+                    if (isRecomputedOnRewind(input)) {
+                        return PlanVerifier.INPUT_RECOMPUTED;
+                    }
+                }
+                case ONCE -> {
+                }
             }
         }
-        return hasInlineCopy(plan) ? PlanVerifier.OUTPUT_COPY : null;
-    }
-
-    private static boolean hasInlineCopy(LogicalPlan plan) {
-        return switch (plan) {
-            case LimitPlan limit when LogicalPlans.hasSortUnderStableProjects(limit.getChild()) -> {
-                LogicalPlan node = limit.getChild();
-                while (node instanceof ProjectPlan && node.getOutputCopy() == null) {
-                    node = node.inputAt(0);
-                }
-                yield node.getOutputCopy() != null;
-            }
-            case ProjectPlan project when PlanToFactoryRules.projectionFactory(project) == PlanToFactoryRules.ProjectionFactory.WINDOW
-                    || PlanToFactoryRules.projectionFactory(project) == PlanToFactoryRules.ProjectionFactory.WINDOW_JOIN ->
-                    project.getChild().getOutputCopy() != null;
-            case AggregatePlan aggregate when PlanToFactoryRules.aggregateFactory(aggregate) == PlanToFactoryRules.AggregateFactory.HORIZON ->
-                    aggregate.getChild().getOutputCopy() != null;
-            default -> false;
-        };
+        return PlanToFactoryRules.isInlineInputCopied(plan) ? PlanVerifier.OUTPUT_COPY : null;
     }
 
     /**
@@ -554,10 +545,6 @@ final class PhysicalChoiceVerifier {
                     PhysicalProperties.supportsRandomAccessWithoutCopy(plan) == PhysicalProperties.Capability.NO;
         };
         return isNeeded && PlanToFactoryRules.copyRejectedColumn(plan.getOutput()) < 0 ? null : PlanVerifier.OUTPUT_COPY;
-    }
-
-    private static String serialHorizon(HorizonJoinPlan horizon, boolean isPlanned) {
-        return isUnsatisfied(PhysicalProperties.supportsRandomAccess(horizon.getMaster()), isPlanned) ? PlanVerifier.INPUT_RANDOM_ACCESS : null;
     }
 
     /**
@@ -605,10 +592,7 @@ final class PhysicalChoiceVerifier {
         if (!isValid) {
             return PlanVerifier.AGGREGATE_ALGORITHM;
         }
-        if (!isStreamConsistent(aggregate, algorithm, factory)) {
-            return PlanVerifier.AGGREGATE_STREAM;
-        }
-        return isHorizon && algorithm == AggregatePlan.Algorithm.SERIAL ? serialHorizon((HorizonJoinPlan) aggregate.getChild(), isPlanned) : null;
+        return isStreamConsistent(aggregate, algorithm, factory) ? null : PlanVerifier.AGGREGATE_STREAM;
     }
 
     /**
@@ -641,9 +625,9 @@ final class PhysicalChoiceVerifier {
         if (violation != null) {
             return violation;
         }
-        final String inputCopy = inputCopies(plan);
-        if (inputCopy != null) {
-            return inputCopy;
+        final String inputRead = inputReads(plan, isPlanned);
+        if (inputRead != null) {
+            return inputRead;
         }
         final String timestampRead = timestampReads(plan, isPlanned);
         return timestampRead == null && plan instanceof WindowPlan window ? windowOrder(window) : timestampRead;
@@ -699,9 +683,11 @@ final class PhysicalChoiceVerifier {
         if (inputTimestampIndex == PhysicalProperties.UNKNOWN_TIMESTAMP) {
             return null;
         }
-        final boolean isValid = algorithm == FillPlan.Algorithm.SAMPLE_BY_ROWS
-                ? inputTimestampIndex == fill.derivedTimestampIndex()
-                : (algorithm == FillPlan.Algorithm.INPUT_ORDER) == OperatorPlanning.isFillInputOrdered(fill);
+        final boolean isValid = switch (algorithm) {
+            case SAMPLE_BY_ROWS -> inputTimestampIndex == fill.derivedTimestampIndex();
+            case INPUT_ORDER -> OperatorPlanning.isFillInputOrdered(fill);
+            case SORTED -> !OperatorPlanning.isFillInputOrdered(fill) || PlanToFactoryRules.isPrevRowRead(fill);
+        };
         return isValid ? null : PlanVerifier.FILL_ALGORITHM;
     }
 
@@ -753,10 +739,7 @@ final class PhysicalChoiceVerifier {
                     ? !isUnsatisfied(PhysicalProperties.supportsPageFrameCursor(master), isPlanned)
                     : PlanToFactoryRules.stolenFilter(master) != null);
         };
-        if (!isValid) {
-            return PlanVerifier.HORIZON_ALGORITHM;
-        }
-        return algorithm == HorizonJoinPlan.Algorithm.SERIAL ? serialHorizon(horizon, isPlanned) : null;
+        return isValid ? null : PlanVerifier.HORIZON_ALGORITHM;
     }
 
     /**
@@ -822,9 +805,7 @@ final class PhysicalChoiceVerifier {
         if (!isBuildSideSettled(join, position, step)) {
             return PlanVerifier.JOIN_BUILD_SIDE;
         }
-        return isSlaveReadByRowId(algorithm) && !PlanToFactoryRules.isSlaveEmptied(step)
-                && isUnsatisfied(PhysicalProperties.supportsRandomAccess(step.getInput()), isPlanned)
-                || isMasterReadByRowId(step) && position > 0
+        return position > 0 && isJoinedMasterReadByRowId(step, position)
                 && isUnsatisfied(PhysicalProperties.masterSupportsRandomAccess(join, position), isPlanned)
                 ? PlanVerifier.INPUT_RANDOM_ACCESS : null;
     }
@@ -835,12 +816,7 @@ final class PhysicalChoiceVerifier {
         if (algorithm != null && isScanned) {
             return PlanVerifier.LATEST_BY_ALGORITHM;
         }
-        if (algorithm == null) {
-            return isPlanned && !isScanned ? PlanVerifier.CHOICE_UNPLANNED : null;
-        }
-        return algorithm != LatestByPlan.Algorithm.MATERIALIZED
-                && isUnsatisfied(PhysicalProperties.supportsRandomAccess(PlanToFactoryRules.latestByBase(latest)), isPlanned)
-                ? PlanVerifier.INPUT_RANDOM_ACCESS : null;
+        return algorithm == null && isPlanned && !isScanned ? PlanVerifier.CHOICE_UNPLANNED : null;
     }
 
     static String limit(LimitPlan limit, boolean isPlanned) {

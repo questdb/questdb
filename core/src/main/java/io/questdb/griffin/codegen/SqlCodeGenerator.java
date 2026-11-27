@@ -357,6 +357,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     /**
+     * Checks the factory of the plan's own operator against the plan under {@link ParanoiaState#PLAN_PARANOIA_MODE},
+     * see {@link #verifyPhysicalProperties}. Consumes the factory on failure.
+     */
+    private static RecordCursorFactory verifiedOperator(LogicalPlan plan, RecordCursorFactory factory) {
+        return ParanoiaState.PLAN_PARANOIA_MODE ? verifyPhysicalProperties(plan, factory, false) : factory;
+    }
+
+    /**
      * Puts the copy of the rows the consumer of the plan reads, see {@link LogicalPlan#getOutputCopy()}, over the
      * factory of the plan's own operator, and checks it against the plan. Consumes the factory on entry, including on
      * failure.
@@ -424,7 +432,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 return generateMasterSuffixLimit(frame, limit, executionContext);
             }
             case LimitPlan limit when input instanceof DistinctPlan distinct ->
-                    base = copyRows(distinct, aggregateGenerator.generateDistinct(frame, distinct, limit, executionContext));
+                    base = copyRows(distinct, verifiedOperator(distinct, aggregateGenerator.generateDistinct(frame, distinct, limit, executionContext)));
             default -> base = generate(frame, input, executionContext);
         }
         if (plan instanceof FilterPlan filter) {
@@ -501,16 +509,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     /**
-     * Builds the factory the consumer of the plan reads: the plan's own operator, see {@link #generateOperator}, under
-     * the copy of its rows the consumer reads, see {@link #copyRows}.
+     * Builds the factory the consumer of the plan reads: the plan's own operator, see {@link #generateOperator}, or the
+     * shared cursor of the set operation head the frame reads in its place, under the copy of its rows the consumer
+     * reads, see {@link #copyRows}.
      */
     RecordCursorFactory generate(GenerationFrame frame, LogicalPlan plan, SqlExecutionContext executionContext) throws SqlException {
+        final RecordCursorFactory factory;
         if (plan == frame.sharedHeadTarget) {
             frame.sharedHeadTarget = null;
-            return frame.shareCursor(frame.sharedHeadEntry);
+            factory = frame.shareCursor(frame.sharedHeadEntry);
+        } else if (plan instanceof AggregatePlan producer && producer.getReaderCount() > 0) {
+            factory = generateProducer(frame, producer, executionContext);
+        } else {
+            factory = generateOperator(frame, plan, executionContext);
         }
-        return copyRows(plan, plan instanceof AggregatePlan producer && producer.getReaderCount() > 0
-                ? generateProducer(frame, producer, executionContext) : generateOperator(frame, plan, executionContext));
+        return copyRows(plan, factory);
     }
 
     /**
@@ -549,7 +562,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             case SetOperationPlan operation -> setOperationGenerator.generate(frame, operation, executionContext);
             default -> generateUnary(frame, plan, executionContext);
         };
-        return ParanoiaState.PLAN_PARANOIA_MODE ? verifyPhysicalProperties(plan, factory, false) : factory;
+        return verifiedOperator(plan, factory);
     }
 
     /**
