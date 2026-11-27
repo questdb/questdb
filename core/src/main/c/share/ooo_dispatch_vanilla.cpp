@@ -112,7 +112,7 @@ void merge_copy_varchar_column(
         if ((firstWord & 1) == 0 && (firstWord & 4) == 0) {
             // not inlined and not null
             auto originalOffset = secondWord >> 16;
-            auto len = (firstWord >> 4) & 0xffffff;
+            auto len = (firstWord >> 4) & VARCHAR_DATA_LENGTH_MASK;
             auto data = src_var[bit] + originalOffset;
             __MEMCPY(dst_var + dst_var_offset, data, len);
             dst_var_offset += len;

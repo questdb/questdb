@@ -2316,7 +2316,7 @@ public class TableSnapshotRestore implements QuietCloseable {
             int covType = metadata.getColumnType(covDenseIdx);
             names.add(metadata.getColumnName(covDenseIdx));
             nameTxns.add(columnVersionReader.getColumnNameTxn(partitionTimestamp, covWriterIdx));
-            tops.add(Math.max(0, columnVersionReader.getColumnTop(partitionTimestamp, covWriterIdx)));
+            tops.add(PostingIndexUtils.coveredColumnTop(columnVersionReader.getColumnTop(partitionTimestamp, covWriterIdx)));
             shifts.add(ColumnType.pow2SizeOf(covType));
             indices.add(covWriterIdx);
             types.add(covType);

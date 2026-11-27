@@ -29,6 +29,7 @@ import io.questdb.cairo.frm.FrameAlgebra;
 import io.questdb.cairo.idx.BitmapIndexUtils;
 import io.questdb.cairo.idx.IndexFactory;
 import io.questdb.cairo.idx.IndexWriter;
+import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.idx.PostingIndexWriter;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
@@ -808,7 +809,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 final int covType = metadata.getColumnType(covCol);
                 coverNames.add(metadata.getColumnName(covCol));
                 coverNameTxns.add(versions.getColumnNameTxn(partitionTimestamp, covCol));
-                coverTops.add(Math.max(0, versions.getColumnTop(partitionTimestamp, covCol)));
+                coverTops.add(PostingIndexUtils.coveredColumnTop(versions.getColumnTop(partitionTimestamp, covCol)));
                 coverShifts.add(ColumnType.pow2SizeOf(covType));
                 coverIndices.add(covCol);
                 coverTypes.add(covType);
@@ -6092,8 +6093,15 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                 // Data buffer: overestimate varies per merge, grow if needed.
                 // a replace merge without O3 rows, a filter, has an empty O3 slice
-                final long o3DataSize = mergeRangeHi >= mergeRangeLo ? ctd.getDataVectorSize(srcOooFixAddr, mergeRangeLo, mergeRangeHi) : 0;
-                long neededDataSize = o3DataSize + ctd.getDataVectorSizeAt(columnAuxPtr, rowGroupSize - 1);
+                final long o3RowCount = mergeRangeHi >= mergeRangeLo ? mergeRangeHi - mergeRangeLo + 1 : 0;
+                final long neededDataSize;
+                if (mergeRowCount < rowGroupSize + o3RowCount) {
+                    // DEDUP repeats an incoming row once per stored duplicate: only the index bounds the size
+                    neededDataSize = ctd.dedupMergeVarColumnSize(timestampMergeIndexAddr, mergeRowCount, columnAuxPtr, srcOooFixAddr);
+                } else {
+                    final long o3DataSize = o3RowCount > 0 ? ctd.getDataVectorSize(srcOooFixAddr, mergeRangeLo, mergeRangeHi) : 0;
+                    neededDataSize = o3DataSize + ctd.getDataVectorSizeAt(columnAuxPtr, rowGroupSize - 1);
+                }
                 if (neededDataSize > mergeDstBufs.getQuick(bi4 + 1)) {
                     if (mergeDstBufs.getQuick(bi4) != 0) {
                         Unsafe.free(mergeDstBufs.getQuick(bi4), mergeDstBufs.getQuick(bi4 + 1), MemoryTag.NATIVE_O3);

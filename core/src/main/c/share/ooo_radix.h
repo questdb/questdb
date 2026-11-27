@@ -561,7 +561,7 @@ int64_t merge_shuffle_varchar_column_from_many_addresses(
         if ((first_word & 1) == 0 && (first_word & 4) == 0) {
             // not inlined and not null
             auto original_offset = second_word >> 16;
-            auto len = (first_word >> 4) & 0xffffff;
+            auto len = (first_word >> 4) & VARCHAR_DATA_LENGTH_MASK;
             auto data = src_primary[src_index] + original_offset;
             assertm(dst_var_offset + len <= dst_data_size, "destination var buffer is too small");
 

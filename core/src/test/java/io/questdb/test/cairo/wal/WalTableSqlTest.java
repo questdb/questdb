@@ -57,6 +57,7 @@ import io.questdb.mp.Job;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
@@ -74,6 +75,9 @@ import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.util.Comparator;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -84,6 +88,9 @@ import static io.questdb.cairo.wal.WalUtils.SEQ_DIR;
 
 @SuppressWarnings({"SameParameterValue", "resource"})
 public class WalTableSqlTest extends AbstractCairoTest {
+    private static final boolean[] LARGE_VARCHAR_MERGE_APPEND = {false, false, true};
+    private static final String[] LARGE_VARCHAR_MODES = {"BYPASS WAL", "WAL", "WAL"};
+    private static final int LARGE_VARCHAR_16M = 1 << 24;
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
@@ -1372,6 +1379,104 @@ public class WalTableSqlTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLargeVarcharDedupInOrderSingleRow() throws Exception {
+        assertLargeVarcharRows(true, new LargeVarcharRow[][]{{largeVarchar("12:00", 'B', LARGE_VARCHAR_16M + 1, "0123456789")}});
+    }
+
+    @Test
+    public void testLargeVarcharDedupReplacesLargeValue() throws Exception {
+        assertLargeVarcharRows(
+                true,
+                new LargeVarcharRow[][]{
+                        largeVarcharCommitted(),
+                        {largeVarchar("12:00", 'C', LARGE_VARCHAR_16M + 1, "abcdefghij"), largeVarchar("13:00", 'n', 20, "nn")}
+                }
+        );
+    }
+
+    @Test
+    public void testLargeVarcharInMergeRange() throws Exception {
+        assertLargeVarcharRows(false, new LargeVarcharRow[][]{largeVarcharCommitted(), {largeVarchar("11:00", 'm', 20, "mm"), largeVarchar("13:00", 'n', 20, "nn")}});
+    }
+
+    @Test
+    public void testLargeVarcharInPrefix() throws Exception {
+        assertLargeVarcharRows(false, new LargeVarcharRow[][]{largeVarcharCommitted(), {largeVarchar("13:00", 'm', 20, "mm"), largeVarchar("15:00", 'n', 20, "nn")}});
+    }
+
+    @Test
+    public void testLargeVarcharInSuffix() throws Exception {
+        assertLargeVarcharRows(false, new LargeVarcharRow[][]{largeVarcharCommitted(), {largeVarchar("09:00", 'm', 20, "mm"), largeVarchar("11:00", 'n', 20, "nn")}});
+    }
+
+    @Test
+    public void testLargeVarcharMergeBelowColumnTop() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_STR_FUNCTION_BUFFER_MAX_SIZE, 64 * Numbers.SIZE_1MB);
+        assertMemoryLeak(() -> {
+            for (int m = 0; m < LARGE_VARCHAR_MODES.length; m++) {
+                setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, String.valueOf(LARGE_VARCHAR_MERGE_APPEND[m]));
+                execute("CREATE TABLE t (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY " + LARGE_VARCHAR_MODES[m]);
+                execute("INSERT INTO t VALUES ('2024-01-01T09:00:00.000000Z', 1)");
+                execute("ALTER TABLE t ADD COLUMN v VARCHAR");
+                final LargeVarcharRow[] committed = {largeVarchar("12:00", 'B', LARGE_VARCHAR_16M + 1, "0123456789"), largeVarchar("14:00", 'q', 20, "p2")};
+                final LargeVarcharRow[] outOfOrder = {largeVarchar("08:30", 'm', 20, "mm"), largeVarchar("13:00", 'n', 20, "nn")};
+                execute("INSERT INTO t (ts, v) VALUES " + largeVarcharValues(committed));
+                drainWalQueue();
+                execute("INSERT INTO t (ts, v) VALUES " + largeVarcharValues(outOfOrder));
+                drainWalQueue();
+                assertQuery("SELECT ts, length(v) len, md5(v) h FROM t WHERE v IS NOT NULL")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .returns(largeVarcharExpected(false, committed, outOfOrder));
+                execute("DROP TABLE t");
+            }
+        });
+    }
+
+    @Test
+    public void testLargeVarcharOutOfOrder() throws Exception {
+        assertLargeVarcharRows(
+                false,
+                new LargeVarcharRow[][]{
+                        {largeVarchar("10:00", 'p', 20, "p1"), largeVarchar("14:00", 'q', 20, "p2")},
+                        {largeVarchar("12:00", 'B', LARGE_VARCHAR_16M + 1, "0123456789")}
+                }
+        );
+    }
+
+    @Test
+    public void testLargeVarcharSortInOneTransaction() throws Exception {
+        for (int size : new int[]{LARGE_VARCHAR_16M - 1, LARGE_VARCHAR_16M, LARGE_VARCHAR_16M + 1, 20 * Numbers.SIZE_1MB}) {
+            assertLargeVarcharRows(
+                    false,
+                    new LargeVarcharRow[][]{{largeVarchar("12:00", 'B', size, "0123456789"), largeVarchar("11:00", 'x', 1, "x"), largeVarchar("13:00", 'n', 20, "nn")}}
+            );
+        }
+    }
+
+    @Test
+    public void testLargeVarcharWalBlockApply() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_STR_FUNCTION_BUFFER_MAX_SIZE, 64 * Numbers.SIZE_1MB);
+        assertMemoryLeak(() -> {
+            for (int m = 1; m < LARGE_VARCHAR_MODES.length; m++) {
+                setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, String.valueOf(LARGE_VARCHAR_MERGE_APPEND[m]));
+                final LargeVarcharRow[] first = {largeVarchar("12:00", 'B', LARGE_VARCHAR_16M + 1, "0123456789")};
+                final LargeVarcharRow[] second = {largeVarchar("11:00", 'm', 20, "mm"), largeVarchar("13:00", 'n', 20, "nn")};
+                execute("CREATE TABLE t (ts TIMESTAMP, v VARCHAR) TIMESTAMP(ts) PARTITION BY DAY " + LARGE_VARCHAR_MODES[m]);
+                execute("INSERT INTO t VALUES " + largeVarcharValues(first));
+                execute("INSERT INTO t VALUES " + largeVarcharValues(second));
+                drainWalQueue();
+                assertQuery("SELECT ts, length(v) len, md5(v) h FROM t")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns(largeVarcharExpected(false, first, second));
+                execute("DROP TABLE t");
+            }
+        });
+    }
+
+    @Test
     public void testNoLagUsedWhenDataIsInOrder() throws Exception {
         // Merge-append refuses WAL lag for the whole table, which this test's lag-scheduling assertions need.
         node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
@@ -1541,6 +1646,22 @@ public class WalTableSqlTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .returns("suspended\tcaught_up\nfalse\ttrue\n");
         });
+    }
+
+    @Test
+    public void testRebaseWalVarSizeColumns() throws Exception {
+        assertRebaseWalVarSizeColumns(false);
+    }
+
+    @Test
+    public void testRebaseWalVarSizeColumnsBlockApply() throws Exception {
+        setProperty(PropertyKey.DEBUG_WAL_APPLY_BLOCK_FAILURE_NO_RETRY, "true");
+        assertRebaseWalVarSizeColumns(false);
+    }
+
+    @Test
+    public void testRebaseWalVarSizeColumnsMergeAppend() throws Exception {
+        assertRebaseWalVarSizeColumns(true);
     }
 
     @Test
@@ -2337,6 +2458,84 @@ public class WalTableSqlTest extends AbstractCairoTest {
         row.append();
     }
 
+    private void assertLargeVarcharRows(boolean dedup, LargeVarcharRow[][] transactions) throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_STR_FUNCTION_BUFFER_MAX_SIZE, 64 * Numbers.SIZE_1MB);
+        assertMemoryLeak(() -> {
+            for (int m = dedup ? 1 : 0; m < LARGE_VARCHAR_MODES.length; m++) {
+                setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, String.valueOf(LARGE_VARCHAR_MERGE_APPEND[m]));
+                execute("CREATE TABLE t (ts TIMESTAMP, v VARCHAR) TIMESTAMP(ts) PARTITION BY DAY " + LARGE_VARCHAR_MODES[m]
+                        + (dedup ? " DEDUP UPSERT KEYS(ts)" : ""));
+                for (LargeVarcharRow[] transaction : transactions) {
+                    execute("INSERT INTO t VALUES " + largeVarcharValues(transaction));
+                    drainWalQueue();
+                }
+                assertQuery("SELECT ts, length(v) len, md5(v) h FROM t")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns(largeVarcharExpected(dedup, transactions));
+                execute("DROP TABLE t");
+            }
+        });
+    }
+
+    private void assertRebaseCaughtUp() throws Exception {
+        assertQuery("SELECT suspended, writerTxn = sequencerTxn caught_up FROM wal_tables() WHERE name = 't'")
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns("suspended\tcaught_up\nfalse\ttrue\n");
+    }
+
+    private void assertRebaseWalVarSizeColumns(boolean mergeAppend) throws Exception {
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, String.valueOf(mergeAppend));
+        final String[][] types = {
+                {"VARCHAR", "'v1'", "'v2'", "'v3'", "'v4'", "v1", "v2", "v3", "v4"},
+                {"STRING", "'v1'", "'v2'", "'v3'", "'v4'", "v1", "v2", "v3", "v4"},
+                {"BINARY", "null", "null", "null", "null", "", "", "", ""},
+                {"DOUBLE[]", "ARRAY[1.0]", "ARRAY[2.0]", "ARRAY[3.0, 3.5]", "ARRAY[4.0]", "[1.0]", "[2.0]", "[3.0,3.5]", "[4.0]"},
+        };
+        assertMemoryLeak(() -> {
+            for (String[] type : types) {
+                for (boolean dedup : new boolean[]{true, false}) {
+                    execute("CREATE TABLE t (k SYMBOL, ts TIMESTAMP, v " + type[0] + ") TIMESTAMP(ts) PARTITION BY DAY WAL"
+                            + (dedup ? " DEDUP UPSERT KEYS(k, ts)" : ""));
+                    execute("INSERT INTO t VALUES ('a', '2026-01-01T00:00:00.000000Z', " + type[1] + ")");
+                    drainWalQueue();
+
+                    execute("ALTER TABLE t SUSPEND WAL");
+                    execute("ALTER TABLE t REBASE WAL");
+                    drainWalQueueBounded();
+                    assertRebaseCaughtUp();
+                    assertQuery("t")
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .expectSize()
+                            .returns("k\tts\tv\na\t2026-01-01T00:00:00.000000Z\t" + type[5] + "\n");
+
+                    execute("INSERT INTO t VALUES ('b', '2026-01-01T01:00:00.000000Z', " + type[2] + "), ('c', '2025-12-31T23:00:00.000000Z', " + type[3] + ")");
+                    drainWalQueueBounded();
+                    engine.releaseAllWriters();
+                    execute("INSERT INTO t VALUES ('a', '2026-01-01T00:00:00.000000Z', " + type[4] + ")");
+                    drainWalQueueBounded();
+                    assertRebaseCaughtUp();
+                    assertQuery("t")
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .expectSize()
+                            .returns(
+                                    "k\tts\tv\n"
+                                            + "c\t2025-12-31T23:00:00.000000Z\t" + type[7] + "\n"
+                                            + (dedup ? "" : "a\t2026-01-01T00:00:00.000000Z\t" + type[5] + "\n")
+                                            + "a\t2026-01-01T00:00:00.000000Z\t" + type[8] + "\n"
+                                            + "b\t2026-01-01T01:00:00.000000Z\t" + type[6] + "\n"
+                            );
+                    execute("DROP TABLE t");
+                }
+            }
+        });
+    }
+
     private void checkTableFilesExist(TableToken sysTableName, String partition, String fileName, boolean value) {
         Path sysPath = Path.PATH.get().of(configuration.getDbRoot()).concat(sysTableName).concat(TXN_FILE_NAME);
         Assert.assertEquals(Utf8s.toString(sysPath), value, Files.exists(sysPath.$()));
@@ -2426,6 +2625,53 @@ public class WalTableSqlTest extends AbstractCairoTest {
             }
         }
         Assert.fail("WAL apply did not go idle in 20 passes");
+    }
+
+    private static LargeVarcharRow largeVarchar(String ts, char fill, int size, String prefix) {
+        return new LargeVarcharRow(ts, fill, size, prefix);
+    }
+
+    private static LargeVarcharRow[] largeVarcharCommitted() {
+        return new LargeVarcharRow[]{largeVarchar("10:00", 'p', 20, "p1"), largeVarchar("12:00", 'B', LARGE_VARCHAR_16M + 1, "0123456789"), largeVarchar("14:00", 'q', 20, "p2")};
+    }
+
+    private static String largeVarcharExpected(boolean dedup, LargeVarcharRow[]... transactions) throws Exception {
+        final ObjList<LargeVarcharRow> rows = new ObjList<>();
+        for (LargeVarcharRow[] transaction : transactions) {
+            for (LargeVarcharRow r : transaction) {
+                if (dedup) {
+                    for (int i = rows.size() - 1; i > -1; i--) {
+                        if (rows.getQuick(i).ts.equals(r.ts)) {
+                            rows.remove(i);
+                        }
+                    }
+                }
+                rows.add(r);
+            }
+        }
+        rows.sort(Comparator.comparing(LargeVarcharRow::ts));
+        final StringBuilder sb = new StringBuilder("ts\tlen\th\n");
+        final MessageDigest md5 = MessageDigest.getInstance("MD5");
+        for (int i = 0, n = rows.size(); i < n; i++) {
+            final LargeVarcharRow r = rows.getQuick(i);
+            sb.append("2024-01-01T").append(r.ts).append(":00.000000Z\t").append(r.size).append('\t');
+            for (byte b : md5.digest(r.value().getBytes(StandardCharsets.US_ASCII))) {
+                sb.append(String.format("%02x", b));
+            }
+            sb.append('\n');
+        }
+        return sb.toString();
+    }
+
+    private static String largeVarcharValues(LargeVarcharRow[] rows) {
+        final StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < rows.length; i++) {
+            final LargeVarcharRow r = rows[i];
+            sb.append(i > 0 ? ", " : "")
+                    .append("('2024-01-01T").append(r.ts).append(":00.000000Z', rpad('")
+                    .append(r.prefix).append("', ").append(r.size).append(", '").append(r.fill).append("')::varchar)");
+        }
+        return sb.toString();
     }
 
     private void runApplyOnce(TableToken token) {
@@ -2783,5 +3029,11 @@ public class WalTableSqlTest extends AbstractCairoTest {
                     .expectSize()
                     .returns("count\tmin\tmax\tsum\n" + expectedSummary);
         });
+    }
+
+    private record LargeVarcharRow(String ts, char fill, int size, String prefix) {
+        String value() {
+            return prefix + String.valueOf(fill).repeat(size - prefix.length());
+        }
     }
 }

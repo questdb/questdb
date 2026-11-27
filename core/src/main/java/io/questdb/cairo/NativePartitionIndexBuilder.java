@@ -26,6 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.idx.IndexFactory;
 import io.questdb.cairo.idx.IndexWriter;
+import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMAR;
@@ -312,7 +313,7 @@ final class NativePartitionIndexBuilder implements QuietCloseable {
             final long columnNameTxn = columnVersions.getColumnNameTxn(partitionTimestamp, writerIndex);
             coveredTypes.setQuick(slot, columnType);
             coveredShifts.setQuick(slot, ColumnType.pow2SizeOf(columnType));
-            coveredTops.setQuick(slot, Math.max(0, columnTop(columnTops, columnVersions, partitionTimestamp, writerIndex)));
+            coveredTops.setQuick(slot, PostingIndexUtils.coveredColumnTop(columnTop(columnTops, columnVersions, partitionTimestamp, writerIndex)));
             coveredNameTxns.setQuick(slot, columnNameTxn);
             mapCoveredFile(TableUtils.dFile(partitionDir.trimTo(dirLen), columnName, columnNameTxn), coveredAddrs, coveredSizes, slot);
             if (ColumnType.isVarSize(columnType)) {
