@@ -86,9 +86,6 @@ public class TableReader implements Closeable, SymbolTableSource {
     // than contention. A power of 2. Far longer than any commit's publish window, yet still a short wait.
     private static final int TORN_DIAGNOSIS_WINDOW = 1 << 16;
     private final BitSet activeColumns = new BitSet();
-    // the columns whose slot a metadata transition fills with another column's objects or a new column, see
-    // reshuffleClosedPartitionColumns()
-    private final IntList changedColumnSlots = new IntList();
     private final MillisecondClock clock;
     private final ColumnVersionReader columnVersionReader;
     private final CairoConfiguration configuration;
@@ -98,6 +95,9 @@ public class TableReader implements Closeable, SymbolTableSource {
     private final int maxOpenPartitions;
     private final MessageBus messageBus;
     private final TableReaderMetadata metadata;
+    // the indexed columns that a metadata transition moves to another slot or replaces with a new instance, see
+    // reshuffleClosedPartitionIndexReaders()
+    private final IntList movedIndexedColumns = new IntList();
     private final ParquetMetaFileReader parquetMetaReader = new ParquetMetaFileReader();
     private final int partitionBy;
     private final PartitionOverwriteControl partitionOverwriteControl;
@@ -2739,21 +2739,25 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     /**
-     * Moves the column slots of a partition that is closed, or that reshuffleColumns() just closed because the
-     * transaction rewrote it, the way it moves an open partition's, without opening any file. The slots keep the
-     * closed column memory and index readers that the partition reuses when it opens again: reloadColumnAt() and
-     * getIndexReader() reopen whatever reader sits in a column's slot for that column. A reader left behind in its
-     * old slot would serve the column that moves there, and could be of another index type, which of() cannot
-     * turn it into.
+     * Moves the index readers of a partition that is closed, or that reshuffleColumns() just closed because the
+     * transaction rewrote it, along with their columns, without opening any file. The partition reuses its closed
+     * objects when it opens again, and only the index readers depend on the slot they sit in: reloadColumnAt() and
+     * getIndexReader() reopen whatever reader sits in a column's slot for that column, and of() cannot turn a
+     * reader into another index type. The column memory and column tops stay where they are: reloadColumnAt()
+     * points whatever memory object sits in a slot at the file of the column that opens it, and recomputes the
+     * column's top, as it does for an open partition's new column instance.
      */
-    private void reshuffleClosedPartitionColumns(int base, TableReaderMetadataTransitionIndex transitionIndex) {
+    private void reshuffleClosedPartitionIndexReaders(int base, TableReaderMetadataTransitionIndex transitionIndex) {
         // ascending, like the open partition's loop: a column only moves left, from a slot not yet filled
-        for (int k = 0, n = changedColumnSlots.size(); k < n; k++) {
-            final int columnIndex = changedColumnSlots.getQuick(k);
+        for (int k = 0, n = movedIndexedColumns.size(); k < n; k++) {
+            final int columnIndex = movedIndexedColumns.getQuick(k);
             final int copyFrom = transitionIndex.getCopyFromIndex(columnIndex);
             if (copyFrom > -1) {
                 // the same column instance from another slot, its readers with it
-                copyColumns(base, copyFrom, columns, columnTops, indexes, base, columnIndex);
+                final int fromIndex = getPrimaryColumnIndex(base, copyFrom);
+                final int toIndex = getPrimaryColumnIndex(base, columnIndex);
+                indexes.setQuick(toIndex, indexes.getAndSetQuick(fromIndex, null));
+                indexes.setQuick(toIndex + 1, indexes.getAndSetQuick(fromIndex + 1, null));
             } else {
                 // a new column instance: the slot's readers belong to the column that held it before
                 freeIndexReaders(base, columnIndex);
@@ -2783,20 +2787,24 @@ public class TableReader implements Closeable, SymbolTableSource {
     private void reshuffleColumns(int columnCount, TableReaderMetadataTransitionIndex transitionIndex) {
         LOG.debug().$("reshuffling columns file list [table=").$(tableToken).I$();
         int iterateCount = Math.max(columnCount, this.columnCount);
-        // A closed partition has no files to reopen, so it visits only the slots the transition changes
-        changedColumnSlots.clear();
+        // A closed partition has no files to reopen, and only its index readers must follow their columns, so it
+        // visits only the indexed columns the transition moves or replaces, and nothing when there are none
+        movedIndexedColumns.clear();
         for (int i = 0; i < columnCount; i++) {
-            if (transitionIndex.getCopyFromIndex(i) != i) {
-                changedColumnSlots.add(i);
+            if (transitionIndex.getCopyFromIndex(i) != i && metadata.isColumnIndexed(i)) {
+                movedIndexedColumns.add(i);
             }
         }
+        final boolean hasMovedIndexedColumns = movedIndexedColumns.size() > 0;
 
         for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
             int base = getColumnBase(partitionIndex);
             try {
                 long partitionRowCount = openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_SIZE);
                 if (partitionRowCount < 0 || (partitionRowCount = closeRewrittenPartitionFiles(partitionIndex, base)) < 0) {
-                    reshuffleClosedPartitionColumns(base, transitionIndex);
+                    if (hasMovedIndexedColumns) {
+                        reshuffleClosedPartitionIndexReaders(base, transitionIndex);
+                    }
                 } else {
                     for (int i = 0; i < iterateCount; i++) {
                         final int copyFrom = transitionIndex.getCopyFromIndex(i);

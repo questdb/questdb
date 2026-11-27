@@ -110,6 +110,56 @@ public class TableReaderSchemaChangeIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDropColumnBeforeColumnsOfEveryKind() throws Exception {
+        // Each column after c takes the slot of the column before it. The first partition reopens each one in the
+        // memory that column left there: a variable-size column in a fixed-size column's and the other way round,
+        // an array in a STRING's, a column with a column top in one without, and a column the partition lacks in a
+        // column's it has.
+        assertMemoryLeak(() -> {
+            createTable("ts TIMESTAMP, c INT, v VARCHAR, i INT, s STRING, arr DOUBLE[], sym SYMBOL, a SYMBOL INDEX TYPE "
+                    + startIndexType + ", l LONG");
+            insert("('2024-01-01T12:00:00', 1, 'v1', 10, 's1', ARRAY[1.0, 2.0], 'p', 'x', 100)");
+            // the first partition's first row predates the column
+            ddl("ALTER TABLE t ADD COLUMN late LONG");
+            insert("('2024-01-01T13:00:00', 2, 'v2', 20, 's2', ARRAY[3.0], 'q', 'z', 200, 5), "
+                    + "('2024-01-02T12:00:00', 3, 'v3', 30, 's3', ARRAY[4.0, 5.0], 'q', 'x', 300, NULL)");
+            // the first partition lacks the column
+            ddl("ALTER TABLE t ADD COLUMN late2 VARCHAR");
+            insert("('2024-01-02T13:00:00', 4, 'v4', 40, 's4', ARRAY[6.0], 'r', 'z', 400, 8, 'w')");
+            prepareFirstPartition();
+            // opens every partition and every column, so the first partition's slots hold the memory of each
+            assertQuery("SELECT * FROM t")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tc\tv\ti\ts\tarr\tsym\ta\tl\tlate\tlate2
+                            2024-01-01T12:00:00.000000Z\t1\tv1\t10\ts1\t[1.0,2.0]\tp\tx\t100\tnull\t
+                            2024-01-01T13:00:00.000000Z\t2\tv2\t20\ts2\t[3.0]\tq\tz\t200\t5\t
+                            2024-01-02T12:00:00.000000Z\t3\tv3\t30\ts3\t[4.0,5.0]\tq\tx\t300\tnull\t
+                            2024-01-02T13:00:00.000000Z\t4\tv4\t40\ts4\t[6.0]\tr\tz\t400\t8\tw
+                            """);
+
+            closeOrRewriteFirstPartition("('2024-01-01T06:00:00', 0, 'v0', 0, 's0', ARRAY[0.5], 'o', 'y', 0, 6, 'u')");
+            ddl("ALTER TABLE t DROP COLUMN c");
+            final String rewrittenRow = firstPartition == FirstPartition.REWRITTEN
+                    ? "2024-01-01T06:00:00.000000Z\tv0\t0\ts0\t[0.5]\to\ty\t0\t6\tu\n"
+                    : "";
+            assertQuery("SELECT * FROM t")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\tv\ti\ts\tarr\tsym\ta\tl\tlate\tlate2\n"
+                            + rewrittenRow
+                            + "2024-01-01T12:00:00.000000Z\tv1\t10\ts1\t[1.0,2.0]\tp\tx\t100\tnull\t\n"
+                            + "2024-01-01T13:00:00.000000Z\tv2\t20\ts2\t[3.0]\tq\tz\t200\t5\t\n"
+                            + "2024-01-02T12:00:00.000000Z\tv3\t30\ts3\t[4.0,5.0]\tq\tx\t300\tnull\t\n"
+                            + "2024-01-02T13:00:00.000000Z\tv4\t40\ts4\t[6.0]\tr\tz\t400\t8\tw\n");
+            assertIndexScans("a", "2024-01-01T12:00:00.000000Z", "2024-01-02T12:00:00.000000Z");
+        });
+    }
+
+    @Test
     public void testDropIndexedColumnBeforeIndexedColumn() throws Exception {
         // Dropping a SYMBOL column renumbers the symbol columns after it, so b becomes a new column instance in a's slot.
         assertMemoryLeak(() -> {

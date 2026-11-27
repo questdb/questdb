@@ -32,6 +32,7 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.std.MemoryTag;
@@ -89,6 +90,63 @@ public class TableReaderReloadTest extends AbstractCairoTest {
                 Assert.assertNotSame(fwd, reader.getIndexReader(0, a, IndexReader.DIR_FORWARD));
                 Assert.assertEquals("0", indexRowIds(reader, 0, a, IndexReader.DIR_BACKWARD));
                 Assert.assertEquals("0", indexRowIds(reader, 0, a, IndexReader.DIR_FORWARD));
+            }
+        });
+    }
+
+    @Test
+    public void testReloadLeavesColumnMemoryOfClosedPartitionInPlace() throws Exception {
+        // Dropping c moves every column after it one slot left. In the partition the reader has closed, only the
+        // index readers follow their column: each column reopens in the memory left in the slot it took.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, c INT, a INT, v VARCHAR, s SYMBOL INDEX TYPE POSTING) " +
+                    "TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO t VALUES ('2024-01-01T12:00:00', 1, 2, 'abc', 'x'), ('2024-01-02T12:00:00', 3, 4, 'def', 'y')");
+            try (TableReader reader = newOffPoolReader(configuration, "t")) {
+                final int c = reader.getMetadata().getColumnIndex("c");
+                final int a = reader.getMetadata().getColumnIndex("a");
+                final int v = reader.getMetadata().getColumnIndex("v");
+                final int s = reader.getMetadata().getColumnIndex("s");
+                reader.openPartition(0);
+                final int base = reader.getColumnBase(0);
+                final MemoryCR cData = reader.getColumn(TableReader.getPrimaryColumnIndex(base, c));
+                final MemoryCR aData = reader.getColumn(TableReader.getPrimaryColumnIndex(base, a));
+                final MemoryCR vData = reader.getColumn(TableReader.getPrimaryColumnIndex(base, v));
+                final MemoryCR vAux = reader.getColumn(TableReader.getPrimaryColumnIndex(base, v) + 1);
+                final IndexReader sBwd = reader.getIndexReader(0, s, IndexReader.DIR_BACKWARD);
+                final IndexReader sFwd = reader.getIndexReader(0, s, IndexReader.DIR_FORWARD);
+                reader.closePartitionByIndex(0);
+
+                execute("ALTER TABLE t DROP COLUMN c");
+                Assert.assertTrue(reader.reload());
+
+                // the reload moves none of the closed partition's column memory...
+                Assert.assertSame(cData, reader.getColumn(TableReader.getPrimaryColumnIndex(base, c)));
+                Assert.assertSame(aData, reader.getColumn(TableReader.getPrimaryColumnIndex(base, a)));
+                Assert.assertSame(vData, reader.getColumn(TableReader.getPrimaryColumnIndex(base, v)));
+                Assert.assertSame(vAux, reader.getColumn(TableReader.getPrimaryColumnIndex(base, v) + 1));
+                // ...and moves its index readers with their column
+                Assert.assertSame(sBwd, reader.getIndexReaderIfExists(0, s - 1, IndexReader.DIR_BACKWARD));
+                Assert.assertSame(sFwd, reader.getIndexReaderIfExists(0, s - 1, IndexReader.DIR_FORWARD));
+
+                // a maps its file into c's memory, v its data vector into a's, and s into v's data vector
+                reader.openPartition(0);
+                Assert.assertSame(cData, reader.getColumn(TableReader.getPrimaryColumnIndex(base, a - 1)));
+                Assert.assertSame(aData, reader.getColumn(TableReader.getPrimaryColumnIndex(base, v - 1)));
+                Assert.assertSame(vData, reader.getColumn(TableReader.getPrimaryColumnIndex(base, s - 1)));
+                TestUtils.assertReader(
+                        """
+                                ts\ta\tv\ts
+                                2024-01-01T12:00:00.000000Z\t2\tabc\tx
+                                2024-01-02T12:00:00.000000Z\t4\tdef\ty
+                                """,
+                        reader,
+                        sink
+                );
+                Assert.assertSame(sBwd, reader.getIndexReader(0, s - 1, IndexReader.DIR_BACKWARD));
+                Assert.assertSame(sFwd, reader.getIndexReader(0, s - 1, IndexReader.DIR_FORWARD));
+                Assert.assertEquals("0", indexRowIds(reader, 0, s - 1, IndexReader.DIR_BACKWARD));
+                Assert.assertEquals("0", indexRowIds(reader, 0, s - 1, IndexReader.DIR_FORWARD));
             }
         });
     }

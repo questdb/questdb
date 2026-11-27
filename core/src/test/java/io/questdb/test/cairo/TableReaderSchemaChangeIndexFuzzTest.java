@@ -25,6 +25,8 @@
 package io.questdb.test.cairo;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CursorPrinter;
+import io.questdb.cairo.TableReader;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
@@ -36,7 +38,8 @@ import org.junit.Test;
 /**
  * Index scans through a pooled reader that keeps the index readers of the partitions it has closed, while columns
  * come and go, change their type, index type and symbol capacity, get renamed, and inserts rewrite partitions. Each
- * check compares the index scans of every indexed column, both directions, with a scan that reads no index.
+ * check compares the index scans of every indexed column, both directions, with a scan that reads no index, and every
+ * column the pooled reader reads with what a fresh reader reads.
  */
 public class TableReaderSchemaChangeIndexFuzzTest extends AbstractCairoTest {
     private static final String[] INDEX_TYPES = {"BITMAP", "POSTING", "POSTING DELTA", "POSTING EF"};
@@ -91,6 +94,8 @@ public class TableReaderSchemaChangeIndexFuzzTest extends AbstractCairoTest {
                         final int index = rnd.nextInt(columns.size());
                         ddl("ALTER TABLE t DROP COLUMN " + columns.getQuick(index).name, isWal);
                         columns.remove(index);
+                        // the columns after it take the slots of the columns before them
+                        checkAllColumns();
                     }
                 } else if (op < 62) {
                     final Column column = pickSymbol(rnd, false);
@@ -128,9 +133,11 @@ public class TableReaderSchemaChangeIndexFuzzTest extends AbstractCairoTest {
                     }
                 } else {
                     checkIndexScans();
+                    checkAllColumns();
                 }
             }
             checkIndexScans();
+            checkAllColumns();
         });
     }
 
@@ -138,6 +145,21 @@ public class TableReaderSchemaChangeIndexFuzzTest extends AbstractCairoTest {
         final StringSink plan = new StringSink();
         printSql("EXPLAIN " + query, plan);
         Assert.assertTrue("index scan expected, plan was:\n" + plan, plan.toString().contains(expected));
+    }
+
+    private void checkAllColumns() throws Exception {
+        // the pooled reader reopens a closed partition in the objects its slots kept across the schema changes, a
+        // fresh reader in objects of its own
+        final StringSink actual = new StringSink();
+        printSql("SELECT * FROM t", actual);
+        final StringSink expected = new StringSink();
+        try (
+                TableReader reader = newOffPoolReader(configuration, "t");
+                TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
+        ) {
+            CursorPrinter.println(cursor, reader.getMetadata(), expected, true, false);
+        }
+        TestUtils.assertEquals(expected, actual);
     }
 
     private void checkIndexScans() throws Exception {
