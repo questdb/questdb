@@ -637,7 +637,7 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
     }
 
     public boolean tryAcquirePublication() {
-        if (runtime.isCurrentFiberOwned()) {
+        if (runtime.isCurrentFiberOwned() || Fiber.isHoldingLimitedGrant()) {
             return false;
         }
         while (true) {

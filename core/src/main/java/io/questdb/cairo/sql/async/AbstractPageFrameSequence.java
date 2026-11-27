@@ -111,6 +111,16 @@ abstract class AbstractPageFrameSequence {
         return SuspensionScope.isFiberMode() && Fiber.isMounted();
     }
 
+    // An owner under a CPU limit may wait for its group's budget at any poll, and a stolen frame must not
+    // wait with it: its query would stall on a budget that is not its own.
+    static boolean isReducerSuspendable(
+            AbstractPageFrameSequence frameSequence,
+            @Nullable AbstractPageFrameSequence stealingFrameSequence
+    ) {
+        return isFiberSuspendable()
+                && (stealingFrameSequence == null || stealingFrameSequence == frameSequence || !Fiber.isDispatchLimited());
+    }
+
     // A suspended reducer may hold the frame this owner waits for and need its carrier to resume.
     protected static void yieldOrPause(boolean isFiberSuspendable) {
         if (!isFiberSuspendable || !Fiber.yieldCooperatively()) {
@@ -217,6 +227,12 @@ abstract class AbstractPageFrameSequence {
         cancel(interruptionReason == SqlExecutionCircuitBreaker.STATE_OK
                 ? CANCEL_REASON_REDUCER_ERROR
                 : interruptionReason);
+    }
+
+    protected final void detachContextIfOwnerCannotPark() {
+        if (dispatchContext != null && !isFiberSuspendable()) {
+            dispatchContext = null;
+        }
     }
 
     void enterReducerCancellationScope() {

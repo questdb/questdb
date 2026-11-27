@@ -238,6 +238,7 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     // Rows skipped at the start of the result set.
     private long rowWindowSkipped;
     private SecurityContext securityContext;
+    private CharSequence sessionResourceGroup;
     /**
      * Streaming-state for an in-flight query. Populated when the query starts; cleared
      * (and resources freed) on completion, error, or disconnect. Lets the upgrade
@@ -674,6 +675,7 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         pendingHandshakeBytes = 0;
         fd = -1;
         securityContext = null;
+        sessionResourceGroup = null;
         negotiatedVersion = QwpConstants.VERSION;
         maxBatchRows = 0;  // reset to "unset"; will be set per-connection in onHeadersReady
         batchBuffer.reset();
@@ -1033,6 +1035,10 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         return securityContext;
     }
 
+    public CharSequence getSessionResourceGroup() {
+        return sessionResourceGroup;
+    }
+
     public long getStreamingBatchSeq() {
         return streamingBatchSeq;
     }
@@ -1388,6 +1394,10 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
 
     public void setRecvBufferLen(int recvBufferLen) {
         this.recvBufferLen = recvBufferLen;
+    }
+
+    public void setSessionResourceGroup(CharSequence sessionResourceGroup) {
+        this.sessionResourceGroup = sessionResourceGroup;
     }
 
     public void setWsHandshakeSent(boolean wsHandshakeSent) {

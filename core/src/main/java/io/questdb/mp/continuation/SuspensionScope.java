@@ -37,7 +37,7 @@ public final class SuspensionScope {
     public static @Nullable Mode enter(Mode mode) {
         final CarrierScope scope = SCOPE.get();
         final Mode previous = scope.mode;
-        scope.mode = mode;
+        changeMode(scope, mode);
         return previous;
     }
 
@@ -45,7 +45,7 @@ public final class SuspensionScope {
     // valid when no suspension can occur in between, which BLOCKING guarantees.
     public static @Nullable Mode enterBlocking(CarrierScope scope) {
         final Mode previous = scope.mode;
-        scope.mode = Mode.BLOCKING;
+        changeMode(scope, Mode.BLOCKING);
         return previous;
     }
 
@@ -80,7 +80,7 @@ public final class SuspensionScope {
         if (isFirstLock) {
             state.setPreviousMode(scope.mode);
             if (scope.mode == Mode.FIBER) {
-                scope.mode = Mode.BLOCKING;
+                changeMode(scope, Mode.BLOCKING);
             }
         }
     }
@@ -193,7 +193,7 @@ public final class SuspensionScope {
         final RoleSwitchReadLockState state = getRoleSwitchReadLockState(scope);
         state.leave(lock);
         if (!state.hasAny()) {
-            scope.mode = state.takePreviousMode();
+            changeMode(scope, state.takePreviousMode());
         }
     }
 
@@ -205,7 +205,7 @@ public final class SuspensionScope {
     }
 
     public static void restore(@Nullable Mode mode) {
-        SCOPE.get().mode = mode;
+        changeMode(SCOPE.get(), mode);
     }
 
     public static void restoreCancellationSignal(
@@ -218,7 +218,7 @@ public final class SuspensionScope {
     }
 
     public static void restoreMode(CarrierScope scope, @Nullable Mode mode) {
-        scope.mode = mode;
+        changeMode(scope, mode);
     }
 
     public static CarrierScope scope() {
@@ -229,6 +229,17 @@ public final class SuspensionScope {
         return scope.roleSwitchReadLocks.hasAny()
                 || scope.roleSwitchWriteLockDepth > 0
                 || (scope.fiber != null && scope.fiber.getRoleSwitchReadLockState().hasAny());
+    }
+
+    private static void changeMode(CarrierScope scope, @Nullable Mode mode) {
+        if ((scope.mode == Mode.FIBER) != (mode == Mode.FIBER)) {
+            final Fiber fiber = scope.fiber;
+            final FiberDispatchTicket ticket = fiber != null ? fiber.getMountedDispatchTicket() : null;
+            if (ticket != null) {
+                ticket.onSuspensionModeChange(mode == Mode.FIBER);
+            }
+        }
+        scope.mode = mode;
     }
 
     private static RoleSwitchReadLockState getRoleSwitchReadLockState(CarrierScope scope) {
