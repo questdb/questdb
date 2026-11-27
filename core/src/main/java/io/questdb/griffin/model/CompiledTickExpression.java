@@ -38,6 +38,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 /**
@@ -50,24 +51,27 @@ import org.jetbrains.annotations.TestOnly;
  * <pre>
  *   ir[0]:                         header (flags, see HDR_* constants)
  *   ir[1]:                         numericTzOffset (Long.MIN_VALUE if not numeric)
- *   ir[2]:                         D, the number of duration parts
- *   ir[3]:                         T, the number of time overrides
- *   ir[4]:                         the number of elements
+ *   ir[2]:                         element count
+ *   ir[3]:                         time override count (T)
+ *   ir[4]:                         duration part count (D)
  *   ir[5 .. 5+D):                  duration parts (encoded unit+value)
  *   ir[5+D .. 5+D+3T):             time override triples (offset, width, zoneMatch)
  *   ir[5+D+3T .. end):             elements
  * </pre>
+ * Each count takes a whole IR slot, so no count can overflow its field.
  * Element encodings (tag in bits 63-62, expr in bits 59-0):
  * <ul>
  *   <li>SINGLE_VAR (tag 00): 1 long — encoded DateVariableExpr</li>
- *   <li>STATIC (tag 01): 3 longs — tag, lo, hi</li>
+ *   <li>STATIC (tag 01): 3 longs — tag, lo, hi of an interval of a fixed date, after the day filter
+ *   and in UTC; the compiler writes those of all fixed dates where the first fixed date of the list
+ *   stands</li>
  *   <li>RANGE (tag 10): 2 longs — tag+isBusinessDay+startExpr, endExpr</li>
  * </ul>
  * {@link #evaluate} runs the steps of the parser in the same order, and stops at the interval
  * limit where the parser stops, with the same error.
  * <p>
  * In a list with a tick calendar whose only ';' starts its duration, each static date keeps its own
- * extent in UTC, see {@link #HDR_STATIC_OWN_EXTENT_BIT}, as the parser keeps it for a bind variable.
+ * extent in UTC, as the parser keeps it for a bind variable, see {@link IntervalUtils#compileTickExpr}.
  * Where the own extents of a static date alone exceed the interval limit, the IR holds windows as long
  * as the duration instead, and {@link #evaluate} parses the list first, see {@link #HDR_PARSE_FIRST_BIT}.
  * <p>
@@ -96,19 +100,18 @@ public class CompiledTickExpression extends UntypedFunction {
     // own extent, and evaluates the IR, whose static dates are windows as long as the duration, only
     // where the evaluation is lenient and the parse fails
     static final long HDR_PARSE_FIRST_BIT = 1L << 25;
-    // the static dates are their own extents in UTC, which the steps of the elements skip, and the
-    // intervals unite before the tick calendar cuts them
-    static final long HDR_STATIC_OWN_EXTENT_BIT = 1L << 24;
-    // ---- Section counts (ir[2..4]), a long each, so that no count is ever truncated ----
-    static final int IR_DURATION_PART_COUNT_INDEX = 2;
-    static final int IR_ELEMENT_COUNT_INDEX = 4;
+
+    // ---- IR prefix slots ----
+    static final int IR_DURATION_COUNT_INDEX = 4;
+    static final int IR_ELEM_COUNT_INDEX = 2;
+    static final int IR_HEADER_INDEX = 0;
+    static final int IR_PREFIX_SIZE = 5;
     static final int IR_TIME_OVERRIDE_COUNT_INDEX = 3;
+    static final int IR_TZ_OFFSET_INDEX = 1;
 
     // ---- Header (ir[0]) bit layout ----
     private static final long HDR_DAY_MASK = 0x7FL;
     private static final long HDR_DWE_BIT = 1L << 23;
-    // ---- Sections: duration parts, then time overrides, then elements ----
-    private static final int IR_DURATION_PARTS_INDEX = 5;
 
     // ---- Expr encoding (bits 59-0) ----
     private static final long IR_BD_BIT = 1L << 57;
@@ -135,8 +138,6 @@ public class CompiledTickExpression extends UntypedFunction {
     private final LongList ir;
     // see HDR_PARSE_FIRST_BIT
     private final boolean isParseFirst;
-    // see HDR_STATIC_OWN_EXTENT_BIT
-    private final boolean isStaticOwnExtent;
     // set only for an expression that evaluate() parses
     private final StringSink parseSink;
     // the position of the expression, for errors
@@ -174,17 +175,19 @@ public class CompiledTickExpression extends UntypedFunction {
         this.dateLocale = dateLocale;
         this.exchangeSchedule = exchangeSchedule;
 
-        // Pre-decode header and section offsets
-        long header = ir.getQuick(0);
+        // Pre-decode header, counts and section offsets
+        long header = ir.getQuick(IR_HEADER_INDEX);
         this.isParseFirst = (header & HDR_PARSE_FIRST_BIT) != 0;
-        this.isStaticOwnExtent = (header & HDR_STATIC_OWN_EXTENT_BIT) != 0;
         this.parseSink = isParseFirst ? new StringSink() : null;
+        this.elemCount = (int) ir.getQuick(IR_ELEM_COUNT_INDEX);
+        this.timeOverrideCount = (int) ir.getQuick(IR_TIME_OVERRIDE_COUNT_INDEX);
+        this.durationPartCount = (int) ir.getQuick(IR_DURATION_COUNT_INDEX);
         this.hasDurationWithExchange = (header & HDR_DWE_BIT) != 0;
         this.dayFilterMask = (int) (header & HDR_DAY_MASK);
-        this.durationPartCount = (int) ir.getQuick(IR_DURATION_PART_COUNT_INDEX);
-        this.timeOverrideCount = (int) ir.getQuick(IR_TIME_OVERRIDE_COUNT_INDEX);
-        this.elemCount = (int) ir.getQuick(IR_ELEMENT_COUNT_INDEX);
-        this.durationOff = IR_DURATION_PARTS_INDEX;
+        // IntervalUtils.compileTickExpr() parses the '#' suffix as a day filter only when it names no
+        // tick calendar, so the day filter of evaluate() never meets both.
+        assert dayFilterMask == 0 || exchangeSchedule == null;
+        this.durationOff = IR_PREFIX_SIZE;
         this.toOff = durationOff + durationPartCount;
         this.elemOff = toOff + timeOverrideCount * 3;
     }
@@ -206,7 +209,6 @@ public class CompiledTickExpression extends UntypedFunction {
         this.parseSink = new StringSink();
         this.ir = null;
         this.isParseFirst = false;
-        this.isStaticOwnExtent = false;
         this.tzRules = null;
         this.dateLocale = null;
         this.exchangeSchedule = null;
@@ -224,14 +226,51 @@ public class CompiledTickExpression extends UntypedFunction {
         return ((long) (unit & 0xFFFF) << 32) | (value & 0xFFFFFFFFL);
     }
 
+    // The timezone step of evaluate(): converts each interval from startIndex on from local time to
+    // UTC, a named zone with IntervalUtils.localIntervalsToUtc(). IntervalUtils.compileTickExpr()
+    // converts the static intervals of a list with it.
+    static void applyTimezone(
+            TimestampDriver timestampDriver,
+            long numericTzOffset,
+            @Nullable TimeZoneRules tzRules,
+            LongList out,
+            int startIndex
+    ) {
+        if (numericTzOffset != Long.MIN_VALUE) {
+            for (int i = startIndex, size = out.size(); i < size; i++) {
+                out.setQuick(i, out.getQuick(i) - numericTzOffset);
+            }
+        } else if (tzRules != null) {
+            IntervalUtils.localIntervalsToUtc(tzRules, out, startIndex);
+        }
+    }
+
     static long encodeHeader(boolean hasDurationWithExchange, int dayFilterMask) {
         return (hasDurationWithExchange ? HDR_DWE_BIT : 0L) | (dayFilterMask & HDR_DAY_MASK);
     }
 
+    // Micros.addPeriod() and Nanos.addPeriod() return NULL for a unit they do not know, and
+    // DateVariableExpr.parseEncoded() accepts any single character as the unit. evaluateExpr()
+    // maps 'D' to 'd', and a zero unit means no offset.
+    private static boolean hasKnownOffsetUnit(long encoded) {
+        final char unit = (char) ((encoded >>> IR_UNIT_SHIFT) & 0xFFFF);
+        return unit == 0 || unit == 'D' || isKnownDurationUnit(unit);
+    }
+
+    // The units Micros.addPeriod() and Nanos.addPeriod() know. IntervalUtils.compileTickExpr()
+    // compiles an expression whose duration has another unit into one that parses on every
+    // evaluation, see isParsedOnEvaluation().
+    private static boolean isKnownDurationUnit(char unit) {
+        return switch (unit) {
+            case 'n', 'u', 'T', 's', 'm', 'h', 'd', 'w', 'M', 'y' -> true;
+            default -> false;
+        };
+    }
+
     /**
      * Evaluates the tick expression with the given "now" timestamp and appends
-     * the resulting [lo, hi] interval pairs to outIntervals.
-     * This overload is intended for testing without a SqlExecutionContext.
+     * the resulting [lo, hi] interval pairs to outIntervals. For callers that
+     * read "now" themselves, and for tests without a SqlExecutionContext.
      */
     public void evaluate(LongList outIntervals, long now) {
         this.now = now;
@@ -264,8 +303,9 @@ public class CompiledTickExpression extends UntypedFunction {
         // the end of the intervals that the last merge after a day of a range left merged
         int mergedEnd = outStart;
 
-        // Emit the intervals of each element, and run its day filter and timezone steps on them,
-        // or on the intervals of each day of a range
+        // Emit the intervals of each date variable element, and run its day filter and timezone
+        // steps on them, or on the intervals of each day of a range. The compiler applied the day
+        // filter and the time zone to the STATIC entries, so they join the intervals as they are.
         int pos = elemOff;
         for (int i = 0; i < elemCount; i++) {
             long word = ir.getQuick(pos);
@@ -276,11 +316,7 @@ public class CompiledTickExpression extends UntypedFunction {
                 applyElementSteps(outIntervals, elementStart);
                 pos++;
             } else if (tag == TAG_STATIC) {
-                final int elementStart = outIntervals.size();
                 outIntervals.add(ir.getQuick(pos + 1), ir.getQuick(pos + 2));
-                if (!isStaticOwnExtent) {
-                    applyElementSteps(outIntervals, elementStart);
-                }
                 pos += 3;
             } else {
                 mergedEnd = emitRange(word, ir.getQuick(pos + 1), outIntervals, outStart, mergedEnd);
@@ -288,13 +324,10 @@ public class CompiledTickExpression extends UntypedFunction {
             }
         }
 
-        // The tick calendar filter and its duration apply to the whole result, in UTC
+        // The tick calendar filter and its duration apply to the whole result, in UTC. Own extents
+        // can hold one another, as a day holds a minute of a static date, and the filter unions
+        // them before it intersects them.
         if (exchangeSchedule != null) {
-            if (isStaticOwnExtent && outIntervals.size() > outStart + 2) {
-                // own extents can hold one another, as a day holds a minute of a static date, and the
-                // tick calendar intersects a sorted list of intervals that are apart
-                IntervalUtils.unionAppendedIntervals(outIntervals, outStart, mergedEnd);
-            }
             IntervalUtils.applyTickCalendarFilter(timestampDriver, exchangeSchedule, outIntervals, outStart);
             if (hasDurationWithExchange) {
                 applyDurationToAllIntervals(outIntervals, outStart);
@@ -305,6 +338,135 @@ public class CompiledTickExpression extends UntypedFunction {
         if (outIntervals.size() > outStart + 2) {
             unionAndCheckLimit(outIntervals, outStart, outStart, "Bracket expansion");
         }
+    }
+
+    /**
+     * Returns the number of IR elements: one per SINGLE_VAR, RANGE and STATIC entry.
+     */
+    @TestOnly
+    public int getElementCount() {
+        return elemCount;
+    }
+
+    public String getExpression() {
+        return expression;
+    }
+
+    /**
+     * Returns an upper bound on the number of intervals {@link #evaluate} yields for any "now", or
+     * -1 when this method knows no bound or the bound exceeds {@code cap}. The JIT filter compiles a
+     * fixed number of range checks for the expression and fills them on every execution, so the
+     * bound has to hold for every clock value, not only for the current one: '$today#workday' yields
+     * one interval on a weekday and none at a weekend.
+     * <p>
+     * An expression that {@link #evaluate} parses, see {@link #isParsedOnEvaluation()}, gets no bound.
+     * Otherwise the bound is the sum of the element bounds, where the STATIC entries count together.
+     * The final merge joins the intervals that overlap or touch, so it yields no more intervals than
+     * the STATIC bound below plus the intervals that the date variable elements emit.
+     * <ul>
+     *     <li>STATIC: the runs of overlapping or adjacent intervals that the STATIC entries form,
+     *     plus one for each empty interval (lo &gt; hi, as a zero duration yields), which the merge
+     *     may keep apart from a run. The compiler stores the STATIC entries after the day filter and
+     *     the timezone conversion: one per bracket leaf, day or list value, or one per interval of
+     *     their union once they exceed the interval cap, so '[$today, 2024-01-[01..20]]' holds twenty
+     *     in one run. {@link #evaluate} emits them as stored, so this method counts their runs as
+     *     they are.</li>
+     *     <li>SINGLE_VAR: the time override count, or 1 without time overrides.
+     *     {@link #emitSingleVar} emits one interval per time override for a day-aligned value, and
+     *     one interval otherwise. The day filter only drops intervals. A numeric offset maps each
+     *     interval to one. A named timezone with clock changes converts an interval that starts or
+     *     ends inside a repeated hour to up to three, see {@link IntervalUtils#localIntervalsToUtc},
+     *     so such an element counts three times as many, unless it is a whole day: a repeated hour
+     *     that starts or ends at midnight, or holds no midnight, leaves the days whole. A zone whose
+     *     clocks fall back across midnight would split a day, and
+     *     {@link io.questdb.griffin.engine.functions.bind.CompiledFilterTickBounds} fails the query
+     *     rather than lose rows when the bound falls short.</li>
+     *     <li>RANGE: 1 when the range is contiguous, that is, it has no business-day walk, and the
+     *     expression has no time override, duration, day filter or named timezone (a numeric offset
+     *     is fine). {@link #emitRange} then emits no interval (bounds reversed by an offset), one
+     *     interval, or a run of adjacent whole days, which the final merge joins into one. Any other range yields a count that follows
+     *     the length of the range, the weekends in it or the clock changes of the zone, and gets no
+     *     bound.</li>
+     * </ul>
+     * An exchange calendar splits intervals into sessions, so it gets no bound. Nor does an offset or
+     * duration unit the timestamp driver does not know: the driver adds it as NULL, and the JIT
+     * filter compares a NULL bound unlike the Java filter.
+     */
+    public int getMaxIntervalCount(int cap) {
+        if (isParsedOnEvaluation() || exchangeSchedule != null) {
+            return -1;
+        }
+        for (int i = 0; i < durationPartCount; i++) {
+            if (!isKnownDurationUnit((char) ((ir.getQuick(durationOff + i) >>> 32) & 0xFFFF))) {
+                return -1;
+            }
+        }
+        final int perDayCount = Math.max(1, timeOverrideCount);
+        // a named timezone with clock changes turns a local interval into up to three where clocks
+        // fall back, unless the interval is a whole day
+        final boolean hasRepeatedHours = tzRules != null && !tzRules.hasFixedOffset();
+        final boolean isContiguousRange = timeOverrideCount == 0
+                && durationPartCount == 0
+                && dayFilterMask == 0
+                && tzRules == null;
+        long count = 0;
+        LongList staticIntervals = null;
+        int pos = elemOff;
+        for (int i = 0; i < elemCount; i++) {
+            final long word = ir.getQuick(pos);
+            final long tag = word & TAG_MASK;
+            if (tag == TAG_SINGLE_VAR) {
+                if (!hasKnownOffsetUnit(word)) {
+                    return -1;
+                }
+                final boolean isWholeDay = timeOverrideCount == 0
+                        && durationPartCount == 0
+                        && DateVariableExpr.isDayLevel(word);
+                count += hasRepeatedHours && !isWholeDay ? 3L * perDayCount : perDayCount;
+                pos++;
+            } else if (tag == TAG_STATIC) {
+                if (staticIntervals == null) {
+                    staticIntervals = new LongList();
+                }
+                staticIntervals.add(ir.getQuick(pos + 1), ir.getQuick(pos + 2));
+                pos += 3;
+            } else {
+                if (!isContiguousRange
+                        || (word & RANGE_BD_BIT) != 0
+                        || !hasKnownOffsetUnit(word)
+                        || !hasKnownOffsetUnit(ir.getQuick(pos + 1))) {
+                    return -1;
+                }
+                count++;
+                pos += 2;
+            }
+            if (count > cap) {
+                return -1;
+            }
+        }
+        if (staticIntervals != null) {
+            int emptyCount = 0;
+            int writeIndex = 0;
+            for (int i = 0, n = staticIntervals.size(); i < n; i += 2) {
+                final long lo = staticIntervals.getQuick(i);
+                final long hi = staticIntervals.getQuick(i + 1);
+                if (lo > hi) {
+                    emptyCount++;
+                } else {
+                    staticIntervals.setQuick(writeIndex++, lo);
+                    staticIntervals.setQuick(writeIndex++, hi);
+                }
+            }
+            staticIntervals.setPos(writeIndex);
+            if (staticIntervals.size() > 2) {
+                IntervalUtils.unionBracketExpandedIntervals(staticIntervals, 0);
+            }
+            count += staticIntervals.size() / 2 + emptyCount;
+            if (count > cap) {
+                return -1;
+            }
+        }
+        return (int) count;
     }
 
     /**
@@ -441,24 +603,14 @@ public class CompiledTickExpression extends UntypedFunction {
     /**
      * Runs the day filter, in local time, and the timezone steps on the intervals from
      * {@code startIndex} on, which belong to one element, or one day of a range.
+     * IntervalUtils.compileTickExpr() runs both on the static intervals once and stores the result
+     * for every "now", so neither may read "now".
      */
     private void applyElementSteps(LongList out, int startIndex) {
         if (dayFilterMask != 0 && exchangeSchedule == null) {
             applyDayFilter(out, startIndex);
         }
-        applyTimezone(out, startIndex);
-    }
-
-    private void applyTimezone(LongList out, int startIndex) {
-        long numericTzOffset = ir.getQuick(1);
-        int size = out.size();
-        if (numericTzOffset != Long.MIN_VALUE) {
-            for (int i = startIndex; i < size; i++) {
-                out.setQuick(i, out.getQuick(i) - numericTzOffset);
-            }
-        } else if (tzRules != null) {
-            IntervalUtils.localIntervalsToUtc(tzRules, out, startIndex, 2);
-        }
+        applyTimezone(timestampDriver, ir.getQuick(IR_TZ_OFFSET_INDEX), tzRules, out, startIndex);
     }
 
     private void emitDayInterval(long dayStart, LongList out) {
@@ -601,9 +753,7 @@ public class CompiledTickExpression extends UntypedFunction {
                     expression.length(),
                     position,
                     outIntervals,
-                    IntervalOperation.INTERSECT,
                     parseSink,
-                    true,
                     now,
                     checks
             );
@@ -634,9 +784,7 @@ public class CompiledTickExpression extends UntypedFunction {
                     expression.length(),
                     position,
                     outIntervals,
-                    IntervalOperation.INTERSECT,
                     parseSink,
-                    true,
                     now,
                     isLenient ? checks | IntervalUtils.TICK_CHECK_INTERVAL_LIMIT : checks,
                     false,
@@ -677,7 +825,7 @@ public class CompiledTickExpression extends UntypedFunction {
      * Used for per-element timezone entries that are already in UTC.
      */
     private long utcToGlobalLocal(long utc) {
-        long numericTzOffset = ir.getQuick(1);
+        long numericTzOffset = ir.getQuick(IR_TZ_OFFSET_INDEX);
         if (numericTzOffset != Long.MIN_VALUE) {
             return utc + numericTzOffset;
         } else if (tzRules != null) {

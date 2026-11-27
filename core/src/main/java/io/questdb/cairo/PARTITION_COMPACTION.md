@@ -73,6 +73,10 @@ the folder is hot. A MOVE-TAIL's prefix is finished in the same commit when it c
 MAKE-PLAIN, or REWRITE if still wasteful); a fragmented prefix otherwise stays composite for a later JOIN,
 SQUASH or REWRITE.
 
+JOIN, MOVE-TAIL and MAKE-PLAIN publish a geometry record into the folder they keep, so each steps aside when
+that folder has no generation left for it (`PartitionGeometry.hasGenerationForNextPublish`). REWRITE writes a
+fresh folder with no `_geometry` file and so reclaims all sixteen.
+
 Pieces can only be JOINed or copied together if they are neighbours in the folder's piece list.
 
 ## Reader safety

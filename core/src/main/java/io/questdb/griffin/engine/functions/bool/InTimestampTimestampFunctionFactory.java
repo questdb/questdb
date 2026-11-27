@@ -39,6 +39,7 @@ import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.griffin.model.CompiledTickExpression;
 import io.questdb.griffin.model.DateExpressionEvaluator;
 import io.questdb.griffin.model.IntervalUtils;
@@ -122,7 +123,22 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
                     }
                     return new EqTimestampCompiledTickExprFunction(args.getQuick(0), compiled);
                 }
-                return new EqTimestampStrConstantFunction(args.getQuick(0), timestampType, right, argPositions.getQuick(1), configuration);
+                final EqTimestampStrConstantFunction func = new EqTimestampStrConstantFunction(
+                        args.getQuick(0),
+                        timestampType,
+                        right,
+                        argPositions.getQuick(1),
+                        configuration
+                );
+                if (func.intervals.size() == 0) {
+                    // The expression holds no instant, e.g. '2024-01-06#workday', where the day
+                    // filter drops the only day, a Saturday. No row matches, NULL included. A
+                    // constant lets the parser fold the enclosing AND, OR and NOT, and lets the
+                    // code generator skip the scan or the filter.
+                    Misc.free(func);
+                    return BooleanConstant.FALSE;
+                }
+                return func;
             }
             return new InTimestampConstFunction(args.getQuick(0), parseDiscreteTimestampValues(timestampType, args, argPositions));
         }
@@ -272,7 +288,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         ) throws SqlException {
             this.left = left;
             final StringSink sink = new StringSink();
-            IntervalUtils.parseTickExprAndIntersect(ColumnType.getTimestampDriver(leftTimestampType), configuration, right, intervals, rightPosition, sink, true);
+            IntervalUtils.parseTickExprAndIntersect(ColumnType.getTimestampDriver(leftTimestampType), configuration, right, intervals, rightPosition, sink);
         }
 
         @Override
@@ -329,7 +345,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
             }
             intervals.clear();
             try {
-                IntervalUtils.parseTickExprAndIntersect(timestampDriver, configuration, timestampAsString, intervals, rightPosition, sink, true, now, checks);
+                IntervalUtils.parseTickExprAndIntersect(timestampDriver, configuration, timestampAsString, intervals, rightPosition, sink, now, checks);
             } catch (SqlException e) {
                 if (isLenient) {
                     // An engine job has no caller to report to, and WAL apply would suspend the table
@@ -528,11 +544,11 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
                     final long now = executionContext.getNow(driver.getTimestampType());
                     final int checks = isLenient ? IntervalUtils.TICK_CHECK_INTERVAL_LIMIT : IntervalUtils.TICK_CHECK_ALL;
                     try {
-                        IntervalUtils.parseTickExprAndIntersect(driver, configuration, intervalFunc.getStrA(null), intervals, intervalFuncPos, sink, true, now, checks);
+                        IntervalUtils.parseTickExprAndIntersect(driver, configuration, intervalFunc.getStrA(null), intervals, intervalFuncPos, sink, now, checks);
                     } catch (SqlException e) {
                         if (isLenient) {
                             intervals.clear();
-                            IntervalUtils.parseTickExprAndIntersect(driver, configuration, null, intervals, intervalFuncPos, sink, true, now, checks);
+                            IntervalUtils.parseTickExprAndIntersect(driver, configuration, null, intervals, intervalFuncPos, sink, now, checks);
                             break;
                         }
                         // the parser can point into the value, which is not part of the SQL text

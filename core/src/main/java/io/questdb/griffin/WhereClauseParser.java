@@ -44,7 +44,6 @@ import io.questdb.griffin.model.CompiledTickExpression;
 import io.questdb.griffin.model.DateExpressionEvaluator;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IQueryModel;
-import io.questdb.griffin.model.IntervalOperation;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.griffin.model.IntrinsicModel;
 import io.questdb.griffin.model.ScalarSubQueryCompileCache;
@@ -1898,9 +1897,7 @@ public final class WhereClauseParser implements Mutable {
                         inArg.token.length() - 1,
                         inArg.position,
                         tempInIntervals,
-                        IntervalOperation.INTERSECT,
                         intervalSink,
-                        true,
                         outDriver.getTicks(),
                         IntervalUtils.TICK_CHECK_ALL,
                         true

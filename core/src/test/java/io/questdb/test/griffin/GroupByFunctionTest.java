@@ -61,7 +61,7 @@ public class GroupByFunctionTest extends AbstractCairoTest {
                         " from long_sequence(100)" +
                         "), index(seller), index(buyer) timestamp(delivery_start_utc)")
                 .timestamp("y_utc_15m")
-                .expectSize()
+                .noRandomAccess()
                 .returns("""
                         y_utc_15m\ty_sf_position_mw
                         1970-01-01T00:00:00.000000Z\t-0.2246301342497259
@@ -323,8 +323,8 @@ public class GroupByFunctionTest extends AbstractCairoTest {
                 .expectSize()
                 .returns("""
                         s\tksum
-                        aa\t416262.4729439181
-                        bb\t416933.3416598129
+                        aa\t416262.4729439178
+                        bb\t416933.3416598177
                         """);
     }
 
@@ -344,7 +344,7 @@ public class GroupByFunctionTest extends AbstractCairoTest {
                 .returns("""
                         s\tksum\tksum1
                         aa\t416262.47294392\t416262.47294392
-                        bb\t416933.34165981\t416933.34165981
+                        bb\t416933.34165982\t416933.34165982
                         """);
     }
 
@@ -3028,6 +3028,43 @@ public class GroupByFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testVectorNSumDoubleCompensatesAcrossFrames() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, d DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                        ('2024-01-01T00', 1e16), ('2024-01-01T01', 1), ('2024-01-01T02', 1), ('2024-01-01T03', 1),
+                        ('2024-01-01T04', 1), ('2024-01-01T05', 1), ('2024-01-01T06', 1), ('2024-01-01T07', 1),
+                        ('2024-01-01T08', 'Infinity'::double), ('2024-01-01T09', '-Infinity'::double), ('2024-01-02', -1e16)""");
+            assertQuery("SELECT nsum(d) FROM x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("vectorized: true")
+                    .returns("""
+                            nsum
+                            7.0
+                            """);
+
+            execute("ALTER TABLE x ADD COLUMN k INT");
+            execute("""
+                    INSERT INTO x VALUES
+                        ('2024-01-03T00', 2, null), ('2024-01-03T01', 1, 1), ('2024-01-03T02', -1e16, 1),
+                        ('2024-01-03T03', 1e16, 1), ('2024-01-03T04', 'Infinity'::double, 2), ('2024-01-03T05', 3, 2)""");
+            assertQuery("SELECT k, nsum(d) FROM x ORDER BY k")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("GroupBy vectorized: true")
+                    .returns("""
+                            k\tnsum
+                            null\t9.0
+                            1\t1.0
+                            2\t3.0
+                            """);
+        });
+    }
+
+    @Test
     public void testVectorNSumOneDouble() throws Exception {
         assertQuery("select nsum(d) sum from x")
                 .ddl("create table x as " +
@@ -3043,6 +3080,31 @@ public class GroupByFunctionTest extends AbstractCairoTest {
                         sum
                         833539.8830410708
                         """);
+    }
+
+    @Test
+    public void testVectorShortAggregatesOverWalColumnTops() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, a SHORT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO t VALUES ('2024-01-01T00', -7), ('2024-01-01T01', -2)");
+            execute("ALTER TABLE t ADD COLUMN k INT");
+            execute("INSERT INTO t VALUES ('2024-01-02T00', -3, null), ('2024-01-02T01', 5, 1)");
+            execute("ALTER TABLE t ADD COLUMN s SHORT");
+            execute("INSERT INTO t VALUES ('2024-01-03T00', -9, 1, -4)");
+            drainWalQueue();
+            // SHORT has no NULL: a column top reads as 0.
+            assertQuery("""
+                    SELECT k, max(a) amax, min(a) amin, sum(a) asum, avg(a) aavg, max(s) smax, min(s) smin, sum(s) ssum, avg(s) savg
+                    FROM t ORDER BY k""")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("GroupBy vectorized: true")
+                    .returns("""
+                            k\tamax\tamin\tasum\taavg\tsmax\tsmin\tssum\tsavg
+                            null\t-2\t-7\t-12\t-4.0\t0\t0\t0\t0.0
+                            1\t5\t-9\t-4\t-2.0\t0\t-4\t-4\t-2.0
+                            """);
+        });
     }
 
     @Test

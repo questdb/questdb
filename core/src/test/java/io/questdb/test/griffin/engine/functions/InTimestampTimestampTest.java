@@ -1312,6 +1312,50 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInStrColumnParsesEachRow() throws Exception {
+        // The tick string of each row gives the intervals that t must fall in. 2024-01-15 is a
+        // Monday, so the day filter of row 5 drops the only day. A NULL string (row 7) and a NULL
+        // timestamp (row 8) match nothing, so NOT IN holds for them. A malformed string (row 6)
+        // fails the query at the column, as a malformed literal fails it, and the table keeps
+        // answering.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (k INT, t TIMESTAMP, s STRING, v VARCHAR)");
+            execute("""
+                    INSERT INTO x VALUES
+                        (1, '2024-01-15T10:00:00.000000Z', '2024-01-15', '2024-01-15'),
+                        (2, '2024-01-15T10:00:00.000000Z', '2024-01-16', '2024-01-16'),
+                        (3, '2024-01-15T10:00:59.999999Z', '2024-01-[14,15]T10:00', '2024-01-[14,15]T10:00'),
+                        (4, '2024-01-15T10:01:00.000000Z', '2024-01-[14,15]T10:00', '2024-01-[14,15]T10:00'),
+                        (5, '2024-01-15T10:00:00.000000Z', '2024-01-15#tue', '2024-01-15#tue'),
+                        (7, '2024-01-15T10:00:00.000000Z', NULL, NULL),
+                        (8, NULL, '2024-01-15', '2024-01-15')
+                    """);
+            final String sql = "SELECT k, t IN s AS in_s, t NOT IN s AS not_in_s, t IN v AS in_v, t NOT IN v AS not_in_v FROM x";
+            final String expected = """
+                    k\tin_s\tnot_in_s\tin_v\tnot_in_v
+                    1\ttrue\tfalse\ttrue\tfalse
+                    2\tfalse\ttrue\tfalse\ttrue
+                    3\ttrue\tfalse\ttrue\tfalse
+                    4\tfalse\ttrue\tfalse\ttrue
+                    5\tfalse\ttrue\tfalse\ttrue
+                    7\tfalse\ttrue\tfalse\ttrue
+                    8\tfalse\ttrue\tfalse\ttrue
+                    """;
+            assertQuery(sql).noLeakCheck().expectSize().returns(expected);
+            execute("INSERT INTO x VALUES (6, '2024-01-15T10:00:00.000000Z', '2024-01-[15', '2024-01-[15')");
+            for (String column : new String[]{"s", "v"}) {
+                for (String in : new String[]{" IN ", " NOT IN "}) {
+                    final String filter = "SELECT k FROM x WHERE t" + in + column;
+                    assertExceptionNoLeakCheck(filter, filter.length() - 1, "Unclosed '[' in interval");
+                }
+            }
+            // a NULL string in row 6, inserted last, matches nothing
+            execute("UPDATE x SET s = NULL, v = NULL WHERE k = 6");
+            assertQuery(sql).noLeakCheck().expectSize().returns(expected + "6\tfalse\ttrue\tfalse\ttrue\n");
+        });
+    }
+
+    @Test
     public void testIntervalBindVariable() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (select rnd_int() a, timestamp_sequence(0, 1000) ts from long_sequence(10000))");
@@ -2870,9 +2914,9 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
         // dateadd() of the designated timestamp, which selects the minutes an hour before. On Monday
         // 2025-01-27, XNYS trades from 14:30 to 21:00Z, as on Friday 2025-01-24: a session holds 390
         // minutes, and an hour longer 450. Where the parser reads the list alike, its bind variable selects
-        // the same rows; where a fixed date holds another, the parser keeps the end of the inner one, see
-        // bug-nested-slots-tick-calendar, and the parser does not take the duration of a fixed date in a
-        // list with a tick calendar, see bug-date-list-calendar-cut-inside-list.
+        // the same rows, also where a fixed date holds another, as the tick calendar unites the intervals
+        // before it cuts them; the parser does not take the duration of a fixed date in a list with a tick
+        // calendar, see bug-date-list-calendar-cut-inside-list.
         useTickCalendar();
         assertMemoryLeak(() -> {
             createMinuteTables();
@@ -2897,8 +2941,8 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
                 // 15:00:00Z in Paris is 14:00Z, before the session
                 assertMinuteRowsInEveryFilterPath("[$today, 2025-01-24T15:00:00Z]@Europe/Paris#XNYS;1h", 450, "2025-01-27T14:30", "2025-01-27T21:59", 450);
                 // today in Hong Kong ends at 16:00Z and holds its minute at 23:00, 15:00Z
-                assertMinuteRowsInEveryFilterPath("[$today, 2025-01-27T23:00]@Asia/Hong_Kong#XNYS;1h", 150, "2025-01-27T14:30", "2025-01-27T16:59", 91);
-                assertMinuteRowsInEveryFilterPath("[$today, 2025-01-27T23:00]@Asia/Hong_Kong#XNYS;", 90, "2025-01-27T14:30", "2025-01-27T15:59", 31);
+                assertMinuteRowsInEveryFilterPath("[$today, 2025-01-27T23:00]@Asia/Hong_Kong#XNYS;1h", 150, "2025-01-27T14:30", "2025-01-27T16:59", 150);
+                assertMinuteRowsInEveryFilterPath("[$today, 2025-01-27T23:00]@Asia/Hong_Kong#XNYS;", 90, "2025-01-27T14:30", "2025-01-27T15:59", 90);
                 // the minute at 15:00Z, or at 09:30 in New York, as it is
                 assertMinuteRowsInEveryFilterPath("[$today, 2025-01-24T[15:00@UTC]]#XNYS;0h", 391, "2025-01-24T15:00", "2025-01-27T20:59", 391);
                 assertMinuteRowsInEveryFilterPath("[$today, 2025-01-24T[15:00@UTC]]#XNYS;", 391, "2025-01-24T15:00", "2025-01-27T20:59", 391);
@@ -3228,9 +3272,10 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
 
     @Test
     public void testTickExprThatExpandsToNothingInRowFilter() throws Exception {
-        // An OR with a condition that is not a timestamp interval keeps the IN in the row filter.
         // A tick expression with no interval at all, here a day filter that drops its only day,
-        // never matches, and the JIT compiles it to a comparison that is always false.
+        // never matches: IN folds to false and NOT IN to true, and the enclosing OR folds around
+        // them, with the JIT on and off. IN alone leaves no row to scan, NOT IN and the OR of NOT IN
+        // no filter, and the OR of IN only the other condition in the row filter.
         assertMemoryLeak(() -> {
             // hourly rows from 2024-01-01T00:00 to 2024-01-04T23:00, in ts and in ts2
             execute("""
@@ -3244,13 +3289,10 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
             try {
                 for (int mode : new int[]{SqlJitMode.JIT_MODE_ENABLED, SqlJitMode.JIT_MODE_DISABLED}) {
                     sqlExecutionContext.setJitMode(mode);
-                    final String groupBy = mode == SqlJitMode.JIT_MODE_ENABLED && JitUtil.isJitSupported()
-                            ? "Async JIT Group By"
-                            : "Async Group By";
-                    assertFilterRows("ts IN '2024-01-02#Mon' OR ts > '2030-01-01'", groupBy, "0\t\t");
-                    assertFilterRows("ts NOT IN '2024-01-02#Mon' OR ts > '2030-01-01'", groupBy, "96\t2024-01-01T00:00:00.000000Z\t2024-01-04T23:00:00.000000Z");
-                    assertFilterRows("ts2 IN '2024-01-02#Mon'", groupBy, "0\t\t");
-                    assertFilterRows("ts2 NOT IN '2024-01-02#Mon'", groupBy, "96\t2024-01-01T00:00:00.000000Z\t2024-01-04T23:00:00.000000Z");
+                    assertFilterRows("ts IN '2024-01-02#Mon' OR ts > '2030-01-01'", "filter: 2030-01-01T00:00:00.000000Z<ts", "0\t\t");
+                    assertFilterRows("ts NOT IN '2024-01-02#Mon' OR ts > '2030-01-01'", "filter: null", "96\t2024-01-01T00:00:00.000000Z\t2024-01-04T23:00:00.000000Z");
+                    assertFilterRows("ts2 IN '2024-01-02#Mon'", "Empty table", "0\t\t");
+                    assertFilterRows("ts2 NOT IN '2024-01-02#Mon'", "filter: null", "96\t2024-01-01T00:00:00.000000Z\t2024-01-04T23:00:00.000000Z");
                     assertFilterRows(
                             "(ts IN '2024-01-02#Mon' OR ts IN '2024-01-03') AND ts IN '2024-01-[03..04]'",
                             "Interval forward scan",

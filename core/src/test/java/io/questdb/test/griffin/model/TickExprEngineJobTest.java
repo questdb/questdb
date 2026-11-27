@@ -44,7 +44,6 @@ import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.model.CompiledTickExpression;
 import io.questdb.griffin.model.DateVariableExpr;
-import io.questdb.griffin.model.IntervalOperation;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.griffin.model.RuntimeIntervalModelBuilder;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
@@ -470,15 +469,15 @@ public class TickExprEngineJobTest extends AbstractCairoTest {
     public void testStaticDateTickCalendarLenientOverflowMergesLocally() throws Exception {
         // A list whose fixed date alone has more own extents than the interval limit parses as its bind
         // variable on each evaluation, with the limit where the evaluation is lenient. The parse merges the
-        // intervals of each date into those merged so far once there are as many as the merge threshold,
-        // rather than all of them again after each new one. At the default threshold of 256 and limit of
-        // 1,024, on Monday 2025-01-27, nothing holds the 1,440 seconds at the minutes of 2025-01-24, which
-        // lie before today and apart. The first merge, after 255 of them, unites all 256 intervals. Then
-        // the j-th second, for j from 256 on, merges into j intervals: 1 + floor(log2(j)) comparisons find
-        // that it lands before today, after the second before it, which it reads, and today moves after it,
-        // 4 + floor(log2(j)) in all, up to the 1,024th, whose merge leaves 1,025 intervals, past the limit:
-        // 256 + 769 x 4 + 256 x 8 + 512 x 9 + 10 = 9,998. Before, each merge sorted and merged every
-        // interval so far, 493,185 in all. The list then evaluates as it always has, see
+        // intervals of each date into those merged so far once the merge range grew by the merge
+        // threshold, rather than all of them again. At the default threshold of 256 and limit of 1,024, on
+        // Monday 2025-01-27, nothing holds the 1,440 seconds at the minutes of 2025-01-24, which lie before
+        // today and apart. The first merge, at the 255th second, unites all 256 intervals. The merges at
+        // the 511th, 767th, 1,023rd and 1,279th seconds sort the 256 new ones, find with 9, 10, 10 and 11
+        // comparisons that they land right before today, after the second before them, which they read,
+        // and move today after them: 258 plus the comparisons each, the last of which leaves 1,280
+        // intervals, past the limit: 256 + 267 + 268 + 268 + 269 = 1,328. A merge of every interval so far
+        // each time would sort and merge 3,840. The list then evaluates as it always has, see
         // testStaticDateTickCalendarOverflowInBackgroundJob.
         final String expression = "[$today, 2025-01-24T[00..23]:[00..59]:00]#XNYS;1m";
         final CairoConfiguration defaultLimits = tickCalendarConfiguration(256, 1024);
@@ -500,7 +499,7 @@ public class TickExprEngineJobTest extends AbstractCairoTest {
                             intervals.clear();
                             final long before = IntervalUtils.getStaticOwnExtentMergeIntervalCountForTesting();
                             compiled.evaluate(intervals);
-                            Assert.assertEquals(context, 9_998, IntervalUtils.getStaticOwnExtentMergeIntervalCountForTesting() - before);
+                            Assert.assertEquals(context, 1_328, IntervalUtils.getStaticOwnExtentMergeIntervalCountForTesting() - before);
                             TestUtils.assertEquals(context, expected, intervalToString(driver, intervals));
                         }
                     }
@@ -556,11 +555,10 @@ public class TickExprEngineJobTest extends AbstractCairoTest {
         // the duration from each of its slots. The same list with the duration on its fixed date
         // instead has no duration of its own, so it compiles as it always has, its fixed date to the same
         // windows, and evaluates to what the list does before the duration extends each piece. The tick
-        // calendar cuts those intervals without uniting them first, and keeps the end of the later of
-        // two that nest, see bug-nested-slots-tick-calendar, so a day that an element after the fixed
-        // date holds can cut short a piece of the windows. Where no element holds the day of the fixed
-        // date, the windows united, cut by the sessions, each piece extended by the duration, and merged,
-        // give the same. The windows are at least as long as the time between the slots, so that they
+        // calendar unites those intervals before it cuts them, so the windows united, cut by the
+        // sessions, each piece extended by the duration, and merged, give the same; the test compares
+        // them where no element holds the day of the fixed date. The windows are at least as long as the
+        // time between the slots, so that they
         // join, as windows that stay apart fail the list as it compiles. questdb.fuzz.tickExpressions
         // sets the number of lists, a tenth of it.
         final String[] variables = {"$today", "$yesterday", "$today-3d..$today", "$yesterday..$tomorrow"};
@@ -654,7 +652,7 @@ public class TickExprEngineJobTest extends AbstractCairoTest {
                     final String message = text + " at " + nowText + " [" + ColumnType.nameOf(driver.getTimestampType()) + (isSmallLimit ? ", limit 16]" : "]");
                     boolean isFit = true;
                     try {
-                        IntervalUtils.parseTickExpr(driver, limits, text, 0, text.length(), 0, new LongList(), IntervalOperation.INTERSECT, sink, true, now, IntervalUtils.TICK_CHECK_INTERVAL_LIMIT);
+                        IntervalUtils.parseTickExpr(driver, limits, text, 0, text.length(), 0, new LongList(), sink, now, IntervalUtils.TICK_CHECK_INTERVAL_LIMIT);
                     } catch (SqlException e) {
                         TestUtils.assertContains(message, e.getFlyweightMessage(), LIMIT_ERROR);
                         isFit = false;
@@ -714,15 +712,12 @@ public class TickExprEngineJobTest extends AbstractCairoTest {
         // minutes from 01:00 up to now, and the parse keeps those at 03:40 and 03:50, the last of which
         // ends the session of XHKG at 04:00Z, ten minutes later; the windows of ten minutes used to end it
         // at 04:10.
-        // At +08:00 on Monday, the seconds at the hours of Tuesday lie only in the range from yesterday to
-        // tomorrow, which follows them in the list, so the parse fails there too. The list keeps the
-        // windows of four hours as three intervals: the first 22 windows, which its merges unite as they
-        // reach 8 intervals, and the last two. After the 8th interval of the list, Sunday of that range,
-        // it merges them and the days from Friday on into one interval, from 16:00Z on Thursday to 19:00Z
-        // on Tuesday, which Monday and Tuesday of the range follow. The tick calendar cuts the intervals
-        // without uniting them first, and keeps the end of Tuesday, 16:00Z, as the end of the session of
-        // Tuesday rather than 19:00Z, see bug-nested-slots-tick-calendar, so the duration ends it at
-        // 20:00Z, not 23:00Z.
+        // At +08:00 on Monday, each element merges its intervals in a range of its own, so the 24 seconds
+        // at the hours of Tuesday count against the limit alone, and the parse fails there too. The list
+        // keeps the windows of four hours, from 16:00Z on Monday to 19:00Z on Tuesday, which join the days
+        // of the ranges, from 16:00Z on Thursday, into one interval. The tick calendar unites the intervals
+        // before it cuts them, so it keeps the sessions of Thursday from 16:00Z, of Friday and Monday, and
+        // of Tuesday to 19:00Z, the end of the last window, and the duration ends each four hours later.
         final CairoConfiguration defaultLimits = tickCalendarConfiguration(256, 1024);
         final CairoConfiguration smallLimits = tickCalendarConfiguration(8, 16);
         assertMemoryLeak(() -> {
@@ -759,7 +754,7 @@ public class TickExprEngineJobTest extends AbstractCairoTest {
                                 "2025-01-23T16:00:00.000000Z", "2025-01-24T01:00:00.000000Z",
                                 "2025-01-24T14:30:00.000000Z", "2025-01-25T01:00:00.000000Z",
                                 "2025-01-27T14:30:00.000000Z", "2025-01-28T01:00:00.000000Z",
-                                "2025-01-28T14:30:00.000000Z", "2025-01-28T20:00:00.000000Z"
+                                "2025-01-28T14:30:00.000000Z", "2025-01-28T23:00:00.000000Z"
                         );
                     }
                 }
@@ -1198,7 +1193,7 @@ public class TickExprEngineJobTest extends AbstractCairoTest {
     private String parse(TimestampDriver driver, String expression, long now, int checks) {
         final LongList out = new LongList();
         try {
-            IntervalUtils.parseTickExpr(driver, configuration, expression, 0, expression.length(), 0, out, IntervalOperation.INTERSECT, sink, true, now, checks);
+            IntervalUtils.parseTickExpr(driver, configuration, expression, 0, expression.length(), 0, out, sink, now, checks);
             return intervalToString(driver, out).toString();
         } catch (SqlException e) {
             return "error: " + e.getFlyweightMessage();

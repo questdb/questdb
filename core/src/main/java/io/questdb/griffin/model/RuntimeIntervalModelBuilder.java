@@ -240,14 +240,16 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         final int size = staticIntervals.size();
         try {
             parsedIntervals.clear();
-            IntervalUtils.parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, parsedIntervals, IntervalOperation.INTERSECT, sink, true);
+            parseStaticTickExpr(seq, lo, lim, position);
             if (dynamicRangeList.size() == 0) {
                 staticIntervals.add(parsedIntervals);
                 if (intervalApplied) {
                     IntervalUtils.intersectInPlace(staticIntervals, size);
                 }
+            } else if (parsedIntervals.size() == 0) {
+                intersectEmpty();
             } else {
-                intersectParsedIntervals();
+                appendStaticIntervalsIntersection();
             }
             intervalApplied = true;
         } finally {
@@ -624,7 +626,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         final int size = staticIntervals.size();
         try {
             parsedIntervals.clear();
-            IntervalUtils.parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, parsedIntervals, IntervalOperation.SUBTRACT, sink, true);
+            parseStaticTickExpr(seq, lo, lim, position);
             if (dynamicRangeList.size() == 0) {
                 staticIntervals.add(parsedIntervals);
                 IntervalUtils.invert(staticIntervals, size);
@@ -632,9 +634,13 @@ public class RuntimeIntervalModelBuilder implements Mutable {
                     IntervalUtils.intersectInPlace(staticIntervals, size);
                 }
             } else {
-                // the subtraction intersects the preceding result with the complement
+                // NOT IN S keeps the complement of S, so the inverted list encodes as an intersection.
                 IntervalUtils.invert(parsedIntervals, 0);
-                intersectParsedIntervals();
+                if (parsedIntervals.size() == 0) {
+                    intersectEmpty();
+                } else {
+                    appendStaticIntervalsIntersection();
+                }
             }
             intervalApplied = true;
         } finally {
@@ -695,7 +701,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         final int size = staticIntervals.size();
         try {
             parsedIntervals.clear();
-            IntervalUtils.parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, parsedIntervals, IntervalOperation.UNION, sink, true);
+            parseStaticTickExpr(seq, lo, lim, position);
             if (dynamicRangeList.size() == 0) {
                 staticIntervals.add(parsedIntervals);
                 if (intervalApplied) {
@@ -982,19 +988,6 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         }
     }
 
-    /**
-     * Intersects the preceding result with the static intervals in {@code parsedIntervals}, which
-     * the parser has sorted and merged. With no interval at all the result is the empty set,
-     * whatever the dynamic intervals before it resolve to.
-     */
-    private void intersectParsedIntervals() {
-        if (parsedIntervals.size() == 0) {
-            intersectEmpty();
-        } else {
-            appendStaticIntervalsIntersection();
-        }
-    }
-
     private long offsetIntervalHi(long hi, long hiOffset, TimestampDriver modelTimestampDriver) {
         if (hi == Long.MAX_VALUE || hiOffset == Long.MAX_VALUE) {
             return Long.MAX_VALUE;
@@ -1011,6 +1004,16 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         }
         lo = timestampDriver.from(lo, modelTimestampDriver.getTimestampType());
         return subtractSaturating(lo, loOffset);
+    }
+
+    /**
+     * Resolves a tick string without date variables into plain [lo, hi] pairs in parsedIntervals,
+     * also when a run-time interval precedes it. The callers then combine the whole list with the
+     * preceding expression in one step, so the result does not depend on the order of the AND or
+     * OR operands.
+     */
+    private void parseStaticTickExpr(CharSequence seq, int lo, int lim, int position) throws SqlException {
+        IntervalUtils.parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, parsedIntervals, sink);
     }
 
     /**

@@ -33,12 +33,14 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoConfigurationWrapper;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SampleBySortStrategy;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
+import io.questdb.cutlass.http.HttpServerConfiguration;
 import io.questdb.cutlass.pgwire.DefaultPGConfiguration;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.log.Log;
@@ -220,6 +222,9 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(32, configuration.getCairoConfiguration().getCopyPoolCapacity());
         Assert.assertEquals(5, configuration.getCairoConfiguration().getCreateAsSelectRetryCount());
         Assert.assertEquals(8, configuration.getCairoConfiguration().getViewLexerPoolCapacity());
+        // the server and the embedded default retry a view compile that met a table lock after 1 s
+        Assert.assertEquals(1_000, configuration.getCairoConfiguration().getViewCompileBusyRetryTimeout());
+        Assert.assertEquals(1_000, new DefaultCairoConfiguration(root).getViewCompileBusyRetryTimeout());
         Assert.assertTrue(configuration.getCairoConfiguration().isMatViewEnabled());
         Assert.assertTrue(configuration.getCairoConfiguration().isMatViewRowExpiryCleanupEnabled());
         Assert.assertEquals(16_384, configuration.getCairoConfiguration().getMatViewRowExpiryCleanupMaxCachedPartitions());
@@ -330,6 +335,7 @@ public class PropServerConfigurationTest {
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelWindowJoinEnabled());
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelGroupByEnabled());
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelHashJoinGroupByEnabled());
+        Assert.assertTrue(configuration.getCairoConfiguration().isSqlStreamGroupByEnabled());
         Assert.assertEquals(300_000, configuration.getCairoConfiguration().getSqlParallelHashJoinGroupByBuildParallelMinRows());
         Assert.assertEquals(32_768, configuration.getCairoConfiguration().getSqlParallelHashJoinGroupByBuildRowsPerPartition());
         Assert.assertEquals(128 * Numbers.SIZE_1MB, configuration.getCairoConfiguration().getSqlParallelHashJoinGroupByPayloadCopyMaxSize());
@@ -653,6 +659,30 @@ public class PropServerConfigurationTest {
         properties.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_COLUMN_SYNC_BATCHED.getPropertyPath(), "false");
         PropServerConfiguration configuration = newPropServerConfiguration(properties);
         Assert.assertFalse(configuration.getCairoConfiguration().isAdaptiveEpochColumnSyncBatched());
+    }
+
+    @Test
+    public void testBrowserTlsTerminationEnabled() throws Exception {
+        // both HTTP servers compare the Origin of a browser with Host, so both read the setting
+        assertBrowserTlsTerminationEnabled(false, new Properties(), null);
+
+        final Properties properties = new Properties();
+        properties.setProperty(PropertyKey.BROWSER_TLS_TERMINATION_ENABLED.getPropertyPath(), "true");
+        assertBrowserTlsTerminationEnabled(true, properties, null);
+
+        // the deprecated name still enables it, and the new name wins over it
+        final Properties deprecated = new Properties();
+        deprecated.setProperty(PropertyKey.QWP_BROWSER_TLS_TERMINATION_ENABLED.getPropertyPath(), "true");
+        assertBrowserTlsTerminationEnabled(true, deprecated, null);
+        deprecated.setProperty(PropertyKey.BROWSER_TLS_TERMINATION_ENABLED.getPropertyPath(), "false");
+        assertBrowserTlsTerminationEnabled(false, deprecated, null);
+
+        final Map<String, String> env = new HashMap<>();
+        env.put(PropertyKey.BROWSER_TLS_TERMINATION_ENABLED.getEnvVarName(), "true");
+        assertBrowserTlsTerminationEnabled(true, new Properties(), env);
+        env.clear();
+        env.put(PropertyKey.QWP_BROWSER_TLS_TERMINATION_ENABLED.getEnvVarName(), "true");
+        assertBrowserTlsTerminationEnabled(true, new Properties(), env);
     }
 
     @Test
@@ -1019,6 +1049,22 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testDeprecatedQwpBrowserTlsTerminationKey() throws Exception {
+        // qwp.browser.tls.termination.enabled shipped before the setting applied to every HTTP
+        // endpoint, so a server.conf that carries it still starts under strict validation
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.CONFIG_VALIDATION_STRICT.getPropertyPath(), "true");
+        properties.setProperty(PropertyKey.QWP_BROWSER_TLS_TERMINATION_ENABLED.getPropertyPath(), "true");
+        Assert.assertTrue(newPropServerConfiguration(properties).getHttpServerConfiguration().isBrowserTlsTerminationEnabled());
+
+        PropServerConfiguration.ValidationResult result = validate(properties);
+        Assert.assertNotNull(result);
+        Assert.assertFalse(result.isError());
+        TestUtils.assertContains(result.message(), "Deprecated settings");
+        TestUtils.assertContains(result.message(), "qwp.browser.tls.termination.enabled: Replaced by `browser.tls.termination.enabled`");
+    }
+
+    @Test
     public void testLiveViewDefaults() throws Exception {
         // Pin every live-view default through the real parser. Tests that set these keys
         // on a test configuration object never exercise PropServerConfiguration, so an
@@ -1250,6 +1296,18 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testHashJoinValuePageSizeClampedToOne() throws Exception {
+        // hash.join.value.page.size is a RecordChain page like sort.value.page.size, which runs at 1 byte
+        // and has no fixed block. A page of 0 never extends, so its first write lands outside the chain.
+        Properties properties = new Properties();
+        properties.setProperty("cairo.sql.hash.join.value.page.size", "0");
+
+        CairoConfiguration cairo = newPropServerConfiguration(properties).getCairoConfiguration();
+
+        Assert.assertEquals(1, cairo.getSqlHashJoinValuePageSize());
+    }
+
+    @Test
     public void testSortValuePageSizeClampedToOne() throws Exception {
         // sort.value.page.size is a divisor-only RecordChain page (no fixed block), so 0 clamps to 1
         // rather than being rejected - see testPageSizeBelowBlockSizeRejected for the heap-backed keys.
@@ -1409,6 +1467,83 @@ public class PropServerConfigurationTest {
         properties = new Properties();
         propConf = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
         Assert.assertEquals(300_000, propConf.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getExportTimeout());
+    }
+
+    @Test
+    public void testHttpAllowedHosts() throws Exception {
+        Properties properties = new Properties();
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        // both HTTP servers serve the names public DNS cannot point at them, and no other
+        for (HttpServerConfiguration httpConfiguration : new HttpServerConfiguration[]{
+                configuration.getHttpServerConfiguration(),
+                configuration.getHttpMinServerConfiguration()
+        }) {
+            Assert.assertTrue(httpConfiguration.getAllowedHosts().isAllowed(new Utf8String("localhost:9000")));
+            Assert.assertFalse(httpConfiguration.getAllowedHosts().isAllowed(new Utf8String("questdb.example.com:9000")));
+        }
+
+        properties.setProperty(PropertyKey.HTTP_ALLOWED_HOSTS.getPropertyPath(), "questdb.example.com");
+        configuration = newPropServerConfiguration(properties);
+        for (HttpServerConfiguration httpConfiguration : new HttpServerConfiguration[]{
+                configuration.getHttpServerConfiguration(),
+                configuration.getHttpMinServerConfiguration()
+        }) {
+            Assert.assertTrue(httpConfiguration.getAllowedHosts().isAllowed(new Utf8String("questdb.example.com:9000")));
+            Assert.assertFalse(httpConfiguration.getAllowedHosts().isAllowed(new Utf8String("rebind.example.com:9000")));
+        }
+    }
+
+    @Test
+    public void testHttpAllowedHostsRejectsInvalidEntry() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.HTTP_ALLOWED_HOSTS.getPropertyPath(), "questdb.example.com:9000");
+        try {
+            newPropServerConfiguration(properties);
+            Assert.fail();
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertEquals(
+                    "http.allowed.hosts: expected comma-separated host names, domains written with a leading dot such as .example.com, or *; host names are listed without a port: questdb.example.com:9000",
+                    e.getMessage()
+            );
+        }
+    }
+
+    @Test
+    public void testHttpBrowserAllowedOrigins() throws Exception {
+        Properties properties = new Properties();
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        for (HttpServerConfiguration httpConfiguration : new HttpServerConfiguration[]{
+                configuration.getHttpServerConfiguration(),
+                configuration.getHttpMinServerConfiguration()
+        }) {
+            Assert.assertFalse(httpConfiguration.getBrowserAllowedOrigins().isAllowed(new Utf8String("https://app.example.com")));
+        }
+
+        properties.setProperty(PropertyKey.HTTP_BROWSER_ALLOWED_ORIGINS.getPropertyPath(), "https://app.example.com");
+        configuration = newPropServerConfiguration(properties);
+        for (HttpServerConfiguration httpConfiguration : new HttpServerConfiguration[]{
+                configuration.getHttpServerConfiguration(),
+                configuration.getHttpMinServerConfiguration()
+        }) {
+            Assert.assertTrue(httpConfiguration.getBrowserAllowedOrigins().isAllowed(new Utf8String("https://app.example.com")));
+            Assert.assertFalse(httpConfiguration.getBrowserAllowedOrigins().isAllowed(new Utf8String("https://other.example.com")));
+        }
+        // the QWP WebSocket allowlist is a separate setting
+        Assert.assertFalse(configuration.getHttpServerConfiguration().getQwpBrowserAllowedOrigins().isAllowed(
+                new Utf8String("https://app.example.com")));
+    }
+
+    @Test
+    public void testHttpBrowserAllowedOriginsRejectsInvalidEntry() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.HTTP_BROWSER_ALLOWED_ORIGINS.getPropertyPath(), "https://app.example.com/");
+        try {
+            newPropServerConfiguration(properties);
+            Assert.fail();
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertContains(e.getMessage(), "http.browser.allowed.origins: expected comma-separated http(s) origins");
+            TestUtils.assertContains(e.getMessage(), ": https://app.example.com/");
+        }
     }
 
     @Test
@@ -2348,17 +2483,6 @@ public class PropServerConfigurationTest {
     }
 
     @Test
-    public void testQwpBrowserTlsTerminationEnabled() throws Exception {
-        Properties properties = new Properties();
-        PropServerConfiguration configuration = newPropServerConfiguration(properties);
-        Assert.assertFalse(configuration.getHttpServerConfiguration().isQwpBrowserTlsTerminationEnabled());
-
-        properties.setProperty(PropertyKey.QWP_BROWSER_TLS_TERMINATION_ENABLED.getPropertyPath(), "true");
-        configuration = newPropServerConfiguration(properties);
-        Assert.assertTrue(configuration.getHttpServerConfiguration().isQwpBrowserTlsTerminationEnabled());
-    }
-
-    @Test
     public void testQwpMaxRowsPerTable() throws Exception {
         Properties properties = new Properties();
         PropServerConfiguration configuration = newPropServerConfiguration(properties);
@@ -2564,6 +2688,17 @@ public class PropServerConfigurationTest {
         Properties properties = new Properties();
         properties.setProperty(PropertyKey.MEMORY_USAGE_LOG_INTERVAL.getPropertyPath(), "-1");
         assertInvalidConfiguration(properties, PropertyKey.MEMORY_USAGE_LOG_INTERVAL);
+    }
+
+    @Test
+    public void testStreamGroupByPropertyAndEnvironment() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty("cairo.sql.stream.groupby.enabled", "false");
+        Assert.assertFalse(newPropServerConfiguration(properties).getCairoConfiguration().isSqlStreamGroupByEnabled());
+        Map<String, String> env = new HashMap<>();
+        env.put("QDB_CAIRO_SQL_STREAM_GROUPBY_ENABLED", "true");
+        Assert.assertTrue(newPropServerConfiguration(root, properties, env, new BuildInformationHolder())
+                .getCairoConfiguration().isSqlStreamGroupByEnabled());
     }
 
     @Test
@@ -3151,6 +3286,38 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testViewCompileBusyRetryTimeoutAcceptsZeroAndLongMax() throws Exception {
+        final Properties properties = new Properties();
+        properties.setProperty(PropertyKey.CAIRO_VIEW_COMPILE_BUSY_RETRY_TIMEOUT.getPropertyPath(), "0");
+        Assert.assertEquals(0, newPropServerConfiguration(properties).getCairoConfiguration().getViewCompileBusyRetryTimeout());
+        properties.setProperty(PropertyKey.CAIRO_VIEW_COMPILE_BUSY_RETRY_TIMEOUT.getPropertyPath(), "9_223_372_036_854_775_807");
+        Assert.assertEquals(Long.MAX_VALUE, newPropServerConfiguration(properties).getCairoConfiguration().getViewCompileBusyRetryTimeout());
+    }
+
+    @Test
+    public void testViewCompileBusyRetryTimeoutRejectsInvalidValues() throws Exception {
+        final String key = PropertyKey.CAIRO_VIEW_COMPILE_BUSY_RETRY_TIMEOUT.getPropertyPath();
+        final String[][] valuesAndErrors = {
+                // a negative delay, in milliseconds or with a unit
+                {"-1", key + " must not be negative"},
+                {"-1s", key + " must not be negative"},
+                // one past the largest value, and a value that does not parse
+                {"9223372036854775808", "invalid configuration value [key=" + key + ", value=9223372036854775808]"},
+                {"1.5s", "invalid configuration value [key=" + key + ", value=1.5s]"}
+        };
+        for (String[] valueAndError : valuesAndErrors) {
+            final Properties properties = new Properties();
+            properties.setProperty(key, valueAndError[0]);
+            try {
+                newPropServerConfiguration(properties);
+                Assert.fail("expected ServerConfigurationException for " + valueAndError[0]);
+            } catch (ServerConfigurationException e) {
+                TestUtils.assertEquals(valueAndError[1], e.getMessage());
+            }
+        }
+    }
+
+    @Test
     public void testWebConsolePathChangeUpdatesDefaultDependencies() throws Exception {
         Properties properties = new Properties();
         properties.setProperty("http.context.web.console", "/new-path");
@@ -3640,6 +3807,12 @@ public class PropServerConfigurationTest {
         return pathsThatCanBePinned;
     }
 
+    private void assertBrowserTlsTerminationEnabled(boolean expected, Properties properties, Map<String, String> env) throws Exception {
+        final PropServerConfiguration configuration = newPropServerConfiguration(root, properties, env, new BuildInformationHolder());
+        Assert.assertEquals(expected, configuration.getHttpServerConfiguration().isBrowserTlsTerminationEnabled());
+        Assert.assertEquals(expected, configuration.getHttpMinServerConfiguration().isBrowserTlsTerminationEnabled());
+    }
+
     private void assertInputWorkRootCantBeSetTo(Properties properties, String value) throws Exception {
         try {
             properties.setProperty(PropertyKey.CAIRO_SQL_COPY_ROOT.getPropertyPath(), value);
@@ -3782,6 +3955,8 @@ public class PropServerConfigurationTest {
         Assert.assertFalse(configuration.isAdaptiveEpochColumnSyncBatched());
         Assert.assertEquals(12, configuration.getCreateAsSelectRetryCount());
         Assert.assertEquals(16, configuration.getViewLexerPoolCapacity());
+        // 2s
+        Assert.assertEquals(2_000, configuration.getViewCompileBusyRetryTimeout());
         Assert.assertFalse(configuration.isMatViewEnabled());
         Assert.assertTrue(configuration.getDefaultSymbolCacheFlag());
         Assert.assertEquals(512, configuration.getDefaultSymbolCapacity());

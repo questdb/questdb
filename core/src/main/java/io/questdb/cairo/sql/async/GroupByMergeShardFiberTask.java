@@ -26,7 +26,7 @@ package io.questdb.cairo.sql.async;
 
 import io.questdb.griffin.engine.groupby.GroupByMergeShardJob;
 import io.questdb.griffin.engine.groupby.PostAggregationCircuitBreaker;
-import io.questdb.griffin.engine.table.GroupByShardingContext;
+import io.questdb.griffin.engine.groupby.GroupByShardMerger;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.CountDownLatchSPI;
@@ -44,7 +44,7 @@ final class GroupByMergeShardFiberTask extends AbstractQueryParallelFiberTask {
     private PostAggregationCircuitBreaker circuitBreaker;
     private long cursor = -1;
     private CountDownLatchSPI doneLatch;
-    private GroupByShardingContext shardingContext;
+    private GroupByShardMerger merger;
     private int shardIndex = -1;
     private boolean started;
     private AtomicInteger startedCounter;
@@ -64,14 +64,14 @@ final class GroupByMergeShardFiberTask extends AbstractQueryParallelFiberTask {
         this.circuitBreaker = task.getCircuitBreaker();
         this.startedCounter = task.getStartedCounter();
         this.doneLatch = task.getDoneLatch();
-        this.shardingContext = task.getShardingContext();
+        this.merger = task.getMerger();
         this.shardIndex = task.getShardIndex();
         this.subSeq = subSeq;
         this.cursor = cursor;
         this.batchQueue = queue;
         bindBatch(workerId, subSeq);
         bindCancellation(circuitBreaker, task.getDispatchContext());
-        bindProgress(shardingContext.getProgressState());
+        bindProgress(merger.getProgressState());
         task.clear();
         releaseCursor();
     }
@@ -98,7 +98,7 @@ final class GroupByMergeShardFiberTask extends AbstractQueryParallelFiberTask {
         circuitBreaker = null;
         cursor = -1;
         doneLatch = null;
-        shardingContext = null;
+        merger = null;
         shardIndex = -1;
         started = false;
         startedCounter = null;
@@ -147,7 +147,7 @@ final class GroupByMergeShardFiberTask extends AbstractQueryParallelFiberTask {
                     circuitBreaker,
                     startedCounter,
                     doneLatch,
-                    shardingContext,
+                    merger,
                     shardIndex,
                     false
             );

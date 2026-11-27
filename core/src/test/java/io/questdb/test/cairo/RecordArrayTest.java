@@ -69,6 +69,89 @@ public class RecordArrayTest extends AbstractCairoTest {
     private static final EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
 
     @Test
+    public void testPutRowCopiesFixedWidthRows() throws Exception {
+        assertMemoryLeak(() -> {
+            final GenericRecordMetadata metadata = new GenericRecordMetadata();
+            metadata.add(new TableColumnMetadata("a", ColumnType.LONG));
+            metadata.add(new TableColumnMetadata("b", ColumnType.INT));
+            try (
+                    RecordArray source = new RecordArray(metadata, null, SIZE_4M, Integer.MAX_VALUE);
+                    RecordArray target = new RecordArray(metadata, null, 4096, Integer.MAX_VALUE)
+            ) {
+                final int n = 1_000;
+                for (int i = 0; i < n; i++) {
+                    source.beginRecord();
+                    source.putLong(i);
+                    source.putInt(i * 2);
+                }
+                for (int i = n - 1; i >= 0; i--) {
+                    target.putRow(source, i);
+                }
+                Assert.assertEquals(n, target.size());
+                final Record record = target.getRecordB();
+                for (int i = 0; i < n; i++) {
+                    target.recordAtRowIndex(record, i);
+                    Assert.assertEquals(n - 1 - i, record.getLong(0));
+                    Assert.assertEquals((n - 1 - i) * 2, record.getInt(1));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testPutRowCopiesStoredRows() throws Exception {
+        assertMemoryLeak(() -> {
+            final int n = 1_000;
+            CreateTableTestUtils.createTestTable(n, new Rnd(), new TestRecord.ArrayBinarySequence());
+            try (
+                    TableReader reader = newOffPoolReader(configuration, "x");
+                    TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
+            ) {
+                final RecordMetadata metadata = reader.getMetadata();
+                entityColumnFilter.of(metadata.getColumnCount());
+                final RecordSink recordSink = RecordSinkFactory.getInstance(configuration, asm, metadata, entityColumnFilter);
+                try (
+                        RecordArray source = new RecordArray(metadata, recordSink, SIZE_4M, Integer.MAX_VALUE);
+                        // A sink would throw here, and the small page grows and moves under the copies.
+                        RecordArray backwards = new RecordArray(metadata, null, 4096, Integer.MAX_VALUE);
+                        RecordArray mixed = new RecordArray(metadata, recordSink, 4096, Integer.MAX_VALUE)
+                ) {
+                    source.setSymbolTableResolver(cursor);
+                    backwards.setSymbolTableResolver(cursor);
+                    mixed.setSymbolTableResolver(cursor);
+                    final Record cursorRecord = cursor.getRecord();
+                    while (cursor.hasNext()) {
+                        source.put(cursorRecord);
+                    }
+                    for (long i = n - 1; i >= 0; i--) {
+                        backwards.putRow(source, i);
+                    }
+                    // Rows from the sink and from copies share the append position.
+                    cursor.toTop();
+                    for (long i = 0; cursor.hasNext(); i++) {
+                        if (i % 3 == 0) {
+                            mixed.put(cursorRecord);
+                        } else {
+                            mixed.putRow(source, i);
+                        }
+                    }
+                    Assert.assertEquals(n, backwards.size());
+                    Assert.assertEquals(n, mixed.size());
+                    final Record backwardsRecord = backwards.getRecordB();
+                    final Record mixedRecord = mixed.getRecordB();
+                    cursor.toTop();
+                    for (long i = 0; cursor.hasNext(); i++) {
+                        backwards.recordAtRowIndex(backwardsRecord, n - 1 - i);
+                        assertSame(cursorRecord, backwardsRecord, metadata);
+                        mixed.recordAtRowIndex(mixedRecord, i);
+                        assertSame(cursorRecord, mixedRecord, metadata);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testPseudoRandomAccess() throws Exception {
         assertMemoryLeak(() -> {
             int N = 10000;

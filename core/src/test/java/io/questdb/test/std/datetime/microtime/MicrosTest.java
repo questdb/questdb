@@ -412,6 +412,24 @@ public class MicrosTest {
     }
 
     @Test
+    public void testFloorNSWithOffset() {
+        final long offset = 900_000_000L;
+        // A whole-microsecond stride falls on the same grid as its microsecond form.
+        for (long micros = offset; micros < offset + 100; micros++) {
+            Assert.assertEquals(offset + (micros - offset) / 7 * 7, Micros.floorNS(micros, 7000, offset));
+        }
+        // Buckets of 2.5 microseconds that start at the offset of 3 microseconds: 3, 5.5, 8 and 10.5.
+        Assert.assertEquals(3, Micros.floorNS(3, 2500, 3));
+        Assert.assertEquals(3, Micros.floorNS(5, 2500, 3));
+        Assert.assertEquals(5, Micros.floorNS(6, 2500, 3));
+        Assert.assertEquals(8, Micros.floorNS(10, 2500, 3));
+        Assert.assertEquals(10, Micros.floorNS(11, 2500, 3));
+        // A timestamp below the offset floors to the offset.
+        Assert.assertEquals(3, Micros.floorNS(2, 2500, 3));
+        Assert.assertEquals(offset, Micros.floorNS(-1, 7000, offset));
+    }
+
+    @Test
     public void testFloorSS() {
         testFloorSS("1969-12-31T23:59:59.999999Z", "1969-12-31T23:59:59.000000Z");
         testFloorSS("1969-01-01T00:00:00.000000Z", "1969-01-01T00:00:00.000000Z");

@@ -765,6 +765,35 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testStreamGroupByMaster() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tr (ts TIMESTAMP, px DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO tr VALUES (0, 1), (500_000, 3), (1_500_000, 5), (2_000_000, 7)");
+            final String expected = """
+                    a\th
+                    2.0\t1970-01-01T00:00:00.000000Z
+                    2.0\t1970-01-01T00:00:00.250000Z
+                    5.0\t1970-01-01T00:00:01.000000Z
+                    5.0\t1970-01-01T00:00:01.250000Z
+                    7.0\t1970-01-01T00:00:02.000000Z
+                    7.0\t1970-01-01T00:00:02.250000Z
+                    """;
+            for (String master : new String[]{
+                    "((SELECT ts, avg(px) a FROM tr SAMPLE BY 1s) TIMESTAMP(ts))",
+                    "(SELECT ts, avg(px) a FROM tr SAMPLE BY 1s ORDER BY ts LIMIT 10)"
+            }) {
+                final String sql = "WITH offsets AS (SELECT 250_000 * (x - 1) offs FROM long_sequence(2)) "
+                        + "SELECT /*+ markout_horizon(b offsets) */ a, ts + offs h FROM " + master + " b CROSS JOIN offsets ORDER BY ts + offs";
+                assertHintUsedAndResultSameAsWithoutHint(sql);
+                assertQuery(sql)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns(expected);
+            }
+        });
+    }
+
+    @Test
     public void testVeryCloseTimestamps() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE orders (id INT, order_ts TIMESTAMP) TIMESTAMP(order_ts)");
