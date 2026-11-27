@@ -890,8 +890,8 @@ public class QueryFuzzTest extends AbstractCairoTest {
         withSystemProperties(
                 new String[][]{
                         {FuzzConfig.QUERIES_PROP, "300"},
-                        {"questdb.fuzz.s0", "402"},
-                        {"questdb.fuzz.s1", "12469"},
+                        {"questdb.fuzz.s0", "3"},
+                        {"questdb.fuzz.s1", "100"},
                         {FuzzConfig.PARALLEL_JOIN_FRAMES_PROP, "2"},
                         {FuzzConfig.PARALLEL_JOIN_PROBE_FRAMES_PROP, "0"},
                         {FuzzConfig.PARALLEL_JOIN_RING_PROP, "192"},
@@ -925,8 +925,8 @@ public class QueryFuzzTest extends AbstractCairoTest {
         withSystemProperties(
                 new String[][]{
                         {FuzzConfig.QUERIES_PROP, "300"},
-                        {"questdb.fuzz.s0", "20"},
-                        {"questdb.fuzz.s1", "627"},
+                        {"questdb.fuzz.s0", "135"},
+                        {"questdb.fuzz.s1", "4192"},
                         {FuzzConfig.PARALLEL_JOIN_FRAMES_PROP, "2"},
                         {FuzzConfig.PARALLEL_JOIN_PROBE_FRAMES_PROP, "0"},
                         {FuzzConfig.PARALLEL_JOIN_RING_PROP, "192"},
@@ -1072,8 +1072,8 @@ public class QueryFuzzTest extends AbstractCairoTest {
         withSystemProperties(
                 new String[][]{
                         {FuzzConfig.QUERIES_PROP, "300"},
-                        {"questdb.fuzz.s0", "1"},
-                        {"questdb.fuzz.s1", "38"},
+                        {"questdb.fuzz.s0", "8"},
+                        {"questdb.fuzz.s1", "255"},
                         {FuzzConfig.PARALLEL_JOIN_FRAMES_PROP, "3"},
                         {FuzzConfig.PARALLEL_JOIN_PROBE_FRAMES_PROP, "0"},
                         {FuzzConfig.PARALLEL_JOIN_RING_PROP, "1"},

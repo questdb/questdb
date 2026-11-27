@@ -80,7 +80,10 @@ import java.util.regex.Pattern;
  * The generator is random, so the assertions run over a corpus; the seed is fixed so a failure is reproducible.
  */
 public class ExportTimestampShapeCoverageTest extends AbstractCairoTest {
-    private static final int CORPUS_SIZE = 4_000;
+    // Only about 1 query in 70 yields a plan the streamed timestamp check reads, and 1 in 100 of those has an index
+    // scan. At 40_000 the pinned seed yields 6 index scans and 19 sorts, so a change to the generator that
+    // reshuffles the corpus does not empty a family; 4_000 yielded one or none.
+    private static final int CORPUS_SIZE = 40_000;
     // Simulated fuzz runs testFactoryRetypesColumnsOfParquetPartitions drives through FuzzTableFactory, each building
     // two or three tables of two siblings. The pinned seed yields 283 siblings that retype INT to LONG after their
     // conversion and 266 that retype VARCHAR to STRING, in well under a second.

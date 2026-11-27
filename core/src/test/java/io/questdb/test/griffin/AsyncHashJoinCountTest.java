@@ -37,6 +37,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
 import io.questdb.griffin.engine.table.AsyncHashJoinAtom;
 import io.questdb.griffin.engine.table.AsyncHashJoinRecordCursorFactory;
@@ -803,7 +804,7 @@ public class AsyncHashJoinCountTest extends AbstractCairoTest {
                     try (RecordCursorFactory factory = select(sql)) {
                         final AsyncHashJoinRecordCursorFactory join = find(factory);
                         Assert.assertNotNull(sql, join);
-                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        try (RecordCursor cursor = getCursorKeptOpenOnFailure(factory)) {
                             final RecordCursor.Counter counter = new RecordCursor.Counter();
                             try {
                                 cursor.calculateSize(sqlExecutionContext.getCircuitBreaker(), counter);
@@ -1075,7 +1076,7 @@ public class AsyncHashJoinCountTest extends AbstractCairoTest {
             final long passes = chainLengthIndexCount(join);
             final SqlExecutionCircuitBreaker previous = sqlExecutionContext.getCircuitBreaker();
             ((SqlExecutionContextImpl) sqlExecutionContext).with(breaker);
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            try (RecordCursor cursor = getCursorKeptOpenOnFailure(factory)) {
                 for (int i = 0; i < prefix; i++) {
                     Assert.assertTrue(sql, cursor.hasNext());
                 }
@@ -1399,6 +1400,14 @@ public class AsyncHashJoinCountTest extends AbstractCairoTest {
         execute("CREATE TABLE u1 AS (SELECT (x - 1)::INT k, x * 3 w FROM long_sequence(5))");
         // m holds three rows of key 1, two of key 3 and one of keys 2, 4 and 5.
         execute("CREATE TABLE m AS (SELECT CASE WHEN x <= 3 THEN 1 WHEN x = 4 THEN 2 WHEN x <= 6 THEN 3 ELSE x - 3 END::INT k, x w FROM long_sequence(8))");
+    }
+
+    // QueryProgress closes its cursor when calculateSize() fails, and the close resets the join's
+    // frame counts. The cursor of the factory under it stays open until the test closes it, so the
+    // test reads the frames that the failed count went through.
+    private static RecordCursor getCursorKeptOpenOnFailure(RecordCursorFactory factory) throws SqlException {
+        final RecordCursorFactory base = factory instanceof QueryProgress ? factory.getBaseFactory() : factory;
+        return base.getCursor(sqlExecutionContext);
     }
 
     private static boolean isOnStack(String methodName) {
