@@ -462,7 +462,7 @@ public class StreamSampleByFillTest extends AbstractCairoTest {
                     + "('2024-01-01T02:00', '00000000-0000-0000-0000-000000000002')", context);
             assertQuery("SELECT ts, first(id) id FROM ids SAMPLE BY 1h FILL(PREV)")
                     .withEngine(engine).withContext(context).noLeakCheck().timestamp("ts").noRandomAccess()
-                    .withPlanContaining("Sample By Fill", "sort light").withPlanNotContaining("Stream Group By")
+                    .withPlanContaining("Sample By Fill", "Materialize", "Stream Group By").withPlanNotContaining("sort")
                     .returns(precision("""
                             ts\tid
                             2024-01-01T00:00:00.000000Z\t00000000-0000-0000-0000-000000000001

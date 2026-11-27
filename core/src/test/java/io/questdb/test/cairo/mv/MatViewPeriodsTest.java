@@ -100,6 +100,8 @@ public class MatViewPeriodsTest {
         assertPeriod(sampler, rules, "2022-03-13T06:35", "2022-03-13T06:00", "2022-03-13T07:00");
         // On a grid point, and a microsecond before it.
         assertPeriod(sampler, rules, "2022-03-13T06:00", "2022-03-13T06:00", "2022-03-13T07:00");
+        // 05:35Z is 00:35 EST, an hour further below the start.
+        assertPeriod(sampler, rules, "2022-03-13T05:35", "2022-03-13T05:00", "2022-03-13T06:00");
         Assert.assertEquals(
                 MicrosTimestampDriver.floor("2022-03-13T05:00"),
                 MatViewPeriods.periodStart(sampler, rules, MicrosTimestampDriver.floor("2022-03-13T06:00") - 1)

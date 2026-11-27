@@ -43,18 +43,16 @@ import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TimeFrame;
 import io.questdb.cairo.sql.TimeFrameCursor;
-import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.parquet.ParquetDecoder;
-import io.questdb.jit.CompiledFilter;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
 
-public final class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
+public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
     private final RecordCursorFactory base;
     private final IntList columnCrossIndex;
     private final SelectedRecordCursor cursor;
@@ -68,13 +66,18 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         super(metadata);
         this.base = base;
         this.columnCrossIndex = columnCrossIndex;
-        this.cursor = new SelectedRecordCursor(columnCrossIndex, base.recordCursorSupportsRandomAccess());
-        // True when the cursor must wrap its base to expose only the projected columns.
-        // isCrossedIndex covers reorder; the size check covers drop-only-with-identity-mapping
-        // (kept columns are at base[0..size-1]). Without the size check, page frame consumers
-        // that iterate by base columnMapping size would walk past the projected metadata.
-        this.needsProjection = isCrossedIndex(columnCrossIndex)
-                || columnCrossIndex.size() != base.getMetadata().getColumnCount();
+        try {
+            this.cursor = new SelectedRecordCursor(columnCrossIndex, base.recordCursorSupportsRandomAccess());
+            // True when the cursor must wrap its base to expose only the projected columns.
+            // isCrossedIndex covers reorder; the size check covers drop-only-with-identity-mapping
+            // (kept columns are at base[0..size-1]). Without the size check, page frame consumers
+            // that iterate by base columnMapping size would walk past the projected metadata.
+            this.needsProjection = isCrossedIndex(columnCrossIndex)
+                    || columnCrossIndex.size() != base.getMetadata().getColumnCount();
+        } catch (Throwable th) {
+            Misc.free(this, th);
+            throw th;
+        }
     }
 
     public static boolean isCrossedIndex(IntList columnCrossIndex) {
@@ -84,11 +87,6 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
             }
         }
         return false;
-    }
-
-    @Override
-    public boolean canPeelForTopK() {
-        return true;
     }
 
     @Override
@@ -108,30 +106,8 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
     }
 
     @Override
-    public boolean isStableWithinExecution() {
-        return base.isStableWithinExecution();
-    }
-
-    // to be used in combination with compiled filter
-    @Nullable
-    public ObjList<Function> getBindVarFunctions() {
-        return base.getBindVarFunctions();
-    }
-
-    // to be used in combination with compiled filter
-    @Nullable
-    public MemoryCARW getBindVarMemory() {
-        return base.getBindVarMemory();
-    }
-
-    @Override
     public IntList getColumnCrossIndex() {
         return columnCrossIndex;
-    }
-
-    @Override
-    public CompiledFilter getCompiledFilter() {
-        return base.getCompiledFilter();
     }
 
     @Override
@@ -217,11 +193,6 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         return timeFrameCursor.of(baseCursor);
     }
 
-    @Override
-    public void halfClose() {
-        base.halfClose();
-    }
-
     // The column the metadata marks as the timestamp must pass through the base's own timestamp: a timestamp(col)
     // claim over another column of the base marks a column that may hold NULL in rows of any order.
     @Override
@@ -265,15 +236,6 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
     }
 
     @Override
-    public RecordCursorFactory rewrapOverTopK(RecordCursorFactory topK, RecordMetadata orderedMetadata) {
-        RecordCursorFactory rewrappedBase = base.rewrapOverTopK(topK, base.getMetadata());
-        // Shares columnCrossIndex with the orphaned wrapper. Per the
-        // RecordCursorFactory.rewrapOverTopK contract, the caller must not close the orphan;
-        // its state has transferred here. Same precedent as the AsOf and LatestBy peels.
-        return new SelectedRecordCursorFactory(orderedMetadata, columnCrossIndex, rewrappedBase);
-    }
-
-    @Override
     public boolean supportsConcurrentTimeFrameCursor() {
         return base.supportsConcurrentTimeFrameCursor();
     }
@@ -302,14 +264,6 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
     public void toPlan(PlanSink sink) {
         sink.type("SelectedRecord");
         sink.child(base);
-    }
-
-    @Override
-    public int translateOrderByColumnToBase(int projectedIndex) {
-        if (projectedIndex < 0 || projectedIndex >= columnCrossIndex.size()) {
-            return -1;
-        }
-        return base.translateOrderByColumnToBase(columnCrossIndex.getQuick(projectedIndex));
     }
 
     @Override

@@ -49,6 +49,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.QueryAssertion;
 import org.junit.Assert;
 
@@ -124,6 +125,19 @@ public final class ParquetTestUtils {
                 }
             }
         }));
+    }
+
+    /**
+     * Asserts the Parquet field ids of the file's columns, in column order.
+     */
+    public static void assertColumnIds(String parquetFilePath, FilesFacade ff, String expectedColumnIds) {
+        withDecoder(parquetFilePath, ff, decoder -> {
+            final StringSink actual = new StringSink();
+            for (int i = 0, n = decoder.metadata().getColumnCount(); i < n; i++) {
+                actual.put(i > 0 ? "," : "").put(decoder.metadata().getColumnId(i));
+            }
+            TestUtils.assertEquals("field ids of " + parquetFilePath, expectedColumnIds, actual);
+        });
     }
 
     /**

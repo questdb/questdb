@@ -115,7 +115,7 @@ public class FullPartitionFrameCursorFactoryTest extends AbstractCairoTest {
                 execute("alter table x convert partition to parquet where timestamp >= 0;");
             }
 
-            try (FullPartitionFrameCursorFactory factory = new FullPartitionFrameCursorFactory(tableToken, 0, metadata, ORDER_ASC, null, 0, false)) {
+            try (FullPartitionFrameCursorFactory factory = new FullPartitionFrameCursorFactory(tableToken, 0, TestUtils.tableDescriptor(metadata), ORDER_ASC, null, 0, false)) {
                 long count = 0;
                 try (PartitionFrameCursor cursor = factory.getCursor(new SqlExecutionContextStub(engine), new IntList(), ORDER_ASC)) {
                     PartitionFrame frame;

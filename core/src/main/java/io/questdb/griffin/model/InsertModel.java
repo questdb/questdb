@@ -44,7 +44,7 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
     private final ObjList<ObjList<ExpressionNode>> rowTupleValues = new ObjList<>();
     private long batchSize = -1;
     private long o3MaxLag = 0;
-    private IQueryModel queryModel;
+    private QueryModel queryModel;
     private int selectKeywordPosition;
     private ExpressionNode tableNameExpr;
 
@@ -113,7 +113,7 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
         return o3MaxLag;
     }
 
-    public IQueryModel getQueryModel() {
+    public QueryModel getQueryModel() {
         return queryModel;
     }
 
@@ -147,7 +147,7 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
         this.o3MaxLag = o3MaxLag;
     }
 
-    public void setQueryModel(IQueryModel queryModel) {
+    public void setQueryModel(QueryModel queryModel) {
         this.queryModel = queryModel;
     }
 

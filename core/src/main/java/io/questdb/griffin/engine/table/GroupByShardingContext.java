@@ -89,7 +89,7 @@ public class GroupByShardingContext implements GroupByShardMerger, QuietCloseabl
     volatile boolean sharded;
     boolean shardedHint;
 
-    GroupByShardingContext(
+    public GroupByShardingContext(
             CairoConfiguration configuration,
             ColumnTypes keyTypes,
             ColumnTypes valueTypes,
@@ -148,9 +148,20 @@ public class GroupByShardingContext implements GroupByShardMerger, QuietCloseabl
         Misc.freeObjList(destShards);
     }
 
+    public GroupByMapFragment getFragment(int slotId) {
+        if (slotId == -1) {
+            return ownerFragment;
+        }
+        return perWorkerFragments.getQuick(slotId);
+    }
+
     @Override
     public AsyncQueryProgressState getProgressState() {
         return progressState;
+    }
+
+    public boolean isSharded() {
+        return sharded;
     }
 
     @Override
@@ -161,14 +172,77 @@ public class GroupByShardingContext implements GroupByShardMerger, QuietCloseabl
         return perWorkerLocks.acquireSlot(carrierId, circuitBreaker);
     }
 
+    public void maybeEnableSharding(GroupByMapFragment fragment, long functionCardinalityIncrement) {
+        fragment.totalFunctionCardinality += functionCardinalityIncrement;
+        // Functions are cheaper to merge when compared with merging the maps, hence the 10x multiplier.
+        final int shardingThreshold = configuration.getGroupByShardingThreshold();
+        if (!sharded && (fragment.getMap().size() > shardingThreshold || fragment.totalFunctionCardinality > 10L * shardingThreshold)) {
+            sharded = true;
+        }
+    }
+
+    public Map mergeOwnerMap() {
+        return mergeOwnerMap(getFunctionUpdater(-1));
+    }
+
     @Override
     public void mergeShard(int slotId, int shardIndex) {
         mergeShard(shardIndex, getFunctionUpdater(slotId));
     }
 
+    /**
+     * Merges per-worker shard maps into destination shards in parallel.
+     * The owner thread publishes merge tasks and work-steals when the queue is full.
+     *
+     * @return destination shard maps (non-intersecting key sets)
+     */
+    public ObjList<Map> mergeShards(
+            MessageBus messageBus,
+            WorkStealingStrategy workStealingStrategy,
+            SqlExecutionCircuitBreaker circuitBreaker,
+            PostAggregationCircuitBreaker postAggregationCircuitBreaker,
+            SOUnboundedCountDownLatch postAggregationDoneLatch,
+            AtomicInteger postAggregationStartedCounter
+    ) {
+        // First, make sure to shard all non-sharded maps, if any.
+        shardAll();
+        // Next, merge each set of partial shard maps into the final shard map. This is done in parallel.
+        GroupByMergeShardJob.mergeShards(
+                this,
+                ownerLoop,
+                messageBus,
+                workStealingStrategy,
+                circuitBreaker,
+                postAggregationCircuitBreaker,
+                postAggregationDoneLatch,
+                postAggregationStartedCounter,
+                false,
+                NUM_SHARDS
+        );
+        if (!postAggregationCircuitBreaker.checkIfTrippedOrYield()) {
+            finalizeShardStats();
+        }
+        return destShards;
+    }
+
     @Override
     public void release(int slotId) {
         perWorkerLocks.releaseSlot(slotId);
+    }
+
+    public void reopen() {
+        if (shardedHint) {
+            // Looks like we had to shard during previous execution, so let's do it ahead of time.
+            sharded = true;
+        }
+    }
+
+    public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+        memoryTracker = tracker;
+        ownerFragment.setMemoryTracker(tracker);
+        for (int i = 0, n = perWorkerFragments.size(); i < n; i++) {
+            perWorkerFragments.getQuick(i).setMemoryTracker(tracker);
+        }
     }
 
     private Map mergeOwnerMap(GroupByFunctionsUpdater functionUpdater) {
@@ -334,85 +408,11 @@ public class GroupByShardingContext implements GroupByShardMerger, QuietCloseabl
         return destShards;
     }
 
-    GroupByMapFragment getFragment(int slotId) {
-        if (slotId == -1) {
-            return ownerFragment;
-        }
-        return perWorkerFragments.getQuick(slotId);
-    }
-
     GroupByFunctionsUpdater getFunctionUpdater(int slotId) {
         if (slotId == -1 || perWorkerFunctionUpdaters == null) {
             return ownerFunctionUpdater;
         }
         return perWorkerFunctionUpdaters.getQuick(slotId);
-    }
-
-    boolean isSharded() {
-        return sharded;
-    }
-
-    void maybeEnableSharding(GroupByMapFragment fragment, long functionCardinalityIncrement) {
-        fragment.totalFunctionCardinality += functionCardinalityIncrement;
-        // Functions are cheaper to merge when compared with merging the maps, hence the 10x multiplier.
-        final int shardingThreshold = configuration.getGroupByShardingThreshold();
-        if (!sharded && (fragment.getMap().size() > shardingThreshold || fragment.totalFunctionCardinality > 10L * shardingThreshold)) {
-            sharded = true;
-        }
-    }
-
-    Map mergeOwnerMap() {
-        return mergeOwnerMap(getFunctionUpdater(-1));
-    }
-
-    /**
-     * Merges per-worker shard maps into destination shards in parallel.
-     * The owner thread publishes merge tasks and work-steals when the queue is full.
-     *
-     * @return destination shard maps (non-intersecting key sets)
-     */
-    ObjList<Map> mergeShards(
-            MessageBus messageBus,
-            WorkStealingStrategy workStealingStrategy,
-            SqlExecutionCircuitBreaker circuitBreaker,
-            PostAggregationCircuitBreaker postAggregationCircuitBreaker,
-            SOUnboundedCountDownLatch postAggregationDoneLatch,
-            AtomicInteger postAggregationStartedCounter
-    ) {
-        // First, make sure to shard all non-sharded maps, if any.
-        shardAll();
-        // Next, merge each set of partial shard maps into the final shard map. This is done in parallel.
-        GroupByMergeShardJob.mergeShards(
-                this,
-                ownerLoop,
-                messageBus,
-                workStealingStrategy,
-                circuitBreaker,
-                postAggregationCircuitBreaker,
-                postAggregationDoneLatch,
-                postAggregationStartedCounter,
-                false,
-                NUM_SHARDS
-        );
-        if (!postAggregationCircuitBreaker.checkIfTrippedOrYield()) {
-            finalizeShardStats();
-        }
-        return destShards;
-    }
-
-    void reopen() {
-        if (shardedHint) {
-            // Looks like we had to shard during previous execution, so let's do it ahead of time.
-            sharded = true;
-        }
-    }
-
-    void setMemoryTracker(@Nullable MemoryTracker tracker) {
-        memoryTracker = tracker;
-        ownerFragment.setMemoryTracker(tracker);
-        for (int i = 0, n = perWorkerFragments.size(); i < n; i++) {
-            perWorkerFragments.getQuick(i).setMemoryTracker(tracker);
-        }
     }
 
     void shardAll() {

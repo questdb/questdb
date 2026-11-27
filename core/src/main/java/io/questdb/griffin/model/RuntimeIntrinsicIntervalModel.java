@@ -49,11 +49,9 @@ public interface RuntimeIntrinsicIntervalModel extends QuietCloseable, Plannable
     }
 
     /**
-     * Returns {@code true} if repeated interval calculations within one query execution produce
-     * the same intervals. The default stays fail-safe by deriving from determinism; runtime
-     * models may prove the weaker property for execution-scoped bound functions.
+     * The intervals' part of {@link io.questdb.cairo.sql.RecordCursorFactory#isLegacyStableWithinExecution()}.
      */
-    default boolean isStableWithinExecution() {
+    default boolean isLegacyStableWithinExecution() {
         return !isNonDeterministic();
     }
 

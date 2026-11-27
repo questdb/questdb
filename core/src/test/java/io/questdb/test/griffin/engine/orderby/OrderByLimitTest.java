@@ -35,6 +35,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.LimitBounds;
 import io.questdb.griffin.engine.functions.constants.LongConstant;
 import io.questdb.griffin.engine.orderby.EncodedSortLimitedLightRecordCursorFactory;
 import io.questdb.std.BytecodeAssembler;
@@ -956,9 +957,7 @@ public class OrderByLimitTest extends AbstractCairoTest {
                         configuration,
                         base.getMetadata(),
                         base,
-                        new LongConstant(10),
-                        null,
-                        0,
+                        new LimitBounds(new LongConstant(10), null, 0),
                         sortColumnFilter,
                         -1,
                         sink,

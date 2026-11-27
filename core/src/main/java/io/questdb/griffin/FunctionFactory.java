@@ -28,13 +28,69 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 
 public interface FunctionFactory {
+    /**
+     * The value the group by function the factory builds reports over a group of no rows. The planner reads it where
+     * a rewrite loses the empty group: an outer row a decorrelated LATERAL matches no row of, an absent PIVOT cell,
+     * a WINDOW JOIN whose filter is constant false. Every function the factory builds agrees with it, see
+     * {@link io.questdb.griffin.engine.functions.GroupByFunction#hasNonNullEmptyValue()}.
+     *
+     * @return the value of the group by function over no rows
+     */
+    default EmptyGroupValue getEmptyGroupValue() {
+        return EmptyGroupValue.NULL;
+    }
+
+    /**
+     * The row of a group whose argument the group by function the factory builds reports, when the rows of the group
+     * ascend by its only argument and hold no NULL in it. The planner answers such a function from that row alone, e.g.
+     * min() or first() of the designated timestamp from the first row of a table scan, max() or last() from the last.
+     *
+     * @return the row the group by function reads its value from, or {@link EndpointRow#NONE}
+     */
+    default EndpointRow getEndpointRow() {
+        return EndpointRow.NONE;
+    }
+
     default int getExecutionRequirements() {
         return SqlExecutionRequirements.NONE;
+    }
+
+    /**
+     * How the value of the group by function the factory builds depends on the order of its input rows.
+     *
+     * @return the order dependence of the group by function
+     */
+    default OrderDependence getOrderDependence() {
+        return OrderDependence.NONE;
+    }
+
+    /**
+     * How the values of the group by function the factory builds over consecutive parts of a group combine into its
+     * value over the whole group. A PIVOT over a WINDOW JOIN merges the window values of the rows of each cell by it.
+     *
+     * @return how the values over the parts of a group merge, or {@link PartialMerge#NONE} when they do not
+     */
+    default PartialMerge getPartialMerge() {
+        return PartialMerge.NONE;
+    }
+
+    /**
+     * The type of the function {@link #newInstance} returns for arguments of the given resolved types, known without
+     * building it. It must hold for every argument of these types, constant or not; {@link ColumnType#UNDEFINED}
+     * means only the built function knows its type, e.g. when the type depends on an argument's value. A factory
+     * that {@link #isBoolean() returns booleans} declares BOOLEAN.
+     *
+     * @param argTypes resolved argument types, after implicit casts, in call order
+     * @return the result type, or {@link ColumnType#UNDEFINED} when it is not known statically
+     */
+    default int getResultType(@Transient IntList argTypes) {
+        return isBoolean() ? ColumnType.BOOLEAN : ColumnType.UNDEFINED;
     }
 
     /**
@@ -84,6 +140,32 @@ public interface FunctionFactory {
     String getSignature();
 
     /**
+     * How the value of the call depends on the precision of its TIMESTAMP argument, so a filter over a set column
+     * whose branches differ in precision may make the call at each branch's precision when it does not depend on it,
+     * see {@code BranchPrecisionRewrite}. A factory whose answer depends on a constant unit reads the unit from the
+     * bound first argument, as the characters of a text or CHAR constant
+     * ({@link io.questdb.griffin.plan.logical.ConstantExpression#getChars()}), and answers
+     * {@link TimestampPrecisionUse#DEPENDENT} for any other argument. The default answers
+     * {@link TimestampPrecisionUse#DEPENDENT}.
+     *
+     * @param firstArgument the call's first argument, never modified
+     */
+    default TimestampPrecisionUse getTimestampPrecisionUse(BoundExpression firstArgument) {
+        return TimestampPrecisionUse.DEPENDENT;
+    }
+
+    /**
+     * Whether the group by function the factory builds sums its only argument over the rows of a group that hold no
+     * NULL in it. The sum of {@code c * k}, {@code c + k} or {@code c - k} then follows from the sum and the count of
+     * {@code c}, so the planner computes several such sums from one.
+     *
+     * @return true when the group by function is the sum of its argument
+     */
+    default boolean isArgumentSum() {
+        return false;
+    }
+
+    /**
      * Returns true if the function returns a boolean type.
      *
      * @return true if the function returns a boolean type
@@ -93,11 +175,47 @@ public interface FunctionFactory {
     }
 
     /**
+     * Vets the arguments of a call that has non-constant arguments, so that its construction can wait for code
+     * generation: raises the errors {@link #newInstance} raises for these arguments, in its order, and answers
+     * whether {@link #newInstance} then builds a non-constant function of the {@link #getResultType declared type}
+     * that does not stand in for one of its arguments. Only the values of constant arguments may be read; the others
+     * can be placeholders. The default answers true only when no argument is a constant value, so a call with
+     * constant arguments is constructed while binding.
+     *
+     * @param position      the position of the call in the SQL statement
+     * @param args          the arguments {@link #newInstance} would receive, never modified
+     * @param argPositions  the positions of the arguments in the SQL statement
+     * @param configuration the configuration {@link #newInstance} would receive
+     * @return true when the call can be constructed later with the same outcome
+     * @throws SqlException the error {@link #newInstance} raises for these arguments
+     */
+    default boolean isConstructionDeferrable(int position, @Transient ObjList<Function> args, @Transient IntList argPositions, CairoConfiguration configuration) throws SqlException {
+        for (int i = 0, n = args.size(); i < n; i++) {
+            final Function arg = args.getQuick(i);
+            if (arg.isConstant() && !(arg instanceof TypeConstant)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
      * Returns true if the function returns a cursor.
      *
      * @return true if the function returns a cursor
      */
     default boolean isCursor() {
+        return false;
+    }
+
+    /**
+     * Returns true if each per-worker clone of the function executes its cursor arguments itself instead of taking
+     * the value its owner computed through {@link Function#offerStateTo}. Such a clone receives its own executable
+     * sub-query.
+     *
+     * @return true if a per-worker clone of the function executes its sub-queries
+     */
+    default boolean isCursorArgumentExecutedPerWorker() {
         return false;
     }
 
@@ -111,6 +229,40 @@ public interface FunctionFactory {
     }
 
     /**
+     * Returns true if a call of the function searches the intervals that a constant text after its TIMESTAMP,
+     * TIMESTAMP_NS or DATE key spells, as {@code ts IN '2024-01'} does. The binder parses such text once, see
+     * {@link io.questdb.griffin.model.IntervalSearch}, and checks that each text element of a longer TIMESTAMP list
+     * spells a timestamp or an interval.
+     *
+     * @return true if a call of the function searches the intervals of its text
+     */
+    default boolean isIntervalSearch() {
+        return false;
+    }
+
+    /**
+     * Whether the group by function the factory builds counts the rows of a group in which no argument is NULL, as
+     * count() does. A call without arguments counts every row of its group, which the planner answers without reading
+     * the rows, see {@link FunctionFactoryDescriptor#isRowCount()}.
+     *
+     * @return true when the group by function counts the rows whose arguments are not NULL
+     */
+    default boolean isNonNullRowCount() {
+        return false;
+    }
+
+    /**
+     * Returns true if the window function ranks a row among its peers, so that a window without ORDER BY, where every
+     * row is a peer of every other, gives every row of a partition the same value whatever order the rows come in:
+     * rank(), dense_rank(), percent_rank() and cume_dist().
+     *
+     * @return true if the window function ranks a row among its peers
+     */
+    default boolean isPeerRanking() {
+        return false;
+    }
+
+    /**
      * @return true if the {@link Function} produced by the factory is guaranteed to be constant for
      * a query such that its result does not depend on any {@link Record} in the result set, i.e. now().
      */
@@ -119,11 +271,24 @@ public interface FunctionFactory {
     }
 
     /**
+     * Whether {@link #newInstance} builds a {@link io.questdb.griffin.engine.functions.regex.SymbolKeySetProvider} for
+     * a call over these bound arguments, known without building it; only the values of constant arguments are read.
+     * The answer holds for arguments {@link #newInstance} accepts. The default answers false.
+     *
+     * @param args                the bound arguments of the call, never modified
+     * @param isSymbolTableStatic whether the first argument reads a static symbol table
+     * @return true when the built function provides the matched symbol keys
+     */
+    default boolean isSymbolKeySetProvider(@Transient ObjList<BoundExpression> args, boolean isSymbolTableStatic) {
+        return false;
+    }
+
+    /**
      * Returns true if the first argument of the function names a table, view, materialized view or
      * live view, whose metadata the function reads, e.g. table_columns(). In a view, such a function
      * reads the object through the view only when the view's definition names it, which is why
      * CREATE VIEW and ALTER VIEW record a constant argument among the dependencies of the view, see
-     * {@link SqlExecutionContext.TableFunctionView#isDependency(io.questdb.cairo.TableToken)}.
+     * {@link SqlExecutionContext.TableFunctionView#isDependency(io.questdb.cairo.TableToken, io.questdb.cairo.CairoEngine)}.
      *
      * @return true if the first argument of the function names a table
      */
@@ -190,7 +355,101 @@ public interface FunctionFactory {
         return true;
     }
 
-    default boolean variadicTypeSupportUndefinedBindVariables(ObjList<Function> args) {
+    default boolean variadicTypeSupportUndefinedBindVariables(int argCount) {
         return true;
+    }
+
+    /**
+     * The value a group by function reports over a group of no rows.
+     */
+    enum EmptyGroupValue {
+        /**
+         * NULL, or false for a BOOLEAN function.
+         */
+        NULL,
+        /**
+         * Zero of the function's LONG or DOUBLE type, as count() reports. Over a group of rows the function reports
+         * neither NULL nor a negative value: {@code coalesce(value, 0)} restores the value over no rows where an outer
+         * join has no row, and a comparison that every value from zero up passes keeps every group.
+         */
+        ZERO,
+        /**
+         * True, as isOrdered() reports. The function is BOOLEAN, which an outer join reads as false where it has no
+         * row.
+         */
+        TRUE
+    }
+
+    /**
+     * The row of a group whose argument a group by function reports, over rows that ascend by the argument.
+     */
+    enum EndpointRow {
+        /**
+         * The function reads more than one row.
+         */
+        NONE,
+        /**
+         * The first row, as min() and first() report.
+         */
+        FIRST,
+        /**
+         * The last row, as max() and last() report.
+         */
+        LAST
+    }
+
+    /**
+     * How the value of a group by function depends on the order of its input rows.
+     */
+    enum OrderDependence {
+        /**
+         * The value does not depend on the row order; floating-point rounding does not count.
+         */
+        NONE,
+        /**
+         * The value depends on the order the input delivers, including which of several tied rows it picks, but
+         * without an ORDER BY that order is unspecified: a sort under the aggregate stays, a scan delivers its rows
+         * in any order.
+         */
+        INPUT_ORDER,
+        /**
+         * The value is defined by the table order of the input, as for first(): a sort under the aggregate stays,
+         * and a scan delivers its rows in table order.
+         */
+        TABLE_ORDER
+    }
+
+    /**
+     * How the values of a group by function over consecutive parts of a group give its value over the group.
+     */
+    enum PartialMerge {
+        /**
+         * The values over the parts do not give the value over the group.
+         */
+        NONE,
+        /**
+         * The sum of the values over the parts, as for sum() and count().
+         */
+        SUM,
+        /**
+         * The least of the values over the parts, as for min().
+         */
+        MIN,
+        /**
+         * The greatest of the values over the parts, as for max().
+         */
+        MAX,
+        /**
+         * The sum of the sums of the argument over the parts divided by the sum of its counts, as for avg().
+         */
+        AVERAGE,
+        /**
+         * The value over the first part that has a row, as for first().
+         */
+        FIRST,
+        /**
+         * The value over the last part that has a row, as for last().
+         */
+        LAST
     }
 }

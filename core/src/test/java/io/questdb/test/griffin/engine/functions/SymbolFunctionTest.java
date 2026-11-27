@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.engine.functions;
 
+import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.SymbolFunction;
@@ -132,7 +133,7 @@ public class SymbolFunctionTest {
         function.getDecimal8(null);
     }
 
-    @Test(expected = UnsupportedOperationException.class)
+    @Test(expected = ImplicitCastException.class)
     public void testGetDouble() {
         function.getDouble(null);
     }
@@ -162,7 +163,7 @@ public class SymbolFunctionTest {
         function.getGeoShort(null);
     }
 
-    @Test(expected = UnsupportedOperationException.class)
+    @Test(expected = ImplicitCastException.class)
     public void testGetIPv4() {
         function.getIPv4(null);
     }
@@ -172,7 +173,7 @@ public class SymbolFunctionTest {
         function.getTimestamp(null);
     }
 
-    @Test(expected = UnsupportedOperationException.class)
+    @Test(expected = ImplicitCastException.class)
     public void testGetLong() {
         function.getLong(null);
     }

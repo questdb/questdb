@@ -88,18 +88,6 @@ public class GenericRecordMetadata extends AbstractRecordMetadata {
         return null;
     }
 
-    public static GenericRecordMetadata copyOfSansTimestamp(RecordMetadata that, int columnCount) {
-        GenericRecordMetadata metadata = new GenericRecordMetadata();
-        copyColumns(that, metadata, columnCount);
-        return metadata;
-    }
-
-    public static GenericRecordMetadata copyOfSansTimestamp(RecordMetadata that) {
-        GenericRecordMetadata metadata = new GenericRecordMetadata();
-        copyColumns(that, metadata);
-        return metadata;
-    }
-
     /**
      * Creates a new GenericRecordMetadata instance, copying column references (shallow copy).
      * Unlike {@link #copyOf}, this method always creates a new instance even if the input
@@ -131,15 +119,16 @@ public class GenericRecordMetadata extends AbstractRecordMetadata {
         return null;
     }
 
-    public static RecordMetadata removeTimestamp(RecordMetadata that) {
-        if (that.getTimestampIndex() != -1) {
-            if (that instanceof GenericRecordMetadata) {
-                ((GenericRecordMetadata) that).setTimestampIndex(-1);
-                return that;
-            }
-            return GenericRecordMetadata.copyOfSansTimestamp(that);
-        }
-        return that;
+    public static GenericRecordMetadata copyOfSansTimestamp(RecordMetadata that, int columnCount) {
+        GenericRecordMetadata metadata = new GenericRecordMetadata();
+        copyColumns(that, metadata, columnCount);
+        return metadata;
+    }
+
+    public static GenericRecordMetadata copyOfSansTimestamp(RecordMetadata that) {
+        GenericRecordMetadata metadata = new GenericRecordMetadata();
+        copyColumns(that, metadata);
+        return metadata;
     }
 
     public GenericRecordMetadata add(TableColumnMetadata meta) {
@@ -155,15 +144,6 @@ public class GenericRecordMetadata extends AbstractRecordMetadata {
             return this;
         }
         throw CairoException.duplicateColumn(meta.getColumnName());
-    }
-
-    public void addIfNotExists(int i, TableColumnMetadata meta) {
-        int index = columnNameIndexMap.keyIndex(meta.getColumnName());
-        if (index > -1) {
-            columnNameIndexMap.putAt(index, meta.getColumnName(), i);
-            columnMetadata.extendAndSet(i, meta);
-            columnCount++;
-        }
     }
 
     public void setTimestampIndex(int index) {

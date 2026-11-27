@@ -28,6 +28,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.NumericException;
 import io.questdb.std.Rnd;
+import io.questdb.std.datetime.FixedTimeZoneRule;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.datetime.microtime.TimeZoneRulesMicros;
@@ -35,10 +36,13 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.math.BigInteger;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
+import java.time.zone.ZoneOffsetTransition;
+import java.time.zone.ZoneRules;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -48,6 +52,26 @@ import java.util.Set;
 
 public class TimeZoneRulesMicrosTest {
     private static final Log LOG = LogFactory.getLog(TimeZoneRulesMicrosTest.class);
+
+    private static void assertFirstInstant(String zone, ZoneRules zoneRules, TimeZoneRulesMicros rules, long local) {
+        final LocalDateTime ldt = LocalDateTime.ofEpochSecond(Math.floorDiv(local, Micros.SECOND_MICROS), (int) Math.floorMod(local, Micros.SECOND_MICROS) * 1000, ZoneOffset.UTC);
+        final List<ZoneOffset> offsets = zoneRules.getValidOffsets(ldt);
+        final long expected = offsets.isEmpty()
+                ? zoneRules.getTransition(ldt).getInstant().getEpochSecond() * Micros.SECOND_MICROS
+                : local - Math.max(offsets.get(0).getTotalSeconds(), offsets.get(offsets.size() - 1).getTotalSeconds()) * Micros.SECOND_MICROS;
+        Assert.assertEquals(zone + " " + ldt, expected, rules.getFirstInstantAtOrAfter(local));
+    }
+
+    private static void assertHighWater(String zone, ZoneRules zoneRules, TimeZoneRulesMicros rules, long utc) {
+        final Instant instant = Instant.ofEpochSecond(Math.floorDiv(utc, Micros.SECOND_MICROS), Math.floorMod(utc, Micros.SECOND_MICROS) * 1000);
+        long expected = utc + zoneRules.getOffset(instant).getTotalSeconds() * Micros.SECOND_MICROS;
+        final ZoneOffsetTransition previous = zoneRules.previousTransition(instant.plusNanos(1));
+        if (previous != null && previous.isOverlap()) {
+            final long localBefore = previous.getDateTimeBefore().toEpochSecond(ZoneOffset.UTC) * Micros.SECOND_MICROS;
+            expected = Math.max(expected, localBefore - 1);
+        }
+        Assert.assertEquals(zone + " " + instant, expected, rules.getWallClockHighWater(utc));
+    }
 
     @Test
     public void testCompatibility() {
@@ -125,6 +149,36 @@ public class TimeZoneRulesMicrosTest {
     }
 
     @Test
+    public void testFirstInstantAndWallClockHighWaterAroundTransitions() {
+        final String[] zones = {
+                "Europe/Berlin", "America/New_York", "Australia/Sydney", "Australia/Lord_Howe", "Europe/Dublin",
+                "America/Havana", "Pacific/Apia", "America/Sao_Paulo", "Asia/Tehran", "UTC"
+        };
+        final long minute = Micros.MINUTE_MICROS;
+        for (String id : zones) {
+            final ZoneRules zoneRules = ZoneId.of(id).getRules();
+            final TimeZoneRulesMicros rules = new TimeZoneRulesMicros(zoneRules);
+            ZoneOffsetTransition tr = zoneRules.nextTransition(Instant.parse("1970-01-01T00:00:00Z"));
+            while (tr != null && tr.getInstant().isBefore(Instant.parse("2045-01-01T00:00:00Z"))) {
+                final long transition = tr.getInstant().getEpochSecond() * Micros.SECOND_MICROS;
+                final long localBefore = tr.getDateTimeBefore().toEpochSecond(ZoneOffset.UTC) * Micros.SECOND_MICROS;
+                final long localAfter = tr.getDateTimeAfter().toEpochSecond(ZoneOffset.UTC) * Micros.SECOND_MICROS;
+                for (long d = -26 * 60; d <= 26 * 60; d += 7) {
+                    assertHighWater(id, zoneRules, rules, transition + d * minute);
+                    assertFirstInstant(id, zoneRules, rules, localBefore + d * minute);
+                }
+                for (long edge : new long[]{transition - 1, transition, transition + 1, transition + localBefore - localAfter - 1, transition + localBefore - localAfter}) {
+                    assertHighWater(id, zoneRules, rules, edge);
+                }
+                for (long edge : new long[]{localBefore - 1, localBefore, localBefore + 1, localAfter - 1, localAfter, localAfter + 1}) {
+                    assertFirstInstant(id, zoneRules, rules, edge);
+                }
+                tr = zoneRules.nextTransition(tr.getInstant());
+            }
+        }
+    }
+
+    @Test
     public void testGetNextDSTBeforeFirstTransition() {
         // Antarctica/Troll's first-ever DST transition is after 1970 (2005); for an instant before
         // it, getNextDST must return that transition, not Long.MAX_VALUE ("no more transitions").
@@ -136,6 +190,41 @@ public class TimeZoneRulesMicrosTest {
         Assert.assertTrue(next > beforeFirst);
         // the offset genuinely changes at that transition
         Assert.assertNotEquals(rules.getOffset(beforeFirst), rules.getOffset(next));
+    }
+
+    @Test
+    public void testGetLocalTimeOffsetGcd() {
+        final long[] localTimes = {0, 30 * 60, 2 * 3_600 + 30 * 60, 23 * 3_600 + 45 * 60, -3_600};
+        for (String id : ZoneId.getAvailableZoneIds()) {
+            final ZoneRules zoneRules = ZoneId.of(id).getRules();
+            final TimeZoneRulesMicros rules = new TimeZoneRulesMicros(zoneRules);
+            for (long localTime : localTimes) {
+                final long base = zoneRules.getOffset(Instant.EPOCH).getTotalSeconds();
+                long expected = 0;
+                for (ZoneOffsetTransition tr = zoneRules.nextTransition(Instant.EPOCH);
+                     tr != null && tr.getInstant().getEpochSecond() < 7_258_118_400L;
+                     tr = zoneRules.nextTransition(tr.getInstant())) {
+                    final long before = tr.getOffsetBefore().getTotalSeconds();
+                    expected = BigInteger.valueOf(expected).gcd(BigInteger.valueOf(tr.getOffsetAfter().getTotalSeconds() - base)).longValue();
+                    if (tr.isGap()) {
+                        final long skipped = Math.floorMod(localTime - tr.getDateTimeBefore().toLocalTime().toSecondOfDay(), 86_400L);
+                        if (skipped > 0 && skipped < tr.getDuration().getSeconds()) {
+                            expected = BigInteger.valueOf(expected).gcd(BigInteger.valueOf(before + skipped - base)).longValue();
+                        }
+                    }
+                }
+                Assert.assertEquals(id + " at " + localTime, expected * Micros.SECOND_MICROS, rules.getLocalTimeOffsetGcd(0, localTime * Micros.SECOND_MICROS));
+            }
+        }
+        final TimeZoneRulesMicros berlin = new TimeZoneRulesMicros(ZoneId.of("Europe/Berlin").getRules());
+        Assert.assertEquals(Micros.HOUR_MICROS, berlin.getLocalTimeOffsetGcd(0, 0));
+        // 02:30 falls in the spring-forward gap, which starts at 02:00 and maps the local time to the shift instant.
+        Assert.assertEquals(30 * Micros.MINUTE_MICROS, berlin.getLocalTimeOffsetGcd(0, 150 * Micros.MINUTE_MICROS));
+        // Berlin kept local mean time, +00:53:28, until 1893.
+        Assert.assertEquals(8 * Micros.SECOND_MICROS, berlin.getLocalTimeOffsetGcd(Micros.toMicros(1890, 1, 1, 0, 0), 0));
+        Assert.assertEquals(0, new TimeZoneRulesMicros(ZoneId.of("Asia/Kolkata").getRules()).getLocalTimeOffsetGcd(0, 0));
+        Assert.assertEquals(0, new TimeZoneRulesMicros(ZoneId.of("UTC").getRules()).getLocalTimeOffsetGcd(0, 0));
+        Assert.assertEquals(0, new FixedTimeZoneRule(330 * Micros.MINUTE_MICROS).getLocalTimeOffsetGcd(0, 0));
     }
 
     @Test

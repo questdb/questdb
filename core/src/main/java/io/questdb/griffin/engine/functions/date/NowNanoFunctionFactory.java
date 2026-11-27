@@ -40,6 +40,11 @@ public class NowNanoFunctionFactory implements FunctionFactory {
     private static final String SIGNATURE = "now_ns()";
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.TIMESTAMP_NANO;
+    }
+
+    @Override
     public String getSignature() {
         return SIGNATURE;
     }

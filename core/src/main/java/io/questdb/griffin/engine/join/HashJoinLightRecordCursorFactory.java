@@ -41,21 +41,22 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.SymbolTranslatingRecord;
-import io.questdb.griffin.model.JoinContext;
+import io.questdb.griffin.plan.logical.BuildSide;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.Nullable;
 
 public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFactory {
+    private final BuildSide buildSide;
     private final RecordSink masterSink;
     private final int @Nullable [] masterSymbolKeyColumnIndices;
     private final RecordSink slaveKeySink;
     private final int @Nullable [] slaveSymbolKeyColumnIndices;
     private HashJoinRecordCursor cursor;
-    private boolean masterDetermined = false;
     private @Nullable SymbolTranslatingRecord symbolTranslatingRecord;
 
     public HashJoinLightRecordCursorFactory(
@@ -68,17 +69,20 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
             RecordSink masterSink,
             RecordSink slaveKeySink,
             int columnSplit,
-            JoinContext joinContext,
+            Plannable joinCondition,
             int @Nullable [] masterSymbolKeyColumnIndices,
-            int @Nullable [] slaveSymbolKeyColumnIndices
+            int @Nullable [] slaveSymbolKeyColumnIndices,
+            BuildSide buildSide
     ) {
-        super(metadata, joinContext, masterFactory, slaveFactory);
+        super(metadata, joinCondition, masterFactory, slaveFactory);
+        assert buildSide != BuildSide.SMALLER || masterFactory.recordCursorSupportsRandomAccess() : "hashed master lacks random access";
+        this.buildSide = buildSide;
         this.masterSymbolKeyColumnIndices = masterSymbolKeyColumnIndices;
         this.slaveSymbolKeyColumnIndices = slaveSymbolKeyColumnIndices;
-        this.symbolTranslatingRecord = masterSymbolKeyColumnIndices != null ?
-                new SymbolTranslatingRecord(configuration, Math.max(masterFactory.getMetadata().getColumnCount(), slaveFactory.getMetadata().getColumnCount()),
-                        masterSymbolKeyColumnIndices.length) : null;
         try {
+            this.symbolTranslatingRecord = masterSymbolKeyColumnIndices != null ?
+                    new SymbolTranslatingRecord(configuration, Math.max(masterFactory.getMetadata().getColumnCount(), slaveFactory.getMetadata().getColumnCount()),
+                            masterSymbolKeyColumnIndices.length) : null;
             this.masterSink = masterSink;
             this.slaveKeySink = slaveKeySink;
             this.cursor = new HashJoinRecordCursor(columnSplit, configuration, joinColumnTypes, valueTypes);
@@ -90,9 +94,7 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
 
     @Override
     public boolean followedOrderByAdvice() {
-        boolean followOrderBy = masterFactory.followedOrderByAdvice();
-        masterDetermined |= followOrderBy;
-        return followOrderBy;
+        return buildSide == BuildSide.FIXED_MASTER && masterFactory.followedOrderByAdvice();
     }
 
     @Override
@@ -101,21 +103,20 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
         RecordCursor masterCursor = null;
         try {
             masterCursor = masterFactory.getCursor(executionContext);
-            boolean swapped = false;
-            if (masterFactory.recordCursorSupportsRandomAccess() && !masterDetermined) {
-                long masterSize = masterCursor.size();
-                long slaveSize = slaveCursor.size();
-
-                if (masterSize > 0 && slaveSize > 0 && masterSize < slaveSize) {
-                    RecordCursor temp = masterCursor;
-                    masterCursor = slaveCursor;
-                    slaveCursor = temp;
-                    swapped = true;
-                }
+            final boolean isMasterBuilt = switch (buildSide) {
+                case MASTER -> true;
+                case FIXED_MASTER, SLAVE -> false;
+                case SMALLER ->
+                        BuildSide.smaller(masterCursor.size(), slaveCursor.size(), BuildSide.SLAVE) == BuildSide.MASTER;
+            };
+            if (isMasterBuilt) {
+                final RecordCursor temp = masterCursor;
+                masterCursor = slaveCursor;
+                slaveCursor = temp;
             }
 
             slaveCursor.setParquetDecodeHint(ParquetDecodeHint.SCATTERED);
-            cursor.of(masterCursor, slaveCursor, executionContext, swapped);
+            cursor.of(masterCursor, slaveCursor, executionContext, isMasterBuilt);
             return cursor;
         } catch (Throwable e) {
             Misc.free(slaveCursor);
@@ -129,9 +130,7 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
 
     @Override
     public int getScanDirection() {
-        int scanDirection = masterFactory.getScanDirection();
-        masterDetermined |= scanDirection != RecordCursorFactory.SCAN_DIRECTION_OTHER;
-        return scanDirection;
+        return buildSide == BuildSide.FIXED_MASTER ? masterFactory.getScanDirection() : SCAN_DIRECTION_OTHER;
     }
 
     @Override
@@ -147,12 +146,17 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("Hash Join Light");
-        sink.attr("condition").val(joinContext);
+        sink.attr("condition").val(joinCondition);
         if (symbolTranslatingRecord != null) {
             sink.attr("symbolKeyJoin").val(true);
         }
-        sink.child(masterFactory);
-        sink.child("Hash", slaveFactory);
+        if (buildSide == BuildSide.MASTER) {
+            sink.child(slaveFactory);
+            sink.child("Hash", masterFactory);
+        } else {
+            sink.child(masterFactory);
+            sink.child("Hash", slaveFactory);
+        }
     }
 
     private static void populateRowIDHashMap(
@@ -198,6 +202,7 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
         private final LongChain slaveChain;
         private SqlExecutionCircuitBreaker circuitBreaker;
         private boolean isMapBuilt;
+        private boolean isMapEmpty;
         private boolean isOpen;
         private RecordSink masterCursorSink;
         private Record masterRecord;
@@ -224,6 +229,9 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
         @Override
         public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
             buildMapOfSlaveRecords();
+            if (isMapEmpty) {
+                return;
+            }
             while (slaveChainCursor != null && slaveChainCursor.hasNext()) {
                 slaveChainCursor.next();
                 counter.inc();
@@ -271,6 +279,9 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
         @Override
         public boolean hasNext() {
             buildMapOfSlaveRecords();
+            if (isMapEmpty) {
+                return false;
+            }
             if (slaveChainCursor != null && slaveChainCursor.hasNext()) {
                 slaveCursor.recordAt(slaveRecord, slaveChainCursor.next());
                 return true;
@@ -310,8 +321,48 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
         }
 
         @Override
+        public long remainingMasterRowCount() {
+            if (swapped) {
+                return -1;
+            }
+            final long masterRowsLeft = masterCursor.remainingMasterRowCount();
+            if (masterRowsLeft != 0) {
+                return -1;
+            }
+            return slaveChainCursor != null ? slaveChainCursor.remaining() : 0;
+        }
+
+        @Override
         public long size() {
             return -1;
+        }
+
+        @Override
+        public void skipRows(Counter rowCount, long maxRowsAfterSkip) {
+            buildMapOfSlaveRecords();
+            if (isMapEmpty) {
+                return;
+            }
+            if (slaveChainCursor != null) {
+                rowCount.dec(slaveChainCursor.skip(rowCount.get()));
+            }
+            while (rowCount.get() > 0 && masterCursor.hasNext()) {
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
+                MapKey key = joinKeyMap.withKey();
+                key.put(masterRecord, masterCursorSink);
+                MapValue value = key.findValue();
+                if (value != null) {
+                    final int chainLength = value.getInt(1);
+                    if (chainLength <= rowCount.get()) {
+                        rowCount.dec(chainLength);
+                        slaveChainCursor = null;
+                    } else {
+                        slaveChainCursor = slaveChain.getCursor(value.getInt(0));
+                        slaveChainCursor.skip(rowCount.get());
+                        rowCount.clear();
+                    }
+                }
+            }
         }
 
         @Override
@@ -330,6 +381,7 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
                 Record keyRecord = symbolTranslatingRecord != null ? symbolTranslatingRecord : slaveCursor.getRecord();
                 populateRowIDHashMap(circuitBreaker, slaveCursor, joinKeyMap, slaveCursorSink, slaveChain, keyRecord);
                 isMapBuilt = true;
+                isMapEmpty = joinKeyMap.size() == 0;
             }
         }
 

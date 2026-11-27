@@ -29,7 +29,6 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
@@ -37,7 +36,17 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 
-public class LastDecimalGroupByFunctionFactory implements FunctionFactory {
+public class LastDecimalGroupByFunctionFactory implements LastAggregate {
+
+    @Override
+    public OrderDependence getOrderDependence() {
+        return OrderDependence.TABLE_ORDER;
+    }
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return argTypes.getQuick(0);
+    }
 
     @Override
     public String getSignature() {

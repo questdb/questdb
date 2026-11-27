@@ -179,8 +179,8 @@ public class BuildArrayFunctionFactory implements FunctionFactory {
 
         @Override
         public void close() {
-            MultiArgFunction.super.close();
             array = Misc.free(array);
+            MultiArgFunction.super.close();
         }
 
         @Override

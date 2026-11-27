@@ -88,7 +88,7 @@ public class PGResultFormatCodesTest extends BasePGTest {
         // before any cursor or ArrayView access can mask it.
         AbstractCairoTest.engineFactory = conf -> new CairoEngine(conf) {
             @Override
-            protected Iterable<FunctionFactory> getFunctionFactories() {
+            public Iterable<FunctionFactory> getFunctionFactories() {
                 final ArrayList<FunctionFactory> factories = new ArrayList<>();
                 super.getFunctionFactories().forEach(factories::add);
 

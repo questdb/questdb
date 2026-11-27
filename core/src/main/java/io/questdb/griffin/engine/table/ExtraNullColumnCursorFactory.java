@@ -46,29 +46,26 @@ import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TimeFrame;
 import io.questdb.cairo.sql.TimeFrameCursor;
-import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.parquet.ParquetDecoder;
-import io.questdb.jit.CompiledFilter;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
-import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
 
 public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFactory {
     private final RecordCursorFactory base;
     private final int columnSplit;
     private final ExtraNullColumnRecordCursor cursor;
-    // Per spliced column, the type tag of its empty value (ColumnType.UNDEFINED for NULL), parallel
-    // to emptyValues. Null exactly when emptyValues is null.
+    // Per spliced column, the type tag of its empty value (ColumnType.UNDEFINED for NULL), parallel to emptyValues.
+    // Null exactly when emptyValues is null.
     @Nullable
     private final IntList emptyValueTypes;
-    // Per spliced column, the raw bits of the empty value that getBool(), getDouble() or getLong()
-    // reports; null means every spliced column is NULL. Both lists are immutable after
-    // construction, so every record, cursor and worker shares them read-only.
+    // Per spliced column, the raw bits of the empty value that getBool(), getDouble() or getLong() reports; null means
+    // every spliced column is NULL. Both lists are immutable after construction, so every record, cursor and worker
+    // shares them read-only.
     @Nullable
     private final LongList emptyValues;
     private ExtraNullColumnPageFrameCursor pageFrameCursor;
@@ -95,7 +92,12 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         this.columnSplit = columnSplit;
         this.emptyValues = emptyValues;
         this.emptyValueTypes = emptyValueTypes;
-        this.cursor = new ExtraNullColumnRecordCursor(columnSplit, base.recordCursorSupportsRandomAccess(), emptyValues, emptyValueTypes);
+        try {
+            this.cursor = new ExtraNullColumnRecordCursor(columnSplit, base.recordCursorSupportsRandomAccess(), emptyValues, emptyValueTypes);
+        } catch (Throwable th) {
+            Misc.free(this, th);
+            throw th;
+        }
     }
 
     @Override
@@ -106,21 +108,6 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
     @Override
     public RecordCursorFactory getBaseFactory() {
         return base;
-    }
-
-    @Nullable
-    public ObjList<Function> getBindVarFunctions() {
-        return base.getBindVarFunctions();
-    }
-
-    @Nullable
-    public MemoryCARW getBindVarMemory() {
-        return base.getBindVarMemory();
-    }
-
-    @Override
-    public CompiledFilter getCompiledFilter() {
-        return base.getCompiledFilter();
     }
 
     @Override
@@ -147,11 +134,10 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         final PageFrameCursor baseCursor = base.getPageFrameCursor(executionContext, order);
         try {
             // Claim only what the base provides: a table base keeps the TablePageFrameCursor
-            // surface (parallel hash-join row-count checks and live-view routing read its table
-            // reader and interval filter), while a non-table base such as read_parquet() - whose
-            // page-frame cursor is a plain PageFrameCursor - gets a plain null-padding wrapper
-            // instead of a getTableReader()/hasIntervalFilter()/toPartition() contract it cannot
-            // honor.
+            // surface (window-join parents downcast a slave's page-frame cursor to it), while a
+            // non-table base such as read_parquet() - whose page-frame cursor is a plain
+            // PageFrameCursor - gets a plain null-padding wrapper instead of a getTableReader()/
+            // hasIntervalFilter()/toPartition() contract it cannot honor.
             if (baseCursor instanceof TablePageFrameCursor tableBaseCursor) {
                 if (tablePageFrameCursor == null) {
                     tablePageFrameCursor = new ExtraNullColumnTablePageFrameCursor(columnSplit, getMetadata().getColumnCount());
@@ -177,14 +163,10 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
     public TimeFrameCursor getTimeFrameCursor(SqlExecutionContext executionContext) throws SqlException {
         TimeFrameCursor baseCursor = base.getTimeFrameCursor(executionContext);
         if (timeFrameCursor == null) {
-            timeFrameCursor = new ExtraNullColumnTimeFrameCursor(columnSplit, base.recordCursorSupportsRandomAccess(), getMetadata().getTimestampIndex(), emptyValues, emptyValueTypes);
+            timeFrameCursor = new ExtraNullColumnTimeFrameCursor(columnSplit, base.recordCursorSupportsRandomAccess(), getMetadata().getTimestampIndex(),
+                    emptyValues, emptyValueTypes);
         }
         return timeFrameCursor.of(baseCursor);
-    }
-
-    @Override
-    public void halfClose() {
-        base.halfClose();
     }
 
     @Override
@@ -193,9 +175,23 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
     }
 
     @Override
+    public boolean isProjection() {
+        return true;
+    }
+
+    /**
+     * The base's cursor: a parallel join reads the time frames from this factory's page frames, which already carry
+     * the null columns, at the timestamp index of the layout it reads them in. Empty values exist only in the records,
+     * so a factory that reports them serves no concurrent time frames, see {@link #supportsConcurrentTimeFrameCursor}.
+     */
+    @Override
+    public ConcurrentTimeFrameCursor newTimeFrameCursor() {
+        assert emptyValues == null;
+        return base.newTimeFrameCursor();
+    }
+
+    @Override
     public boolean recordCursorSupportsLongTopK(int columnIndex) {
-        // Only the master columns below the split exist in the base. The spliced columns
-        // come from this factory's own records, so the base cannot answer for them.
         return columnIndex < columnSplit && base.recordCursorSupportsLongTopK(columnIndex);
     }
 
@@ -206,16 +202,13 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
 
     @Override
     public boolean supportsConcurrentTimeFrameCursor() {
-        // The concurrent time-frame cursor reads every column from page-frame memory, and page
-        // frames carry no memory for the spliced columns. Only the record-based time-frame cursor
-        // from getTimeFrameCursor() can serve their NULL and empty values.
-        return false;
+        return emptyValues == null && base.supportsConcurrentTimeFrameCursor();
     }
 
     @Override
     public boolean supportsPageFrameCursor() {
-        // Page frames carry no memory for the spliced columns, so they can only report NULL.
-        // The empty values exist only in the records.
+        // Page frames carry no memory for the spliced columns, so they can only report NULL. The empty values exist
+        // only in the records.
         return emptyValues == null && base.supportsPageFrameCursor();
     }
 
@@ -250,8 +243,6 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         base.close();
     }
 
-    // Spliced column k holds the empty value of the aggregate that metadata column columnSplit + k
-    // describes, so every typed empty value must match that column's type.
     private static boolean hasEmptyValueTypesOfMetadata(RecordMetadata metadata, int columnSplit, IntList emptyValueTypes) {
         for (int k = 0, n = emptyValueTypes.size(); k < n; k++) {
             final int typeTag = emptyValueTypes.getQuick(k);
@@ -531,9 +522,8 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
             // maps its own columnSplit columns, so the synthetic null columns above the
             // split need entries of their own. They belong to no reader, writer or
             // parquet column, so all three indexes are -1: columnIdToParquetIdx keys are
-            // never negative, which leaves the column undecoded with page address 0. That
-            // address reads as NULL, matching the record in NULL mode. A factory with
-            // empty values reports no page-frame support (supportsPageFrameCursor()).
+            // never negative, which leaves the column undecoded and its page address 0
+            // -- NULL, matching what the record and page frame report for them.
             columnMapping.copyFrom(baseCursor.getColumnMapping());
             assert columnMapping.getColumnCount() == columnSplit
                     : "base column mapping must cover exactly the split columns";

@@ -191,7 +191,10 @@ def resolve_base(root, base):
 
 def changed_lines(root, base):
     """Maps each changed file to the set of its added or modified line numbers in the working tree."""
-    diff = git_out(root, 'diff', '--no-color', '--no-ext-diff', '-U0', '--diff-filter=ACMR', base, '--', *DIFF_PATHS)
+    # Copy detection matches CI's report: a file forked from an unchanged one counts by the lines that differ from
+    # its source only.
+    diff = git_out(root, 'diff', '--no-color', '--no-ext-diff', '-U0', '--diff-filter=ACMR', '--find-copies-harder',
+                   '-C90%', '-l', '20000', base, '--', *DIFF_PATHS)
     files = {}
     current = None
     for line in diff.splitlines():

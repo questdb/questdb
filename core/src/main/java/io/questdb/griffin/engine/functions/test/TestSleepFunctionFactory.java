@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.test;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
@@ -40,6 +41,11 @@ import io.questdb.std.Os;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 
 public class TestSleepFunctionFactory implements FunctionFactory {
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.BOOLEAN;
+    }
 
     @Override
     public String getSignature() {

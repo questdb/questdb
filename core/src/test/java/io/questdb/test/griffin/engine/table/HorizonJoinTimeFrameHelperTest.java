@@ -240,7 +240,7 @@ public class HorizonJoinTimeFrameHelperTest extends AbstractTest {
             try (PollingEngine engine = new PollingEngine(root, new State());
                  Map map = newMap(engine);
                  HorizonJoinTimeFrameHelper helper = new HorizonJoinTimeFrameHelper(
-                         engine.getConfiguration(), 64, 1, 131_072, 1_024, 8, filter, new ArrayColumnTypes().add(ColumnType.INT)
+                         engine.getConfiguration(), 64, 1, 131_072, 1_024, 8, filter, new ArrayColumnTypes().add(ColumnType.INT), null
                  )) {
                 // A hit below the cost floor rescans at the next position.
                 helper.of(cursor, null);
@@ -278,7 +278,7 @@ public class HorizonJoinTimeFrameHelperTest extends AbstractTest {
             try (PollingEngine engine = new PollingEngine(root, new State());
                  Map map = newMap(engine);
                  HorizonJoinTimeFrameHelper helper = new HorizonJoinTimeFrameHelper(
-                         engine.getConfiguration(), 64, 1, 131_072, 1_024, 8, filter, new ArrayColumnTypes().add(ColumnType.INT)
+                         engine.getConfiguration(), 64, 1, 131_072, 1_024, 8, filter, new ArrayColumnTypes().add(ColumnType.INT), null
                  )) {
                 helper.of(cursor, null);
                 Assert.assertEquals(10, helper.findKeyedAsOfMatch(8_300, cursor.getRecord(), KEY_SINK, KEY_SINK, map, null, breaker));
@@ -308,7 +308,7 @@ public class HorizonJoinTimeFrameHelperTest extends AbstractTest {
             try (PollingEngine engine = new PollingEngine(root, new State());
                  Map map = newMap(engine);
                  HorizonJoinTimeFrameHelper helper = new HorizonJoinTimeFrameHelper(
-                         engine.getConfiguration(), 64, 1, 131_072, 1_024, 8, filter, new ArrayColumnTypes().add(ColumnType.INT)
+                         engine.getConfiguration(), 64, 1, 131_072, 1_024, 8, filter, new ArrayColumnTypes().add(ColumnType.INT), null
                  )) {
                 helper.of(cursor, null);
                 Assert.assertEquals(0, helper.findKeyedAsOfMatch(Rows.toRowID(2, 100), cursor.getRecord(), KEY_SINK, KEY_SINK, map, null, breaker));
@@ -335,7 +335,7 @@ public class HorizonJoinTimeFrameHelperTest extends AbstractTest {
             try (PollingEngine engine = new PollingEngine(root, state);
                  Map map = newMap(engine);
                  HorizonJoinTimeFrameHelper helper = new HorizonJoinTimeFrameHelper(
-                         engine.getConfiguration(), 64, 1, 131_072, 1_024, 8, filter(trace, true), new ArrayColumnTypes().add(ColumnType.INT)
+                         engine.getConfiguration(), 64, 1, 131_072, 1_024, 8, filter(trace, true), new ArrayColumnTypes().add(ColumnType.INT), null
                  )) {
                 helper.of(cursor, null);
                 Assert.assertEquals(Long.MIN_VALUE, helper.findKeyedAsOfMatch(1000, MISSING_KEY, KEY_SINK, KEY_SINK, map, null, breaker));
@@ -358,7 +358,7 @@ public class HorizonJoinTimeFrameHelperTest extends AbstractTest {
             try (PollingEngine engine = new PollingEngine(root, new State());
                  Map map = newMap(engine);
                  HorizonJoinTimeFrameHelper helper = new HorizonJoinTimeFrameHelper(
-                         engine.getConfiguration(), 64, 1, 131_072, 1_024, 8, filter(trace, true), new ArrayColumnTypes().add(ColumnType.INT)
+                         engine.getConfiguration(), 64, 1, 131_072, 1_024, 8, filter(trace, true), new ArrayColumnTypes().add(ColumnType.INT), null
                  )) {
                 helper.of(cursor, null);
                 Assert.assertEquals(Long.MIN_VALUE, helper.findKeyedAsOfMatch(1000, MISSING_KEY, KEY_SINK, KEY_SINK, map, null, breaker));
@@ -403,7 +403,7 @@ public class HorizonJoinTimeFrameHelperTest extends AbstractTest {
             try (PollingEngine engine = new PollingEngine(root, new State());
                  Map map = newMap(engine);
                  HorizonJoinTimeFrameHelper helper = new HorizonJoinTimeFrameHelper(
-                         engine.getConfiguration(), 64, 1, 131_072, 1_024, 8, filter(trace, true), new ArrayColumnTypes().add(ColumnType.INT)
+                         engine.getConfiguration(), 64, 1, 131_072, 1_024, 8, filter(trace, true), new ArrayColumnTypes().add(ColumnType.INT), null
                  )) {
                 helper.of(cursor, null);
                 Assert.assertEquals(Long.MIN_VALUE, helper.findKeyedAsOfMatch(1000, MISSING_KEY, KEY_SINK, KEY_SINK, map, null, breaker));
@@ -450,7 +450,7 @@ public class HorizonJoinTimeFrameHelperTest extends AbstractTest {
             try (PollingEngine engine = new PollingEngine(root, new State());
                  Map map = newMap(engine);
                  HorizonJoinTimeFrameHelper helper = new HorizonJoinTimeFrameHelper(
-                         engine.getConfiguration(), 64, 1, 131_072, 1_024, 8, filter, new ArrayColumnTypes().add(ColumnType.INT)
+                         engine.getConfiguration(), 64, 1, 131_072, 1_024, 8, filter, new ArrayColumnTypes().add(ColumnType.INT), null
                  )) {
                 helper.of(cursor, null);
                 Assert.assertEquals(Long.MIN_VALUE, helper.findKeyedAsOfMatch(1000, cursor.getRecord(), KEY_SINK, KEY_SINK, map, null, breaker));
@@ -795,7 +795,7 @@ public class HorizonJoinTimeFrameHelperTest extends AbstractTest {
     }
 
     private static HorizonJoinTimeFrameHelper helper(Cursor cursor, Function filter, long lookahead) {
-        HorizonJoinTimeFrameHelper helper = new HorizonJoinTimeFrameHelper(null, lookahead, 1, 0, 0, 1, filter, null);
+        HorizonJoinTimeFrameHelper helper = new HorizonJoinTimeFrameHelper(null, lookahead, 1, 0, 0, 1, filter, null, null);
         helper.of(cursor, null);
         return helper;
     }

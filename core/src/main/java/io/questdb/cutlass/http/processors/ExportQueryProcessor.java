@@ -170,10 +170,11 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                     circuitBreaker.of(context.getFd())
             );
             sqlExecutionContext.initNow();
-            state.recordCursorFactory = context.getSelectCache().poll(state.getSelectCacheKey(sqlExecutionContext.getSecurityContext()));
+            state.recordCursorFactory = context.getSelectCache().poll(state.getSelectCacheKey(sqlExecutionContext));
             if (state.recordCursorFactory == null) {
                 try (SqlCompiler compiler = engine.getSqlCompiler()) {
                     CompiledQuery cc = compiler.compile(state.sqlText, sqlExecutionContext);
+                    state.setSelectCacheCompiledBy(compiler);
                     if (cc.getType() == CompiledQuery.SELECT || cc.getType() == CompiledQuery.EXPLAIN) {
                         state.recordCursorFactory = cc.getRecordCursorFactory();
                     } else if (isExpRequest) {
@@ -265,6 +266,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                             CompiledQuery cc;
                             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                                 cc = compiler.compile(state.sqlText, sqlExecutionContext);
+                                state.setSelectCacheCompiledBy(compiler);
                                 if (cc.getType() != CompiledQuery.SELECT && cc.getType() != CompiledQuery.EXPLAIN && isExpRequest) {
                                     // Close CompiledQuery to prevent memory leak for INSERT/UPDATE/ALTER unsupported operations
                                     cc.closeAllButSelect();
@@ -855,7 +857,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                             sendException(response, e.getPosition(), e.getFlyweightMessage(), state);
                             break OUT;
                         } catch (Throwable e) {
-                            sendException(response, 0, e.getMessage(), state);
+                            sendException(response, 0, Misc.getMessageOrClassName(e), state);
                             break OUT;
                         }
                         state.queryState = QUERY_PARQUET_SEND_HEADER;
@@ -901,7 +903,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                         } catch (PeerIsSlowToReadException | PeerDisconnectedException e) {
                             throw e;
                         } catch (Throwable e) {
-                            sendException(response, 0, e.getMessage(), state);
+                            sendException(response, 0, Misc.getMessageOrClassName(e), state);
                             break OUT;
                         }
                         state.queryState = QUERY_PARQUET_FILE_SEND_COMPLETE;
@@ -1416,10 +1418,10 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             CharSequence errorMessage,
             ExportQueryProcessorState state
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        if (state.parquetFileOffset > 0) {
+        if (state.parquetFileOffset > 0 || state.getHttpConnectionContext().getLastRequestBytesSent() > 0) {
             // We already sent a partial response to the client.
             // Give up and close the connection.
-            LOG.error().$("partial parquet response sent, closing connection on error [fd=").$(state.getFd())
+            LOG.error().$("partial response sent, closing connection on error [fd=").$(state.getFd())
                     .$(", parquetFileOffset=").$(state.parquetFileOffset)
                     .$(", errorMessage=").$safe(errorMessage)
                     .I$();

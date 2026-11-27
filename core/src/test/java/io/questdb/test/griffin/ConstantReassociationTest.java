@@ -28,7 +28,7 @@ import io.questdb.griffin.ExpressionTreeBuilder;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.griffin.model.IQueryModel;
+import io.questdb.griffin.model.QueryModel;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -425,13 +425,13 @@ public class ConstantReassociationTest extends AbstractCairoTest {
     @Test
     public void testReturnValueIndicatesConstantSubtree() throws Exception {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            ExpressionNode allConst = compiler.testParseExpression("1 + 2 + 3", (IQueryModel) null);
+            ExpressionNode allConst = compiler.testParseExpression("1 + 2 + 3", (QueryModel) null);
             Assert.assertTrue(allConst.reassociateConstants(false));
 
-            ExpressionNode hasColumn = compiler.testParseExpression("d + 1 + 4", (IQueryModel) null);
+            ExpressionNode hasColumn = compiler.testParseExpression("d + 1 + 4", (QueryModel) null);
             Assert.assertFalse(hasColumn.reassociateConstants(false));
 
-            ExpressionNode leaf = compiler.testParseExpression("42", (IQueryModel) null);
+            ExpressionNode leaf = compiler.testParseExpression("42", (QueryModel) null);
             Assert.assertTrue(leaf.reassociateConstants(false));
         }
     }
@@ -447,7 +447,7 @@ public class ConstantReassociationTest extends AbstractCairoTest {
 
     /**
      * Asserts what production does to {@code inputExpr}. Unlike {@link #assertReassociation}, this
-     * routes through {@link SqlCompiler#testParseExpression(CharSequence, IQueryModel)},
+     * routes through {@link SqlCompiler#testParseExpression(CharSequence, QueryModel)},
      * which runs {@code SqlParser.rewriteKnownStatements} - and with it {@code rewriteConcat} -
      * exactly as the production {@code expr(...)} overloads do. The tree handed to
      * {@link ExpressionNode#reassociateConstants} here is therefore the one {@code FunctionParser}
@@ -464,7 +464,7 @@ public class ConstantReassociationTest extends AbstractCairoTest {
      */
     private void assertPostRewriteReassociation(String inputExpr, String expectedExpr) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            ExpressionNode node = compiler.testParseExpression(inputExpr, (IQueryModel) null);
+            ExpressionNode node = compiler.testParseExpression(inputExpr, (QueryModel) null);
             Assert.assertNotNull(node);
             sink.clear();
             node.toSink(sink);

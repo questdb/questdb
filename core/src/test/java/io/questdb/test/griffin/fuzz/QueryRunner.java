@@ -123,6 +123,12 @@ import java.util.regex.Pattern;
  *       answer, or a fused operator that answers it wrong: either returns the
  *       same wrong rows on every other axis, because every other axis runs
  *       the fused plan on both sides.</li>
+ *   <li>A query that carries a {@link GeneratedQuery#fencedSql()} runs it on
+ *       the primary at JIT-off and compares it with the pivot. The fenced
+ *       form keeps its filters above a set operation, so this catches a
+ *       filter the planner pushed into the set's branches where it means
+ *       something else than over the column the set returns: every other
+ *       axis runs the pushed plan on both sides.</li>
  *   <li>the map page axis, on when the runner gets the engine's
  *       {@link Overrides}, runs every query on the primary at JIT-off once
  *       more, and an equi-join GROUP BY query several more times, with
@@ -1132,7 +1138,7 @@ public class QueryRunner {
      * into the async filter (those two factories are the only ones that render it).
      * <p>
      * The optimiser introduces this limit not only for an explicit {@code LIMIT}
-     * but also implicitly: {@code SqlOptimiser.rewriteSingleFirstLastGroupBy}
+     * but also implicitly: {@code TimestampEndpointLimit.limitEndpointInputs}
      * rewrites a lone {@code min} / {@code max} / {@code first} / {@code last} over
      * the designated timestamp (e.g. {@code SELECT max(ts) FROM t WHERE ...}) into
      * an {@code ORDER BY ts [DESC] LIMIT 1} scan, whose SQL text carries no
@@ -1711,7 +1717,7 @@ public class QueryRunner {
         }
         // One side returned an empty result, the other threw an allowlisted
         // cast error. The succeeding side's WHERE was statically
-        // satisfiable-as-empty (e.g. WhereClauseParser folded a contradiction
+        // satisfiable-as-empty (e.g. the planner folded a contradiction
         // like 'c IS NOT NULL AND c IS NULL' to FALSE), so its compiler short
         // -circuited before reaching a constant subtree that contains an
         // out-of-range cast literal. The erroring side's compiler reached
@@ -1769,6 +1775,26 @@ public class QueryRunner {
         } catch (SqlException e) {
             return false;
         }
+    }
+
+    /**
+     * Runs the query's fenced form on the primary at JIT-off and reconciles it against the pivot
+     * {@code bJ}. The failure message carries the fenced SQL beside the query's own.
+     */
+    private Result runFencedVariant(GeneratedQuery query, Outcome bJ) {
+        executionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+        Outcome fenced = runOnce(query.fencedSql(), rowsE, primaryHasAnyParquet, query.deterministic());
+        return reconcilePair(
+                query.sql(),
+                bJ,
+                fenced,
+                rowsB,
+                rowsE,
+                query.deterministic(),
+                "set operation fence divergence, fenced sql: " + query.fencedSql(),
+                "pushed",
+                "fenced"
+        );
     }
 
     /**
@@ -2050,7 +2076,7 @@ public class QueryRunner {
     private Result runQuery(GeneratedQuery query) {
         String sql = query.sql();
         if (!diffJit && !diffShadow && !diffStream && !isFusedAxisApplicable(query) && mapPageOverrides == null && !query.hasBind()
-                && query.referenceSql() == null && query.spellingSql() == null) {
+                && query.fencedSql() == null && query.referenceSql() == null && query.spellingSql() == null) {
             Outcome outcome = runOnce(sql, rowsA, primaryHasAnyParquet, query.deterministic());
             return toResult(sql, outcome);
         }
@@ -2058,8 +2084,8 @@ public class QueryRunner {
         try {
             // Pivot: primary at JIT-off. The pivot is the right-hand side of
             // the JIT comparison and the left-hand side of the storage,
-            // fused, map page and bind-variable comparisons, so it runs whenever
-            // any of the five diffs is on.
+            // fused, map page, fence and bind-variable comparisons, so it runs whenever
+            // any of the six diffs is on.
             executionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
             Outcome bJ = runOnce(sql, rowsB, primaryHasAnyParquet, query.deterministic());
 
@@ -2125,6 +2151,13 @@ public class QueryRunner {
                             return pageResult;
                         }
                     }
+                }
+            }
+
+            if (query.fencedSql() != null) {
+                Result fenceResult = runFencedVariant(query, bJ);
+                if (fenceResult.isFailed()) {
+                    return fenceResult;
                 }
             }
 

@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.engine.functions.constants;
 
-import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.IntFunction;
@@ -47,17 +46,6 @@ public class IntConstant extends IntFunction implements ConstantFunction {
     @Override
     public int getInt(Record rec) {
         return value;
-    }
-
-    @Override
-    public boolean isEquivalentTo(Function obj) {
-        if (this == obj) {
-            return true;
-        }
-        if (obj instanceof IntConstant that) {
-            return this.value == that.value;
-        }
-        return false;
     }
 
     @Override

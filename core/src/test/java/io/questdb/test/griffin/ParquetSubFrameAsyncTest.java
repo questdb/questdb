@@ -55,7 +55,8 @@ import java.util.concurrent.atomic.AtomicLong;
  * 1000 rows (CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE) while page.frame.max.rows is 100, yet every
  * row group stays one frame and one task. A small reduce queue makes a task
  * land on the reduce queue, be work-stolen, or be reduced locally across GROUP BY (unordered), WINDOW JOIN
- * (ordered, keyed and non-keyed), async filters, and a mid-scan abandon. Results are compared row-for-row
+ * (ordered, keyed and non-keyed), async filters, a negative LIMIT over a join that reads ranges of older
+ * frames newest-to-oldest, and a mid-scan abandon. Results are compared row-for-row
  * against the native (pre-conversion) oracle; decode counts prove that each row group decodes once.
  */
 public class ParquetSubFrameAsyncTest extends AbstractCairoTest {
@@ -181,6 +182,27 @@ public class ParquetSubFrameAsyncTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNegativeLimitOverJoinReadsOlderFramesOfParquetAndNativePartitions() throws Exception {
+        // A negative LIMIT over a join reads the last rows of the master's async filter, then ranges of older
+        // frames newest-to-oldest until the join emits the rows it selects. The master alternates parquet and
+        // native partitions, so the ranges cross parquet row groups, native page frames and partition edges.
+        setProperty(PropertyKey.CAIRO_SQL_MAX_NEGATIVE_LIMIT, 4);
+        // the owner thread reduces every frame
+        assertMemoryLeak(() -> {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                assertNegativeLimitOverJoinReadsOlderFrames(engine, compiler, sqlExecutionContext);
+            }
+        });
+        // workers reduce the frames
+        assertMemoryLeak(() -> TestUtils.execute(
+                new WorkerPool(() -> 4),
+                this::assertNegativeLimitOverJoinReadsOlderFrames,
+                configuration,
+                LOG
+        ));
+    }
+
+    @Test
     public void testStreamGroupByDecodesOnce() throws Exception {
         assertMemoryLeak(() -> TestUtils.execute(
                 new WorkerPool(() -> 4),
@@ -291,12 +313,113 @@ public class ParquetSubFrameAsyncTest extends AbstractCairoTest {
         engine.execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-02'", ctx);
     }
 
+    private static String lastRows(String rows, int count) {
+        final int headerEnd = rows.indexOf('\n');
+        int start = rows.length() - 1;
+        for (int i = 0; i < count && start > headerEnd; i++) {
+            start = rows.lastIndexOf('\n', start - 1);
+        }
+        return rows.substring(0, headerEnd + 1) + rows.substring(start + 1);
+    }
+
     private void assertDecodedOnce(SqlCompiler compiler, SqlExecutionContext ctx, String sql) throws SqlException {
         Assert.assertTrue(sql, drain(compiler, ctx, sql) > 0);
         final String message = sql + " [calls=" + decodeCalls.get() + ", windows=" + decodedWindows.size() + ']';
         // One window per row group proves that no row group splits into sub-frames.
         Assert.assertEquals(message, ROW_GROUP_COUNT, decodedWindows.size());
         Assert.assertEquals(message, ROW_GROUP_COUNT, decodeCalls.get());
+    }
+
+    private void assertNegativeLimitOverJoinReadsOlderFrames(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext ctx
+    ) throws Exception {
+        // 2_880 rows a day: 2024-01-01 and 2024-01-03 become parquet partitions of three row groups each,
+        // 2024-01-02 and 2024-01-04 stay native and split into page frames of 100 rows
+        engine.execute(
+                "CREATE TABLE m AS (SELECT x::INT i, x % 7 l, timestamp_sequence('2024-01-01', 30_000_000) ts FROM long_sequence(10_000))"
+                        + " TIMESTAMP(ts) PARTITION BY DAY",
+                ctx
+        );
+        // master rows 5 (three slave rows), 2_000, 2_001 sit in 2024-01-01, 4_000 in 2024-01-02, 6_500 in
+        // 2024-01-03 and 9_999 in 2024-01-04; master row 7 fails the filter
+        engine.execute("CREATE TABLE s (k INT, v LONG)", ctx);
+        engine.execute("INSERT INTO s VALUES (5, 1), (5, 2), (5, 3), (7, 4), (2_000, 5), (2_001, 6), (4_000, 7), (6_500, 8), (9_999, 9)", ctx);
+        // fewer joined rows than the LIMIT selects
+        engine.execute("CREATE TABLE f (k INT, v LONG)", ctx);
+        engine.execute("INSERT INTO f VALUES (10, 1), (3_000, 2)", ctx);
+        // no joined row
+        engine.execute("CREATE TABLE z (k INT, v LONG)", ctx);
+        engine.execute("INSERT INTO z VALUES (100_001, 1), (100_002, 2)", ctx);
+        final String[] joins = {
+                "SELECT m.i, s.v FROM m JOIN s ON m.i = s.k WHERE m.l > 0",
+                "SELECT m.i, f.v FROM m JOIN f ON m.i = f.k WHERE m.l > 0",
+                "SELECT m.i, z.v FROM m JOIN z ON m.i = z.k WHERE m.l > 0",
+        };
+        // the oracle: every joined row of the native master, without a LIMIT
+        final String[] all = new String[joins.length];
+        final StringSink sink = new StringSink();
+        for (int i = 0; i < joins.length; i++) {
+            sink.clear();
+            TestUtils.printSql(compiler, ctx, joins[i], sink);
+            all[i] = sink.toString();
+        }
+        Assert.assertEquals(
+                """
+                        i\tv
+                        5\t3
+                        5\t2
+                        5\t1
+                        2000\t5
+                        2001\t6
+                        4000\t7
+                        6500\t8
+                        9999\t9
+                        """,
+                all[0]
+        );
+        Assert.assertEquals("i\tv\n10\t1\n3000\t2\n", all[1]);
+        Assert.assertEquals("i\tv\n", all[2]);
+
+        engine.execute("ALTER TABLE m CONVERT PARTITION TO PARQUET LIST '2024-01-01', '2024-01-03'", ctx);
+        for (int jitMode : new int[]{SqlJitMode.JIT_MODE_DISABLED, SqlJitMode.JIT_MODE_ENABLED}) {
+            ctx.setJitMode(jitMode);
+            for (int i = 0; i < joins.length; i++) {
+                for (int n = 1; n < 5; n++) {
+                    final String query = joins[i] + " LIMIT -" + n;
+                    final String expected = lastRows(all[i], n);
+                    assertQuery(query)
+                            .noLeakCheck()
+                            .withEngine(engine)
+                            .withCompiler(compiler)
+                            .withContext(ctx)
+                            .assertsPlanContaining(jitMode == SqlJitMode.JIT_MODE_ENABLED ? "Async JIT Filter" : "Async Filter", "limit: " + n);
+                    assertQuery(query)
+                            .noLeakCheck()
+                            .withEngine(engine)
+                            .withCompiler(compiler)
+                            .withContext(ctx)
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns(expected);
+                    // without the parallel filter, the LIMIT runs the join once over every master row
+                    ctx.setParallelFilterEnabled(false);
+                    try {
+                        sink.clear();
+                        TestUtils.printSql(compiler, ctx, query, sink);
+                        TestUtils.assertEquals(query, expected, sink);
+                    } finally {
+                        ctx.setParallelFilterEnabled(true);
+                    }
+                }
+            }
+        }
+        // the next engine of the test opens the same database
+        engine.execute("DROP TABLE m", ctx);
+        engine.execute("DROP TABLE s", ctx);
+        engine.execute("DROP TABLE f", ctx);
+        engine.execute("DROP TABLE z", ctx);
     }
 
     private void buildLargeParquet(String table) throws SqlException {

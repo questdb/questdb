@@ -75,9 +75,9 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
     private long filteredRowCount;
     // Global frame index of this run's first sub-frame.
     private int firstFrameIndex;
-    // Global index of the sub-frame currently visible to the reducer (firstFrameIndex + j). The reducer
-    // sees one sub-frame at a time, so getFrameRowCount/isParquetFrame/populateFrameMemory stay unchanged.
+    // Global index of the sub-frame currently visible to the reducer or collector.
     private int frameIndex = Integer.MAX_VALUE;
+    private int frameIndexStep;
     private PageFrameMemory frameMemory;
     private PageFrameSequence<?> frameSequence;
     private long frameSequenceId = -1;
@@ -213,6 +213,10 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
     }
 
     public PageFrameMemory getFrameMemory() {
+        if (frameMemory == null && subFrameCount > 1) {
+            // Only the last sub-frame decoded by the reducer remains bound. Some collectors need just row ids.
+            frameMemory = frameMemoryPool.navigateTo(frameIndex);
+        }
         return frameMemory;
     }
 
@@ -304,14 +308,14 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
         this.taskIndex = taskIndex;
         this.firstFrameIndex = frameSequence.getTaskFirstFrame(taskIndex);
         this.subFrameCount = frameSequence.getTaskFrameCount(taskIndex);
+        this.frameIndexStep = frameSequence.getDispatchFrameStep();
         this.frameIndex = firstFrameIndex;
         this.isCountOnly = countOnly;
         // Rebind the per-query tracker on every task: clear() nulls it on the
         // pool between tasks, and the pool.of() below only re-runs on a fresh
         // query. Top K uses its own frame memory pool, so this is a no-op there.
         frameMemoryPool.setMemoryTracker(frameSequence.getMemoryTracker());
-        // Initialize the memory pool if the task wasn't previously initialized for the same query,
-        // or it belongs to top K. Top K uses its own frame memory pool.
+        // Bind the memory pool on the first task of each query. Top K owns its memory pool.
         if (!sameQueryExecution && taskType != TYPE_TOP_K) {
             frameMemoryPool.of(frameSequence.getPageFrameAddressCache());
         }
@@ -364,43 +368,34 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
     }
 
     /**
-     * Positions the task to present the j-th sub-frame of the run as a standalone frame, so the unchanged
-     * collector reads it through getFilteredRows / getFilteredRowCount / getFrameIndex / getFrameMemory.
-     * A single sub-frame (the common, unsplit case) is already in place from reduce and only re-binds the
-     * frame memory (a hit); a split run copies the sub-frame's rows to the front of filteredRows and
-     * re-decodes its frame memory (the budget-0 pool kept only the last sub-frame decoded). Reading only
-     * matching rows is correct against a full re-decode and a late-materialised buffer alike.
+     * Positions the task to present one sub-frame's reduce output to the collector.
      */
     public void positionAtSubFrame(int subFrame) {
-        frameIndex = firstFrameIndex + subFrame;
-        // A cancelled task (runReduce skipped on a tripped circuit breaker) or a run that threw mid-way
-        // (a reducer error on sub-frame > 0) has no complete output for this sub-frame: its per-sub-frame
-        // arrays are short. runReduce keeps subFrameRowOffsets one entry ahead of subFrameRowCounts even on
-        // a throw, so both checks below hold together; present an empty frame so the collector's
-        // `filteredRows.size() == filteredRowCount` invariant holds before it discards the frame on
-        // hasError()/isActive()==false, and never index subFrameRowOffsets past its end. This mirrors the
-        // pre-run-task state of a cancelled task (filteredRows cleared, count 0) and avoids a re-decode.
+        if (subFrameCount == 1) {
+            return;
+        }
+        final int nextFrameIndex = firstFrameIndex + subFrame * frameIndexStep;
+        if (frameIndex != nextFrameIndex) {
+            frameMemory = null;
+            frameIndex = nextFrameIndex;
+        }
+        // A cancelled or failed run can leave the per-sub-frame results incomplete.
         if (subFrame >= subFrameRowCounts.size() || subFrame + 1 >= subFrameRowOffsets.size()) {
             filteredRowCount = 0;
             filteredRows.clear();
             return;
         }
         filteredRowCount = subFrameRowCounts.getQuick(subFrame);
-        if (subFrameCount > 1) {
-            final long offset = subFrameRowOffsets.getQuick(subFrame);
-            final long len = subFrameRowOffsets.getQuick(subFrame + 1) - offset;
-            filteredRows.clear();
-            if (len > 0) {
-                // Grow-only: the sub-frames of a split run have varying match counts, so an unconditional
-                // setCapacity would shrink-then-grow (realloc) on every collect. Match populateJitData.
-                if (filteredRows.getCapacity() < len) {
-                    filteredRows.setCapacity(len);
-                }
-                Vect.memcpy(filteredRows.getAddress(), accumulatedRows.getAddress() + (offset << 3), len << 3);
-                filteredRows.setPos(len);
+        final long offset = subFrameRowOffsets.getQuick(subFrame);
+        final long len = subFrameRowOffsets.getQuick(subFrame + 1) - offset;
+        filteredRows.clear();
+        if (len > 0) {
+            if (filteredRows.getCapacity() < len) {
+                filteredRows.setCapacity(len);
             }
+            Vect.memcpy(filteredRows.getAddress(), accumulatedRows.getAddress() + (offset << 3), len << 3);
+            filteredRows.setPos(len);
         }
-        frameMemory = frameMemoryPool.navigateTo(frameIndex);
     }
 
     public void releaseFrameMemory() {
@@ -423,23 +418,20 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
             @Nullable PageFrameSequence<?> stealingFrameSequence
     ) {
         final PageFrameReducer reducer = frameSequence.getReducer();
-        accumulatedRows.clear();
-        subFrameRowCounts.clear();
-        subFrameRowOffsets.clear();
+        if (subFrameCount == 1) {
+            reducer.reduce(workerId, record, this, circuitBreaker, stealingFrameSequence);
+            return;
+        }
         long accumulatedLen = 0;
         for (int j = 0; j < subFrameCount; j++) {
             subFrameRowOffsets.add(accumulatedLen);
-            frameIndex = firstFrameIndex + j;
+            frameIndex = firstFrameIndex + j * frameIndexStep;
             frameMemory = null;
             filteredRows.clear();
             filteredRowCount = 0;
             reducer.reduce(workerId, record, this, circuitBreaker, stealingFrameSequence);
             subFrameRowCounts.add(filteredRowCount);
-            // The budget-0 pool overwrites this sub-frame's decode on the next navigateTo, so a split run
-            // must retain each sub-frame's matching rows here; a single sub-frame keeps filteredRows as is.
-            if (subFrameCount > 1) {
-                accumulatedRows.addAll(filteredRows);
-            }
+            accumulatedRows.addAll(filteredRows);
             accumulatedLen += filteredRows.size();
         }
         subFrameRowOffsets.add(accumulatedLen);
@@ -523,7 +515,7 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
         // Scheduling budgets cover the whole run; reducers still read one subframe at a time.
         long rowCount = 0;
         for (int i = 0; i < subFrameCount; i++) {
-            rowCount += frameSequence.getFrameRowCount(firstFrameIndex + i);
+            rowCount += frameSequence.getFrameRowCount(firstFrameIndex + i * frameIndexStep);
         }
         return rowCount;
     }

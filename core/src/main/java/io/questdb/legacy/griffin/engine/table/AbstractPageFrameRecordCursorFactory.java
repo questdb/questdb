@@ -1,0 +1,200 @@
+/*+*****************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2026 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.legacy.griffin.engine.table;
+
+import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CairoTable;
+import io.questdb.cairo.MetadataCacheReader;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.PartitionFrameCursor;
+import io.questdb.cairo.sql.PartitionFrameCursorFactory;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.table.BwdTableReaderPageFrameCursor;
+import io.questdb.griffin.engine.table.FwdTableReaderPageFrameCursor;
+import io.questdb.griffin.engine.table.TablePageFrameCursor;
+import io.questdb.std.IntList;
+import io.questdb.std.Misc;
+import org.jetbrains.annotations.NotNull;
+
+import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ANY;
+import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
+
+/**
+ * Abstract base class for page frame record cursor factories.
+ */
+abstract class AbstractPageFrameRecordCursorFactory extends AbstractRecordCursorFactory {
+    /**
+     * The column indexes.
+     */
+    protected final IntList columnIndexes;
+    /**
+     * The column size shifts.
+     */
+    protected final IntList columnSizeShifts;
+    /**
+     * The page frame cursor.
+     */
+    protected TablePageFrameCursor pageFrameCursor;
+    /**
+     * The partition frame cursor factory.
+     */
+    protected PartitionFrameCursorFactory partitionFrameCursorFactory;
+
+    /**
+     * Constructs a new page frame record cursor factory.
+     *
+     * @param metadata                    the record metadata
+     * @param partitionFrameCursorFactory the partition frame cursor factory
+     * @param columnIndexes               the column indexes
+     * @param columnSizeShifts            the column size shifts
+     */
+    public AbstractPageFrameRecordCursorFactory(
+            @NotNull RecordMetadata metadata,
+            @NotNull PartitionFrameCursorFactory partitionFrameCursorFactory,
+            @NotNull IntList columnIndexes,
+            @NotNull IntList columnSizeShifts
+    ) {
+        super(metadata);
+        this.partitionFrameCursorFactory = partitionFrameCursorFactory;
+        this.columnIndexes = columnIndexes;
+        this.columnSizeShifts = columnSizeShifts;
+    }
+
+    @Override
+    public String getBaseColumnName(int columnIndex) {
+        return partitionFrameCursorFactory.getTableDescriptor().getColumnName(columnIndexes.getQuick(columnIndex));
+    }
+
+    @Override
+    public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+        PageFrameCursor frameCursor = initPageFrameCursor(executionContext);
+        try {
+            return initRecordCursor(frameCursor, executionContext);
+        } catch (Throwable e) {
+            frameCursor.close();
+            throw e;
+        }
+    }
+
+    @Override
+    public TableToken getTableToken() {
+        return partitionFrameCursorFactory.getTableToken();
+    }
+
+    @Override
+    public boolean hasParquetConvertedColumns(SqlExecutionContext executionContext) {
+        final CairoEngine engine = executionContext.getCairoEngine();
+        final TableToken tableToken = partitionFrameCursorFactory.getTableToken();
+        engine.getMetadataCache().hydrateTableOnDemand(tableToken);
+        try (MetadataCacheReader metadataRO = engine.getMetadataCache().readLock()) {
+            final CairoTable table = metadataRO.getTable(tableToken);
+            if (table == null || !table.hasParquetPartitions()) {
+                return false;
+            }
+        }
+        // A column re-keyed by ALTER COLUMN TYPE has writerIndex != originalWriterIndex, which the descriptor of the
+        // table records, unlike the projected query metadata seen downstream.
+        return partitionFrameCursorFactory.getTableDescriptor().hasConvertedColumns();
+    }
+
+    @Override
+    public boolean supportsUpdateRowId(TableToken tableToken) {
+        return partitionFrameCursorFactory.supportsTableRowId(tableToken);
+    }
+
+    @Override
+    protected void _close() {
+        final TablePageFrameCursor pageFrameCursor = this.pageFrameCursor;
+        this.pageFrameCursor = null;
+        final PartitionFrameCursorFactory partitionFrameCursorFactory = this.partitionFrameCursorFactory;
+        this.partitionFrameCursorFactory = null;
+        Throwable failure = Misc.freeBestEffort(null, pageFrameCursor);
+        failure = Misc.freeBestEffort(failure, partitionFrameCursorFactory);
+        CairoException.rethrowCleanupFailure(failure);
+    }
+
+    /**
+     * Initializes the page frame cursor.
+     *
+     * @param executionContext the SQL execution context
+     * @return the initialized page frame cursor
+     * @throws SqlException if initialization fails
+     */
+    protected TablePageFrameCursor initPageFrameCursor(SqlExecutionContext executionContext) throws SqlException {
+        final int order = partitionFrameCursorFactory.getOrder();
+        PartitionFrameCursor partitionFrameCursor = partitionFrameCursorFactory.getCursor(executionContext, columnIndexes, ORDER_ANY);
+        if (pageFrameCursor == null) {
+            if (order == ORDER_ASC || order == ORDER_ANY) {
+                pageFrameCursor = new FwdTableReaderPageFrameCursor(
+                        columnIndexes,
+                        columnSizeShifts,
+                        partitionFrameCursorFactory.getPushdownFilterConditions(),
+                        1 // used for single-threaded exec plans
+                );
+            } else {
+                pageFrameCursor = new BwdTableReaderPageFrameCursor(
+                        columnIndexes,
+                        columnSizeShifts,
+                        partitionFrameCursorFactory.getPushdownFilterConditions(),
+                        1 // used for single-threaded exec plans
+                );
+            }
+        }
+        return pageFrameCursor.of(executionContext, partitionFrameCursor);
+    }
+
+    /**
+     * Returns true when the column that the metadata marks as this factory's timestamp reads the designated timestamp
+     * of the table, rather than another column that a {@code timestamp(col)} clause names.
+     *
+     * @return true if the factory's timestamp is the table's designated timestamp
+     */
+    protected boolean isTimestampTableDesignated() {
+        final int timestampIndex = getMetadata().getTimestampIndex();
+        // columnIndexes maps the factory's columns to the reader's, and the partition frame factory describes the
+        // reader's table
+        return timestampIndex > -1
+                && columnIndexes.getQuick(timestampIndex) == partitionFrameCursorFactory.getTableDescriptor().getTimestampIndex();
+    }
+
+    /**
+     * Initializes the record cursor from the page frame cursor.
+     *
+     * @param frameCursor      the page frame cursor
+     * @param executionContext the SQL execution context
+     * @return the initialized record cursor
+     * @throws SqlException if initialization fails
+     */
+    protected abstract RecordCursor initRecordCursor(
+            PageFrameCursor frameCursor,
+            SqlExecutionContext executionContext
+    ) throws SqlException;
+}

@@ -35,7 +35,7 @@ import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
-import static io.questdb.griffin.SqlCodeGenerator.GKK_VANILLA_INT;
+import static io.questdb.griffin.engine.groupby.vect.VectorAggregateFunction.GKK_VANILLA_INT;
 
 public class NSumDoubleVectorAggregateFunctionTest extends AbstractCairoTest {
     private static final double INF = Double.POSITIVE_INFINITY;

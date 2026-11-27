@@ -44,7 +44,6 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameReduceTaskFactory;
 import io.questdb.cairo.sql.async.PageFrameSequence;
-import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -54,14 +53,13 @@ import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.GroupByRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.griffin.engine.groupby.StreamGroupByMap;
-import io.questdb.jit.CompiledFilter;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.DirectLongList;
-import io.questdb.std.IntHashSet;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rows;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
@@ -95,12 +93,7 @@ public class AsyncStreamGroupByRecordCursorFactory extends AbstractRecordCursorF
             ObjList<Function> keyFunctions,
             ObjList<ObjList<Function>> perWorkerKeys,
             ObjList<Function> recordFunctions,
-            CompiledFilter compiledFilter,
-            MemoryCARW bindVarMemory,
-            ObjList<Function> bindVarFunctions,
-            Function filter,
-            IntHashSet filterUsedColumnIndexes,
-            ObjList<Function> perWorkerFilters,
+            @NotNull AsyncFilterResources filterResources,
             PageFrameReduceTaskFactory reduceTaskFactory,
             int workerCount,
             boolean isDescending
@@ -117,7 +110,7 @@ public class AsyncStreamGroupByRecordCursorFactory extends AbstractRecordCursorF
                     messageBus,
                     new AsyncStreamGroupByAtom(configuration, asm, base.getMetadata(), columnFilter, keyTypes, valueTypes, streamKeyIndex,
                             keyFunction, keyFunctions, perWorkerKeys, groupByFunctions, perWorkerFunctions,
-                            compiledFilter, bindVarMemory, bindVarFunctions, filter, filterUsedColumnIndexes, perWorkerFilters, workerCount,
+                            filterResources, workerCount,
                             isDescending, Math.max(1, configuration.getSqlParallelFilterDispatchLimit()) + 1,
                             messageBus.getPageFrameReduceQueue(0).getCycle()),
                     AsyncStreamGroupByRecordCursorFactory::aggregate,

@@ -27,6 +27,7 @@ package io.questdb.test.griffin.fuzz;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.griffin.fuzz.types.BooleanType;
 import io.questdb.test.griffin.fuzz.types.ColumnKind;
 import io.questdb.test.griffin.fuzz.types.LongType;
 
@@ -42,8 +43,9 @@ import io.questdb.test.griffin.fuzz.types.LongType;
  * <ul>
  *   <li>{@code SELECT * FROM base} (default);</li>
  *   <li>{@code SELECT * FROM base WHERE p [LIMIT N]} (filtered);</li>
- *   <li>{@code SELECT col AS r0, col AS r1, ts AS rts FROM base}
- *       (renaming projection &mdash; outer sees the aliases);</li>
+ *   <li>{@code SELECT col AS r0, (col IS NULL) AS r1, ts AS rts FROM base}
+ *       (renaming projection, which computes some columns &mdash; outer
+ *       sees the aliases);</li>
  *   <li>{@code SELECT keyCol AS k, count() AS cnt FROM base}
  *       (aggregated &mdash; outer sees a small 2-column schema);</li>
  *   <li>{@code SELECT ts AS ts, count() AS cnt FROM base SAMPLE BY i}
@@ -66,6 +68,8 @@ import io.questdb.test.griffin.fuzz.types.LongType;
  * or a single-threaded HORIZON JOIN reads them by row id.
  */
 public final class FuzzSource {
+    // one in COMPUTED_COLUMN_ODDS kept non-timestamp columns of a projection is computed rather than renamed
+    private static final int COMPUTED_COLUMN_ODDS = 4;
     // Out of 100: how often rowIdJoinSide() reads a WINDOW JOIN sub-query instead of the table.
     private static final int ROW_ID_JOIN_SIDE_WINDOW_JOIN_PCT = 20;
     private static final String[] SAMPLE_INTERVALS = {"15m", "1h", "1d"};
@@ -266,6 +270,12 @@ public final class FuzzSource {
             }
             first = false;
             String alias = "r" + (aliasIdx++);
+            // A computed column, which an outer count or a projection of other columns leaves unread.
+            if (!isTs && rnd.nextInt(COMPUTED_COLUMN_ODDS) == 0) {
+                sb.put('(').put(c.getName()).put(" IS NULL) AS ").put(alias);
+                renamedCols.add(new FuzzColumn(alias, BooleanType.INSTANCE));
+                continue;
+            }
             sb.put(c.getName()).put(" AS ").put(alias);
             renamedCols.add(new FuzzColumn(alias, c.getType()));
             if (isTs) {

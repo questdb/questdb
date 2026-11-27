@@ -83,6 +83,11 @@ public class NthValueLongWindowFunctionFactory extends AbstractWindowFunctionFac
     private static final String SIGNATURE = NAME + "(LL)";
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.LONG;
+    }
+
+    @Override
     public String getSignature() {
         return SIGNATURE;
     }
@@ -264,6 +269,7 @@ public class NthValueLongWindowFunctionFactory extends AbstractWindowFunctionFac
                     }
                 } // between current row and current row
                 else if (rowsLo == 0 && rowsHi == 0) {
+                    CairoException.rethrowCleanupFailure(Misc.freeObjListBestEffort(null, partitionByRecord.getFunctions()));
                     return new NthValueOverCurrentRowFunction(args.get(0), n);
                 } // whole partition
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {

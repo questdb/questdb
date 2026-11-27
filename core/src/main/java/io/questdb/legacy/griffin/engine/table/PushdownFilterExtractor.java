@@ -1,0 +1,617 @@
+/*+*****************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2026 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.legacy.griffin.engine.table;
+
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.DecimalUtil;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.table.ParquetRowGroupFilter;
+import io.questdb.legacy.griffin.FunctionParser;
+import io.questdb.legacy.griffin.SqlKeywords;
+import io.questdb.legacy.griffin.model.ExpressionNode;
+import io.questdb.std.Chars;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
+import io.questdb.std.Decimals;
+import io.questdb.std.Misc;
+import io.questdb.std.Mutable;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
+
+import java.util.ArrayDeque;
+
+/**
+ * Extracts pushdown filter conditions from a filter expression.
+ * <p>
+ * These conditions can be used for Parquet row group pruning
+ * via bloom filters, min/max statistics, and null counts.
+ * <p>
+ * Supported conditions:
+ * 1. col = expr (equality)
+ * 2. col IN (expr, ...) (IN list)
+ * 3. col &lt; expr, col &lt;= expr, col &gt; expr, col &gt;= expr (range)
+ * 4. col BETWEEN lo AND hi (single OP_BETWEEN with two bounds)
+ * 5. col IS NULL / col IS NOT NULL (null checks)
+ * 6. col = v1 OR col = v2 OR ... (OR of equalities on same column)
+ * <p>
+ * Multiple AND conditions form multiple PushdownFilterCondition entries.
+ * Value expressions are validated later (after parsing into Functions)
+ * to ensure they are constant or runtime-constant.
+ */
+public class PushdownFilterExtractor implements Mutable {
+
+    // Operation types for pushdown filter conditions.
+    // Keep in sync with FILTER_OP_* constants in parquet_read/mod.rs.
+    // Range semantics (LT/LE/GT/GE): skip row group if
+    //   LT: min >= val, LE: min > val, GT: max <= val, GE: max < val.
+    // BETWEEN: auto-swaps bounds, skip if max_stat < min(a,b) || min_stat > max(a,b).
+    public static final int OP_BETWEEN = 7;
+    public static final int OP_EQ = 0;
+    public static final int OP_GE = 4;
+    public static final int OP_GT = 3;
+    public static final int OP_IS_NOT_NULL = 6;
+    public static final int OP_IS_NULL = 5;
+    public static final int OP_LE = 2;
+    public static final int OP_LT = 1;
+    // Not an op the native side knows about: it marks a condition that cannot be pushed down.
+    public static final int OP_UNSUPPORTED = -1;
+
+    private final ObjList<PushdownFilterCondition> conditions = new ObjList<>();
+    private final ObjList<ExpressionNode> orValues = new ObjList<>();
+
+    @Override
+    public void clear() {
+        conditions.clear();
+        orValues.clear();
+    }
+
+    public ObjList<io.questdb.griffin.engine.table.PushdownFilterExtractor.PushdownFilterCondition> extractAndCompile(
+            ArrayDeque<ExpressionNode> stack,
+            ArrayDeque<ExpressionNode> stack2,
+            ExpressionNode filterExpr,
+            RecordMetadata metadata,
+            FunctionParser functionParser,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        conditions.clear();
+        if (filterExpr != null) {
+            traverse(stack, stack2, filterExpr, metadata);
+        }
+
+        ObjList<io.questdb.griffin.engine.table.PushdownFilterExtractor.PushdownFilterCondition> result = null;
+        PushdownFilterCondition condition = null;
+        try {
+            for (int i = 0, n = conditions.size(); i < n; i++) {
+                condition = conditions.getQuick(i);
+                ObjList<ExpressionNode> values = condition.getValues();
+                boolean allConstant = true;
+                for (int j = 0, m = values.size(); j < m; j++) {
+                    ExpressionNode node = values.getQuick(j);
+                    if (containsQuery(stack, node)) {
+                        allConstant = false;
+                        break;
+                    }
+
+                    Function f = functionParser.parseFunction(node, metadata, executionContext);
+                    if (!f.isConstantOrRuntimeConstant()) {
+                        condition.addValueFunction(f);
+                        allConstant = false;
+                        break;
+                    }
+                    // Pushdown reads the literal's raw value via getDecimal<N>(null)
+                    // dispatched on the column's storage tag, then compares the bytes
+                    // against parquet row group min/max statistics. For that to be
+                    // correct the literal must share the column's storage tag and
+                    // scale. Rescale the constant to match when possible; abandon
+                    // the condition when rescale would lose precision, overflow the
+                    // column's storage range, or when the value is only a runtime
+                    // constant (bind variable) whose raw bytes aren't known at
+                    // compile time - reading it through DecimalUtil.load would call
+                    // getDecimal<N>(null) on an unbound NamedParameterLinkFunction
+                    // and trip its assertion.
+                    final int colType = condition.getColumnType();
+                    if (ColumnType.isDecimal(colType) && ColumnType.isDecimal(f.getType())) {
+                        final int fType = f.getType();
+                        final boolean tagAndScaleMatch = ColumnType.tagOf(colType) == ColumnType.tagOf(fType)
+                                && ColumnType.getDecimalScale(colType) == ColumnType.getDecimalScale(fType);
+                        Function rescaled = null;
+                        if (tagAndScaleMatch) {
+                            rescaled = f;
+                        } else if (f.isConstant()) {
+                            rescaled = rescaleDecimalForPushdown(f, colType, executionContext);
+                        }
+                        if (rescaled == null) {
+                            condition.addValueFunction(f);
+                            allConstant = false;
+                            break;
+                        }
+                        f = rescaled;
+                    }
+                    condition.addValueFunction(f);
+                }
+                if (allConstant) {
+                    if (result == null) {
+                        result = new ObjList<>();
+                    }
+                    result.add(condition);
+                } else {
+                    Misc.free(condition);
+                }
+            }
+        } catch (Throwable e) {
+            Misc.free(condition);
+            Misc.freeObjList(result);
+            throw e;
+        }
+
+        return result;
+    }
+
+    private static boolean containsQuery(ArrayDeque<ExpressionNode> stack, ExpressionNode node) {
+        stack.clear();
+        stack.push(node);
+        while (!stack.isEmpty()) {
+            ExpressionNode current = stack.poll();
+            if (current.type == ExpressionNode.QUERY) {
+                return true;
+            }
+            if (current.lhs != null) {
+                stack.push(current.lhs);
+            }
+            if (current.rhs != null) {
+                stack.push(current.rhs);
+            }
+            for (int i = 0, n = current.args.size(); i < n; i++) {
+                ExpressionNode arg = current.args.getQuick(i);
+                if (arg != null) {
+                    stack.push(arg);
+                }
+            }
+        }
+        return false;
+    }
+
+    private static int flipComparison(int opType) {
+        return switch (opType) {
+            case OP_LT -> OP_GT;
+            case OP_LE -> OP_GE;
+            case OP_GT -> OP_LT;
+            case OP_GE -> OP_LE;
+            default -> opType;
+        };
+    }
+
+    private static boolean isNullConstant(ExpressionNode node) {
+        return node.type == ExpressionNode.CONSTANT && SqlKeywords.isNullKeyword(node.token);
+    }
+
+    /**
+     * Reports whether a null predicate over this column type may drive row group pruning.
+     * <p>
+     * Pruning is exact only where the parquet null bit and the SQL NULL denote the same rows.
+     * The parquet writer marks column-top rows - rows that predate the ADD COLUMN - with
+     * definition level 0, and decides every other row's null bit through its {@code Nullable}
+     * impl in {@code core/rust/qdbr/src/parquet_write/mod.rs}. Two type groups break the
+     * correspondence, in opposite directions:
+     * <ul>
+     * <li>BOOLEAN, BYTE and SHORT carry no null sentinel, so {@code EqBooleanFunctionFactory},
+     * {@code EqByteFunctionFactory} and {@code EqShortFunctionFactory} fold a null constant to
+     * {@code BooleanConstant.FALSE} and every stored row is non-null - a column-top row reads
+     * back as 0/false, a legitimate value. A row group built entirely from column-top rows
+     * reports {@code null_count == num_values}, which {@link ParquetRowGroupFilter} would
+     * discard for IS NOT NULL even though every one of its rows matches. Neither direction may
+     * consult the file's null bit.</li>
+     * <li>CHAR, FLOAT and DOUBLE call more values NULL than the writer marks null, so parquet
+     * nulls are a strict subset of SQL NULLs. IS NOT NULL still prunes exactly - a row group
+     * with {@code null_count == num_values} holds only NULLs, so no row matches - but IS NULL
+     * does not: {@code null_count == 0} no longer implies the group holds no NULL. CHAR's null
+     * is {@code Numbers.CHAR_NULL} while the writer's {@code Nullable} impl for {@code u16}
+     * reports every stored value non-null; {@code Numbers.isNull(double)} masks
+     * {@code EXP_BIT_MASK} and {@code isNull(float)} tests {@code isInfinite}, so both count
+     * +/-Infinity as NULL, while the writer's impls for {@code f32}/{@code f64} test only
+     * {@code is_nan()} and {@code simd.rs} compares strictly greater than the infinity bits.
+     * A stored CHAR_NULL or infinity therefore reaches the file as a non-null value, and a row
+     * group of them reports {@code null_count == 0} while every row matches IS NULL.</li>
+     * </ul>
+     * Every other type's null detection - a {@code Nullable} impl for the fixed-size types, a
+     * length or key check for the variable-size ones, which do not implement that trait -
+     * recognises the same values SQL does, so both directions stay exact. That includes IPv4,
+     * whose in-band 0 the writer does map to a parquet null.
+     * <p>
+     * This gates on the column's <em>metadata</em> type; soundness also needs the file's stored
+     * type to agree, which {@link ParquetRowGroupFilter} enforces separately by dropping any
+     * condition whose parquet column type differs, before it reaches the null-op branch.
+     * <p>
+     * Relaxing either arm would recover no pruning, so the two {@code false} answers cost nothing.
+     * The native side declines the same skips independently: {@code writer_undercounts_nulls}
+     * refuses the {@code null_count == 0} skip for CHAR, FLOAT and DOUBLE, and
+     * {@code is_null_free_type} refuses the {@code null_count == num_values} skip for BOOLEAN, BYTE
+     * and SHORT, both in {@code parquet_read::row_groups} and its {@code parquet_metadata::skip}
+     * twin. A newly pushed condition would therefore prune nothing and merely mark pushdown active,
+     * which costs the page frame cursor its up-front {@code size()}. For BOOLEAN, BYTE and SHORT it
+     * would also reopen the {@code filter == null} alongside active pushdown state that
+     * {@code ParquetRowGroupPruningTest.testLimitOverConstantFoldedByteNullFilter} pins closed,
+     * because {@code b IS NOT NULL} folds to a constant TRUE the code generator drops. The
+     * remaining pair - IS NULL over those three - folds to a constant FALSE that
+     * {@code SqlCodeGenerator} replaces with an empty factory, so no scan runs there to prune.
+     */
+    private static boolean isNullOpPushable(int columnType, int opType) {
+        return switch (ColumnType.tagOf(columnType)) {
+            case ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.SHORT -> false;
+            case ColumnType.CHAR, ColumnType.FLOAT, ColumnType.DOUBLE -> opType == OP_IS_NOT_NULL;
+            default -> true;
+        };
+    }
+
+    /**
+     * Rebuilds a constant DECIMAL function so its storage tag and scale match the
+     * column's, which is what {@link ParquetRowGroupFilter#prepareFilterList} relies
+     * on when it dispatches {@code getDecimal<N>} based on the column tag and pushes
+     * the raw bytes against parquet row group statistics. Returns {@code null} when
+     * the constant cannot be expressed at the column's scale (lossy scale-down) or
+     * does not fit in the column's storage size, signalling the caller to skip
+     * pushdown for the condition. Returns the input unchanged when scale and tag
+     * already match. On a successful rebuild the original function is closed and
+     * the new constant takes its place.
+     */
+    private static Function rescaleDecimalForPushdown(
+            Function f,
+            int colType,
+            SqlExecutionContext executionContext
+    ) {
+        final int colTag = ColumnType.tagOf(colType);
+        final int litTag = ColumnType.tagOf(f.getType());
+        final int colScale = ColumnType.getDecimalScale(colType);
+        final int litScale = ColumnType.getDecimalScale(f.getType());
+        if (colTag == litTag && colScale == litScale) {
+            return f;
+        }
+
+        final int colPrecision = ColumnType.getDecimalPrecision(colType);
+        final Decimal256 d256 = executionContext.getDecimal256();
+        final Decimal128 d128 = executionContext.getDecimal128();
+        DecimalUtil.load(d256, d128, f, null);
+
+        if (d256.isNull()) {
+            f.close();
+            return DecimalUtil.createNullDecimalConstant(colPrecision, colScale);
+        }
+
+        try {
+            d256.rescale(colScale);
+        } catch (NumericException e) {
+            return null;
+        }
+
+        final int colStorageSizePow2 = Decimals.getStorageSizePow2(colPrecision);
+        if (!d256.fitsInStorageSizePow2(colStorageSizePow2)) {
+            return null;
+        }
+
+        f.close();
+        return DecimalUtil.createDecimalConstant(d256, colPrecision, colScale);
+    }
+
+    private void traverse(ArrayDeque<ExpressionNode> stack, ArrayDeque<ExpressionNode> stack2, ExpressionNode node, RecordMetadata metadata) {
+        stack.clear();
+
+        while (!stack.isEmpty() || node != null) {
+            if (node != null) {
+                if (node.token == null) {
+                    // tokenless node (e.g. subquery); not extractable, skip it -
+                    // extraction is best-effort and fewer conditions is always safe
+                    node = null;
+                } else if (SqlKeywords.isAndKeyword(node.token)) {
+                    if (node.rhs != null) {
+                        stack.push(node.rhs);
+                    }
+                    node = node.lhs;
+                } else {
+                    if (Chars.equals(node.token, "=")) {
+                        tryExtractEquality(node, metadata);
+                    } else if (Chars.equals(node.token, "!=")) {
+                        tryExtractNotEqual(node, metadata);
+                    } else if (Chars.equals(node.token, "<")) {
+                        tryExtractComparison(node, metadata, OP_LT);
+                    } else if (Chars.equals(node.token, "<=")) {
+                        tryExtractComparison(node, metadata, OP_LE);
+                    } else if (Chars.equals(node.token, ">")) {
+                        tryExtractComparison(node, metadata, OP_GT);
+                    } else if (Chars.equals(node.token, ">=")) {
+                        tryExtractComparison(node, metadata, OP_GE);
+                    } else if (SqlKeywords.isInKeyword(node.token)) {
+                        tryExtractIn(node, metadata);
+                    } else if (SqlKeywords.isBetweenKeyword(node.token)) {
+                        tryExtractBetween(node, metadata);
+                    } else if (SqlKeywords.isOrKeyword(node.token)) {
+                        tryExtractOrEqualities(stack2, node, metadata);
+                    }
+                    node = null;
+                }
+            } else {
+                node = stack.poll();
+            }
+        }
+    }
+
+    private void tryExtractBetween(ExpressionNode node, RecordMetadata metadata) {
+        if (node.paramCount != 3 || node.args.size() < 3) {
+            return;
+        }
+
+        ExpressionNode colNode = node.args.getLast();
+        if (colNode == null || colNode.type != ExpressionNode.LITERAL) {
+            return;
+        }
+
+        int columnIndex = metadata.getColumnIndexQuiet(colNode.token);
+        if (columnIndex < 0) {
+            return;
+        }
+
+        ExpressionNode loNode = node.args.getQuick(1);
+        ExpressionNode hiNode = node.args.getQuick(0);
+
+        int columnType = metadata.getColumnType(columnIndex);
+        PushdownFilterCondition cond = new PushdownFilterCondition(colNode.token, metadata.getWriterIndex(columnIndex), columnType, OP_BETWEEN);
+        cond.addValue(loNode);
+        cond.addValue(hiNode);
+        conditions.add(cond);
+    }
+
+    private void tryExtractComparison(ExpressionNode node, RecordMetadata metadata, int opType) {
+        if (node.lhs == null || node.rhs == null) {
+            return;
+        }
+
+        ExpressionNode colNode;
+        ExpressionNode valueNode;
+        int effectiveOp = opType;
+        if (node.lhs.type == ExpressionNode.LITERAL && node.rhs.type != ExpressionNode.LITERAL) {
+            colNode = node.lhs;
+            valueNode = node.rhs;
+        } else if (node.rhs.type == ExpressionNode.LITERAL && node.lhs.type != ExpressionNode.LITERAL) {
+            colNode = node.rhs;
+            valueNode = node.lhs;
+            effectiveOp = flipComparison(opType);
+        } else {
+            return;
+        }
+
+        int columnIndex = metadata.getColumnIndexQuiet(colNode.token);
+        if (columnIndex < 0) {
+            return;
+        }
+
+        int columnType = metadata.getColumnType(columnIndex);
+        PushdownFilterCondition condition = new PushdownFilterCondition(colNode.token, metadata.getWriterIndex(columnIndex), columnType, effectiveOp);
+        condition.addValue(valueNode);
+        conditions.add(condition);
+    }
+
+    private void tryExtractEquality(ExpressionNode node, RecordMetadata metadata) {
+        if (node.lhs == null || node.rhs == null) {
+            return;
+        }
+
+        ExpressionNode colNode;
+        ExpressionNode valueNode;
+        if (node.lhs.type == ExpressionNode.LITERAL && node.rhs.type != ExpressionNode.LITERAL) {
+            colNode = node.lhs;
+            valueNode = node.rhs;
+        } else if (node.rhs.type == ExpressionNode.LITERAL && node.lhs.type != ExpressionNode.LITERAL) {
+            colNode = node.rhs;
+            valueNode = node.lhs;
+        } else {
+            return;
+        }
+
+        int columnIndex = metadata.getColumnIndexQuiet(colNode.token);
+        if (columnIndex < 0) {
+            return;
+        }
+
+        int columnType = metadata.getColumnType(columnIndex);
+
+        if (isNullConstant(valueNode)) {
+            if (isNullOpPushable(columnType, OP_IS_NULL)) {
+                conditions.add(new PushdownFilterCondition(colNode.token, metadata.getWriterIndex(columnIndex), columnType, OP_IS_NULL));
+            }
+            return;
+        }
+
+        PushdownFilterCondition condition = new PushdownFilterCondition(colNode.token, metadata.getWriterIndex(columnIndex), columnType);
+        condition.addValue(valueNode);
+        conditions.add(condition);
+    }
+
+    private void tryExtractIn(ExpressionNode node, RecordMetadata metadata) {
+        ExpressionNode colNode = node.paramCount < 3 ? node.lhs : node.args.getLast();
+        if (colNode == null || colNode.type != ExpressionNode.LITERAL) {
+            return;
+        }
+
+        int columnIndex = metadata.getColumnIndexQuiet(colNode.token);
+        if (columnIndex < 0) {
+            return;
+        }
+
+        int valueCount;
+        if (node.paramCount < 3) {
+            if (node.rhs == null) {
+                return;
+            }
+            valueCount = 1;
+        } else {
+            valueCount = node.paramCount - 1;
+        }
+
+        int columnType = metadata.getColumnType(columnIndex);
+        PushdownFilterCondition condition = new PushdownFilterCondition(
+                colNode.token,
+                metadata.getWriterIndex(columnIndex),
+                columnType
+        );
+
+        if (node.paramCount < 3) {
+            condition.addValue(node.rhs);
+        } else {
+            for (int i = 0; i < valueCount; i++) {
+                condition.addValue(node.args.getQuick(i));
+            }
+        }
+        conditions.add(condition);
+    }
+
+    private void tryExtractNotEqual(ExpressionNode node, RecordMetadata metadata) {
+        if (node.lhs == null || node.rhs == null) {
+            return;
+        }
+
+        ExpressionNode colNode;
+        ExpressionNode valueNode;
+        if (node.lhs.type == ExpressionNode.LITERAL && node.rhs.type != ExpressionNode.LITERAL) {
+            colNode = node.lhs;
+            valueNode = node.rhs;
+        } else if (node.rhs.type == ExpressionNode.LITERAL && node.lhs.type != ExpressionNode.LITERAL) {
+            colNode = node.rhs;
+            valueNode = node.lhs;
+        } else {
+            return;
+        }
+
+        if (!isNullConstant(valueNode)) {
+            return;
+        }
+
+        int columnIndex = metadata.getColumnIndexQuiet(colNode.token);
+        if (columnIndex < 0) {
+            return;
+        }
+
+        int columnType = metadata.getColumnType(columnIndex);
+        if (!isNullOpPushable(columnType, OP_IS_NOT_NULL)) {
+            return;
+        }
+        conditions.add(new PushdownFilterCondition(colNode.token, metadata.getWriterIndex(columnIndex), columnType, OP_IS_NOT_NULL));
+    }
+
+    private void tryExtractOrEqualities(ArrayDeque<ExpressionNode> orStack, ExpressionNode node, RecordMetadata metadata) {
+        orStack.clear();
+        orValues.clear();
+        CharSequence columnName = null;
+        int columnType = -1;
+        int resolvedColumnIndex = -1;
+
+        ExpressionNode cur = node;
+        while (cur != null || !orStack.isEmpty()) {
+            if (cur == null) {
+                cur = orStack.poll();
+            }
+            if (cur.token == null) {
+                // tokenless OR operand (e.g. subquery); the whole OR chain is not extractable
+                return;
+            }
+            if (SqlKeywords.isOrKeyword(cur.token)) {
+                if (cur.lhs == null || cur.rhs == null) {
+                    return;
+                }
+                orStack.push(cur.rhs);
+                cur = cur.lhs;
+                continue;
+            }
+
+            if (!Chars.equals(cur.token, "=") || cur.lhs == null || cur.rhs == null) {
+                return;
+            }
+
+            ExpressionNode colNode;
+            ExpressionNode valueNode;
+            if (cur.lhs.type == ExpressionNode.LITERAL && cur.rhs.type != ExpressionNode.LITERAL) {
+                colNode = cur.lhs;
+                valueNode = cur.rhs;
+            } else if (cur.rhs.type == ExpressionNode.LITERAL && cur.lhs.type != ExpressionNode.LITERAL) {
+                colNode = cur.rhs;
+                valueNode = cur.lhs;
+            } else {
+                return;
+            }
+
+            int columnIndex = metadata.getColumnIndexQuiet(colNode.token);
+            if (columnIndex < 0) {
+                return;
+            }
+            if (resolvedColumnIndex < 0) {
+                resolvedColumnIndex = columnIndex;
+                columnName = colNode.token;
+                columnType = metadata.getColumnType(columnIndex);
+            } else if (columnIndex != resolvedColumnIndex) {
+                return;
+            }
+
+            orValues.add(valueNode);
+            cur = null;
+        }
+
+        if (orValues.size() > 0) {
+            PushdownFilterCondition condition = new PushdownFilterCondition(columnName, metadata.getWriterIndex(resolvedColumnIndex), columnType);
+            condition.addValues(orValues);
+            conditions.add(condition);
+        }
+    }
+
+    // Not pooled: conditions are passed to RecordCursorFactory and live for the duration of query execution.
+
+    /**
+     * The condition the partition frame cursor applies, with the expressions of its values, which
+     * {@link #extractAndCompile} compiles into its value functions.
+     */
+    public static class PushdownFilterCondition extends io.questdb.griffin.engine.table.PushdownFilterExtractor.PushdownFilterCondition {
+        private final ObjList<ExpressionNode> values = new ObjList<>();
+
+        public PushdownFilterCondition(CharSequence columnName, int columnWriterIndex, int columnType) {
+            super(columnName, columnWriterIndex, columnType);
+        }
+
+        public PushdownFilterCondition(CharSequence columnName, int columnWriterIndex, int columnType, int operationType) {
+            super(columnName, columnWriterIndex, columnType, operationType);
+        }
+
+        public void addValue(ExpressionNode valueNode) {
+            values.add(valueNode);
+        }
+
+        public void addValues(ObjList<ExpressionNode> values1) {
+            values.addAll(values1);
+        }
+
+        public ObjList<ExpressionNode> getValues() {
+            return values;
+        }
+    }
+}

@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.SqlExecutionRequirements;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory;
@@ -56,7 +57,7 @@ public class TableColumnsFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        final CharSequence tableName = args.getQuick(0).getStrA(null);
+        final CharSequence tableName = SqlUtil.getTableName(args.getQuick(0), argPositions.getQuick(0));
         final SqlExecutionContext.TableFunctionView view = sqlExecutionContext.getTableFunctionView();
         final TableToken token = sqlExecutionContext.getCairoEngine().getTableTokenIfExists(tableName);
         // Outside a view, or when the view's definition does not name the table, an invisible table

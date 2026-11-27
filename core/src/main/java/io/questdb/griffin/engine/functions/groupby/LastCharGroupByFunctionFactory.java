@@ -25,13 +25,23 @@
 package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
-import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
-public class LastCharGroupByFunctionFactory implements FunctionFactory {
+public class LastCharGroupByFunctionFactory implements LastAggregate {
+    @Override
+    public OrderDependence getOrderDependence() {
+        return OrderDependence.TABLE_ORDER;
+    }
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.CHAR;
+    }
+
     @Override
     public String getSignature() {
         return "last(A)";

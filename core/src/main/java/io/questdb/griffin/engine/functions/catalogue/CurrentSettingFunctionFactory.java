@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.catalogue;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
@@ -37,6 +38,11 @@ import io.questdb.std.ObjList;
 public class CurrentSettingFunctionFactory implements FunctionFactory {
 
     public static final String SERVER_VERSION_NUM = "server_version_num";
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.STRING;
+    }
 
     @Override
     public String getSignature() {

@@ -141,9 +141,7 @@ public final class QueryFuzzDriver {
         // Snapshot the parallel-execution flags so the per-query serial
         // override can restore them. Snapshotting once outside the loop also
         // preserves any global override the user passed via system properties.
-        // HORIZON JOIN and WINDOW JOIN must be included: without them the
-        // serial control arm still runs those joins in parallel, defeating the
-        // determinism the serial arm exists to provide.
+        // HORIZON JOIN, WINDOW JOIN and fused hash join GROUP BY also need to be disabled in the serial arm.
         final boolean savedParallelFilter = sqlExecutionContext.isParallelFilterEnabled();
         final boolean savedParallelGroupBy = sqlExecutionContext.isParallelGroupByEnabled();
         final boolean savedParallelHashJoinGroupBy = sqlExecutionContext.isParallelHashJoinGroupByEnabled();
@@ -178,7 +176,7 @@ public final class QueryFuzzDriver {
                 boolean injectFaultFn = faultType == FaultType.FUNCTION;
                 long preGenS0 = rnd.getSeed0();
                 long preGenS1 = rnd.getSeed1();
-                GeneratedQuery query = QueryGenerator.generate(rnd, tables, null, injectFaultFn, config.isWindowEnabled(), config.isLatestOnEnabled(), config.isHorizonJoinEnabled(), config.isWindowJoinEnabled(), config.isHashJoinEnabled(), config.isGroupingSetsEnabled(), config);
+                GeneratedQuery query = QueryGenerator.generate(rnd, tables, null, injectFaultFn, config.isWindowEnabled(), config.isLatestOnEnabled(), config.isHorizonJoinEnabled(), config.isWindowJoinEnabled(), config.isHashJoinEnabled(), config.isSetOperationEnabled(), config.isGroupingSetsEnabled(), config);
                 QueryRunner.Result result;
                 if (faultType != null) {
                     // Fault queries use a crash-and-recover oracle, not the
@@ -225,7 +223,7 @@ public final class QueryFuzzDriver {
                     final long postGenS0 = rnd.getSeed0();
                     final long postGenS1 = rnd.getSeed1();
                     rnd.reset(preGenS0, preGenS1);
-                    final String spellingSql = QueryGenerator.generate(rnd, tables, BindContext.plainSpelling(), injectFaultFn, config.isWindowEnabled(), config.isLatestOnEnabled(), config.isHorizonJoinEnabled(), config.isWindowJoinEnabled(), config.isHashJoinEnabled(), config.isGroupingSetsEnabled(), config).sql();
+                    final String spellingSql = QueryGenerator.generate(rnd, tables, BindContext.plainSpelling(), injectFaultFn, config.isWindowEnabled(), config.isLatestOnEnabled(), config.isHorizonJoinEnabled(), config.isWindowJoinEnabled(), config.isHashJoinEnabled(), config.isSetOperationEnabled(), config.isGroupingSetsEnabled(), config).sql();
                     Assert.assertTrue(
                             "plain spelling drew a different rnd stream for: " + query.sql(),
                             rnd.getSeed0() == postGenS0 && rnd.getSeed1() == postGenS1
@@ -254,7 +252,7 @@ public final class QueryFuzzDriver {
                         long bindS1 = rnd.nextLong();
                         rnd.reset(preGenS0, preGenS1);
                         BindContext ctx = new BindContext(new Rnd(bindS0, bindS1), CONSTANT_BIND_PROBABILITY_PCT);
-                        GeneratedQuery bindForm = QueryGenerator.generate(rnd, tables, ctx, injectFaultFn, config.isWindowEnabled(), config.isLatestOnEnabled(), config.isHorizonJoinEnabled(), config.isWindowJoinEnabled(), config.isHashJoinEnabled(), config.isGroupingSetsEnabled(), config);
+                        GeneratedQuery bindForm = QueryGenerator.generate(rnd, tables, ctx, injectFaultFn, config.isWindowEnabled(), config.isLatestOnEnabled(), config.isHorizonJoinEnabled(), config.isWindowJoinEnabled(), config.isHashJoinEnabled(), config.isSetOperationEnabled(), config.isGroupingSetsEnabled(), config);
                         if (ctx.getBindValues().size() > 0) {
                             query = query.withBind(bindForm.sql(), ctx.getBindNames(), ctx.getBindValues());
                             bindGen++;
@@ -572,6 +570,9 @@ public final class QueryFuzzDriver {
             case POSTING -> hasPostingIndexedSymbol(tables)
                     ? null
                     : "the run's random schema drew no posting-indexed SYMBOL, so PostingClause.tryGenerate returns null on every draw";
+            case SET_OPERATION -> config.isSetOperationEnabled()
+                    ? null
+                    : "-D" + FuzzConfig.SET_OPERATION_PROP + "=false";
             case TEMPORAL_JOIN -> describeMissingJoinTables(tables);
             case WINDOW -> config.isWindowEnabled()
                     ? null
@@ -642,7 +643,7 @@ public final class QueryFuzzDriver {
         }
     }
 
-    static void logSchema(FuzzTable t) {
+    private static void logSchema(FuzzTable t) {
         StringBuilder sb = new StringBuilder("fuzz schema ").append(t.getName())
                 .append(" (parquet=").append(t.getParquetMode());
         if (t.getParquetPartitions() != null) {

@@ -27,14 +27,14 @@ package io.questdb.griffin.engine.functions.groupby;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
-import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.ResultTypes;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 
-public class SumDecimalGroupByFunctionFactory implements FunctionFactory {
+public class SumDecimalGroupByFunctionFactory implements SumAggregate {
 
     public static GroupByFunction newInstance(Function arg, int position) {
         int k = ColumnType.tagOf(arg.getType());
@@ -46,6 +46,11 @@ public class SumDecimalGroupByFunctionFactory implements FunctionFactory {
             case ColumnType.DECIMAL128 -> new SumDecimal128GroupByFunction(arg, position);
             default -> new SumDecimal256GroupByFunction(arg, position);
         };
+    }
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ResultTypes.decimalSum(argTypes.getQuick(0));
     }
 
     @Override

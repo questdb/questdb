@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.WindowSPI;
+import io.questdb.cairo.vm.MemoryCARWImpl;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.std.BinarySequence;
@@ -95,6 +96,20 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
             String maxPagesConfigKey
     ) {
         this(columnTypes, recordSink, Vm.getCARWInstance(pageSize, maxPages, MemoryTag.NATIVE_RECORD_CHAIN, maxPagesConfigKey));
+    }
+
+    /**
+     * A chain whose memory starts at {@code initialSize} bytes and doubles up to {@code pageSize}, so it takes memory
+     * in proportion to the records it holds, see {@link MemoryCARWImpl}.
+     */
+    public RecordChain(
+            @Transient @NotNull ColumnTypes columnTypes,
+            @NotNull RecordSink recordSink,
+            long initialSize,
+            long pageSize,
+            int maxPages
+    ) {
+        this(columnTypes, recordSink, new MemoryCARWImpl(pageSize, maxPages, MemoryTag.NATIVE_RECORD_CHAIN, null, initialSize));
     }
 
     protected RecordChain(@Transient @NotNull ColumnTypes columnTypes, @Nullable RecordSink recordSink, MemoryCARW mem) {
@@ -405,6 +420,14 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
     }
 
     /**
+     * Reserves the memory that records of {@code bytes} bytes in all take, so that appending them to an empty chain
+     * does not grow its memory again.
+     */
+    public void reserve(long bytes) {
+        mem.extend(bytes);
+    }
+
+    /**
      * Binds the per-query native memory tracker. The chain is lazy by design
      * (the inner MemoryCARW does not allocate native memory until the first
      * write), so factories can safely set the tracker between cursors as long
@@ -413,10 +436,6 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
      */
     public void setMemoryTracker(@Nullable MemoryTracker tracker) {
         mem.setMemoryTracker(tracker);
-    }
-
-    public void reserve(long bytes) {
-        mem.extend(bytes);
     }
 
     public void setSymbolTableResolver(SymbolTableSource resolver) {

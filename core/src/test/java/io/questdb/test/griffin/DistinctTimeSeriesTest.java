@@ -69,6 +69,7 @@ public class DistinctTimeSeriesTest extends AbstractCairoTest {
 
             assertQuery("select distinct * from x where 1 != 1")
                     .noLeakCheck()
+                    .noRandomAccess()
                     .returns("i\tsym\tamt\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tts\tl\tm\tn\tt\tl256\n");
         });
     }

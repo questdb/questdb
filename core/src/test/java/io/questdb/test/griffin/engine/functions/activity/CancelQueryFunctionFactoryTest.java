@@ -163,6 +163,31 @@ public class CancelQueryFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testQueryIdFromSubquery() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT x FROM long_sequence(1_000))");
+            execute("CREATE TABLE t2 (k INT, y INT)");
+            execute("INSERT INTO t2 VALUES (1, 300), (2, 100)");
+            assertQuery("SELECT cancel_query(CASE WHEN (SELECT max(y) > 200 FROM t2 WHERE k = 1) THEN -1 ELSE -2 END) res")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            res
+                            false
+                            """);
+            assertQuery("SELECT count() FROM t WHERE NOT cancel_query(CASE WHEN (SELECT max(y) > 200 FROM t2 WHERE k = 1) THEN -1 ELSE -2 END)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("Async Filter", "[state-shared]")
+                    .returns("""
+                            count
+                            1000
+                            """);
+        });
+    }
+
+    @Test
     public void testRegularUserCanNotCancelOtherUsersCommands() throws Exception {
         assertMemoryLeak(() -> {
             final String query = "select 1 t from long_sequence(1) where sleep(5000)";

@@ -221,6 +221,57 @@ public class TimestampAddFunctionFactoryTest extends AbstractFunctionFactoryTest
     }
 
     @Test
+    public void testTextBindVariableBoundsTimestampInterval() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE xts AS (SELECT timestamp_sequence('2024-01-01', 6 * 3_600_000_000L) ts FROM long_sequence(20)) TIMESTAMP(ts) PARTITION BY DAY");
+            bindVariableService.clear();
+            bindVariableService.setStr(0, "2024-01-04");
+            bindVariableService.setStr(1, "2024-01-04");
+            assertQuery("SELECT ts FROM xts WHERE ts <= dateadd('d', -1, $1) AND ts >= dateadd('d', -2, $2)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .withPlanContaining("Interval forward scan on: xts")
+                    .returns("""
+                            ts
+                            2024-01-02T00:00:00.000000Z
+                            2024-01-02T06:00:00.000000Z
+                            2024-01-02T12:00:00.000000Z
+                            2024-01-02T18:00:00.000000Z
+                            2024-01-03T00:00:00.000000Z
+                            """);
+
+            bindVariableService.clear();
+            bindVariableService.setStr(0, "2024-01-04T09:00");
+            assertQuery("SELECT ts FROM xts WHERE ts >= timestamp_floor('d', $1) AND ts < dateadd('h', 12, $1)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .withPlanContaining("Interval forward scan on: xts")
+                    .returns("""
+                            ts
+                            2024-01-04T00:00:00.000000Z
+                            2024-01-04T06:00:00.000000Z
+                            2024-01-04T12:00:00.000000Z
+                            2024-01-04T18:00:00.000000Z
+                            """);
+
+            bindVariableService.clear();
+            bindVariableService.setStr(0, "2024-01-04");
+            bindVariableService.setStr(1, "b2222");
+            final String invalid = "SELECT ts FROM xts WHERE ts <= dateadd('d', -1, $1) AND ts >= dateadd('d', -2, $2)";
+            assertQuery(invalid)
+                    .noLeakCheck()
+                    .fails(invalid.indexOf("$2"), "inconvertible value: `b2222` [STRING -> TIMESTAMP_NS]");
+
+            bindVariableService.clear();
+            bindVariableService.setStr(0, "b2222");
+            final String projection = "SELECT dateadd('d', 1, $1) FROM xts";
+            assertQuery(projection)
+                    .noLeakCheck()
+                    .fails(projection.indexOf("$1"), "inconvertible value: `b2222` [STRING -> TIMESTAMP_NS]");
+        });
+    }
+
+    @Test
     public void testUnknownPeriod() throws Exception {
         assertQuery("select dateadd('q', -5, 1587275359886758L)")
                 .fails(15, "invalid time period [unit=q]");

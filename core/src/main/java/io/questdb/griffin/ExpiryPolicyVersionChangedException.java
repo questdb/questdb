@@ -36,7 +36,7 @@ import io.questdb.cairo.sql.TableReferenceOutOfDateException;
  * One shared instance is thrown as a control-flow signal; its stack trace is never shown.
  */
 public final class ExpiryPolicyVersionChangedException extends TableReferenceOutOfDateException {
-    static final ExpiryPolicyVersionChangedException INSTANCE = new ExpiryPolicyVersionChangedException();
+    public static final ExpiryPolicyVersionChangedException INSTANCE = new ExpiryPolicyVersionChangedException();
     private static final String MESSAGE =
             "cached query plan cannot be used because the row-expiry policy changed during compilation";
 

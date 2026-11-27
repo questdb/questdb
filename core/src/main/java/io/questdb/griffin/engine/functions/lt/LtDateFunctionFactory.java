@@ -31,7 +31,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
-import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
+import io.questdb.griffin.engine.functions.ComparisonFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -49,10 +49,10 @@ public class LtDateFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new LtDateFunctionFactory.LtDateFunction(args.getQuick(0), args.getQuick(1));
+        return new LtDateFunction(args.getQuick(0), args.getQuick(1));
     }
 
-    private static class LtDateFunction extends NegatableBooleanFunction implements BinaryFunction {
+    private static class LtDateFunction extends ComparisonFunction implements BinaryFunction {
         private final Function left;
         private final Function right;
 
@@ -63,11 +63,7 @@ public class LtDateFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return Numbers.lessThan(
-                    this.left.getDate(rec),
-                    this.right.getDate(rec),
-                    negated
-            );
+            return isComplemented ? !isMatch(rec) : isMatch(rec);
         }
 
         @Override
@@ -81,7 +77,7 @@ public class LtDateFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void toPlan(PlanSink sink) {
+        protected void toComparisonPlan(PlanSink sink) {
             sink.val(left);
             if (negated) {
                 sink.val(">=");
@@ -89,6 +85,14 @@ public class LtDateFunctionFactory implements FunctionFactory {
                 sink.val('<');
             }
             sink.val(right);
+        }
+
+        private boolean isMatch(Record rec) {
+            return Numbers.lessThan(
+                    this.left.getDate(rec),
+                    this.right.getDate(rec),
+                    negated
+            );
         }
     }
 }

@@ -34,13 +34,20 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.MultiArgFunction;
+import io.questdb.griffin.engine.functions.constants.DoubleConstant;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 /**
  * Expects a target size, and then pairs of (order size, order amount).
  */
 public class LevelTwoPriceFunctionFactory implements FunctionFactory {
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.DOUBLE;
+    }
 
     @Override
     public String getSignature() {
@@ -59,12 +66,12 @@ public class LevelTwoPriceFunctionFactory implements FunctionFactory {
             throw SqlException.position(argPositions.getLast()).put("l2price requires an odd number of arguments.");
         }
 
-        final Function target = args.getQuick(0);
-        if (target.isNullConstant()) {
-            return target;
-        }
-
         validateColumnTypes(args, argPositions, true);
+
+        if (args.getQuick(0).isNullConstant()) {
+            Misc.freeObjList(args);
+            return DoubleConstant.NULL;
+        }
 
         final int numberOfPairs = (args.size() - 1) / 2;
         if (numberOfPairs == 0) {
@@ -103,6 +110,7 @@ public class LevelTwoPriceFunctionFactory implements FunctionFactory {
             case ColumnType.LONG:
             case ColumnType.FLOAT:
             case ColumnType.DOUBLE:
+            case ColumnType.NULL:
                 return true;
             case ColumnType.UNDEFINED:
                 return allowUndefined;
@@ -114,12 +122,10 @@ public class LevelTwoPriceFunctionFactory implements FunctionFactory {
     private static void validateColumnTypes(ObjList<Function> args, IntList argPositions, boolean allowUndefined) throws SqlException {
         for (int i = 0, n = args.size(); i < n; i++) {
             if (!allowedColumnType(args.getQuick(i).getType(), allowUndefined)) {
-                if (!args.getQuick(i).isNullConstant()) {
-                    throw SqlException.position(argPositions.getQuick(i))
-                            .put("l2price requires arguments of type `DOUBLE`, or convertible to `DOUBLE`, not `")
-                            .put(ColumnType.nameOf(args.getQuick(i).getType()))
-                            .put("`.");
-                }
+                throw SqlException.position(argPositions.getQuick(i))
+                        .put("l2price requires arguments of type `DOUBLE`, or convertible to `DOUBLE`, not `")
+                        .put(ColumnType.nameOf(args.getQuick(i).getType()))
+                        .put("`.");
             }
         }
     }

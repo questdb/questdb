@@ -67,6 +67,15 @@ public class ReadParquetRecordCursorFactory extends ProjectableRecordCursorFacto
         }
     }
 
+    /**
+     * The designated timestamp of the file, which {@link ReadParquetFunctionFactory} keeps only when every row group
+     * sorts by it and the row groups follow its order.
+     */
+    @Override
+    public int getOrderedColumnIndex() {
+        return getMetadata().getTimestampIndex();
+    }
+
     @Override
     public boolean mayHaveParquetPartitions(SqlExecutionContext executionContext) {
         return true;

@@ -35,6 +35,16 @@ import io.questdb.std.ObjList;
 public class CountDistinctIntGroupByFunctionFactory implements FunctionFactory {
 
     @Override
+    public EmptyGroupValue getEmptyGroupValue() {
+        return EmptyGroupValue.ZERO;
+    }
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.LONG;
+    }
+
+    @Override
     public String getSignature() {
         return "count_distinct(I)";
     }

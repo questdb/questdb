@@ -62,6 +62,10 @@ public class SymbolConstant extends SymbolFunction implements ConstantFunction {
         }
     }
 
+    public static SymbolConstant fromValue(CharSequence value) {
+        return value == null ? NULL : new SymbolConstant(value, 0, false);
+    }
+
     public static SymbolConstant newInstance(CharSequence value) {
         if (value == null) {
             return NULL;
@@ -73,10 +77,6 @@ public class SymbolConstant extends SymbolFunction implements ConstantFunction {
             return FALSE;
         }
         return new SymbolConstant(Chars.toString(value), 0);
-    }
-
-    public static SymbolConstant newUnquotedInstance(CharSequence value) {
-        return value != null ? new SymbolConstant(value, 0, false) : NULL;
     }
 
     @Override

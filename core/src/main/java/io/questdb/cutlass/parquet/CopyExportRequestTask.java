@@ -47,6 +47,7 @@ import io.questdb.griffin.engine.table.parquet.ParquetDecoder;
 import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
@@ -512,6 +513,8 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
     public class StreamPartitionParquetExporter implements Mutable, QuietCloseable {
         // Buffer header size: [8 bytes data_len][8 bytes rows_written_to_row_groups]
         private static final int BUFFER_HEADER_SIZE = 2 * Long.BYTES;
+        private final IntList fieldIds = new IntList();
+        private final IntHashSet usedFieldIds = new IntHashSet();
         private DirectIntList bloomFilterColumnIndexes = new DirectIntList(16, MemoryTag.NATIVE_PARQUET_EXPORTER, true);
         private DirectLongList columnData = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER, true);
         private DirectLongList columnMetadata = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER, true);
@@ -726,6 +729,7 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
             columnNames.reopen();
             columnMetadata.reopen();
             columnData.reopen();
+            assignFieldIds(meta);
 
             for (int i = 0, n = meta.getColumnCount(); i < n; i++) {
                 CharSequence columnName = meta.getColumnName(i);
@@ -733,12 +737,7 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
                 columnNames.put(columnName);
                 columnMetadata.add(columnNames.size() - startSize);
                 final int columnType = meta.getColumnType(i);
-                // table metadata returns the physical writer column index.
-                int writerIdx = meta.getWriterIndex(i);
-                if (writerIdx < 0) {
-                    // GenericRecordMetadata (hybrid/cursor paths) returns -1, use i instead
-                    writerIdx = i;
-                }
+                final int fieldId = fieldIds.getQuick(i);
 
                 // A SYMBOL column needs symbol-table metadata when it is a
                 // real table column.  In the hybrid path (baseColumnMap != null)
@@ -760,10 +759,10 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
                     }
                     // Mask to 32 bits: symbolColumnType can have bit 31 set (no-null flag),
                     // making it negative. Without the mask, Java sign-extends it to 64 bits
-                    // before the OR, clobbering writerIdx in the upper 32 bits.
-                    columnMetadata.add((long) writerIdx << 32 | (symbolColumnType & 0xFFFFFFFFL));
+                    // before the OR, clobbering the field id in the upper 32 bits.
+                    columnMetadata.add((long) fieldId << 32 | (symbolColumnType & 0xFFFFFFFFL));
                 } else {
-                    columnMetadata.add((long) writerIdx << 32 | (columnType & 0xFFFFFFFFL));
+                    columnMetadata.add((long) fieldId << 32 | (columnType & 0xFFFFFFFFL));
                 }
                 // Per-column parquet encoding config (third long); the JNI side reads it
                 // and stores it in Column::parquet_encoding_config so the writer can honour
@@ -1005,6 +1004,38 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
         private static boolean isAlignedForColumnType(long address, int columnType) {
             int alignment = getRequiredAlignmentForSimd(columnType);
             return alignment <= 1 || (address & (alignment - 1)) == 0;
+        }
+
+        /**
+         * Gives every exported column a distinct Parquet field id, which the writer requires. A column takes the
+         * writer index of its table column, so a table export and a scan that passes columns through keep the
+         * table's ids, unless an earlier column of the export took that index already, as a column selected twice
+         * does. Such a column, and one that reads no table column, takes its position if no other column holds it,
+         * else the lowest free id.
+         */
+        private void assignFieldIds(RecordMetadata meta) {
+            final int columnCount = meta.getColumnCount();
+            fieldIds.setAll(columnCount, -1);
+            usedFieldIds.clear();
+            for (int i = 0; i < columnCount; i++) {
+                final int writerIndex = meta.getWriterIndex(i);
+                if (writerIndex >= 0 && usedFieldIds.add(writerIndex)) {
+                    fieldIds.setQuick(i, writerIndex);
+                }
+            }
+            int nextFreeId = 0;
+            for (int i = 0; i < columnCount; i++) {
+                if (fieldIds.getQuick(i) < 0) {
+                    int fieldId = i;
+                    if (!usedFieldIds.add(fieldId)) {
+                        while (!usedFieldIds.add(nextFreeId)) {
+                            nextFreeId++;
+                        }
+                        fieldId = nextFreeId;
+                    }
+                    fieldIds.setQuick(i, fieldId);
+                }
+            }
         }
 
         private void closeWriter() {

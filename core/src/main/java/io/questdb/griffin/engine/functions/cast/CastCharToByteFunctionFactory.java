@@ -36,6 +36,11 @@ import io.questdb.std.ObjList;
 
 public class CastCharToByteFunctionFactory implements FunctionFactory {
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.BYTE;
+    }
+
+    @Override
     public String getSignature() {
         return "cast(Ab)";
     }

@@ -25,7 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.PartitionFrameCursor;
-import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.TableDescriptor;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -34,12 +34,9 @@ import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.TestOnly;
 
 public class FullPartitionFrameCursorFactory extends AbstractPartitionFrameCursorFactory {
-    private static final ThreadLocal<CloseObserver> TEST_CLOSE_OBSERVER = new ThreadLocal<>();
     private final int baseOrder;
-    private final CloseObserver closeObserver;
     private FullBwdPartitionFrameCursor bwdCursor;
     private IntervalBwdPartitionFrameCursor bwdRangeCursor;
     private RuntimeIntervalModel bwdRangeIntervalModel;
@@ -52,25 +49,14 @@ public class FullPartitionFrameCursorFactory extends AbstractPartitionFrameCurso
     public FullPartitionFrameCursorFactory(
             TableToken tableToken,
             long metadataVersion,
-            RecordMetadata metadata,
+            TableDescriptor table,
             int order,
             String viewName,
             int viewPosition,
             boolean updateQuery
     ) {
-        super(tableToken, metadataVersion, metadata, viewName, viewPosition, updateQuery);
+        super(tableToken, metadataVersion, table, viewName, viewPosition, updateQuery);
         this.baseOrder = order;
-        this.closeObserver = TEST_CLOSE_OBSERVER.get();
-    }
-
-    @TestOnly
-    public static void clearCloseObserverForTesting() {
-        TEST_CLOSE_OBSERVER.remove();
-    }
-
-    @TestOnly
-    public static void setCloseObserverForTesting(CloseObserver observer) {
-        TEST_CLOSE_OBSERVER.set(observer);
     }
 
     @Override
@@ -82,10 +68,6 @@ public class FullPartitionFrameCursorFactory extends AbstractPartitionFrameCurso
         fwdRangeIntervalModel = Misc.free(fwdRangeIntervalModel);
         bwdRangeCursor = Misc.free(bwdRangeCursor);
         bwdRangeIntervalModel = Misc.free(bwdRangeIntervalModel);
-        // Notify last, so an observer sees a fully released factory.
-        if (closeObserver != null) {
-            closeObserver.onClose(this);
-        }
     }
 
     @Override
@@ -155,14 +137,14 @@ public class FullPartitionFrameCursorFactory extends AbstractPartitionFrameCurso
             if (fwdRangeCursor == null) {
                 fwdRangeIntervals = new LongList(2);
                 fwdRangeIntervalModel = new RuntimeIntervalModel(
-                        ColumnType.getTimestampDriver(getMetadata().getTimestampType()),
+                        ColumnType.getTimestampDriver(getTableDescriptor().getTimestampType()),
                         PartitionBy.NONE,
                         fwdRangeIntervals
                 );
                 fwdRangeCursor = new IntervalFwdPartitionFrameCursor(
                         reader.getConfiguration(),
                         fwdRangeIntervalModel,
-                        getMetadata().getTimestampIndex()
+                        getTableDescriptor().getTimestampIndex()
                 );
             }
             stampRange(fwdRangeIntervals, timestampLo, timestampHi);
@@ -206,14 +188,14 @@ public class FullPartitionFrameCursorFactory extends AbstractPartitionFrameCurso
             if (bwdRangeCursor == null) {
                 bwdRangeIntervals = new LongList(2);
                 bwdRangeIntervalModel = new RuntimeIntervalModel(
-                        ColumnType.getTimestampDriver(getMetadata().getTimestampType()),
+                        ColumnType.getTimestampDriver(getTableDescriptor().getTimestampType()),
                         PartitionBy.NONE,
                         bwdRangeIntervals
                 );
                 bwdRangeCursor = new IntervalBwdPartitionFrameCursor(
                         reader.getConfiguration(),
                         bwdRangeIntervalModel,
-                        getMetadata().getTimestampIndex()
+                        getTableDescriptor().getTimestampIndex()
                 );
             }
             stampRange(bwdRangeIntervals, timestampLo, timestampHi);
@@ -261,10 +243,5 @@ public class FullPartitionFrameCursorFactory extends AbstractPartitionFrameCurso
             intervals.add(timestampLo);
             intervals.add(timestampHi);
         }
-    }
-
-    @TestOnly
-    public interface CloseObserver {
-        void onClose(FullPartitionFrameCursorFactory factory);
     }
 }

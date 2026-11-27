@@ -99,6 +99,22 @@ public class StreamSampleByInterpolateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBucketNameAvoidsOutputNames() throws Exception {
+        run((engine, compiler, context) -> {
+            createPrices(context);
+            engine.execute("INSERT INTO prices VALUES ('2024-01-01T00:10', 'a', 1), ('2024-01-01T02:10', 'a', 3)", context);
+            query(context, "SELECT ts, avg(price) __sample_by_bucket FROM prices SAMPLE BY 1h FILL(LINEAR) ALIGN TO CALENDAR")
+                    .withPlanContaining("keys: [__sample_by_bucket_]")
+                    .returns(precision("""
+                            ts\t__sample_by_bucket
+                            2024-01-01T00:00:00.000000Z\t1.0
+                            2024-01-01T01:00:00.000000Z\t2.0
+                            2024-01-01T02:00:00.000000Z\t3.0
+                            """));
+        });
+    }
+
+    @Test
     public void testDescendingTimestampsFail() throws Exception {
         run((engine, compiler, context) -> {
             final String sql = "SELECT ts, k, sum(v) s FROM (SELECT (7_200_000_000 - x * 3_600_000_000)::" + timestampType
@@ -593,7 +609,8 @@ public class StreamSampleByInterpolateTest extends AbstractCairoTest {
         run((engine, compiler, context) -> {
             createPrices(context);
             insertPrices(context);
-            assertMatchesLegacy(context, "SELECT ts, avg(price) mean, ts time_again FROM prices SAMPLE BY 1h FILL(LINEAR)", "");
+            // the last projected copy of the timestamp designates it
+            assertMatchesLegacy(context, "SELECT ts, avg(price) mean, ts time_again FROM prices SAMPLE BY 1h FILL(LINEAR)", "", "time_again");
             final String sql = "SELECT avg(price) mean FROM prices SAMPLE BY 1h FILL(LINEAR)";
             final String expected = TestUtils.printSqlToString(engine, context,
                     sql + " ALIGN TO FIRST OBSERVATION", new StringSink()).toString();
@@ -671,6 +688,33 @@ public class StreamSampleByInterpolateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUtcCalendarPreAggregates() throws Exception {
+        run((engine, compiler, context) -> {
+            createPrices(context);
+            engine.execute("INSERT INTO prices VALUES ('2024-01-01T00:10', 'a', 1), ('2024-01-01T02:10', 'a', 3)", context);
+            final String prefix = "SELECT ts, avg(price) mean FROM prices SAMPLE BY 1h FILL(LINEAR) ALIGN TO CALENDAR";
+            final String expected = """
+                    ts\tmean
+                    2024-01-01T00:00:00.000000Z\t1.0
+                    2024-01-01T01:00:00.000000Z\t2.0
+                    2024-01-01T02:00:00.000000Z\t3.0
+                    """;
+            // a constant UTC time zone and a zero offset bucket the rows as the floor does
+            for (String clause : new String[]{" TIME ZONE 'UTC'", " TIME ZONE 'utc'", " WITH OFFSET '00:00'", " TIME ZONE 'UTC' WITH OFFSET '00:00'"}) {
+                query(context, prefix + clause).returns(precision(expected));
+            }
+            // a time zone or an offset only execution knows leaves the interpolation to aggregate the rows
+            context.getBindVariableService().clear();
+            context.getBindVariableService().setStr("tz", "UTC");
+            assertLegacy(context, prefix + " TIME ZONE :tz", expected);
+            context.getBindVariableService().clear();
+            context.getBindVariableService().setStr("off", "00:00");
+            assertLegacy(context, prefix + " WITH OFFSET :off", expected);
+            context.getBindVariableService().clear();
+        });
+    }
+
+    @Test
     public void testVarcharAndDerivedKeys() throws Exception {
         run((engine, compiler, context) -> {
             engine.execute("CREATE TABLE prices (ts " + timestampType + ", market VARCHAR, price DOUBLE) "
@@ -684,7 +728,7 @@ public class StreamSampleByInterpolateTest extends AbstractCairoTest {
                     sql + " ALIGN TO FIRST OBSERVATION ORDER BY ts, market", new StringSink()).toString();
             assertQuery(sql + " ALIGN TO CALENDAR ORDER BY ts, market")
                     .withEngine(engine).withContext(context).noLeakCheck().timestamp("ts").expectSize()
-                    .withPlanContaining("Sample By").withPlanNotContaining("Stream Group By").returns(expected);
+                    .withPlanContaining("Sample By", "fill: linear", "Stream Group By").returns(expected);
         });
     }
 
@@ -726,11 +770,15 @@ public class StreamSampleByInterpolateTest extends AbstractCairoTest {
     }
 
     private void assertMatchesLegacy(SqlExecutionContext context, String sql, String suffix) throws Exception {
+        assertMatchesLegacy(context, sql, suffix, "ts");
+    }
+
+    private void assertMatchesLegacy(SqlExecutionContext context, String sql, String suffix, String timestamp) throws Exception {
         final String legacy = sql + " ALIGN TO FIRST OBSERVATION" + suffix;
         final String legacyPlan = TestUtils.printSqlToString(context.getCairoEngine(), context, "EXPLAIN " + legacy, new StringSink()).toString();
         Assert.assertFalse(legacyPlan, legacyPlan.contains("Stream Group By"));
         final String expected = TestUtils.printSqlToString(context.getCairoEngine(), context, legacy, new StringSink()).toString();
-        query(context, sql + " ALIGN TO CALENDAR" + suffix).returns(expected);
+        query(context, sql + " ALIGN TO CALENDAR" + suffix).timestamp(timestamp).returns(expected);
     }
 
     private void createPrices(SqlExecutionContext context) throws Exception {

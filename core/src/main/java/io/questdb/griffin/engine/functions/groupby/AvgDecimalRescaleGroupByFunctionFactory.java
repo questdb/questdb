@@ -27,7 +27,6 @@ package io.questdb.griffin.engine.functions.groupby;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
-import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
@@ -36,14 +35,40 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 
-public class AvgDecimalRescaleGroupByFunctionFactory implements FunctionFactory {
+public class AvgDecimalRescaleGroupByFunctionFactory implements AvgAggregate {
+
+    /**
+     * The type avg(value, scale) returns: the decimal type of the value rescaled to the scale, keeping the value's
+     * integer digits.
+     *
+     * @param argType       the type of the value
+     * @param scale         the constant scale
+     * @param scalePosition the position of the scale
+     * @throws SqlException at the scale's position when the scale is negative or above the maximum scale, or the
+     *                      rescaled precision is below 1 or above the maximum precision
+     */
+    public static int getRescaledType(int argType, Function scale, int scalePosition) throws SqlException {
+        final int targetScale = scale.getInt(null);
+        if (targetScale < 0) {
+            throw SqlException.$(scalePosition, "non-negative scale required: ").put(targetScale);
+        }
+        if (targetScale > Decimals.MAX_SCALE) {
+            throw SqlException.$(scalePosition, "scale exceeds maximum of ").put(Decimals.MAX_SCALE).put(": ").put(targetScale);
+        }
+        final int targetPrecision = getRescaledPrecision(argType, targetScale);
+        if (targetPrecision < 1) {
+            throw SqlException.$(scalePosition, "rescaled decimal has invalid precision: ").put(targetPrecision);
+        }
+        if (targetPrecision > Decimals.MAX_PRECISION) {
+            throw SqlException.$(scalePosition, "rescaled decimal has precision that exceeds maximum of ").put(Decimals.MAX_PRECISION)
+                    .put(": ").put(targetPrecision);
+        }
+        return ColumnType.getDecimalType(targetPrecision, targetScale);
+    }
 
     public static GroupByFunction newInstance(Function arg, int position, int targetScale) {
         final int argType = arg.getType();
-        final int argPrecision = ColumnType.getDecimalPrecision(argType);
-        final int argScale = ColumnType.getDecimalScale(argType);
-        final int targetPrecision = argPrecision - argScale + targetScale;
-        final int targetType = ColumnType.getDecimalType(targetPrecision, targetScale);
+        final int targetType = ColumnType.getDecimalType(getRescaledPrecision(argType, targetScale), targetScale);
         return switch (ColumnType.tagOf(argType)) {
             case ColumnType.DECIMAL8 -> new AvgDecimal8Rescale256GroupByFunction(arg, position, targetType);
             case ColumnType.DECIMAL16 -> new AvgDecimal16Rescale256GroupByFunction(arg, position, targetType);
@@ -72,22 +97,12 @@ public class AvgDecimalRescaleGroupByFunctionFactory implements FunctionFactory 
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        final int targetScale = args.getQuick(1).getInt(null);
-        final int scalePosition = argPositions.getQuick(1);
-        if (targetScale < 0) {
-            throw SqlException.$(scalePosition, "non-negative scale required: ").put(targetScale);
-        }
-        if (targetScale > Decimals.MAX_SCALE) {
-            throw SqlException.$(scalePosition, "scale exceeds maximum of ").put(Decimals.MAX_SCALE).put(": ").put(targetScale);
-        }
         final Function arg = args.getQuick(0);
-        final int argPrecision = ColumnType.getDecimalPrecision(arg.getType());
-        final int argScale = ColumnType.getDecimalScale(arg.getType());
-        final int targetPrecision = argPrecision - argScale + targetScale;
-        if (targetPrecision > Decimals.MAX_PRECISION) {
-            throw SqlException.$(scalePosition, "rescaled decimal has precision that exceeds maximum of ").put(Decimals.MAX_PRECISION)
-                    .put(": ").put(targetPrecision);
-        }
-        return newInstance(arg, position, targetScale);
+        final int targetType = getRescaledType(arg.getType(), args.getQuick(1), argPositions.getQuick(1));
+        return newInstance(arg, position, ColumnType.getDecimalScale(targetType));
+    }
+
+    private static int getRescaledPrecision(int argType, int targetScale) {
+        return ColumnType.getDecimalPrecision(argType) - ColumnType.getDecimalScale(argType) + targetScale;
     }
 }

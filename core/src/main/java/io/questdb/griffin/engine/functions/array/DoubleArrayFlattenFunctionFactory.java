@@ -45,6 +45,11 @@ import io.questdb.std.Transient;
 public class DoubleArrayFlattenFunctionFactory implements FunctionFactory {
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return flattenedType(argTypes.getQuick(0));
+    }
+
+    @Override
     public String getSignature() {
         return "flatten(D[])";
     }
@@ -60,6 +65,10 @@ public class DoubleArrayFlattenFunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0));
     }
 
+    private static int flattenedType(int arrayType) {
+        return ColumnType.encodeArrayType(ColumnType.decodeArrayElementType(arrayType), 1);
+    }
+
     private static class Func extends ArrayFunction implements UnaryFunction {
         private final Function arrayArg;
         private final DerivedArrayView derivedView = new DerivedArrayView();
@@ -67,14 +76,14 @@ public class DoubleArrayFlattenFunctionFactory implements FunctionFactory {
 
         public Func(Function arrayArg) {
             this.arrayArg = arrayArg;
-            this.type = ColumnType.encodeArrayType(ColumnType.decodeArrayElementType(arrayArg.getType()), 1);
+            this.type = flattenedType(arrayArg.getType());
             outArray.setType(type);
         }
 
         @Override
         public void close() {
-            UnaryFunction.super.close();
             outArray = Misc.free(outArray);
+            UnaryFunction.super.close();
         }
 
         @Override
@@ -85,6 +94,9 @@ public class DoubleArrayFlattenFunctionFactory implements FunctionFactory {
         @Override
         public ArrayView getArray(Record rec) {
             ArrayView array = arrayArg.getArray(rec);
+            if (array.isNull()) {
+                return array;
+            }
             if (array.isVanilla()) {
                 derivedView.of(array);
                 derivedView.flatten();

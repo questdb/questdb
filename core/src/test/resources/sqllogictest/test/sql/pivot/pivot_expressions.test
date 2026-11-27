@@ -122,3 +122,26 @@ PIVOT (
 2000 1006 8016 565
 2010 1066 8176 609
 2020 1159 8773 739
+
+# An absent cell reads the value the measure takes over no rows, as conditional aggregation
+# (COUNT(Population) FILTER (WHERE Country = 'XX') + 1) reads it.
+query III rowsort
+Cities PIVOT (COUNT(Population) + 1 FOR Country IN ('NL', 'XX') GROUP BY Year) ORDER BY Year;
+----
+2000	2	1
+2010	2	1
+2020	2	1
+
+query III rowsort
+Cities PIVOT (COALESCE(SUM(Population), 0) FOR Country IN ('NL', 'XX') GROUP BY Year) ORDER BY Year;
+----
+2000	1005	0
+2010	1065	0
+2020	1158	0
+
+query III rowsort
+Cities PIVOT (SUM(Population) + 1 FOR Country IN ('NL', 'XX') GROUP BY Year) ORDER BY Year;
+----
+2000	1006	NULL
+2010	1066	NULL
+2020	1159	NULL

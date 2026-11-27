@@ -24,13 +24,6 @@
 
 package io.questdb.griffin.model;
 
-import io.questdb.griffin.engine.functions.window.DenseRankFunctionFactory;
-import io.questdb.griffin.engine.functions.window.FirstValueDoubleWindowFunctionFactory;
-import io.questdb.griffin.engine.functions.window.LastValueDoubleWindowFunctionFactory;
-import io.questdb.griffin.engine.functions.window.LeadLagWindowFunctionFactoryHelper;
-import io.questdb.griffin.engine.functions.window.RankFunctionFactory;
-import io.questdb.griffin.engine.functions.window.RowNumberFunctionFactory;
-import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectFactory;
@@ -61,9 +54,9 @@ public final class WindowExpression extends QueryColumn {
     public static final char TIME_UNIT_MINUTE = 'm';
     public static final char TIME_UNIT_NANOSECOND = 'n';
     public static final char TIME_UNIT_SECOND = 's';
-    private final ObjList<ExpressionNode> orderBy = new ObjList<>(2);
-    private final IntList orderByDirection = new IntList(2);
-    private final ObjList<ExpressionNode> partitionBy = new ObjList<>(2);
+    private final ObjList<ExpressionNode> orderBy = new ObjList<>(0);
+    private final IntList orderByDirection = new IntList(0);
+    private final ObjList<ExpressionNode> partitionBy = new ObjList<>(0);
     // ANCHOR clause state. Set only for live-view WINDOW specs; null/zero
     // for everything else.
     private ExpressionNode anchorExpression;
@@ -81,9 +74,8 @@ public final class WindowExpression extends QueryColumn {
     private int framingMode = FRAMING_RANGE; // default mode is RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT
     private boolean ignoreNulls = false;
     private int nullsDescPos = 0;
-    // The optimiser binds names once; codegen clones this recipe before every validation/parse.
+    // Binding clones this recipe before every validation/parse.
     private ExpressionNode pendingSubsample;
-    private boolean isSubsampleProjectionPending;
     private boolean hasSubsampleSourceTimestamp;
     private int subsamplePosition;
     private long rowsHi = Long.MAX_VALUE;
@@ -98,7 +90,7 @@ public final class WindowExpression extends QueryColumn {
     private char rowsLoExprTimeUnit;
     private int rowsLoKind = PRECEDING;
     private int rowsLoKindPos = 0;
-    // Set ONLY by SqlOptimiser.desugarSubsample on the internal __keep_subsample keep-flag column.
+    // Set ONLY by SampleByBinder#bindSubsample on the internal __keep_subsample keep-flag column.
     // Marks this window column as the desugared SUBSAMPLE keep flag, which the outer projection above
     // the WHERE filter is guaranteed to drop (its boolean never surfaces in output). The keep-flag
     // filter fusion in code generation fuses ONLY a function carrying this marker; a hand-written
@@ -174,7 +166,6 @@ public final class WindowExpression extends QueryColumn {
         nullsDescPos = 0;
         subsampleKeepFlag = false;
         pendingSubsample = null;
-        isSubsampleProjectionPending = false;
         hasSubsampleSourceTimestamp = false;
         subsamplePosition = 0;
         windowName = null;
@@ -235,27 +226,21 @@ public final class WindowExpression extends QueryColumn {
             ObjectPool<WindowExpression> windowExpressionPool,
             ObjectPool<ExpressionNode> expressionNodePool
     ) {
-        WindowExpression dst = windowExpressionPool.next();
-        dst.of(getAlias(), ExpressionNode.deepClone(expressionNodePool, getAst()));
-        dst.setIncludeIntoWildcard(isIncludeIntoWildcard());
-        dst.copySpecFrom(this, expressionNodePool);
-        dst.ignoreNulls = this.ignoreNulls;
-        dst.nullsDescPos = this.nullsDescPos;
-        dst.baseWindowName = this.baseWindowName;
-        dst.baseWindowNamePosition = this.baseWindowNamePosition;
-        dst.windowName = this.windowName;
-        dst.windowNamePosition = this.windowNamePosition;
-        dst.resolvedWindowName = this.resolvedWindowName;
-        dst.resolvedWindowAnchored = this.resolvedWindowAnchored;
-        dst.subsampleKeepFlag = this.subsampleKeepFlag;
-        dst.pendingSubsample = ExpressionNode.deepClone(expressionNodePool, pendingSubsample);
-        dst.isSubsampleProjectionPending = isSubsampleProjectionPending;
-        dst.hasSubsampleSourceTimestamp = hasSubsampleSourceTimestamp;
-        dst.subsamplePosition = subsamplePosition;
+        final WindowExpression dst = copySpec(windowExpressionPool, expressionNodePool, ExpressionNode.deepClone(expressionNodePool, getAst()));
         if (dst.getAst() != null) {
             dst.getAst().windowExpression = dst;
         }
         return dst;
+    }
+
+    /**
+     * A copy of the window with its own specification over the same window call.
+     */
+    public WindowExpression deepCloneSpec(
+            ObjectPool<WindowExpression> windowExpressionPool,
+            ObjectPool<ExpressionNode> expressionNodePool
+    ) {
+        return copySpec(windowExpressionPool, expressionNodePool, getAst());
     }
 
     public long getAnchorDailyTimeUs() {
@@ -404,17 +389,13 @@ public final class WindowExpression extends QueryColumn {
         return framingMode != FRAMING_RANGE || rowsLoKind != PRECEDING || rowsHiKind != CURRENT || rowsHiExpr != null || rowsLoExpr != null;
     }
 
-    public boolean isSubsampleProjectionPending() {
-        return isSubsampleProjectionPending;
-    }
-
     public boolean isResolvedWindowAnchored() {
         return resolvedWindowAnchored;
     }
 
     /**
      * @return {@code true} iff this window column is the internal {@code __keep_subsample} keep flag
-     * created by {@link io.questdb.griffin.SqlOptimiser#desugarSubsample}. Only such columns may be
+     * created by {@code SampleByBinder#bindSubsample}. Only such columns may be
      * fused by the keep-flag filter fusion in code generation.
      */
     public boolean isSubsampleKeepFlag() {
@@ -468,7 +449,7 @@ public final class WindowExpression extends QueryColumn {
 
     /**
      * Marks this window column as the internal {@code __keep_subsample} keep flag. Called ONLY by
-     * {@link io.questdb.griffin.SqlOptimiser#desugarSubsample}; see {@link #isSubsampleKeepFlag()}.
+     * {@code SampleByBinder#bindSubsample}; see {@link #isSubsampleKeepFlag()}.
      */
     public void setSubsampleKeepFlag(boolean subsampleKeepFlag) {
         this.subsampleKeepFlag = subsampleKeepFlag;
@@ -478,11 +459,6 @@ public final class WindowExpression extends QueryColumn {
         this.pendingSubsample = pendingSubsample;
         this.subsamplePosition = position;
         this.hasSubsampleSourceTimestamp = hasSourceTimestamp;
-        this.isSubsampleProjectionPending = pendingSubsample != null;
-    }
-
-    public void setSubsampleProjectionPending(boolean isSubsampleProjectionPending) {
-        this.isSubsampleProjectionPending = isSubsampleProjectionPending;
     }
 
     public void setRowsHi(long rowsHi) {
@@ -531,47 +507,6 @@ public final class WindowExpression extends QueryColumn {
         this.windowNamePosition = windowNamePosition;
     }
 
-    public boolean stopOrderByPropagate(ObjList<ExpressionNode> modelOrder, IntList modelOrderDirection) {
-        CharSequence token = getAst().token;
-
-        // If this is an 'order' sensitive window function and there is no ORDER BY, it may depend on its child's ORDER BY clause.
-        if ((Chars.equalsIgnoreCase(token, FirstValueDoubleWindowFunctionFactory.NAME) ||
-                Chars.equalsIgnoreCase(token, LastValueDoubleWindowFunctionFactory.NAME)) &&
-                orderBy.size() == 0 && modelOrder.size() == 0) {
-            return true;
-        }
-
-        // Range frames work correctly depending on the ORDER BY clause of the subquery, which cannot be removed by the optimizer.
-        boolean stopOrderBy = framingMode == FRAMING_RANGE && isRangeFrameDependOnSubqueryOrderBy(getAst().token) &&
-                orderBy.size() > 0 && ((rowsHi != 0 || rowsLo != Long.MIN_VALUE) && !(rowsHi == Long.MAX_VALUE && rowsLo == Long.MIN_VALUE));
-
-        // Heuristic. If current recordCursor has orderBy column exactly same as orderBy of window frame, we continue to push the order.
-        if (stopOrderBy) {
-            boolean sameOrder = true;
-            if (modelOrder.size() < orderBy.size()) {
-                sameOrder = false;
-            } else {
-                for (int i = 0, max = orderBy.size(); i < max; i++) {
-                    if (!Chars.equalsIgnoreCase(modelOrder.getQuick(i).token, orderBy.getQuick(i).token) ||
-                            modelOrderDirection.getQuick(i) != orderByDirection.getQuick(i)) {
-                        sameOrder = false;
-                        break;
-                    }
-                }
-            }
-            stopOrderBy = !sameOrder;
-        }
-        return stopOrderBy;
-    }
-
-    private static boolean isRangeFrameDependOnSubqueryOrderBy(CharSequence funName) {
-        return !Chars.equalsIgnoreCase(funName, RowNumberFunctionFactory.NAME)
-                && !Chars.equalsIgnoreCase(funName, RankFunctionFactory.NAME)
-                && !Chars.equalsIgnoreCase(funName, DenseRankFunctionFactory.NAME)
-                && !Chars.equalsIgnoreCase(funName, LeadLagWindowFunctionFactoryHelper.LEAD_NAME)
-                && !Chars.equalsIgnoreCase(funName, LeadLagWindowFunctionFactoryHelper.LAG_NAME);
-    }
-
     /**
      * Copies this window for one read of a declared variable whose value holds it, see
      * {@link ExpressionNode#deepCloneSharingQueries}. {@code ast} is the read's clone of the function
@@ -586,7 +521,6 @@ public final class WindowExpression extends QueryColumn {
         final WindowExpression dst = windowExpressionPool.next();
         dst.of(null, ast, isIncludeIntoWildcard(), getColumnType());
         dst.setAlias(getAlias(), getAliasPosition());
-        dst.setGenerated(isGenerated());
         for (int i = 0, n = partitionBy.size(); i < n; i++) {
             dst.partitionBy.add(ExpressionNode.deepCloneSharingQueries(expressionNodePool, windowExpressionPool, partitionBy.getQuick(i)));
         }
@@ -607,7 +541,6 @@ public final class WindowExpression extends QueryColumn {
         dst.ignoreNulls = ignoreNulls;
         dst.nullsDescPos = nullsDescPos;
         dst.pendingSubsample = ExpressionNode.deepCloneSharingQueries(expressionNodePool, windowExpressionPool, pendingSubsample);
-        dst.isSubsampleProjectionPending = isSubsampleProjectionPending;
         dst.hasSubsampleSourceTimestamp = hasSubsampleSourceTimestamp;
         dst.subsamplePosition = subsamplePosition;
         dst.rowsHi = rowsHi;
@@ -627,6 +560,35 @@ public final class WindowExpression extends QueryColumn {
         dst.windowNamePosition = windowNamePosition;
         dst.resolvedWindowName = resolvedWindowName;
         dst.resolvedWindowAnchored = resolvedWindowAnchored;
+        return dst;
+    }
+
+    private WindowExpression copySpec(
+            ObjectPool<WindowExpression> windowExpressionPool,
+            ObjectPool<ExpressionNode> expressionNodePool,
+            ExpressionNode ast
+    ) {
+        final WindowExpression dst = windowExpressionPool.next();
+        dst.of(getAlias(), ast);
+        dst.setIncludeIntoWildcard(isIncludeIntoWildcard());
+        dst.copySpecFrom(this, expressionNodePool);
+        dst.ignoreNulls = this.ignoreNulls;
+        dst.nullsDescPos = this.nullsDescPos;
+        dst.baseWindowName = this.baseWindowName;
+        dst.baseWindowNamePosition = this.baseWindowNamePosition;
+        dst.windowName = this.windowName;
+        dst.windowNamePosition = this.windowNamePosition;
+        dst.resolvedWindowName = this.resolvedWindowName;
+        dst.resolvedWindowAnchored = this.resolvedWindowAnchored;
+        dst.anchorKind = this.anchorKind;
+        dst.anchorExpression = ExpressionNode.deepClone(expressionNodePool, anchorExpression);
+        dst.anchorDailyTimeUs = this.anchorDailyTimeUs;
+        dst.anchorDailyTimeZone = this.anchorDailyTimeZone;
+        dst.anchorPosition = this.anchorPosition;
+        dst.subsampleKeepFlag = this.subsampleKeepFlag;
+        dst.pendingSubsample = ExpressionNode.deepClone(expressionNodePool, pendingSubsample);
+        dst.hasSubsampleSourceTimestamp = hasSubsampleSourceTimestamp;
+        dst.subsamplePosition = subsamplePosition;
         return dst;
     }
 }

@@ -49,9 +49,4 @@ public class ArrayColumn extends ArrayFunction implements ColumnFunction {
     public int getColumnIndex() {
         return columnIndex;
     }
-
-    @Override
-    public boolean isThreadSafe() {
-        return true;
-    }
 }

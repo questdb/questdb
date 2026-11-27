@@ -185,6 +185,162 @@ public class PGArraysTest extends BasePGTest {
     }
 
     @Test
+    public void testArrayBindElemWise() throws Exception {
+        // PARSE types an array bind variable with weak dims, so its shape reaches array_elem_*() only at BIND
+        assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
+            execute("CREATE TABLE tab (n INT, da DOUBLE[])");
+            execute("INSERT INTO tab VALUES (1, ARRAY[1.0, 2.0]), (2, ARRAY[3.0]), (3, NULL)");
+            for (String name : new String[]{"array_elem_sum", "array_elem_avg", "array_elem_min", "array_elem_max"}) {
+                try (PreparedStatement stmt = connection.prepareStatement("SELECT n, " + name + "(?, da) r FROM tab")) {
+                    stmt.setArray(1, connection.createArrayOf("float8", new Double[]{}));
+                    sink.clear();
+                    try (ResultSet rs = stmt.executeQuery()) {
+                        assertResultSet("""
+                                n[INTEGER],r[ARRAY]
+                                1,{1.0,2.0}
+                                2,{3.0}
+                                3,null
+                                """, sink, rs);
+                    }
+
+                    stmt.setArray(1, null);
+                    sink.clear();
+                    try (ResultSet rs = stmt.executeQuery()) {
+                        assertResultSet("""
+                                n[INTEGER],r[ARRAY]
+                                1,{1.0,2.0}
+                                2,{3.0}
+                                3,null
+                                """, sink, rs);
+                    }
+
+                    stmt.setArray(1, connection.createArrayOf("float8", new Double[][]{{1d, 2d}, {3d, 4d}}));
+                    try {
+                        stmt.executeQuery();
+                        Assert.fail();
+                    } catch (SQLException e) {
+                        TestUtils.assertContains(e.getMessage(), "dimension mismatch");
+                    }
+                }
+
+                try (PreparedStatement stmt = connection.prepareStatement("SELECT " + name + "(?, ?) r")) {
+                    stmt.setNull(1, Types.ARRAY, "_float8");
+                    stmt.setNull(2, Types.ARRAY, "_float8");
+                    sink.clear();
+                    try (ResultSet rs = stmt.executeQuery()) {
+                        assertResultSet("r[ARRAY]\nnull\n", sink, rs);
+                    }
+
+                    stmt.setArray(2, connection.createArrayOf("float8", new Double[]{1d, 2d}));
+                    sink.clear();
+                    try (ResultSet rs = stmt.executeQuery()) {
+                        assertResultSet("r[ARRAY]\n{1.0,2.0}\n", sink, rs);
+                    }
+
+                    stmt.setArray(1, connection.createArrayOf("float8", new Double[][]{{1d, 2d}}));
+                    stmt.setArray(2, connection.createArrayOf("float8", new Double[]{1d, 2d}));
+                    try {
+                        stmt.executeQuery();
+                        Assert.fail();
+                    } catch (SQLException e) {
+                        TestUtils.assertContains(e.getMessage(), "dimension mismatch");
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testArrayBindGroupByAggregate() throws Exception {
+        // an aggregate sizes its state by the argument's dimensionality, which a bind variable lacks at PARSE
+        assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
+            execute("CREATE TABLE tab (n INT)");
+            execute("INSERT INTO tab VALUES (1)");
+            final String[] names = {
+                    "array_elem_sum", "array_elem_avg", "array_elem_min", "array_elem_max",
+                    "first", "last", "first_not_null", "last_not_null", "array_agg"
+            };
+            for (String name : names) {
+                try (PreparedStatement stmt = connection.prepareStatement("SELECT " + name + "(?) FROM tab")) {
+                    stmt.setArray(1, connection.createArrayOf("float8", new Double[]{1d, 2d}));
+                    try {
+                        stmt.executeQuery();
+                        Assert.fail(name);
+                    } catch (SQLException e) {
+                        TestUtils.assertContains(e.getMessage(), "array bind variable argument is not supported");
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testArrayBindMatrixMultiply() throws Exception {
+        assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
+            try (PreparedStatement stmt = connection.prepareStatement("SELECT matmul(?, ARRAY[[1.0], [2.0]]) r")) {
+                stmt.setArray(1, connection.createArrayOf("float8", new Double[]{1d, 2d}));
+                sink.clear();
+                try (ResultSet rs = stmt.executeQuery()) {
+                    assertResultSet("r[ARRAY]\n{{5.0}}\n", sink, rs);
+                }
+
+                stmt.setArray(1, connection.createArrayOf("float8", new Double[][]{{1d, 2d}, {3d, 4d}}));
+                sink.clear();
+                try (ResultSet rs = stmt.executeQuery()) {
+                    assertResultSet("r[ARRAY]\n{{5.0},{11.0}}\n", sink, rs);
+                }
+
+                stmt.setArray(1, null);
+                sink.clear();
+                try (ResultSet rs = stmt.executeQuery()) {
+                    assertResultSet("r[ARRAY]\nnull\n", sink, rs);
+                }
+
+                stmt.setArray(1, connection.createArrayOf("float8", new Double[][][]{{{1d, 2d}}}));
+                try {
+                    stmt.executeQuery();
+                    Assert.fail();
+                } catch (SQLException e) {
+                    TestUtils.assertContains(e.getMessage(), "left array is not one or two-dimensional");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testArrayBindNull() throws Exception {
+        // a NULL array bind variable never learns its dimensionality
+        assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
+            execute("CREATE TABLE tab (da DOUBLE[], da2 DOUBLE[][])");
+            execute("INSERT INTO tab VALUES (ARRAY[1.0, 2.0], ARRAY[[1.0, 2.0]])");
+            final String[][] cases = {
+                    {"? + da", "r[ARRAY]\nnull\n"},
+                    {"da2 - ?", "r[ARRAY]\nnull\n"},
+                    {"? * da", "r[ARRAY]\nnull\n"},
+                    {"da2 / ?", "r[ARRAY]\nnull\n"},
+                    {"dot_product(?, da)", "r[DOUBLE]\n0.0\n"},
+                    {"array_position(?, 1.0)", "r[INTEGER]\nnull\n"},
+                    {"array_position(?, NULL)", "r[INTEGER]\nnull\n"},
+                    {"insertion_point(?, 1.0)", "r[INTEGER]\nnull\n"},
+                    {"insertion_point(?, 1.0, true)", "r[INTEGER]\nnull\n"},
+                    {"l2price(1.0, ?, da)", "r[DOUBLE]\nnull\n"},
+                    {"l2price(1.0, da, ?)", "r[DOUBLE]\nnull\n"},
+                    {"matmul(?, da2)", "r[ARRAY]\nnull\n"},
+                    {"matmul(da2, ?)", "r[ARRAY]\nnull\n"}
+            };
+            for (String[] c : cases) {
+                try (PreparedStatement stmt = connection.prepareStatement("SELECT " + c[0] + " r FROM tab")) {
+                    stmt.setArray(1, null);
+                    sink.clear();
+                    try (ResultSet rs = stmt.executeQuery()) {
+                        assertResultSet(c[0], c[1], sink, rs);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testArrayBindNullPercentiles() throws Exception {
         // a NULL percentile list fails like a NULL percentile does, rather than yielding {}
         assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
@@ -329,7 +485,6 @@ public class PGArraysTest extends BasePGTest {
                     lastArray = element;
                 }
                 java.lang.reflect.Array.set(lastArray, 0, 1.0);
-
 
                 PGConnection pgConnection = connection.unwrap(PGConnection.class);
                 statement.setArray(1, pgConnection.createArrayOf("float8", arr));
@@ -1113,4 +1268,5 @@ public class PGArraysTest extends BasePGTest {
         }
         b.append("}");
     }
+
 }

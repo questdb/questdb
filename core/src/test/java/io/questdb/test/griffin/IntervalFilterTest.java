@@ -337,7 +337,7 @@ public class IntervalFilterTest extends AbstractCairoTest {
 
     @Test
     public void testEqualTimestampOrWithNullBindVariable() throws Exception {
-        // End-to-end guard for the OR-anchor union folding in WhereClauseParser: a nullable timestamp
+        // End-to-end guard for the OR-anchor union folding in IntervalExtractor: a nullable timestamp
         // bound in the FIRST disjunct of `ts = $1 or ts = $2` must drop only its own disjunct, not the
         // whole disjunction. The plan assertion pins that the OR group is still consumed as a runtime
         // interval union (no residual filter fallback), so the interval model alone decides the answer -
@@ -2655,19 +2655,37 @@ public class IntervalFilterTest extends AbstractCairoTest {
                             5
                             """
             );
-            // WhereClauseParser subtracts a not-equals string the same way as NOT IN.
-            assertInBothOrders(
-                    "ts != '2024-09#workday'",
-                    "ts NOT IN :i",
-                    """
-                            k
-                            1
-                            2
-                            3
-                            4
-                            5
-                            """
-            );
+            // A not-equals comparison rejects interval text, which NOT IN reads.
+            final String notEquals = "SELECT k FROM x WHERE ts != '2024-09#workday' AND ts NOT IN :i";
+            assertExceptionNoLeakCheck(notEquals, notEquals.indexOf('\''), "invalid timestamp");
+        });
+    }
+
+    @Test
+    public void testIntervalInOverNullTextOrBindVariableOrExpressionKey() throws Exception {
+        // The binding folds an interval IN to false only for constant text that holds no instant: NULL text matches the
+        // NULL keys, and a bind variable resolves its text at execution, where an interval that holds no instant matches
+        // no row. An interval IN over an expression key runs on the Java filter.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE n (k INT, tm #TIMESTAMP, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", timestampType.getTypeName());
+            execute("""
+                    INSERT INTO n VALUES
+                    (1, '2024-01-05T10:00:00.000000Z', '2024-01-05T10:00:00.000000Z'),
+                    (2, NULL, '2024-01-06T10:00:00.000000Z'),
+                    (3, '2024-01-06T10:00:00.000000Z', '2024-01-06T11:00:00.000000Z')
+                    """);
+            assertQuery("SELECT k FROM n WHERE tm IN NULL::VARCHAR").noLeakCheck().returns("k\n2\n");
+            bindVariableService.clear();
+            bindVariableService.setStr("i", "2024-01-06#workday");
+            assertQuery("SELECT k FROM n WHERE tm IN :i").noLeakCheck().returns("k\n");
+            bindVariableService.setStr("i", "2024-01-05");
+            assertQuery("SELECT k FROM n WHERE tm IN :i").noLeakCheck().returns("k\n1\n");
+            bindVariableService.clear();
+            final String expressionKey = "SELECT k FROM n WHERE dateadd('d', 1, tm) IN '2024-01-06'";
+            assertQuery(expressionKey).noLeakCheck().returns("k\n1\n");
+            try (RecordCursorFactory factory = select(expressionKey)) {
+                Assert.assertFalse(expressionKey, factory.usesCompiledFilter());
+            }
         });
     }
 
@@ -2692,9 +2710,13 @@ public class IntervalFilterTest extends AbstractCairoTest {
                     2
                     3
                     """;
+            // The binding folds the IN over no instant to false, so NOT IN keeps every row and the scan reads the
+            // table whole.
             assertQuery("SELECT k FROM x WHERE ts NOT IN '2024-01-06#workday'")
                     .noLeakCheck()
-                    .withPlanContaining("intervals: [(\"MIN\",\"MAX\")]")
+                    .expectSize()
+                    .withPlanContaining("Frame forward scan on: x")
+                    .withPlanNotContaining("intervals")
                     .returns(all);
             assertQuery("SELECT k FROM x WHERE ts NOT IN '$today#workday'").noLeakCheck().returns(all);
             assertQuery("SELECT k FROM x WHERE NOT ts IN '$today#workday'").noLeakCheck().returns(all);
@@ -2730,7 +2752,9 @@ public class IntervalFilterTest extends AbstractCairoTest {
             bindVariableService.clear();
             bindVariableService.setStr("d8", "2024-01-08");
             assertInBothOrders("ts NOT IN '2024-01-[05,09]'", "ts < now()", "k\n2\n");
-            assertInBothOrders("ts != '2024-01-[05,09]'", "ts < now()", "k\n2\n");
+            // a not-equals comparison rejects interval text, which NOT IN reads
+            final String notEquals = "SELECT k FROM x WHERE ts != '2024-01-[05,09]' AND ts < now()";
+            assertExceptionNoLeakCheck(notEquals, notEquals.indexOf('\''), "invalid timestamp");
             assertInBothOrders("ts NOT IN '[2024-01-05,2024-01-09]'", "ts < now()", "k\n2\n");
             assertInBothOrders("ts NOT IN '2024-01-[05,06]'", "ts IN '$today'", "k\n3\n");
             assertInBothOrders("ts NOT IN '2024-01-[08,09]'", "ts IN '$today'", "k\n");

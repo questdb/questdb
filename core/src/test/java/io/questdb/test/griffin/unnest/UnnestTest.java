@@ -1711,7 +1711,7 @@ public class UnnestTest extends AbstractCairoTest {
     @Test
     public void testWhereWithInvalidFilterExpression() throws Exception {
         // Validates that a parse error in post-UNNEST WHERE does not
-        // cause a double-free (compileBooleanFilter vs compileJoinFilter).
+        // cause a double-free (FilterFactoryGenerator vs JoinFactoryGenerator).
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (arr DOUBLE[])");
             assertException(
@@ -1958,7 +1958,7 @@ public class UnnestTest extends AbstractCairoTest {
         });
     }
 
-    // Test for invalid post-UNNEST filter (compileBooleanFilter)
+    // Test for invalid post-UNNEST filter (FilterFactoryGenerator)
 
     @Test
     public void testWithWhereOnBaseColumn() throws Exception {

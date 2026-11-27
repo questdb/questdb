@@ -3205,7 +3205,7 @@ public class OrderedMapTest extends AbstractCairoTest {
             model.wal();
             AbstractCairoTest.create(model);
 
-            sink.put("SELECT timestamp_floor('1h', t + 1) t, ");
+            sink.put("SELECT timestamp_floor('1h', t + f0::long) t, ");
             for (int i = 0; i < columnCount; i++) {
                 sink.put("max(f").put(i).put("),");
                 sink.put("min(f").put(i).put("),");

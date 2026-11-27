@@ -78,6 +78,7 @@ class StringDistinctAggGroupByFunction extends StrFunction implements UnaryFunct
     public void close() {
         Misc.free(sinkA);
         Misc.free(sinkB);
+        UnaryFunction.super.close();
     }
 
     @Override
@@ -160,6 +161,17 @@ class StringDistinctAggGroupByFunction extends StrFunction implements UnaryFunct
     }
 
     @Override
+    public void recomputeFirst(MapValue mapValue, Record record, long rowId) {
+        final int index = mapValue.getInt(valueIndex);
+        if (index < 0) {
+            computeFirst(mapValue, record, rowId);
+            return;
+        }
+        sets.getQuick(index).clear();
+        computeNext(mapValue, record, rowId);
+    }
+
+    @Override
     public void setNull(MapValue mapValue) {
         mapValue.putInt(valueIndex, -1);
     }
@@ -178,6 +190,12 @@ class StringDistinctAggGroupByFunction extends StrFunction implements UnaryFunct
     public void toTop() {
         UnaryFunction.super.toTop();
         setIndex = 0;
+    }
+
+    @Override
+    public void toTopAtPoolSlot(int slot) {
+        toTop();
+        setIndex = slot;
     }
 
     private CharSequence getStr(Record rec, DirectUtf16Sink sink) {

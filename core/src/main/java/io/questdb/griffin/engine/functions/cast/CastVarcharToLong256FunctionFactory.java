@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.cast;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -38,6 +39,11 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
 
 public class CastVarcharToLong256FunctionFactory implements FunctionFactory {
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.LONG256;
+    }
 
     @Override
     public String getSignature() {

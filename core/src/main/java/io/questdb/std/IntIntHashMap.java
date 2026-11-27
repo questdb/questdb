@@ -85,6 +85,19 @@ public class IntIntHashMap extends AbstractIntHashSet {
         }
     }
 
+    /**
+     * Empties the map and gives it back the capacity it was created with, so that a map one large use grew does not
+     * keep that memory.
+     */
+    public void restoreInitialCapacity() {
+        capacity = initialCapacity;
+        final int len = Numbers.ceilPow2((int) (capacity / loadFactor));
+        keys = new int[len];
+        values = new int[len];
+        mask = len - 1;
+        clear();
+    }
+
     public int valueAt(int index) {
         return index < 0 ? values[-index - 1] : noEntryValue;
     }

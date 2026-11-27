@@ -35,6 +35,7 @@ import io.questdb.griffin.engine.functions.TernaryFunction;
 import io.questdb.griffin.engine.functions.VarcharFunction;
 import io.questdb.griffin.engine.functions.constants.VarcharConstant;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8Sink;
@@ -58,13 +59,19 @@ public class ReplaceVarcharFunctionFactory implements FunctionFactory {
     ) {
         final Function replaceWith = args.getQuick(2);
         if (replaceWith.isConstant() && replaceWith.getVarcharSize(null) < 0) {
+            CairoException.rethrowCleanupFailure(Misc.freeObjListBestEffort(null, args));
             return VarcharConstant.NULL;
         }
         final Function lookFor = args.getQuick(1);
         if (lookFor.isConstant()) {
             if (lookFor.getVarcharSize(null) < 0) {
+                CairoException.rethrowCleanupFailure(Misc.freeObjListBestEffort(null, args));
                 return VarcharConstant.NULL;
             } else if (lookFor.getVarcharSize(null) == 0) {
+                args.setQuick(1, null);
+                Misc.free(lookFor);
+                args.setQuick(2, null);
+                Misc.free(replaceWith);
                 return args.getQuick(0);
             }
         }
@@ -74,12 +81,16 @@ public class ReplaceVarcharFunctionFactory implements FunctionFactory {
         if (value.isConstant()) {
             final Utf8Sequence valueValue = value.getVarcharA(null);
             if (valueValue == null) {
+                args.setQuick(1, null);
+                Misc.free(lookFor);
+                args.setQuick(2, null);
+                Misc.free(replaceWith);
                 return value;
             }
 
             if (lookFor.isConstant() && replaceWith.isConstant()) {
                 try {
-                    return new VarcharConstant(
+                    return VarcharConstant.fromValue(
                             replace(
                                     valueValue,
                                     lookFor.getVarcharA(null),

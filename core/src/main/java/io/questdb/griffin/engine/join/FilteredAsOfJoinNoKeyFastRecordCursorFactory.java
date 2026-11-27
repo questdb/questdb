@@ -88,21 +88,26 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
         super(metadata, null, masterFactory, slaveFactory);
         assert slaveFactory.supportsTimeFrameCursor();
         this.slaveRecordFilter = slaveRecordFilter;
-        this.cursor = new FilteredAsOfJoinKeyedFastRecordCursor(
-                columnSplit,
-                slaveNullRecord,
-                masterFactory.getMetadata().getTimestampIndex(),
-                slaveTimestampIndex,
-                masterFactory.getMetadata().getTimestampType(),
-                slaveFactory.getMetadata().getTimestampType(),
-                configuration.getSqlAsOfJoinLookAhead()
-        );
-        if (slaveColumnCrossIndex != null && SelectedRecordCursorFactory.isCrossedIndex(slaveColumnCrossIndex)) {
-            this.selectedTimeFrameCursor = new SelectedRecordCursorFactory.SelectedTimeFrameCursor(slaveColumnCrossIndex, slaveFactory.recordCursorSupportsRandomAccess(), slaveTimestampIndex);
-        } else {
-            this.selectedTimeFrameCursor = null;
+        try {
+            this.cursor = new FilteredAsOfJoinKeyedFastRecordCursor(
+                    columnSplit,
+                    slaveNullRecord,
+                    masterFactory.getMetadata().getTimestampIndex(),
+                    slaveTimestampIndex,
+                    masterFactory.getMetadata().getTimestampType(),
+                    slaveFactory.getMetadata().getTimestampType(),
+                    configuration.getSqlAsOfJoinLookAhead()
+            );
+            if (slaveColumnCrossIndex != null && SelectedRecordCursorFactory.isCrossedIndex(slaveColumnCrossIndex)) {
+                this.selectedTimeFrameCursor = new SelectedRecordCursorFactory.SelectedTimeFrameCursor(slaveColumnCrossIndex, slaveFactory.recordCursorSupportsRandomAccess(), slaveTimestampIndex);
+            } else {
+                this.selectedTimeFrameCursor = null;
+            }
+            this.toleranceInterval = toleranceInterval;
+        } catch (Throwable th) {
+            Misc.free(this, th);
+            throw th;
         }
-        this.toleranceInterval = toleranceInterval;
     }
 
     @Override
@@ -113,9 +118,10 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         RecordCursor masterCursor = masterFactory.getCursor(executionContext);
+        TimeFrameCursor baseTimeFrameCursor = null;
         TimeFrameCursor slaveCursor = null;
         try {
-            TimeFrameCursor baseTimeFrameCursor = slaveFactory.getTimeFrameCursor(executionContext);
+            baseTimeFrameCursor = slaveFactory.getTimeFrameCursor(executionContext);
             Record filterRecord = baseTimeFrameCursor.getRecordB();
             slaveRecordFilter.init(baseTimeFrameCursor, executionContext);
             slaveCursor = selectedTimeFrameCursor == null ? baseTimeFrameCursor : selectedTimeFrameCursor.of(baseTimeFrameCursor);
@@ -123,7 +129,7 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
             cursor.of(masterCursor, slaveCursor, filterRecord, executionContext.getCircuitBreaker());
             return cursor;
         } catch (Throwable e) {
-            Misc.free(slaveCursor);
+            Misc.free(slaveCursor != null ? slaveCursor : baseTimeFrameCursor);
             Misc.free(masterCursor);
             throw e;
         }
@@ -173,6 +179,14 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
                 int lookahead
         ) {
             super(columnSplit, nullRecord, masterTimestampIndex, masterTimestampType, slaveTimestampIndex, slaveTimestampType, lookahead);
+        }
+
+        @Override
+        public void close() {
+            super.close();
+            if (slaveRecordFilter != null) {
+                slaveRecordFilter.cursorClosed();
+            }
         }
 
         @Override

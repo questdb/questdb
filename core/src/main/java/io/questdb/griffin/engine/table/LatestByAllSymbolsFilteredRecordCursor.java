@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
@@ -86,10 +87,20 @@ class LatestByAllSymbolsFilteredRecordCursor extends AbstractDescendingRecordLis
     @Override
     public void close() {
         if (isOpen()) {
-            filter.cursorClosed();
-            Misc.free(pairKeys);
-            Misc.free(symbolKeys);
-            super.close();
+            Throwable failure = null;
+            try {
+                filter.cursorClosed();
+            } catch (Throwable th) {
+                failure = th;
+            }
+            failure = Misc.freeBestEffort(failure, pairKeys);
+            failure = Misc.freeBestEffort(failure, symbolKeys);
+            try {
+                super.close();
+            } catch (Throwable th) {
+                failure = Misc.foldCleanupFailure(failure, th);
+            }
+            CairoException.rethrowCleanupFailure(failure);
         }
     }
 

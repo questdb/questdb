@@ -27,14 +27,13 @@ package io.questdb.griffin.engine.functions.groupby;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
-import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 
-public class AvgDecimalGroupByFunctionFactory implements FunctionFactory {
+public class AvgDecimalGroupByFunctionFactory implements AvgAggregate {
 
     public static GroupByFunction newInstance(Function arg, int position) {
         int k = ColumnType.tagOf(arg.getType());
@@ -46,6 +45,11 @@ public class AvgDecimalGroupByFunctionFactory implements FunctionFactory {
             case ColumnType.DECIMAL128 -> new AvgDecimal128GroupByFunction(arg, position);
             default -> new AvgDecimal256GroupByFunction(arg, position);
         };
+    }
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return argTypes.getQuick(0);
     }
 
     @Override

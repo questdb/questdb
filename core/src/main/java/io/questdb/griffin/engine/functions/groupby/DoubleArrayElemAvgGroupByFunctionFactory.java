@@ -35,6 +35,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.functions.constants.ArrayConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
@@ -46,6 +47,11 @@ import io.questdb.std.Vect;
 import org.jetbrains.annotations.NotNull;
 
 public class DoubleArrayElemAvgGroupByFunctionFactory implements FunctionFactory {
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return argTypes.getQuick(0);
+    }
 
     @Override
     public String getSignature() {
@@ -65,6 +71,7 @@ public class DoubleArrayElemAvgGroupByFunctionFactory implements FunctionFactory
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
+        SqlUtil.checkArrayDimensionsKnown(args.getQuick(0).getType(), argPositions.getQuick(0));
         return new DoubleArrayElemAvgGroupByFunction(args.getQuick(0), configuration);
     }
 
@@ -94,8 +101,8 @@ public class DoubleArrayElemAvgGroupByFunctionFactory implements FunctionFactory
 
         @Override
         public void close() {
-            super.close();
             Misc.free(arrayOut);
+            super.close();
         }
 
         /**

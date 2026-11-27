@@ -36,7 +36,6 @@ import io.questdb.cairo.security.DenyAllSecurityContext;
 import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
-import io.questdb.cutlass.SelectCacheKey;
 import io.questdb.cutlass.auth.AuthenticatorException;
 import io.questdb.cutlass.auth.SocketAuthenticator;
 import io.questdb.griffin.BatchCallback;
@@ -82,7 +81,6 @@ import io.questdb.std.WeakSelfReturningObjectPool;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.StdoutSink;
-import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8Sink;
 import io.questdb.std.str.Utf8String;
@@ -171,7 +169,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private final ResponseUtf8Sink responseUtf8Sink = new ResponseUtf8Sink();
     private final Rnd rnd;
     private final SecurityContextFactory securityContextFactory;
-    private final StringSink selectCacheKeySink = new StringSink();
     private final SqlExecutionContextImpl sqlExecutionContext;
     private final CharacterStore sqlTextCharacterStore;
     private final WeakSelfReturningObjectPool<TypesAndInsert> taiPool;
@@ -693,6 +690,12 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         responseUtf8Sink.sendBufferAndReset();
     }
 
+    // Returns the insert cache key of the SQL text for the planner the server names now, which the pipeline entry
+    // remembers, so that a cached insert returns to the key it came from.
+    private CharSequence insertCacheKey(PGPipelineEntry entry, CharSequence sqlText) {
+        return entry.getSelectCacheKey().of(sqlExecutionContext).insertKey(sqlText);
+    }
+
     private void lookupPipelineEntryForNamedPortal(@Nullable Utf8Sequence namedPortal) throws PGMessageProcessingException {
         if (namedPortal != null) {
             PGPipelineEntry pe = namedPortals.get(namedPortal);
@@ -1102,7 +1105,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         // will have the supplied parameter types.
 
         int cachedStatus = CACHE_MISS;
-        final TypesAndInsert tai = taiCache.poll(utf16SqlText);
+        final TypesAndInsert tai = taiCache.poll(insertCacheKey(pipelineCurrentEntry, utf16SqlText));
         if (tai != null) {
             if (pipelineCurrentEntry.msgParseReconcileParameterTypes(parameterTypeCount, tai)) {
                 pipelineCurrentEntry.ofCachedInsert(utf16SqlText, tai);
@@ -1430,13 +1433,11 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
     }
 
-    // Returns the select cache key of the SQL text for the current principal. The pipeline entry
-    // remembers the principal's scope, so that it returns its statement to the same scope, even
-    // when the principal changes before the statement closes, e.g. by assuming a service account.
+    // Returns the select cache key of the SQL text for the current principal and the planner the server names now.
+    // The pipeline entry remembers both, so that it returns a cached statement to the same key, even when the
+    // principal changes before the statement closes, e.g. by assuming a service account.
     private CharSequence selectCacheKey(PGPipelineEntry entry, CharSequence sqlText) {
-        final CharSequence scope = sqlExecutionContext.getSecurityContext().getSelectCacheScope();
-        entry.setSelectCacheScope(scope);
-        return SelectCacheKey.of(scope, sqlText, selectCacheKeySink);
+        return entry.getSelectCacheKey().of(sqlExecutionContext).key(sqlText);
     }
 
     private void shiftReceiveBuffer(long readOffsetBeforeParse) {
@@ -1693,6 +1694,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
         @Override
         public void postCompile(SqlCompiler compiler, CompiledQuery cq, CharSequence queryText) throws Exception {
+            pipelineCurrentEntry.getSelectCacheKey().setCompiledBy(compiler);
             try {
                 CharacterStoreEntry entry = sqlTextCharacterStore.newEntry();
                 entry.put(queryText);

@@ -143,6 +143,25 @@ public class RndSymbolWeightedFunctionFactoryTest extends AbstractFunctionFactor
     }
 
     @Test
+    public void testNonNumericWeight() {
+        for (String weight : new String[]{"#s", "true", "1.5m"}) {
+            assertFailure("[32] numeric weight expected", "select rnd_symbol_weighted('a', " + weight + ") from long_sequence(1)");
+        }
+    }
+
+    @Test
+    public void testNonTextSymbol() {
+        for (String symbol : new String[]{"1", "#s", "true", "1.5m"}) {
+            assertFailure("[27] STRING constant expected", "select rnd_symbol_weighted(" + symbol + ", 50) from long_sequence(1)");
+        }
+    }
+
+    @Test
+    public void testZeroTotalWeight() {
+        assertFailure("[7] total weight must be positive", "select rnd_symbol_weighted('A', 0, 'B', 0.0) from long_sequence(1)");
+    }
+
+    @Test
     public void testNegativeWeight() {
         assertFailure("[47] weight must be non-negative",
                 "select rnd_symbol_weighted('AAPL', 50, 'MSFT', -10) as testCol from long_sequence(10)");

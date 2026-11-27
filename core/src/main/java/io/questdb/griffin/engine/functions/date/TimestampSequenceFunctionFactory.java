@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.sql.Function;
@@ -45,6 +46,11 @@ public class TimestampSequenceFunctionFactory implements FunctionFactory {
     private static final String SIGNATURE = NAME + "(NL)";
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.TIMESTAMP_MICRO;
+    }
+
+    @Override
     public String getSignature() {
         return SIGNATURE;
     }
@@ -62,6 +68,7 @@ public class TimestampSequenceFunctionFactory implements FunctionFactory {
         if (arg.isConstant()) {
             final long start = MicrosTimestampDriver.INSTANCE.from(arg.getTimestamp(null), arg.getType());
             if (start == Numbers.LONG_NULL) {
+                CairoException.rethrowCleanupFailure(Misc.freeObjListBestEffort(null, args));
                 return MicrosTimestampDriver.INSTANCE.getTimestampConstantNull();
             }
             return new TimestampSequenceFunctionFactory.TimestampSequenceFunction(NAME, start, args.getQuick(1), timestampType);
@@ -85,6 +92,16 @@ public class TimestampSequenceFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void close() {
+            Misc.free(longIncrement);
+        }
+
+        @Override
+        public void cursorClosed() {
+            longIncrement.cursorClosed();
+        }
+
+        @Override
         public long getTimestamp(Record rec) {
             final long result = next;
             next += longIncrement.getLong(rec);
@@ -100,6 +117,13 @@ public class TimestampSequenceFunctionFactory implements FunctionFactory {
         @Override
         public boolean isNonDeterministic() {
             return true;
+        }
+
+        @Override
+        public void offerStateTo(Function that) {
+            if (that instanceof TimestampSequenceFunction other) {
+                longIncrement.offerStateTo(other.longIncrement);
+            }
         }
 
         @Override
@@ -139,8 +163,12 @@ public class TimestampSequenceFunctionFactory implements FunctionFactory {
 
         @Override
         public void close() {
-            Misc.free(start);
-            Misc.free(longIncrement);
+            CairoException.rethrowCleanupFailure(Misc.freeBestEffort(Misc.freeBestEffort(null, start), longIncrement));
+        }
+
+        @Override
+        public void cursorClosed() {
+            CairoException.rethrowCleanupFailure(Function.cursorClosed(Function.cursorClosed(null, start), longIncrement));
         }
 
         @Override
@@ -160,6 +188,14 @@ public class TimestampSequenceFunctionFactory implements FunctionFactory {
         @Override
         public boolean isNonDeterministic() {
             return true;
+        }
+
+        @Override
+        public void offerStateTo(Function that) {
+            if (that instanceof TimestampSequenceVariableFunction other) {
+                start.offerStateTo(other.start);
+                longIncrement.offerStateTo(other.longIncrement);
+            }
         }
 
         @Override

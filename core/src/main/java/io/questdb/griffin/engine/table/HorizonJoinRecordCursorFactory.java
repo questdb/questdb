@@ -80,6 +80,7 @@ import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.sc
 public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory {
     private HorizonJoinRecordCursor cursor;
     private JoinRecordMetadata horizonJoinMetadata;
+    private @Nullable Function keyCheck;
     private ObjList<Function> keyFunctions;
     private RecordCursorFactory masterFactory;
     private final long[] offsets;
@@ -108,6 +109,7 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
             int masterColumnCount,
             int @Nullable [] masterSymbolKeyColumnIndices,
             int @Nullable [] slaveSymbolKeyColumnIndices,
+            @Nullable Function keyCheck,
             @Transient @NotNull ListColumnFilter groupByColumnFilter,
             int @NotNull [] columnSources,
             int @NotNull [] columnIndexes
@@ -119,6 +121,7 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
             this.masterFactory = masterFactory;
             this.slaveFactory = slaveFactory;
             this.slaveFilter = slaveFilter;
+            this.keyCheck = keyCheck;
             this.offsets = offsets;
             this.recordFunctions = recordFunctions;
 
@@ -154,7 +157,8 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
                     columnIndexes,
                     masterTsScale,
                     slaveTsScale,
-                    slaveFilter
+                    slaveFilter,
+                    keyCheck
             );
         } catch (Throwable th) {
             Misc.free(this, th);
@@ -213,9 +217,8 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
         sink.optAttr("values", cursor.groupByFunctions);
         sink.setMetadata(null);
         sink.child(masterFactory);
-        if (slaveFilter != null) {
-            sink.attr("slave filter").val(slaveFilter, slaveFactory);
-        }
+        sink.optAttr("keyCheck", keyCheck, masterFactory);
+        sink.optAttr("slave filter", slaveFilter, slaveFactory);
         sink.child(slaveFactory);
     }
 
@@ -235,6 +238,8 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
         this.slaveFactory = null;
         final Function slaveFilter = this.slaveFilter;
         this.slaveFilter = null;
+        final Function keyCheck = this.keyCheck;
+        this.keyCheck = null;
 
         Throwable cleanupFailure = Misc.freeBestEffort(null, cursor);
         cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, keyFunctions);
@@ -243,6 +248,7 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
             cleanupFailure = Misc.freeBestEffort(cleanupFailure, slaveFactory);
         }
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, slaveFilter);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, keyCheck);
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, horizonJoinMetadata);
         // recordFunctions includes groupByFunctions (same object references)
         cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, recordFunctions);
@@ -259,6 +265,7 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
         private final HorizonTimestampIterator horizonIterator;
         private final HorizonJoinRecord horizonJoinRecord;
         private final HorizonJoinSymbolTableSource horizonJoinSymbolTableSource;
+        private final @Nullable Function keyCheck;
         private final ObjList<Function> keyFunctions;
         private final RecordSink masterAsOfJoinMapSink;
         private final int masterTimestampColumnIndex;
@@ -301,9 +308,11 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
                 int[] columnIndexes,
                 long masterTsScale,
                 long slaveTsScale,
-                @Nullable Function slaveFilter
+                @Nullable Function slaveFilter,
+                @Nullable Function keyCheck
         ) {
             this.groupByFunctions = groupByFunctions;
+            this.keyCheck = keyCheck;
             this.recordFunctions = recordFunctions;
             this.keyFunctions = keyFunctions;
             this.masterTimestampColumnIndex = masterTimestampColumnIndex;
@@ -370,7 +379,8 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
                     configuration.getSqlHorizonJoinBwdScanMinGap(),
                     configuration.getSqlHorizonJoinBwdScanSwitchFactor(),
                     slaveFilter,
-                    asOfJoinKeyTypes
+                    asOfJoinKeyTypes,
+                    keyCheck
             );
             this.isOpen = false;
         }
@@ -404,8 +414,12 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
                 }
                 if (isSlaveFilterInitialized) {
                     isSlaveFilterInitialized = false;
-                    cleanupFailure = HorizonJoinSlaveState.cursorClosed(cleanupFailure, slaveFilter);
+                    cleanupFailure = Function.cursorClosed(cleanupFailure, slaveFilter);
                 }
+                cleanupFailure = Function.cursorClosed(cleanupFailure, keyCheck);
+                cleanupFailure = Function.cursorClosed(cleanupFailure, recordFunctions);
+                cleanupFailure = Function.cursorClosed(cleanupFailure, keyFunctions);
+                cleanupFailure = Function.cursorClosed(cleanupFailure, groupByFunctions);
                 CairoException.rethrowCleanupFailure(cleanupFailure);
             }
         }
@@ -471,6 +485,9 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
 
             if (slaveFilter != null) {
                 slaveFilter.toTop();
+            }
+            if (keyCheck != null) {
+                keyCheck.toTop();
             }
             slaveTimeFrameHelper.toTop();
             if (keyedAsOfJoin) {
@@ -559,6 +576,9 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
             if (slaveFilter != null) {
                 isSlaveFilterInitialized = true;
                 slaveFilter.init(slaveCursor, executionContext);
+            }
+            if (keyCheck != null) {
+                keyCheck.init(masterCursor, executionContext);
             }
             slaveTimeFrameHelper.of(slaveCursor, executionContext.getMemoryTracker());
 

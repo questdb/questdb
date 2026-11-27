@@ -273,10 +273,14 @@ public class CreateDropViewTest extends AbstractViewTest {
                             1970-01-01T00:00:00.000000Z\t6.5
                             """,
                     VIEW4,
+                    null,
+                    false,
+                    false,
                     """
                             QUERY PLAN
-                            GroupBy vectorized: false
+                            Stream Group By
                               keys: [date_trunc]
+                              keyFunctions: [timestamp_floor('hour',ts)]
                               values: [avg(v_max)]
                                 Async Stream Group By workers: 1
                                   segmentKey: ts

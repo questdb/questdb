@@ -106,4 +106,32 @@ public class IntIntHashMapTest {
             }
         }
     }
+
+    @Test
+    public void testRestoreInitialCapacity() {
+        for (int initial : new int[]{0, 8, 16, 64}) {
+            final IntIntHashMap map = new IntIntHashMap(initial);
+            final int initialCapacity = Math.max(initial, 16);
+            Assert.assertEquals(initialCapacity, map.capacity());
+            for (int i = 0; i < 1_000; i++) {
+                map.put(i, 2 * i);
+            }
+            Assert.assertTrue(map.capacity() >= 1_000);
+            map.restoreInitialCapacity();
+            Assert.assertEquals(0, map.size());
+            Assert.assertEquals(initialCapacity, map.capacity());
+            for (int i = 0; i < 1_000; i++) {
+                Assert.assertTrue(map.keyIndex(i) > -1);
+                Assert.assertEquals(-1, map.get(i));
+            }
+            for (int i = 0; i < 100; i++) {
+                map.put(i, i + 7);
+            }
+            Assert.assertEquals(100, map.size());
+            for (int i = 0; i < 100; i++) {
+                Assert.assertEquals(i + 7, map.get(i));
+            }
+            Assert.assertEquals(-1, map.get(100));
+        }
+    }
 }

@@ -30,31 +30,67 @@ import io.questdb.std.BufferWindowCharSequence;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjectPool;
+import io.questdb.std.RetainedCapacity;
 import io.questdb.std.str.AbstractCharSequence;
 import io.questdb.std.str.Utf16Sink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 public class CharacterStore implements CharacterStoreEntry, Mutable, Utf16Sink {
     private static final Log LOG = LogFactory.getLog(CharacterStore.class);
     private final ObjectPool<NameAssemblerCharSequence> csPool;
+    // null when the store keeps every character it grows to
+    private final RetainedCapacity retainedCapacity;
     private int capacity;
     private char[] chars;
     private NameAssemblerCharSequence next = null;
+    private int peakSize;
     private int[] ryuE10;
     private int size = 0;
 
     public CharacterStore(int capacity, int poolCapacity) {
         this.capacity = capacity;
         this.chars = new char[Numbers.ceilPow2(capacity)];
+        this.retainedCapacity = null;
         csPool = new ObjectPool<>(NameAssemblerCharSequence::new, poolCapacity);
+    }
+
+    /**
+     * Creates a store whose sequences and characters {@link #clear()} trims to what its recent uses needed, see
+     * {@link RetainedCapacity}, but never below {@code minRetainedPoolCapacity} sequences or {@code capacity}
+     * characters.
+     */
+    public CharacterStore(int capacity, int poolCapacity, int minRetainedPoolCapacity) {
+        this.capacity = capacity;
+        this.chars = new char[Numbers.ceilPow2(capacity)];
+        this.retainedCapacity = new RetainedCapacity(capacity);
+        csPool = new ObjectPool<>(NameAssemblerCharSequence::new, poolCapacity, minRetainedPoolCapacity);
     }
 
     @Override
     public void clear() {
         csPool.clear();
+        if (retainedCapacity != null) {
+            final int retained = retainedCapacity.endUse(Math.max(peakSize, size));
+            if (capacity > retained) {
+                capacity = retained;
+                chars = new char[retained];
+            }
+        }
+        peakSize = 0;
         size = 0;
         next = null;
+    }
+
+    @TestOnly
+    public int getCapacity() {
+        return capacity;
+    }
+
+    @TestOnly
+    public int getPoolCapacity() {
+        return csPool.getCapacity();
     }
 
     @Override
@@ -109,6 +145,7 @@ public class CharacterStore implements CharacterStoreEntry, Mutable, Utf16Sink {
     }
 
     public void trimTo(int size) {
+        peakSize = Math.max(peakSize, this.size);
         this.size = size;
     }
 

@@ -185,4 +185,18 @@ public class AvgDecimalRescaleGroupByFunctionFactoryTest extends AbstractCairoTe
                         0\t49.0\t502.00\t501313.01\t4839510335333.017\t9200353642033472407119323164.0022\t31609444379365793148224424272849410604357248203045640530705472887.81685772
                         """);
     }
+
+    @Test
+    public void testAvgDecimalZeroPrecision() throws Exception {
+        assertQuery("select avg(d, 0) from x")
+                .ddl("create table x (d decimal(2,2))")
+                .fails(14, "rescaled decimal has invalid precision: 0");
+    }
+
+    @Test
+    public void testAvgUntypedNullZeroPrecision() throws Exception {
+        assertQuery("select avg(null, 0) from x")
+                .ddl("create table x (d decimal(2,2))")
+                .fails(17, "rescaled decimal has invalid precision: 0");
+    }
 }

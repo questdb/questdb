@@ -34,6 +34,7 @@ import io.questdb.cutlass.http.HttpSessionCredential;
 import io.questdb.cutlass.http.HttpSessionStore;
 import io.questdb.cutlass.http.HttpSessionStoreImpl;
 import io.questdb.network.PlainSocketFactory;
+import io.questdb.std.Os;
 import io.questdb.std.ReadOnlyObjList;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -117,6 +118,59 @@ public class HttpSessionStoreImplTest extends AbstractCairoTest {
                 tokenValid.set(false);
                 Assert.assertNull(store.verifySessionId(sessionId, context));
                 Assert.assertTrue(session.isInvalid());
+            }
+        });
+    }
+
+    @Test
+    public void testDestroySessionByOldIdAfterRotation() throws Exception {
+        assertMemoryLeak(() -> {
+            setCurrentMicros(START_MICROS);
+            final HttpSessionStore store = newStore(REVALIDATION_INTERVAL);
+            try (HttpConnectionContext context = newContext()) {
+                final AtomicBoolean valid = new AtomicBoolean(true);
+                final HttpSessionStore.SessionInfo session = createSession(store, context, "alice", valid::get, fingerprint(1));
+                final String oldId = session.getSessionId();
+                setCurrentMicros(session.getRotateAt() + 1);
+                store.extendSession(session, context);
+                final String newId = session.getSessionId();
+                Assert.assertNotEquals(oldId, newId);
+
+                // a request still carrying the old id, within its grace period, finds the credential revoked
+                valid.set(false);
+                Assert.assertNull(store.verifySessionId(oldId, context));
+                Assert.assertTrue(session.isInvalid());
+                Assert.assertNull(store.getSession(newId));
+                Assert.assertEquals(0, store.size("alice"));
+            }
+        });
+    }
+
+    @Test
+    public void testDestroySessionDuringRotation() throws Exception {
+        assertMemoryLeak(() -> {
+            setCurrentMicros(START_MICROS);
+            final HttpSessionStore store = newStore(REVALIDATION_INTERVAL);
+            try (HttpConnectionContext context = newContext()) {
+                final HttpSessionStore.SessionInfo session = createSession(store, context, "alice", null, null);
+                final String oldId = session.getSessionId();
+
+                // a logout destroys the session while the rotating request generates the new id
+                final Thread logout = new Thread(() -> store.destroySession(oldId, context));
+                store.setTokenGenerator(() -> {
+                    logout.start();
+                    while (logout.isAlive() && logout.getState() != Thread.State.BLOCKED) {
+                        Os.pause();
+                    }
+                    return "qs1_rotated";
+                });
+                setCurrentMicros(session.getRotateAt() + 1);
+                store.extendSession(session, context);
+                logout.join();
+
+                Assert.assertTrue(session.isInvalid());
+                Assert.assertNull(store.getSession(session.getSessionId()));
+                Assert.assertEquals(0, store.size("alice"));
             }
         });
     }

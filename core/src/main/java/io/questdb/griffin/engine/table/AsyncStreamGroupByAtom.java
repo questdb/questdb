@@ -38,7 +38,6 @@ import io.questdb.cairo.sql.StatefulAtom;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.async.AsyncQueryProgressState;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
-import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.PerWorkerLockOwner;
@@ -51,16 +50,15 @@ import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdaterFactory;
 import io.questdb.griffin.engine.groupby.GroupByShardMerger;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.griffin.engine.groupby.StreamGroupByMap;
-import io.questdb.jit.CompiledFilter;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.DirectLongList;
-import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.griffin.engine.table.GroupByMapFragment.NUM_SHARDS;
@@ -114,12 +112,7 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner,
             ObjList<ObjList<Function>> perWorkerKeys,
             ObjList<GroupByFunction> groupByFunctions,
             ObjList<ObjList<GroupByFunction>> perWorkerFunctions,
-            CompiledFilter compiledFilter,
-            MemoryCARW bindVarMemory,
-            ObjList<Function> bindVarFunctions,
-            Function filter,
-            IntHashSet filterUsedColumnIndexes,
-            ObjList<Function> perWorkerFilters,
+            @NotNull AsyncFilterResources filterResources,
             int workerCount,
             boolean isDescending,
             int initialDispatchLimit,
@@ -139,9 +132,9 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner,
         this.groupByFunctions = groupByFunctions;
         this.perWorkerFunctions = perWorkerFunctions;
         try {
-            filterContext = filter == null ? null : new AsyncFilterContext(configuration, compiledFilter,
-                    bindVarMemory, bindVarFunctions, filter, filterUsedColumnIndexes, perWorkerFilters,
-                    workerCount, workerCount, 0, 0);
+            filterContext = filterResources.getFilter() == null
+                    ? null
+                    : new AsyncFilterContext(configuration, filterResources, workerCount, workerCount, 0, 0);
             stateTypes = new ArrayColumnTypes().addAll(valueTypes);
             stateTypes.add(keyFunction.getType());
             batchColumnIndexes = new int[groupByFunctions.size()];
@@ -223,8 +216,8 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner,
         th = closeMaps(th);
         th = Misc.freeObjListBestEffort(th, frameRecords);
         th = Misc.freeObjListBestEffort(th, frameValues);
-        th = AsyncGroupByAtom.closePerWorkerFunctions(th, perWorkerKeys);
-        th = AsyncGroupByAtom.closePerWorkerFunctions(th, perWorkerFunctions);
+        th = PerWorkerFunctionList.closePerWorker(th, perWorkerKeys);
+        th = PerWorkerFunctionList.closePerWorker(th, perWorkerFunctions);
         CairoException.rethrowCleanupFailure(th);
     }
 

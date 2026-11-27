@@ -121,9 +121,11 @@ public class LastNotNullDoubleGroupByFunction extends FirstDoubleGroupByFunction
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        if (!Numbers.isNull(arg.getDouble(record))) {
+        double val = arg.getDouble(record);
+        if (!Numbers.isNull(val)) {
             if (Numbers.isNull(mapValue.getDouble(valueIndex + 1)) || rowId > mapValue.getLong(valueIndex)) {
-                computeFirst(mapValue, record, rowId);
+                mapValue.putLong(valueIndex, rowId);
+                mapValue.putDouble(valueIndex + 1, val);
             }
         }
     }

@@ -45,6 +45,11 @@ import io.questdb.std.Transient;
 public class LevelTwoPriceArrayFunctionFactory implements FunctionFactory {
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.DOUBLE;
+    }
+
+    @Override
     public String getSignature() {
         return "l2price(DD[]D[])";
     }
@@ -154,10 +159,10 @@ public class LevelTwoPriceArrayFunctionFactory implements FunctionFactory {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             TernaryFunction.super.init(symbolTableSource, executionContext);
-            if (ColumnType.decodeArrayDimensionality(sizesArg.getType()) != 1) {
+            if (ColumnType.decodeWeakArrayDimensionality(sizesArg.getType()) > 1) {
                 throw SqlException.$(sizesArgPos, "not a one-dimensional array");
             }
-            if (ColumnType.decodeArrayDimensionality(pricesArg.getType()) != 1) {
+            if (ColumnType.decodeWeakArrayDimensionality(pricesArg.getType()) > 1) {
                 throw SqlException.$(pricesArgPos, "not a one-dimensional array");
             }
         }

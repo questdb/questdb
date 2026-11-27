@@ -25,6 +25,7 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
+import io.questdb.std.Numbers;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
@@ -61,16 +62,33 @@ public class DistinctTest extends AbstractCairoTest {
 
     @Test
     public void testDistinctConstAliasOrderByLimitWithDuplicateCol() throws Exception {
-        // Duplicate column refs trigger rewriteTrivialGroupByExpressions which used to push
-        // LIMIT past the virtual carrying the constant alias; ORDER BY e0 then resolved at the
-        // limited group-by and crashed with AIOOBE.
-        assertQuery("SELECT DISTINCT -1 AS e0, t0.x AS e1, t0.x AS e4 FROM long_sequence(3) t0 ORDER BY e0 DESC, e1 LIMIT 2")
+        // Duplicate column refs put a projection over the group-by, and a LIMIT used to move
+        // past the projection carrying the constant alias (ProjectionMerge.limitBelowProjection
+        // owns that move now); ORDER BY e0 then resolved at the limited group-by and crashed
+        // with AIOOBE.
+        assertQuery("SELECT DISTINCT -1 AS e0, t0.x AS e1, t0.x AS e4 FROM long_sequence(3) t0 ORDER BY e0 DESC LIMIT 2")
                 .expectSize()
                 .returns("""
                         e0	e1	e4
                         -1	1	1
                         -1	2	2
                         """);
+    }
+
+    @Test
+    public void testDistinctEarlyExitFollowsResolvedLimitBounds() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT x % 40 k FROM long_sequence(100))");
+            final String distinct = "SELECT DISTINCT k, max(k) OVER () m FROM x";
+            printSql(distinct);
+            final String[] rows = sink.toString().split("\n");
+            assertDistinctLimitSlice(distinct + " LIMIT 28, 20", "earlyExit: 28", rows, 20, 28);
+            assertDistinctLimitSlice(distinct + " LIMIT 0, 5", "earlyExit: 5", rows, 0, 5);
+            assertDistinctLimitSlice(distinct + " LIMIT NULL::LONG, 5", "earlyExit: 5", rows, 0, 5);
+            bindVariableService.setLong(0, Numbers.LONG_NULL);
+            bindVariableService.setLong(1, 5);
+            assertDistinctLimitSlice(distinct + " LIMIT $1, $2", "earlyExit: 5", rows, 0, 5);
+        });
     }
 
     @Test
@@ -186,7 +204,7 @@ public class DistinctTest extends AbstractCairoTest {
         // The trivial-group-by rewrite pushes the outer LIMIT onto the nested group by, but the
         // gate runs before ORDER BY tokens are normalized, so it resolves positions/qualifiers
         // itself. A position over a key (2 == e1) must push like the alias form; one over the
-        // virtual-only constant (1 == e0) must not, else rewriteOrderBy later crashes (AIOOBE).
+        // virtual-only constant (1 == e0) must not, else OrderBinder later crashes (AIOOBE).
         assertMemoryLeak(() -> {
             final String base = "SELECT DISTINCT -1 AS e0, t0.x AS e1, t0.x AS e4 FROM long_sequence(3) t0 ";
 
@@ -272,11 +290,9 @@ public class DistinctTest extends AbstractCairoTest {
     public void testDistinctQualifiedColumnInExprWithBindVariableFromFuzzer() throws Exception {
         // Bind-form of the prior fuzzer query. The bind cast steals the early aliases
         // ("cast", "cast1") so the bare t0.x projection keeps its user alias "x". The
-        // earlier qualified emit for (t0.x)::CHAR had already registered "x" in the
-        // translating model under the stripped key, and createSelectColumn needed the
-        // same qualified-vs-stripped retry as doReplaceLiteral0 to reuse that entry
-        // instead of renaming the bare projection to "x1" and breaking the DISTINCT
-        // wrapper's lookup.
+        // earlier qualified emit for (t0.x)::CHAR had already registered "x" under the
+        // stripped key, and SqlBinder must reuse that entry instead of renaming the
+        // bare projection to "x1" and breaking the DISTINCT wrapper's lookup.
         assertMemoryLeak(() -> {
             bindVariableService.clear();
             bindVariableService.setStr("b0", "Y");
@@ -305,6 +321,7 @@ public class DistinctTest extends AbstractCairoTest {
                 " (278444 * t0.x) AS e4" +
                 " FROM long_sequence(2) t0" +
                 " ORDER BY e1")
+                .noRandomAccess()
                 .returns("""
                         e0\te1\te2\te3\te4
                         -614\t1\t786\t-716\t278444
@@ -316,7 +333,7 @@ public class DistinctTest extends AbstractCairoTest {
     public void testDistinctReusedColumnWithUserAliasRepro() throws Exception {
         // Duplicate aliased refs to the same column (x AS e1, x AS e2) under DISTINCT
         // pointed the outer projection at the translating-model alias "x" while the
-        // group-by metadata only exposed "e1"; generateSelectChoose hit "wtf? x".
+        // group-by metadata only exposed "e1"; ProjectionFactoryGenerator hit "wtf? x".
         assertQuery("SELECT DISTINCT abs(x) AS e0, x AS e1, x AS e2 FROM long_sequence(3)")
                 .noRandomAccess()
                 .returns("""
@@ -521,6 +538,19 @@ public class DistinctTest extends AbstractCairoTest {
                         2024-01-01T02:00:00.000000Z\t3\t4
                         2024-01-01T01:00:00.000000Z\t2\t3
                         """);
+    }
+
+    private void assertDistinctLimitSlice(String query, String earlyExit, String[] rows, int lo, int hi) throws Exception {
+        final StringBuilder expected = new StringBuilder(rows[0]).append('\n');
+        for (int i = lo; i < hi; i++) {
+            expected.append(rows[i + 1]).append('\n');
+        }
+        assertQuery(query)
+                .noLeakCheck()
+                .withPlanContaining(earlyExit)
+                .noRandomAccess()
+                .expectSize()
+                .returns(expected);
     }
 
     private void testColumnPrefixes(boolean columnAliasExprEnabled) throws Exception {

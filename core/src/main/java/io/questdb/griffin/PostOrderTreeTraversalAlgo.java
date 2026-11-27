@@ -90,6 +90,11 @@ public final class PostOrderTreeTraversalAlgo implements Mutable {
                         node = null;
                         continue;
                     }
+                    if (node.paramCount == 0 && node.lhs == null && node.rhs == null) {
+                        visitor.visit(node);
+                        node = null;
+                        continue;
+                    }
                     stack.push(node);
                     indexStack.push(0);
                     node = node.rhs;
@@ -101,22 +106,21 @@ public final class PostOrderTreeTraversalAlgo implements Mutable {
                         if (index == 0) {
                             indexStack.update(1);
                             node = peek.lhs;
-                        } else {
-                            visitor.visit(peek);
-                            stack.poll();
-                            indexStack.pop();
+                            if (node != null) {
+                                continue;
+                            }
                         }
                     } else {
                         int index = indexStack.peek();
                         if (index < peek.paramCount) {
                             node = peek.args.getQuick(index);
                             indexStack.update(index + 1);
-                        } else {
-                            visitor.visit(peek);
-                            stack.poll();
-                            indexStack.pop();
+                            continue;
                         }
                     }
+                    visitor.visit(peek);
+                    stack.poll();
+                    indexStack.pop();
                 }
             }
         } finally {

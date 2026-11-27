@@ -104,6 +104,7 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
             PropertyKey.CAIRO_MAT_VIEW_MAX_REFRESH_RETRIES,
             PropertyKey.CAIRO_MAT_VIEW_MAX_REFRESH_INTERVALS,
             PropertyKey.CAIRO_SQL_ASOF_JOIN_EVACUATION_THRESHOLD,
+            PropertyKey.CAIRO_SQL_LEGACY_PLANNER_ENABLED,
             PropertyKey.CAIRO_SQL_ASOF_JOIN_SHORT_CIRCUIT_CACHE_CAPACITY,
             PropertyKey.CAIRO_SQL_JOIN_SYMBOL_TRANSLATION_CACHE_CAPACITY,
             PropertyKey.CAIRO_SQL_JIT_MAX_IN_LIST_SIZE_THRESHOLD,

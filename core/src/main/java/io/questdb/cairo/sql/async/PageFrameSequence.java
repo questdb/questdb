@@ -41,7 +41,6 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.MCSequence;
@@ -92,7 +91,12 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
     // Protocol indices are in task (row-group run) units; the address cache / frameRowCounts stay
     // frame-indexed. When no row group is split, taskCount == frameCount and these track frames 1:1.
     private int collectedTaskIndex = -1;
+    // The dispatch range can cut through the first and last runs on a rewind.
+    private int dispatchFrameHi;
+    private int dispatchFrameLo;
+    private int dispatchFrameStep = 1;
     private int dispatchStartTaskIndex;
+    private int firstDispatchRun;
     private PageFrameAddressCache frameAddressCache;
     private int frameCount;
     private PageFrameCursor frameCursor;
@@ -376,12 +380,15 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
     }
 
     public int getTaskFirstFrame(int taskIndex) {
-        return runFirstFrames.getQuick(taskIndex);
+        final int run = firstDispatchRun + taskIndex * dispatchFrameStep;
+        return dispatchFrameStep > 0
+                ? Math.max(runFirstFrames.getQuick(run), dispatchFrameLo)
+                : Math.min(getRunFrameHi(run), dispatchFrameHi) - 1;
     }
 
     public int getTaskFrameCount(int taskIndex) {
-        final int next = taskIndex + 1 < taskCount ? runFirstFrames.getQuick(taskIndex + 1) : frameCount;
-        return next - runFirstFrames.getQuick(taskIndex);
+        final int run = firstDispatchRun + taskIndex * dispatchFrameStep;
+        return Math.min(getRunFrameHi(run), dispatchFrameHi) - Math.max(runFirstFrames.getQuick(run), dispatchFrameLo);
     }
 
     public byte getTaskType() {
@@ -593,7 +600,11 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
         // prepare different frame sequence using the same object instance
         frameCount = 0;
         taskCount = 0;
+        dispatchFrameHi = 0;
+        dispatchFrameLo = 0;
+        dispatchFrameStep = 1;
         dispatchStartTaskIndex = 0;
+        firstDispatchRun = 0;
         collectedTaskIndex = -1;
         heldCollectCursor = HELD_NONE;
         collectSubFrame = 0;
@@ -674,26 +685,47 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
      */
     public void toTop() {
         if (frameCount > 0) {
-            long newId = ID_SEQ.incrementAndGet();
-            LOG.debug()
-                    .$("toTop [shard=").$(shard)
-                    .$(", id=").$(id)
-                    .$(", newId=").$(newId)
-                    .I$();
-
-            await();
-            messageBus.getPageFrameCollectFanOut(shard).resume(collectSubSeq);
-
-            // done is reset by method call above
-            done = false;
-            id = newId;
-            dispatchStartTaskIndex = 0;
-            collectedTaskIndex = -1;
-            reduceFinishedCounter.set(0);
-            reduceStartedCounter.set(0);
-            workStealingStrategy.of(reduceStartedCounter);
-            resetCancellation();
+            toTop(0, frameCount - 1);
         }
+    }
+
+    /**
+     * Prepares the sequence to dispatch the frames from {@code firstFrameIndex} to {@code lastFrameIndex}, both
+     * inclusive, in that order. A task covers the portion of a row-group run within the range. The sequence must
+     * have been prepared for dispatch. The method is not thread-safe.
+     */
+    public void toTop(int firstFrameIndex, int lastFrameIndex) {
+        assert firstFrameIndex >= 0 && firstFrameIndex < frameCount && lastFrameIndex >= 0 && lastFrameIndex < frameCount;
+        long newId = ID_SEQ.incrementAndGet();
+        LOG.debug()
+                .$("toTop [shard=").$(shard)
+                .$(", id=").$(id)
+                .$(", newId=").$(newId)
+                .$(", firstFrameIndex=").$(firstFrameIndex)
+                .$(", lastFrameIndex=").$(lastFrameIndex)
+                .I$();
+
+        await();
+        messageBus.getPageFrameCollectFanOut(shard).resume(collectSubSeq);
+
+        // done is reset by method call above
+        done = false;
+        id = newId;
+        firstDispatchRun = getRunIndex(firstFrameIndex);
+        dispatchFrameStep = lastFrameIndex < firstFrameIndex ? -1 : 1;
+        dispatchFrameLo = Math.min(firstFrameIndex, lastFrameIndex);
+        dispatchFrameHi = Math.max(firstFrameIndex, lastFrameIndex) + 1;
+        taskCount = Math.abs(getRunIndex(lastFrameIndex) - firstDispatchRun) + 1;
+        dispatchStartTaskIndex = 0;
+        collectedTaskIndex = -1;
+        reduceFinishedCounter.set(0);
+        reduceStartedCounter.set(0);
+        workStealingStrategy.of(reduceStartedCounter);
+        resetCancellation();
+    }
+
+    int getDispatchFrameStep() {
+        return dispatchFrameStep;
     }
 
     private void awaitReduced(PageFrameReduceDispatcher dispatcher, boolean isFiberSuspendable) {
@@ -742,7 +774,6 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
                     && partitionIndex == prevPartitionIndex;
             if (!isSameRun) {
                 runFirstFrames.add(frameCount);
-                taskCount++;
             }
             prevCustomDecode = customDecode;
             prevRowGroup = rowGroup;
@@ -750,6 +781,8 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
             frameRowCounts.add(frame.getPartitionHi() - frame.getPartitionLo());
             frameAddressCache.add(frameCount++, frame);
         }
+        dispatchFrameHi = frameCount;
+        taskCount = runFirstFrames.size();
 
         // Covered frames decode their columns on the async workers (in
         // PageFrameMemoryPool.navigateTo) by iterating detached cursors over the
@@ -944,6 +977,18 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
 
     private int getBlockedShard() {
         return reduceFinishedCounter.get() > collectedTaskIndex + 1 ? shard : -1;
+    }
+
+    private int getRunFrameHi(int run) {
+        return run + 1 < runFirstFrames.size() ? runFirstFrames.getQuick(run + 1) : frameCount;
+    }
+
+    private int getRunIndex(int frameIndex) {
+        if (runFirstFrames.size() == frameCount) {
+            return frameIndex;
+        }
+        final int index = runFirstFrames.binarySearchUniqueList(frameIndex);
+        return index >= 0 ? index : -index - 2;
     }
 
     private void reduceLocally(boolean countOnly) {

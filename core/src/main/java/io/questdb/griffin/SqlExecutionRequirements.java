@@ -25,8 +25,11 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.griffin.plan.logical.RequirementFact;
 import io.questdb.std.Chars;
+import io.questdb.std.IntList;
 import io.questdb.std.Mutable;
+import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
 
 public final class SqlExecutionRequirements implements Mutable {
@@ -35,7 +38,7 @@ public final class SqlExecutionRequirements implements Mutable {
      * of the caller allows: it returns only the objects the caller may see (see
      * {@link io.questdb.cairo.SecurityContext#isTableVisible(io.questdb.cairo.TableToken)}), or it
      * lists them to admins only. The SHOW statements that list objects or read their metadata count
-     * as such functions, see {@link FunctionParser#addStatementRequirements}.
+     * as such functions, see {@link FunctionResolver#addStatementRequirements}.
      * <p>
      * A materialized or live view refreshes detached from any caller, under a context that sees
      * every object, protected ones included. Every reader of the view reads what the refresh saw, and
@@ -50,26 +53,21 @@ public final class SqlExecutionRequirements implements Mutable {
     public static final int DISCLOSES_OBJECTS = 1 << 2;
     public static final int NONE = 0;
     /**
-     * The function, or SHOW statement, needs the Enterprise security context of the caller, which
-     * the refresh of a materialized or live view does not have, or it has side effects. Materialized
-     * and live views reject such a function or statement, at CREATE and at refresh alike. A SHOW
-     * statement gets the requirement from {@link SqlParserCallback#getShowExecutionRequirements}.
-     * Ordinary views also reject them in PIVOT IN subqueries, which execute while the detached view
-     * compiler derives metadata; the rest of an ordinary view's SELECT still runs as its caller. A
-     * sub-query nested in such a subquery runs only if the subquery's plan keeps it, so a table
-     * function or SHOW statement there counts only then, e.g. not in a column that nothing reads.
+     * The function needs the Enterprise security context of the caller, which the refresh of a
+     * materialized or live view does not have, or it has side effects. Materialized and live views
+     * reject such a function, at CREATE and at refresh alike.
      */
     public static final int REQUIRES_ENTERPRISE_SECURITY_CONTEXT = 1 << 1;
     public static final int REQUIRES_LIVE_WAL_PROGRESS = 1;
-    private String disclosingName;
-    private int disclosingPosition = -1;
-    private String disclosingViewName;
-    private String enterpriseSecurityContextName;
-    private int enterpriseSecurityContextPosition = -1;
-    private int flags;
-    private boolean isDisclosingStatement;
-    private boolean isDisclosingViewAlterable;
-    private boolean isEnterpriseSecurityContextStatement;
+    private static final int IS_SOURCE = 1 << 29;
+    private static final int IS_STATEMENT = 1 << 30;
+    private static final int IS_VIEW_ALTERABLE = 1 << 28;
+    private static final int STORED_VIEW_REQUIREMENTS = DISCLOSES_OBJECTS | REQUIRES_ENTERPRISE_SECURITY_CONTEXT;
+    // the requirements of each deferred function or SHOW statement, with the IS_* facts about it
+    private final IntList deferred = new IntList();
+    private final ObjList<String> deferredNames = new ObjList<>();
+    private final IntList deferredPositions = new IntList();
+    private final ObjList<String> deferredViewNames = new ObjList<>();
     private int liveWalProgressPosition = -1;
 
     /**
@@ -95,142 +93,148 @@ public final class SqlExecutionRequirements implements Mutable {
             @Nullable SqlExecutionContext.TableFunctionView view,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        checkStoredView0(requirements, position, name, isStatement, viewNameOf(view), isAlterable(view), executionContext);
+        checkStoredView(requirements, position, name, isStatement, viewNameOf(view), isAlterable(view), executionContext);
     }
 
     /**
-     * Throws when a PIVOT IN subquery that derives an ordinary view's metadata may not use a function, or a
-     * SHOW statement, with the given requirements: one that needs the Enterprise security context of the
-     * caller, see {@link #REQUIRES_ENTERPRISE_SECURITY_CONTEXT}. The view compiler runs that subquery
-     * again, detached from any caller, whenever it recompiles the view. Other requirements pass.
+     * Throws when a PIVOT IN subquery that derives an ordinary view's metadata may not use the function, or the
+     * SHOW statement, the fact records: one that needs the Enterprise security context of the caller, see
+     * {@link #REQUIRES_ENTERPRISE_SECURITY_CONTEXT}. The view compiler runs that subquery again, detached from
+     * any caller, whenever it recompiles the view. No fact, or a fact of another requirement, passes. Binding
+     * checks the calls and SHOW statements of the subquery itself as it admits them, see
+     * {@link FunctionResolver}. A sub-query nested in that subquery runs only the calls, table functions and
+     * SHOW statements its generated plan keeps, so code generation checks those where it adopts, builds or takes
+     * them, see {@link FunctionInstantiator} and {@link TableFunctionSources}.
      *
-     * @param requirements the requirements of the function or statement
-     * @param position     where the requirements surface in the compiled SQL
-     * @param name         the name of the function, or the SHOW statement
-     * @param isStatement  whether name is a SHOW statement rather than a function
+     * @param fact the call or statement, or null
      * @throws SqlException when the subquery may not use the function or statement
      */
-    public static void checkViewMetadataSubquery(
-            int requirements,
-            int position,
-            CharSequence name,
-            boolean isStatement
-    ) throws SqlException {
-        if ((requirements & REQUIRES_ENTERPRISE_SECURITY_CONTEXT) != 0) {
-            throw SqlException.functionNotAllowed(position)
-                    .put(isStatement ? "administrative statement" : "administrative function")
-                    .put(" cannot be used in view PIVOT IN subquery: ")
-                    .put(name);
+    public static void checkViewMetadataSubquery(@Nullable RequirementFact fact) throws SqlException {
+        if (fact != null && fact.isAdministrative()) {
+            throw administrativeCallRejected(fact.getPosition(), fact.isStatement()).put("view PIVOT IN subquery: ").put(fact.getName());
         }
     }
 
-    /**
-     * Records the requirements of a function, or a SHOW statement, for checks that run after the
-     * compile created it, e.g. CREATE MATERIALIZED VIEW checks what the optimiser created, see
-     * {@link #checkStoredView(SqlExecutionContext)}.
-     *
-     * @param view the view that the function or statement is written in, or null when the compiled
-     *             SQL itself writes it; a system view counts as the compiled SQL
-     */
-    public void add(
-            int requirements,
-            int position,
-            CharSequence name,
-            boolean isStatement,
-            @Nullable SqlExecutionContext.TableFunctionView view
-    ) {
-        flags |= requirements;
-        if ((requirements & REQUIRES_ENTERPRISE_SECURITY_CONTEXT) != 0 && enterpriseSecurityContextPosition < 0) {
-            enterpriseSecurityContextName = Chars.toString(name);
-            enterpriseSecurityContextPosition = position;
-            isEnterpriseSecurityContextStatement = isStatement;
-        }
-        // one that comes from a view users may alter replaces any other: such a view rejects it outright
-        if ((requirements & DISCLOSES_OBJECTS) != 0) {
-            final boolean isViewAlterable = isAlterable(view);
-            if (disclosingPosition < 0 || (!isDisclosingViewAlterable && isViewAlterable)) {
-                disclosingName = Chars.toString(name);
-                disclosingPosition = position;
-                disclosingViewName = viewNameOf(view);
-                isDisclosingStatement = isStatement;
-                isDisclosingViewAlterable = isViewAlterable;
-            }
-        }
+    public void add(int requirements, int position) {
         if ((requirements & REQUIRES_LIVE_WAL_PROGRESS) != 0 && liveWalProgressPosition < 0) {
             liveWalProgressPosition = position;
         }
     }
 
     /**
-     * Like {@link #checkStoredView(int, int, CharSequence, boolean, SqlExecutionContext.TableFunctionView, SqlExecutionContext)},
-     * for the functions and SHOW statements recorded so far.
+     * Decides the functions and SHOW statements {@link #defer} recorded while CREATE MATERIALIZED VIEW bound its SQL,
+     * in the order the materialized view rejects them: of the table functions and SHOW statements, an administrative
+     * one first, then a catalogue one from a view users may alter, then any other catalogue one; then the first
+     * other function the view may not store, in the order binding created them, unless binding created a
+     * non-deterministic function before it, which the materialized view rejects instead.
+     *
+     * @param nonDeterministicCallIndex the number of functions and SHOW statements recorded before binding created
+     *                                  its first non-deterministic function, or -1 when it created none
+     * @param nonDeterministicCall      the fact of that non-deterministic function, or null when binding created none
+     * @throws SqlException when the materialized view may not store the result of a recorded function or statement
      */
-    public void checkStoredView(SqlExecutionContext executionContext) throws SqlException {
-        if (enterpriseSecurityContextPosition > -1) {
-            checkStoredView0(
-                    REQUIRES_ENTERPRISE_SECURITY_CONTEXT,
-                    enterpriseSecurityContextPosition,
-                    enterpriseSecurityContextName,
-                    isEnterpriseSecurityContextStatement,
-                    null,
-                    false,
-                    executionContext
-            );
+    public void checkDeferred(
+            int nonDeterministicCallIndex,
+            @Nullable RequirementFact nonDeterministicCall,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        int alterableSource = -1;
+        int catalogueSource = -1;
+        for (int i = 0, n = deferred.size(); i < n; i++) {
+            final int requirements = deferred.getQuick(i);
+            if ((requirements & IS_SOURCE) != 0) {
+                if ((requirements & REQUIRES_ENTERPRISE_SECURITY_CONTEXT) != 0) {
+                    checkDeferredAt(i, executionContext);
+                }
+                if (catalogueSource < 0) {
+                    catalogueSource = i;
+                }
+                if (alterableSource < 0 && (requirements & IS_VIEW_ALTERABLE) != 0) {
+                    alterableSource = i;
+                }
+            }
         }
-        if (disclosingPosition > -1) {
-            checkStoredView0(
-                    DISCLOSES_OBJECTS,
-                    disclosingPosition,
-                    disclosingName,
-                    isDisclosingStatement,
-                    disclosingViewName,
-                    isDisclosingViewAlterable,
-                    executionContext
-            );
+        if (catalogueSource > -1) {
+            checkDeferredAt(alterableSource > -1 ? alterableSource : catalogueSource, executionContext);
         }
-    }
-
-    /**
-     * Like {@link #checkViewMetadataSubquery(int, int, CharSequence, boolean)}, for the functions and SHOW
-     * statements recorded so far.
-     */
-    public void checkViewMetadataSubquery() throws SqlException {
-        if (enterpriseSecurityContextPosition > -1) {
-            checkViewMetadataSubquery(
-                    REQUIRES_ENTERPRISE_SECURITY_CONTEXT,
-                    enterpriseSecurityContextPosition,
-                    enterpriseSecurityContextName,
-                    isEnterpriseSecurityContextStatement
-            );
+        for (int i = 0, n = deferred.size(); i < n; i++) {
+            if ((deferred.getQuick(i) & IS_SOURCE) == 0) {
+                try {
+                    checkDeferredAt(i, executionContext);
+                } catch (SqlException e) {
+                    if (nonDeterministicCall != null && nonDeterministicCallIndex <= i) {
+                        throw SqlException.nonDeterministicColumn(nonDeterministicCall.getPosition(), nonDeterministicCall.getName(),
+                                objectKind(executionContext));
+                    }
+                    throw e;
+                }
+            }
         }
     }
 
     @Override
     public void clear() {
-        disclosingName = null;
-        disclosingPosition = -1;
-        disclosingViewName = null;
-        enterpriseSecurityContextName = null;
-        enterpriseSecurityContextPosition = -1;
-        flags = NONE;
-        isDisclosingStatement = false;
-        isDisclosingViewAlterable = false;
-        isEnterpriseSecurityContextStatement = false;
+        deferred.clear();
+        deferredNames.clear();
+        deferredPositions.clear();
+        deferredViewNames.clear();
         liveWalProgressPosition = -1;
     }
 
-    public int getPosition(int requirement) {
-        if (requirement == REQUIRES_ENTERPRISE_SECURITY_CONTEXT
-                && (flags & REQUIRES_ENTERPRISE_SECURITY_CONTEXT) != 0) {
-            return enterpriseSecurityContextPosition;
+    /**
+     * Records a function, or a SHOW statement, the materialized view may not store, for
+     * {@link #checkDeferred} to decide once binding finished.
+     *
+     * @param view the view that the function or statement is written in, or null when the compiled
+     *             SQL itself writes it; a system view counts as the compiled SQL
+     */
+    public void defer(
+            int requirements,
+            int position,
+            CharSequence name,
+            boolean isStatement,
+            @Nullable SqlExecutionContext.TableFunctionView view
+    ) {
+        if ((requirements & STORED_VIEW_REQUIREMENTS) == 0) {
+            return;
         }
-        if (requirement == REQUIRES_LIVE_WAL_PROGRESS && (flags & REQUIRES_LIVE_WAL_PROGRESS) != 0) {
-            return liveWalProgressPosition;
-        }
-        return -1;
+        deferred.add((requirements & STORED_VIEW_REQUIREMENTS) | (isStatement ? IS_STATEMENT | IS_SOURCE : 0) | (isAlterable(view) ? IS_VIEW_ALTERABLE : 0));
+        deferredNames.add(Chars.toString(name));
+        deferredPositions.add(position);
+        deferredViewNames.add(viewNameOf(view));
     }
 
-    private static void checkStoredView0(
+    /**
+     * The number of functions and SHOW statements deferred so far, to pass to {@link #markSources(int)}.
+     */
+    public int getDeferredCount() {
+        return deferred.size();
+    }
+
+    /**
+     * The position of the first function that requires {@link #REQUIRES_LIVE_WAL_PROGRESS}, or -1.
+     */
+    public int getLiveWalProgressPosition() {
+        return liveWalProgressPosition;
+    }
+
+    /**
+     * Marks the functions and SHOW statements deferred since {@code deferredCount} as parts of a table function or a
+     * SHOW statement, which the materialized view decides before any other function.
+     */
+    public void markSources(int deferredCount) {
+        for (int i = deferredCount, n = deferred.size(); i < n; i++) {
+            deferred.setQuick(i, deferred.getQuick(i) | IS_SOURCE);
+        }
+    }
+
+    private static SqlException administrativeCallRejected(int position, boolean isStatement) {
+        return SqlException.functionNotAllowed(position)
+                .put(isStatement ? "administrative statement" : "administrative function")
+                .put(" cannot be used in ");
+    }
+
+    private static void checkStoredView(
             int requirements,
             int position,
             CharSequence name,
@@ -239,14 +243,9 @@ public final class SqlExecutionRequirements implements Mutable {
             boolean isViewAlterable,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        final CharSequence objectKind = executionContext.isLiveViewCompile() ? "live view" : "materialized view";
+        final CharSequence objectKind = objectKind(executionContext);
         if ((requirements & REQUIRES_ENTERPRISE_SECURITY_CONTEXT) != 0) {
-            throw SqlException.functionNotAllowed(position)
-                    .put(isStatement ? "administrative statement" : "administrative function")
-                    .put(" cannot be used in ")
-                    .put(objectKind)
-                    .put(": ")
-                    .put(name);
+            throw administrativeCallRejected(position, isStatement).put(objectKind).put(": ").put(name);
         }
         if ((requirements & DISCLOSES_OBJECTS) == 0) {
             return;
@@ -295,7 +294,18 @@ public final class SqlExecutionRequirements implements Mutable {
         return view != null && !view.definition().getViewToken().isSystem();
     }
 
+    private static CharSequence objectKind(SqlExecutionContext executionContext) {
+        return executionContext.isLiveViewCompile() ? "live view" : "materialized view";
+    }
+
     private static @Nullable String viewNameOf(@Nullable SqlExecutionContext.TableFunctionView view) {
         return view != null ? view.definition().getViewToken().getTableName() : null;
+    }
+
+    private void checkDeferredAt(int index, SqlExecutionContext executionContext) throws SqlException {
+        final int requirements = deferred.getQuick(index);
+        checkStoredView(requirements, deferredPositions.getQuick(index), deferredNames.getQuick(index),
+                (requirements & IS_STATEMENT) != 0, deferredViewNames.getQuick(index), (requirements & IS_VIEW_ALTERABLE) != 0,
+                executionContext);
     }
 }

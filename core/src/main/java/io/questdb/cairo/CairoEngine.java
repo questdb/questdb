@@ -125,6 +125,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.FunctionFactoryCacheBuilder;
 import io.questdb.griffin.FunctionParser;
+import io.questdb.griffin.LegacyPlanner;
 import io.questdb.griffin.QueryRegistry;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlCompilerFactory;
@@ -378,6 +379,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private volatile @NotNull DurableAckRegistry durableAckRegistry;
     private FrameFactory frameFactory;
     private volatile boolean isCompleteInitDone;
+    private volatile LegacyPlanner legacyPlanner;
     private boolean isSqlExecutionCooperativePollingEnabled;
     private @NotNull LiveViewStateStore liveViewStateStore = NoOpLiveViewStateStore.INSTANCE;
     // Governs the adaptive durable epoch on the apply side (ApplyWal2TableJob.maybeAdvanceDurableEpoch).
@@ -533,7 +535,16 @@ public class CairoEngine implements Closeable, WriterSource {
                 insert(cq, sqlExecutionContext);
                 break;
             case SELECT:
+            case EXPLAIN:
+                freeCompiledQuery(cq);
                 throw SqlException.$(0, "use select()");
+            case PSEUDO_SELECT:
+                try (OperationFuture future = cq.execute(eventSubSeq)) {
+                    future.await();
+                } finally {
+                    freeCompiledQuery(cq);
+                }
+                break;
             default:
                 try (OperationFuture future = cq.execute(eventSubSeq)) {
                     future.await();
@@ -1435,6 +1446,8 @@ public class CairoEngine implements Closeable, WriterSource {
             failure = Misc.freeBestEffort(failure, liveViewRegistry);
             failure = Misc.freeBestEffort(failure, liveViewStateStore);
             failure = Misc.freeBestEffort(failure, sqlCompilerPool);
+            // after the compilers, which return the legacy compilers they lease
+            failure = Misc.freeBestEffort(failure, legacyPlanner);
             failure = Misc.freeBestEffort(failure, writerPool);
             failure = Misc.freeBestEffort(failure, readerPool);
             failure = Misc.freeBestEffort(failure, sequencerMetadataPool);
@@ -1590,7 +1603,7 @@ public class CairoEngine implements Closeable, WriterSource {
         }
 
         // compile the SELECT to validate and get metadata. The live-view-compile flag
-        // suppresses indexed-symbol key extraction in WhereClauseParser so the planner
+        // suppresses indexed-symbol key extraction so the planner
         // emits a plain FilteredRecordCursorFactory shape that the incremental refresh
         // path can handle.
         GenericRecordMetadata metadata;
@@ -1616,9 +1629,9 @@ public class CairoEngine implements Closeable, WriterSource {
             outputSymbolCacheFlags.clear();
             try (SqlCompiler compiler = getSqlCompiler()) {
                 // Arm the shared non-determinism guard for the LV body, mirroring the
-                // mat-view compile (SqlCompilerImpl.compileCreateMatView). With it armed,
-                // FunctionParser rejects now()/sysdate()/systimestamp()/rnd_*/etc. anywhere
-                // in the SELECT - projection, WHERE filter, and window-function arguments -
+                // mat-view compile (SqlCompilerImpl.compileCreateSelect). With it armed,
+                // NonDeterministicCalls rejects now()/sysdate()/systimestamp()/rnd_*/etc. that
+                // the optimised SELECT keeps - projection, WHERE filter, and window-function arguments -
                 // so the view can never produce non-reproducible results that diverge on a
                 // re-refresh, O3 replay, or checkpoint restore. The ANCHOR EXPRESSION is
                 // covered separately by validateAnchorPurity below.
@@ -2395,6 +2408,13 @@ public class CairoEngine implements Closeable, WriterSource {
         return frameFactory;
     }
 
+    /**
+     * Creates the function factories the engine's {@link FunctionFactoryCache} holds, for a cache of their own.
+     */
+    public Iterable<FunctionFactory> getFunctionFactories() {
+        return new FunctionFactoryCacheBuilder().scan(LOG).build();
+    }
+
     public FunctionFactoryCache getFunctionFactoryCache() {
         return ffCache;
     }
@@ -2416,6 +2436,24 @@ public class CairoEngine implements Closeable, WriterSource {
             return getTableMetadata(tableToken, desiredVersion);
         }
         return getSequencerMetadata(tableToken, desiredVersion);
+    }
+
+    /**
+     * The planner {@link io.questdb.griffin.SqlCompilerImpl} falls back to while
+     * {@link CairoConfiguration#isSqlLegacyPlannerEnabled()} holds, created on first use.
+     */
+    public LegacyPlanner getLegacyPlanner() {
+        LegacyPlanner planner = legacyPlanner;
+        if (planner == null) {
+            synchronized (this) {
+                planner = legacyPlanner;
+                if (planner == null) {
+                    planner = getSqlCompilerFactory().newLegacyPlanner(this);
+                    legacyPlanner = planner;
+                }
+            }
+        }
+        return planner;
     }
 
     public LiveViewRegistry getLiveViewRegistry() {
@@ -2768,12 +2806,6 @@ public class CairoEngine implements Closeable, WriterSource {
             return null;
         }
         return token;
-    }
-
-    public TableToken getTableTokenIfExists(CharSequence tableName, int lo, int hi) {
-        final StringSink sink = Misc.getThreadLocalSink();
-        sink.put(tableName, lo, hi);
-        return getTableTokenIfExists(sink);
     }
 
     public void getTableTokens(ObjHashSet<TableToken> bucket, boolean includeDropped) {
@@ -3768,6 +3800,12 @@ public class CairoEngine implements Closeable, WriterSource {
         return useful;
     }
 
+    public boolean releaseInactiveCompilers() {
+        // completeInit() builds the compiler pool, and maintenance can start before it runs
+        final SqlCompilerPool compilerPool = sqlCompilerPool;
+        return compilerPool != null && compilerPool.releaseInactive();
+    }
+
     @TestOnly
     public void releaseInactiveTableSequencers() {
         walWriterPool.releaseInactive();
@@ -4215,11 +4253,20 @@ public class CairoEngine implements Closeable, WriterSource {
                                 return future.getAffectedRowsCount();
                             }
                         case INSERT:
+                        case INSERT_AS_SELECT:
+                            freeCompiledQuery(cc);
                             throw SqlException.$(0, "use insert()");
                         case DROP:
+                            freeCompiledQuery(cc);
                             throw SqlException.$(0, "use drop()");
                         case SELECT:
+                        case EXPLAIN:
+                        case PSEUDO_SELECT:
+                            freeCompiledQuery(cc);
                             throw SqlException.$(0, "use select()");
+                        default:
+                            freeCompiledQuery(cc);
+                            throw SqlException.$(0, "use execute()");
                     }
                 } catch (TableReferenceOutOfDateException ex) {
                     // retry, e.g. continue
@@ -4309,6 +4356,12 @@ public class CairoEngine implements Closeable, WriterSource {
         return reader;
     }
 
+    private static void freeCompiledQuery(CompiledQuery cq) {
+        cq.closeAllButSelect();
+        Misc.free(cq.getOperation());
+        Misc.free(cq.getRecordCursorFactory());
+    }
+
     private static void insert(
             CompiledQuery cq,
             SqlExecutionContext sqlExecutionContext
@@ -4325,10 +4378,13 @@ public class CairoEngine implements Closeable, WriterSource {
                 }
                 break;
             case SELECT:
+                freeCompiledQuery(cq);
                 throw SqlException.$(0, "use select()");
             case DROP:
+                freeCompiledQuery(cq);
                 throw SqlException.$(0, "use drop()");
             default:
+                freeCompiledQuery(cq);
                 throw SqlException.$(0, "use ddl()");
         }
     }
@@ -4457,7 +4513,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
         final PageFrameRecordCursorFactory pfrcf = plan.getPageFrameFactory();
         if (pfrcf.hasFilter() || pfrcf.usesIndex()) {
-            // Defensive: WhereClauseParser is supposed to have suppressed indexed-symbol key
+            // Defensive: the planner is supposed to have suppressed indexed-symbol key
             // extraction for live view compiles, so the planner shouldn't produce an indexed
             // row cursor factory here. If it ever does, the intrinsic predicate lives in the
             // row cursor, invisible to the incremental refresh path (which applies only the
@@ -5919,10 +5975,6 @@ public class CairoEngine implements Closeable, WriterSource {
      */
     protected @Nullable CharSequence getEnterpriseVersion() {
         return null;
-    }
-
-    protected Iterable<FunctionFactory> getFunctionFactories() {
-        return new FunctionFactoryCacheBuilder().scan(LOG).build();
     }
 
     /**

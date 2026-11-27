@@ -73,13 +73,13 @@ public abstract class AbstractSetRecordCursorFactory extends AbstractRecordCurso
     }
 
     @Override
-    public boolean isRewindRecomputing() {
-        return factoryA.isRewindRecomputing() || (!isSecondFactoryHashed() && factoryB.isRewindRecomputing());
+    public boolean isLegacyStableWithinExecution() {
+        return factoryA.isLegacyStableWithinExecution() && factoryB.isLegacyStableWithinExecution();
     }
 
     @Override
-    public boolean isStableWithinExecution() {
-        return factoryA.isStableWithinExecution() && factoryB.isStableWithinExecution();
+    public boolean isRewindRecomputing() {
+        return factoryA.isRewindRecomputing() || (!isSecondFactoryHashed() && factoryB.isRewindRecomputing());
     }
 
     // A set operation reads externally if either input does. getBaseFactory() cannot express this

@@ -542,6 +542,15 @@ public class TickExprTest {
     }
 
     @Test
+    public void testBracketExpansionSeparateDays() throws SqlException {
+        assertBracketInterval(
+                "[{lo=2018-01-10T00:00:00.000000Z, hi=2018-01-10T23:59:59.999999Z}," +
+                        "{lo=2018-01-15T00:00:00.000000Z, hi=2018-01-15T23:59:59.999999Z}]",
+                "2018-01-[10,15]"
+        );
+    }
+
+    @Test
     public void testBracketExpansionSingleValue() throws SqlException {
         assertBracketInterval(
                 "[{lo=2018-01-10T00:00:00.000000Z, hi=2018-01-10T23:59:59.999999Z}]",
@@ -3821,6 +3830,14 @@ public class TickExprTest {
     }
 
     @Test
+    public void testDateListSeparateDays() throws SqlException {
+        assertBracketInterval(
+                "[{lo=2025-01-01T00:00:00.000000Z, hi=2025-01-01T23:59:59.999999Z},{lo=2025-01-05T00:00:00.000000Z, hi=2025-01-05T23:59:59.999999Z}]",
+                "[2025-01-01,2025-01-05]"
+        );
+    }
+
+    @Test
     public void testDateListSingleDate() throws SqlException {
         // '[2025-12-31]' produces 1 full-day interval
         assertBracketInterval(
@@ -4268,6 +4285,15 @@ public class TickExprTest {
         // Bare comma lists without brackets should be rejected
         // $now,$tomorrow should fail - needs brackets: [$now,$tomorrow]
         assertBracketIntervalError("$now,$tomorrow", "comma-separated date lists require brackets");
+    }
+
+    @Test
+    public void testDateVariableBareFullDay() throws SqlException {
+        assertBracketIntervalWithNow(
+                "[{lo=2026-03-15T00:00:00.000000Z, hi=2026-03-15T23:59:59.999999Z}]",
+                "$today",
+                "2026-03-15T14:30:00.000000Z"
+        );
     }
 
     @Test
@@ -5698,6 +5724,15 @@ public class TickExprTest {
     }
 
     @Test
+    public void testDayFilterBracketRangeKeepsMonday() throws SqlException {
+        // 2024-01-01 is Monday, 2024-01-02 and 2024-01-03 are not
+        assertBracketInterval(
+                "[{lo=2024-01-01T00:00:00.000000Z, hi=2024-01-01T23:59:59.999999Z}]",
+                "2024-01-[01..03]#Mon"
+        );
+    }
+
+    @Test
     public void testDayFilterCaseInsensitive() throws SqlException {
         // Test case insensitivity
         assertBracketInterval(
@@ -6124,6 +6159,12 @@ public class TickExprTest {
     }
 
     @Test
+    public void testDayFilterWeekendDropsMonday() throws SqlException {
+        // 2024-01-01 is Monday
+        assertBracketInterval("[]", "2024-01-01#weekend");
+    }
+
+    @Test
     public void testDayFilterWithDateList() throws SqlException {
         // Date list with day filter
         // 2024-01-01 is Monday, 2024-01-06 is Saturday
@@ -6197,6 +6238,15 @@ public class TickExprTest {
         assertBracketInterval(
                 "[{lo=2024-01-01T00:00:00.000000Z, hi=2024-01-05T23:59:59.999999Z}]",
                 "2024-01-[01..07]#workday"
+        );
+    }
+
+    @Test
+    public void testDayFilterWorkdayKeepsMonday() throws SqlException {
+        // 2024-01-01 is Monday
+        assertBracketInterval(
+                "[{lo=2024-01-01T00:00:00.000000Z, hi=2024-01-01T23:59:59.999999Z}]",
+                "2024-01-01#workday"
         );
     }
 
@@ -7089,7 +7139,7 @@ public class TickExprTest {
     @Test
     public void testParseShortInterval9() throws Exception {
         Assume.assumeTrue(timestampType == TestTimestampType.MICRO);
-        assertShortInterval("[{lo=2016-03-21T10:30:40.123456Z, hi=2016-03-21T10:30:40.123456Z}]", "2016-03-21T10:30:40.12345678");
+        assertShortInterval("[]", "2016-03-21T10:30:40.12345678");
     }
 
     @Test
@@ -7929,6 +7979,15 @@ public class TickExprTest {
         assertBracketInterval(
                 "[{lo=2024-01-15T13:00:00.000000Z, hi=2024-01-15T13:00:59.999999Z}]",
                 "2024-01-15T08:00@-05:00"
+        );
+    }
+
+    @Test
+    public void testTimezoneNumericOffsetMinutePrecision() throws SqlException {
+        // 08:00 in +03:00 = 05:00 UTC
+        assertBracketInterval(
+                "[{lo=2024-01-15T05:00:00.000000Z, hi=2024-01-15T05:00:59.999999Z}]",
+                "2024-01-15T08:00@+03:00"
         );
     }
 

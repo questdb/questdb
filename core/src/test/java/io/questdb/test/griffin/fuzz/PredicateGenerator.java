@@ -61,9 +61,15 @@ import io.questdb.test.griffin.fuzz.types.SymbolType;
  * so a BOOLEAN operand it builds is only ever a column, a constant or a cast.
  * {@link #appendNestedComparisonPredicate} names the defect the shape stands
  * for.
+ * <p>
+ * A temporal column also meets interval text, {@code ts IN '2024-01-02'}, which
+ * the typed grammar cannot spell either: its temporal constants are casts, and
+ * an IN over a cast compares points. {@link #appendIntervalInPredicate} emits it.
  */
 public final class PredicateGenerator {
     private static final String[] COMPARISON_OPS = {"=", "!=", "<", "<=", ">", ">="};
+    private static final String[] DAY_FILTERS = {"#workday", "#weekend", "#Mon", "#Sat"};
+    private static final String[] DURATION_UNITS = {"s", "m", "h", "d"};
     private static final String[] EQUALITY_OPS = {"=", "!="};
     // Numbers spelled without quotes, for comparison against a SYMBOL or CHAR
     // column. The parser splits a negative one into a unary minus over a bare
@@ -133,6 +139,18 @@ public final class PredicateGenerator {
         return column.getType() == SymbolType.INSTANCE || column.getType() == CharType.INSTANCE;
     }
 
+    private static void appendDay(StringSink sink, int month, int day) {
+        sink.put("2024-0").put(month).put('-');
+        appendTwoDigits(sink, day);
+    }
+
+    private static void appendTwoDigits(StringSink sink, int value) {
+        if (value < 10) {
+            sink.put('0');
+        }
+        sink.put(value);
+    }
+
     /**
      * Emits one BOOLEAN operand of the outer comparison in
      * {@link #appendNestedComparisonPredicate}: either the bare {@code true} /
@@ -182,6 +200,97 @@ public final class PredicateGenerator {
         sink.put(')');
     }
 
+    /**
+     * Emits an interval IN over a temporal column, the column itself or its TIMESTAMP_NS or DATE cast, with or
+     * without NOT: one interval text, bare or in parentheses, a bind variable holding the text, NULL, or a list of
+     * two or three quoted points. The texts span the tick expression forms over the months the fuzz tables hold,
+     * so the differential runs compare the JIT, the Java filter and the interval scan of the designated timestamp
+     * over the intervals the binder parses once.
+     */
+    private void appendIntervalInPredicate(StringSink sink, FuzzColumn anchor, String qualifier, BindContext ctx) {
+        new ColumnRefExpr(rnd, anchor, qualifier).appendSql(sink, ctx);
+        switch (rnd.nextInt(5)) {
+            case 0 -> sink.put("::TIMESTAMP_NS");
+            case 1 -> sink.put("::DATE");
+            default -> {
+            }
+        }
+        sink.put(rnd.nextInt(3) == 0 ? " NOT IN " : " IN ");
+        switch (rnd.nextInt(8)) {
+            case 0 -> sink.put(rnd.nextBoolean() ? "NULL" : "(NULL)");
+            case 1, 2 -> {
+                sink.put('(');
+                for (int i = 0, n = 2 + rnd.nextInt(2); i < n; i++) {
+                    if (i > 0) {
+                        sink.put(", ");
+                    }
+                    sink.put('\'');
+                    appendPointLiteral(sink);
+                    sink.put('\'');
+                }
+                sink.put(')');
+            }
+            case 3 -> {
+                sink.put("('");
+                appendIntervalText(sink);
+                sink.put("')");
+            }
+            default -> {
+                if (ctx != null && ctx.shouldBind()) {
+                    final StringSink text = new StringSink();
+                    appendIntervalText(text);
+                    sink.put(':').put(ctx.addBinding(text.toString()));
+                } else {
+                    sink.put('\'');
+                    appendIntervalText(sink);
+                    sink.put('\'');
+                }
+            }
+        }
+    }
+
+    /**
+     * Appends a tick expression over January to March 2024: a date at year to microsecond precision, a duration,
+     * a repeating interval whose count sometimes passes the JIT's IN list threshold, a day-of-week filter, which
+     * can leave no instant, or a bracket expansion.
+     */
+    private void appendIntervalText(StringSink sink) {
+        final int month = 1 + rnd.nextInt(3);
+        final int day = 1 + rnd.nextInt(28);
+        switch (rnd.nextInt(8)) {
+            case 0 -> sink.put("2024");
+            case 1 -> sink.put("2024-0").put(month);
+            case 2 -> appendDay(sink, month, day);
+            case 3 -> appendPointLiteral(sink);
+            case 4 -> {
+                appendDay(sink, month, day);
+                appendTime(sink);
+                sink.put(';').put(1 + rnd.nextInt(30)).put(DURATION_UNITS[rnd.nextInt(DURATION_UNITS.length)]);
+            }
+            case 5 -> {
+                appendDay(sink, month, day);
+                appendTime(sink);
+                sink.put(';').put(1 + rnd.nextInt(59)).put("m;1d;").put(1 + rnd.nextInt(14));
+            }
+            case 6 -> {
+                if (rnd.nextBoolean()) {
+                    sink.put("2024-0").put(month);
+                } else {
+                    appendDay(sink, month, day);
+                }
+                sink.put(DAY_FILTERS[rnd.nextInt(DAY_FILTERS.length)]);
+            }
+            default -> {
+                sink.put("2024-0").put(month).put("-[");
+                final int from = 1 + rnd.nextInt(20);
+                appendTwoDigits(sink, from);
+                sink.put(rnd.nextBoolean() ? ".." : ",");
+                appendTwoDigits(sink, from + 1 + rnd.nextInt(8));
+                sink.put(']');
+            }
+        }
+    }
+
     private void appendLeafPredicate(
             StringSink sink,
             ObjList<FuzzColumn> columns,
@@ -200,7 +309,8 @@ public final class PredicateGenerator {
 
         int choice = rnd.nextInt(10);
         // 0-1: IS NULL / IS NOT NULL; 2: IN / NOT IN, unless the anchor is an
-        // ARRAY; 3-4: unquoted number, but only when the anchor is a SYMBOL or a
+        // ARRAY, and half the time an interval IN when the anchor is temporal;
+        // 3-4: unquoted number, but only when the anchor is a SYMBOL or a
         // CHAR; 5: a comparison nested as the operand of a comparison, unless the
         // anchor is an ARRAY; 6-9, plus every draw above whose guard turned it
         // down: a plain comparison, a boolean-alone predicate when the anchor is
@@ -208,6 +318,10 @@ public final class PredicateGenerator {
         if (choice < 2) {
             exprGen.generateOfKind(kind).appendSql(sink, ctx);
             sink.put(rnd.nextBoolean() ? " IS NULL" : " IS NOT NULL");
+            return;
+        }
+        if (choice == 2 && kind == ColumnKind.TEMPORAL && rnd.nextBoolean()) {
+            appendIntervalInPredicate(sink, anchor, qualifier, ctx);
             return;
         }
         if (choice == 2 && kind != ColumnKind.ARRAY) {
@@ -319,6 +433,29 @@ public final class PredicateGenerator {
         appendNestedComparison(sink, columns, exprGen, ctx);
     }
 
+    /**
+     * Appends an instant over January to March 2024, from a day to a microsecond in the precision.
+     */
+    private void appendPointLiteral(StringSink sink) {
+        appendDay(sink, 1 + rnd.nextInt(3), 1 + rnd.nextInt(28));
+        final int precision = rnd.nextInt(5);
+        if (precision > 0) {
+            sink.put('T');
+            appendTwoDigits(sink, rnd.nextInt(24));
+        }
+        if (precision > 1) {
+            sink.put(':');
+            appendTwoDigits(sink, rnd.nextInt(60));
+        }
+        if (precision > 2) {
+            sink.put(':');
+            appendTwoDigits(sink, rnd.nextInt(60));
+        }
+        if (precision > 3) {
+            sink.put(".000000Z");
+        }
+    }
+
     private void appendPredicate(
             StringSink sink,
             ObjList<FuzzColumn> columns,
@@ -344,6 +481,13 @@ public final class PredicateGenerator {
         sink.put(op);
         appendPredicate(sink, columns, exprGen, qualifier, ctx, depth + 1);
         sink.put(')');
+    }
+
+    private void appendTime(StringSink sink) {
+        sink.put('T');
+        appendTwoDigits(sink, rnd.nextInt(24));
+        sink.put(':');
+        appendTwoDigits(sink, rnd.nextInt(60));
     }
 
     /**

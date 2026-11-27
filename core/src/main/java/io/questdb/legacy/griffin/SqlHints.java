@@ -1,0 +1,152 @@
+/*+*****************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2026 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.legacy.griffin;
+
+import io.questdb.legacy.griffin.model.IQueryModel;
+import io.questdb.std.Chars;
+import io.questdb.std.LowerCaseCharSequenceObjHashMap;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+
+public final class SqlHints {
+    public static final String ASOF_DENSE_HINT = "asof_dense";
+    public static final String ASOF_INDEX_HINT = "asof_index";
+    public static final String ASOF_LINEAR_HINT = "asof_linear";
+    public static final String ASOF_MEMOIZED_DRIVEBY_HINT = "asof_memoized_driveby";
+    public static final String ASOF_MEMOIZED_HINT = "asof_memoized";
+    public static final String ENABLE_PRE_TOUCH_HINT = "enable_pre_touch";
+    public static final String FORCE_USE_COVERING_HINT = "force_use_covering";
+    public static final char HINTS_PARAMS_DELIMITER = ' ';
+    public static final String MARKOUT_HORIZON_HINT = "markout_horizon";
+    public static final String NO_COVERING_HINT = "no_covering";
+    public static final String NO_INDEX_HINT = "no_index";
+    public static final String NO_SYMBOL_PATTERN_INDEX_HINT = "no_symbol_pattern_index";
+
+    public static boolean hasAsOfDenseHint(
+            @NotNull IQueryModel queryModel,
+            @Nullable CharSequence tableNameA,
+            @Nullable CharSequence tableNameB
+    ) {
+        return hasHintWithParams(queryModel, ASOF_DENSE_HINT, tableNameA, tableNameB);
+    }
+
+    public static boolean hasAsOfIndexHint(
+            @NotNull IQueryModel queryModel,
+            @Nullable CharSequence tableNameA,
+            @Nullable CharSequence tableNameB
+    ) {
+        return hasHintWithParams(queryModel, ASOF_INDEX_HINT, tableNameA, tableNameB);
+    }
+
+    public static boolean hasAsOfLinearHint(
+            @NotNull IQueryModel queryModel,
+            @Nullable CharSequence tableNameA,
+            @Nullable CharSequence tableNameB
+    ) {
+        return hasHintWithParams(queryModel, ASOF_LINEAR_HINT, tableNameA, tableNameB);
+    }
+
+    public static boolean hasAsOfMemoizedDrivebyHint(
+            @NotNull IQueryModel queryModel,
+            @Nullable CharSequence tableNameA,
+            @Nullable CharSequence tableNameB
+    ) {
+        return hasHintWithParams(queryModel, ASOF_MEMOIZED_DRIVEBY_HINT, tableNameA, tableNameB);
+    }
+
+    public static boolean hasAsOfMemoizedHint(
+            @NotNull IQueryModel queryModel,
+            @Nullable CharSequence tableNameA,
+            @Nullable CharSequence tableNameB
+    ) {
+        return hasHintWithParams(queryModel, ASOF_MEMOIZED_HINT, tableNameA, tableNameB);
+    }
+
+    // checks enable column pre-touch hint for parallel filters
+    public static boolean hasEnablePreTouchHint(
+            @NotNull IQueryModel queryModel,
+            @Nullable CharSequence tableName
+    ) {
+        LowerCaseCharSequenceObjHashMap<CharSequence> hints = queryModel.getHints();
+        CharSequence params = hints.get(ENABLE_PRE_TOUCH_HINT);
+        return Chars.containsWordIgnoreCase(params, tableName, HINTS_PARAMS_DELIMITER);
+    }
+
+    /**
+     * Whether the query promises that the indexed column carries no column top on any partition
+     * it will read, so a covering scan can answer the NULL key too and the factory needs no
+     * backup plan.
+     * <p>
+     * Without it, any key that MIGHT be NULL -- a literal {@code null}, or a bind variable whose
+     * value is not known until it is bound -- gets a backup, and a covering factory that carries
+     * one reports no page-frame cursor, so the query loses parallel filter and vectorized GROUP
+     * BY. On a table whose indexed column has existed since its first partition there is nothing
+     * to defer to and that cost buys nothing. This hint is how a query says so.
+     * <p>
+     * Whether a column top exists is runtime state -- {@code _cv} changes without a
+     * metadata-version bump that would invalidate a cached plan -- which is why the planner
+     * cannot check the promise itself and takes the query's word for it here.
+     * <p>
+     * The promise is checked, not trusted: an open whose key does resolve to NULL over a table
+     * that does carry a column top throws rather than answer from a sidecar that holds no value
+     * for those rows. See {@code CoveringIndexRecordCursorFactory.checkHintPromise}.
+     */
+    public static boolean hasForceUseCoveringHint(@NotNull IQueryModel queryModel) {
+        return queryModel.getHints().keyIndex(FORCE_USE_COVERING_HINT) < 0;
+    }
+
+    public static boolean hasMarkoutHorizonHint(
+            @NotNull IQueryModel queryModel,
+            @Nullable CharSequence tableNameA,
+            @Nullable CharSequence tableNameB
+    ) {
+        return hasHintWithParams(queryModel, MARKOUT_HORIZON_HINT, tableNameA, tableNameB);
+    }
+
+    public static boolean hasNoCoveringHint(@NotNull IQueryModel queryModel) {
+        LowerCaseCharSequenceObjHashMap<CharSequence> hints = queryModel.getHints();
+        return hints.keyIndex(NO_COVERING_HINT) < 0 || hints.keyIndex(NO_INDEX_HINT) < 0;
+    }
+
+    public static boolean hasNoIndexHint(@NotNull IQueryModel queryModel) {
+        return queryModel.getHints().keyIndex(NO_INDEX_HINT) < 0;
+    }
+
+    public static boolean hasNoSymbolPatternIndexHint(@NotNull IQueryModel queryModel) {
+        return queryModel.getHints().keyIndex(NO_SYMBOL_PATTERN_INDEX_HINT) < 0;
+    }
+
+    private static boolean hasHintWithParams(
+            @NotNull IQueryModel queryModel,
+            @NotNull CharSequence hintName,
+            @Nullable CharSequence tableNameA,
+            @Nullable CharSequence tableNameB
+    ) {
+        LowerCaseCharSequenceObjHashMap<CharSequence> hints = queryModel.getHints();
+        CharSequence params = hints.get(hintName);
+        return Chars.containsWordIgnoreCase(params, tableNameA, HINTS_PARAMS_DELIMITER) &&
+                Chars.containsWordIgnoreCase(params, tableNameB, HINTS_PARAMS_DELIMITER);
+    }
+}

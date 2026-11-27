@@ -53,9 +53,12 @@ public interface ConcurrentTimeFrameCursor extends TimeFrameCursor {
                 reader.getMetadata().getTimestampType(),
                 reader.getPartitionedBy()
         );
+        // The single partition of a table without a designated timestamp does not bound the
+        // timestamp a query designates, which may precede 1970 or be NULL.
+        final boolean hasDesignatedTimestamp = reader.getMetadata().getTimestampIndex() > -1;
         for (int i = 0; i < partitionCount; i++) {
             final long tsLo = reader.getPartitionTimestampByIndex(i);
-            partitionTimestamps.add(tsLo);
+            partitionTimestamps.add(hasDesignatedTimestamp ? tsLo : Long.MIN_VALUE);
             final long maxTsHi = i < partitionCount - 1 ? reader.getPartitionTimestampByIndex(i + 1) : Long.MAX_VALUE;
             partitionCeilings.add(TimeFrameCursorImpl.estimatePartitionHi(ceilMethod, tsLo, maxTsHi));
         }

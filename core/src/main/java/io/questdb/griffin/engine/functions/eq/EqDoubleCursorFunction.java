@@ -52,7 +52,7 @@ class EqDoubleCursorFunction extends AbstractScalarCursorFunction {
 
     @Override
     public boolean getBool(Record rec) {
-        return negated != Numbers.equals(leftFunc.getDouble(rec), value);
+        return isComplemented ? !isMatch(rec) : isMatch(rec);
     }
 
     @Override
@@ -78,5 +78,9 @@ class EqDoubleCursorFunction extends AbstractScalarCursorFunction {
     @Override
     protected void setNullValue() {
         value = Double.NaN;
+    }
+
+    private boolean isMatch(Record rec) {
+        return negated != Numbers.equals(leftFunc.getDouble(rec), value);
     }
 }

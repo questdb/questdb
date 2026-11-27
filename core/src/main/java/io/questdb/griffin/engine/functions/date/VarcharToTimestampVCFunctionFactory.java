@@ -45,6 +45,11 @@ public final class VarcharToTimestampVCFunctionFactory extends ToTimestampVCFunc
     private final static String NAME = "to_timestamp";
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.TIMESTAMP_MICRO;
+    }
+
+    @Override
     public String getSignature() {
         return "to_timestamp(Øs)";
     }

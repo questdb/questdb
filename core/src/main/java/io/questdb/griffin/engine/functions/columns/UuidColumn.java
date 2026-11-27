@@ -60,15 +60,6 @@ public final class UuidColumn extends UuidFunction implements ColumnFunction {
         return rec.getLong128Lo(columnIndex);
     }
 
-    @Override
-    public boolean isThreadSafe() {
-        // the UUID column is thread-safe
-
-        // it's only when casting to string (=common operation) then it's not thread-safe
-        // the CastUuidToStr function indicate it's not thread-safe
-        return true;
-    }
-
     static {
         COLUMNS.setPos(STATIC_COLUMN_COUNT);
         for (int i = 0; i < STATIC_COLUMN_COUNT; i++) {

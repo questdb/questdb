@@ -39,6 +39,7 @@ import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.griffin.engine.join.AsyncWindowJoinFastRecordCursorFactory;
 import io.questdb.jit.JitUtil;
 import io.questdb.std.Numbers;
+import io.questdb.std.Os;
 import io.questdb.std.Uuid;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.test.AbstractCairoTest;
@@ -845,14 +846,12 @@ public class CompiledFilterTest extends AbstractCairoTest {
             assertFilterWithAndWithoutJit("NOT ts" + empty + " OR k = 2", allDayKeysExcept(), false, QueryAssertion::expectSize);
 
             assertQuery("SELECT k FROM x WHERE tm" + empty + " AND k = 6").noLeakCheck().assertsPlan("""
-                    SelectedRecord
-                        Empty table
+                    Empty table
                     """);
             assertQuery("SELECT k FROM x WHERE tm NOT" + empty).noLeakCheck().assertsPlan("""
-                    SelectedRecord
-                        PageFrame
-                            Row forward scan
-                            Frame forward scan on: x
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: x
                     """);
         });
     }
@@ -986,8 +985,10 @@ public class CompiledFilterTest extends AbstractCairoTest {
                 assertFilterWithAndWithoutJit("(" + a + " IN ('2024-01')) != (" + b + " IN ('2024-02'))", keys(1, 3), true);
                 assertFilterWithAndWithoutJit("(" + b + " IN '2024-02-02') = (" + b + " IN '2024-02-06')", keys(1, 4, 5), true);
                 assertFilterWithAndWithoutJit("(" + b + " IN ('2024-02-02')) != (" + b + " IN ('2024-02-06'))", keys(2, 3), true);
-                // 2024-01-06 is a Saturday, so the left IN holds no interval and matches no row.
-                assertFilterWithAndWithoutJit("(" + a + " IN '2024-01-06#workday') = (" + b + " IN '2024-02')", keys(1, 4, 5), true);
+                // 2024-01-06 is a Saturday, so the left IN holds no interval and matches no row. The binding folds it
+                // to false, and the JIT takes no boolean constant as an operand, so the comparison runs on the Java
+                // filter.
+                assertFilterWithAndWithoutJit("(" + a + " IN '2024-01-06#workday') = (" + b + " IN '2024-02')", keys(1, 4, 5), false);
             }
         });
     }
@@ -1011,6 +1012,79 @@ public class CompiledFilterTest extends AbstractCairoTest {
                 // A date variable compiles its own intervals.
                 assertFilterWithAndWithoutJit("(" + a + " IN '2024-01') = (" + b + " IN '$today')", keys(4, 5), true);
                 assertFilterWithAndWithoutJit("(" + a + " IN '$today') = (" + b + " IN '2024-02')", keys(1, 4, 5), true);
+            }
+        });
+    }
+
+    @Test
+    public void testInIntervalTextSpellings() throws Exception {
+        // The binder parses the text of an interval IN once, at the key's precision, and the Java filter and the JIT
+        // search the intervals it parsed, however the query spells the text.
+        assertMemoryLeak(() -> {
+            createTemporalInTable();
+            for (String c : new String[]{"dt", "tm", "tn"}) {
+                assertFilterWithAndWithoutJit(c + " IN '2024-01-02'", keys(1, 2), true);
+                // A text folded from an expression, a cast included, runs on the Java filter.
+                assertFilterWithAndWithoutJit(c + " IN '2024-01-02'::VARCHAR", keys(1, 2), false);
+                assertFilterWithAndWithoutJit(c + " IN ('2024-01-02'::VARCHAR)", keys(1, 2), false);
+                assertFilterWithAndWithoutJit(c + " IN '2024-01' || '-02'", keys(1, 2), false);
+                assertFilterWithAndWithoutJit(c + " IN ('2024-01' || '-02')", keys(1, 2), false);
+                // A bare number in quotes is a year, never a point or an epoch.
+                assertFilterWithAndWithoutJit(c + " IN '2024'", keys(1, 2, 3, 5), true);
+                assertFilterWithAndWithoutJit(c + " NOT IN '2024'", keys(4), true);
+                assertFilterWithAndWithoutJit(c + " IN NULL", keys(4), true);
+                assertFilterWithAndWithoutJit(c + " NOT IN NULL", keys(1, 2, 3, 5), true);
+                // A text that holds no instant folds the IN to false: 2024-01-06 is a Saturday.
+                assertFilterWithAndWithoutJit(c + " IN '2024-01-06#workday'", "k\n", false);
+                assertFilterWithAndWithoutJit(c + " NOT IN '2024-01-06#workday' AND k < 3", keys(1, 2), true);
+                // A text bound to a variable resolves when the cursor opens.
+                bindVariableService.clear();
+                bindVariableService.setStr("t", "2024-01-02");
+                assertFilterWithAndWithoutJit(c + " IN :t", keys(1, 2), false);
+                bindVariableService.clear();
+            }
+            // A SYMBOL text is an IN list element, a timestamp rather than the day it spells.
+            assertFilterWithAndWithoutJit("tm IN '2024-01-02'::SYMBOL", keys(2), false);
+            // The copy of the IN that filter pushdown gives the NULL-extended side of a RIGHT JOIN keeps the intervals.
+            execute("CREATE TABLE y (k INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO y VALUES (1, '2024-01-01T00:00:00.000000Z'), (3, '2024-01-01T01:00:00.000000Z'), (6, '2024-01-01T02:00:00.000000Z')");
+            assertQuery("SELECT x.k, y.k yk FROM x RIGHT JOIN y ON x.k = y.k WHERE x.tm IN '2024-01-[02..03]' ORDER BY yk")
+                    .noLeakCheck()
+                    .withPlanContaining("Async JIT Filter")
+                    .returns("""
+                            k\tyk
+                            1\t1
+                            3\t3
+                            """);
+            // A declared text binds once per key, each time at the key's precision.
+            assertQuery("DECLARE @d := '2024-01-02' SELECT k FROM x WHERE dt IN @d AND tm IN @d AND tn IN @d").noLeakCheck().returns(keys(1, 2));
+            setCurrentMicros(Micros.toMicros(2024, 1, 2, 1, 0));
+            assertQuery("DECLARE @d := '$today' SELECT k FROM x WHERE dt IN @d AND tm IN @d AND tn IN @d").noLeakCheck().returns(keys(1, 2));
+        });
+    }
+
+    @Test
+    public void testInIntervalTextWithoutParsedIntervals() throws Exception {
+        // InTimestampTimestampFunctionFactory parses the text itself when no binding parsed it: over a constant key
+        // and on the legacy planner. Over a constant key, a date variable follows the clock as over a column.
+        assertMemoryLeak(() -> {
+            createTemporalInTable();
+            setCurrentMicros(Micros.toMicros(2024, 1, 2, 1, 0));
+            final String constantKeys = "SELECT '2024-01-02T12:00:00.000000Z'::TIMESTAMP IN '$today' a, '2024-01-03T12:00:00.000000Z'::TIMESTAMP IN '$today' b";
+            try (RecordCursorFactory factory = select(constantKeys)) {
+                assertFactory(factory).withContext(sqlExecutionContext).expectSize().returns("a\tb\ntrue\tfalse\n");
+                setCurrentMicros(Micros.toMicros(2024, 1, 3, 1, 0));
+                assertFactory(factory).withContext(sqlExecutionContext).expectSize().returns("a\tb\nfalse\ttrue\n");
+            }
+            assertQuery("SELECT '2024-01-02T12:00:00.000000Z'::TIMESTAMP IN '2024-01-02' a, '2024-01-03T12:00:00.000000Z'::TIMESTAMP IN '2024-01-02' b")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("a\tb\ntrue\tfalse\n");
+            setProperty(PropertyKey.CAIRO_SQL_LEGACY_PLANNER_ENABLED, "true");
+            for (String c : new String[]{"dt", "tm", "tn"}) {
+                assertFilterWithAndWithoutJit(c + " IN '2024-01-02'", keys(1, 2), true);
+                assertFilterFollowsClock(c + " IN '$today'", true, Micros.toMicros(2024, 1, 2, 1, 0), keys(1, 2),
+                        Micros.toMicros(2024, 1, 3, 1, 0), keys(3));
             }
         });
     }
@@ -1518,6 +1592,30 @@ public class CompiledFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testKeywordNamedBooleanColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (id INT, \"and\" BOOLEAN, \"not\" BOOLEAN, \"or\" BOOLEAN, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                        (1, true, true, false, '2024-01-01T00:00:00.000000Z'),
+                        (2, true, false, true, '2024-01-01T00:00:01.000000Z'),
+                        (3, false, true, true, '2024-01-01T00:00:02.000000Z'),
+                        (4, false, false, false, '2024-01-01T00:00:03.000000Z')
+                    """);
+            final String[] filters = {"\"and\" AND \"not\"", "\"not\" AND \"and\"", "\"and\" AND NOT \"not\"", "NOT \"not\"", "\"or\" OR \"not\""};
+            final String[] expectedIds = {"1\n", "1\n", "2\n", "2\n4\n", "1\n2\n3\n"};
+            for (int jitMode : new int[]{SqlJitMode.JIT_MODE_DISABLED, SqlJitMode.JIT_MODE_ENABLED}) {
+                sqlExecutionContext.setJitMode(jitMode);
+                for (int i = 0; i < filters.length; i++) {
+                    assertQuery("SELECT id FROM x WHERE " + filters[i])
+                            .noLeakCheck()
+                            .returns("id\n" + expectedIds[i]);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testLatestByDeferredSymbolConstants() throws Exception {
         assertQuery("SELECT v FROM latest_symbols WHERE filter_sym='B' OR filter_sym='D' LATEST ON ts PARTITION BY s,t")
                 .ddl(
@@ -1643,30 +1741,30 @@ public class CompiledFilterTest extends AbstractCairoTest {
             // BYTE * INT (the original fuzzer divergence). Three of the four
             // rows have i = NULL, so the int product is INT_NULL and the
             // f64 cast returns NaN; the (b=5, i=7) row gives 35 and 1.74256
-            // <= 35.0, so the predicate excludes every row.
-            assertQuery("SELECT count(*) FROM x WHERE NOT ((0.348512 * b) <= (b * i))")
+            // > 35.0 is false, so the predicate excludes every row.
+            assertQuery("SELECT count(*) FROM x WHERE (0.348512 * b) > (b * i)")
                     .inferTimestamp()
                     .inferRandomAccess()
                     .sizeMayVary()
                     .noLeakCheck()
                     .returns("count\n0\n");
             // Same shape with addition (int32_add propagates INT_NULL).
-            assertQuery("SELECT count(*) FROM x WHERE NOT ((0.348512 * b) <= (b + i))")
+            assertQuery("SELECT count(*) FROM x WHERE (0.348512 * b) > (b + i)")
                     .inferTimestamp()
                     .inferRandomAccess()
                     .sizeMayVary()
                     .noLeakCheck()
                     .returns("count\n0\n");
             // Subtraction: NaN rows still excluded; the (b=5, i=7) row gives
-            // -2, so NOT(1.74256 <= -2.0) matches and the count is 1.
-            assertQuery("SELECT count(*) FROM x WHERE NOT ((0.348512 * b) <= (b - i))")
+            // -2, so 1.74256 > -2.0 matches and the count is 1.
+            assertQuery("SELECT count(*) FROM x WHERE (0.348512 * b) > (b - i)")
                     .inferTimestamp()
                     .inferRandomAccess()
                     .sizeMayVary()
                     .noLeakCheck()
                     .returns("count\n1\n");
             // SHORT * INT exercises the i16 narrow path.
-            assertQuery("SELECT count(*) FROM x WHERE NOT ((0.348512 * s) <= (s * i))")
+            assertQuery("SELECT count(*) FROM x WHERE (0.348512 * s) > (s * i)")
                     .inferTimestamp()
                     .inferRandomAccess()
                     .sizeMayVary()
@@ -1676,8 +1774,8 @@ public class CompiledFilterTest extends AbstractCairoTest {
             // when rhs is 0 even though both inputs are BYTE / SHORT, so the
             // i32 widening matters here too. The (0, 0, _) row divides by
             // zero -> NaN -> excluded; the (5, 5, _) row gives 1 and
-            // NOT(1.74256 <= 1.0) matches, so the count is 1.
-            assertQuery("SELECT count(*) FROM x WHERE NOT ((0.348512 * b) <= (b / s))")
+            // 1.74256 > 1.0 matches, so the count is 1.
+            assertQuery("SELECT count(*) FROM x WHERE (0.348512 * b) > (b / s)")
                     .inferTimestamp()
                     .inferRandomAccess()
                     .sizeMayVary()
@@ -1687,12 +1785,12 @@ public class CompiledFilterTest extends AbstractCairoTest {
             // JIT must still compile each predicate -- the fix is at the C++
             // kernel level (result dtype tagging), the IR side is unchanged.
             try (RecordCursorFactory factory = select(
-                    "SELECT count(*) FROM x WHERE NOT ((0.348512 * b) <= (b * i))")) {
+                    "SELECT count(*) FROM x WHERE (0.348512 * b) > (b * i)")) {
                 Assert.assertTrue("BYTE * INT in DOUBLE context must still JIT",
                         factory.usesCompiledFilter());
             }
             try (RecordCursorFactory factory = select(
-                    "SELECT count(*) FROM x WHERE NOT ((0.348512 * b) <= (b / s))")) {
+                    "SELECT count(*) FROM x WHERE (0.348512 * b) > (b / s)")) {
                 Assert.assertTrue("BYTE / SHORT in DOUBLE context must still JIT",
                         factory.usesCompiledFilter());
             }
@@ -2108,6 +2206,23 @@ public class CompiledFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNeverMatchingNarrowInDoesNotDeclineJit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (anint INT, abyte BYTE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                        (1, 1, '2024-01-01T00:00:00.000000Z'),
+                        (2, 0, '2024-01-01T00:00:01.000000Z'),
+                        (1, 0, '2024-01-01T00:00:02.000000Z')
+                    """);
+            assertNeverMatchingInRows("SELECT count(*) FROM x WHERE anint = 1 AND abyte IN (null)", "count\n0\n");
+            assertNeverMatchingInRows("SELECT count(*) FROM x WHERE abyte IN (null) AND anint = 1", "count\n0\n");
+            assertNeverMatchingInRows("SELECT count(*) FROM x WHERE anint = 1 OR abyte IN (null)", "count\n2\n");
+            assertNeverMatchingInRows("SELECT count(*) FROM x WHERE anint = 1 AND abyte IN (null, null)", "count\n0\n");
+        });
+    }
+
+    @Test
     public void testNullTokenDoesNotForceNarrowI64Widening() throws Exception {
         assertMemoryLeak(() -> {
             // null / true / false end in 'l' / 'e' and were folded into
@@ -2245,6 +2360,38 @@ public class CompiledFilterTest extends AbstractCairoTest {
                     Assert.assertTrue("must JIT: " + q, factory.usesCompiledFilter());
                 }
             }
+        });
+    }
+
+    @Test
+    public void testOperatorNamedColumns() throws Exception {
+        // a Windows file name cannot hold < or >, so the column files of "<" and ">=" cannot exist there
+        Assume.assumeFalse(Os.isWindows());
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE x (
+                        "not" BOOLEAN, "and" INT, "in" INT, "or" LONG, "<" INT, "=" INT, ">=" SHORT, ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO x VALUES
+                        (true, 1, 1, 1, 1, 1, 1, '2024-01-01T00:00:00.000000Z'),
+                        (false, 2, 2, 0, -3, 2, 2, '2024-01-01T00:00:01.000000Z'),
+                        (true, 3, 5, 7, 3, 3, -1, '2024-01-01T00:00:02.000000Z')
+                    """);
+            assertOperatorNamedColumnRows("WHERE \"not\"", "1\n3\n");
+            assertOperatorNamedColumnRows("WHERE NOT \"not\"", "2\n");
+            assertOperatorNamedColumnRows("WHERE NOT (\"not\" AND \"and\" > 1)", "1\n2\n");
+            assertOperatorNamedColumnRows("WHERE \"not\" AND \">=\" > 0", "1\n");
+            assertOperatorNamedColumnRows("WHERE \"and\" = 1 AND \"or\" > 0", "1\n");
+            assertOperatorNamedColumnRows("WHERE \"or\" = 1 OR \"and\" = 2", "1\n2\n");
+            assertOperatorNamedColumnRows("WHERE \"in\" IN (1, 5)", "1\n3\n");
+            assertOperatorNamedColumnRows("WHERE \"in\" IN (5) AND \">=\" < 0", "3\n");
+            assertOperatorNamedColumnRows("WHERE \"<\" = 3", "3\n");
+            assertOperatorNamedColumnRows("WHERE -\"<\" = 3", "2\n");
+            assertOperatorNamedColumnRows("WHERE \"=\" = 2 OR \"<\" < 0", "2\n");
+            assertOperatorNamedColumnRows("WHERE \"<\" + \"in\" > 3", "3\n");
+            assertOperatorNamedColumnRows("WHERE \">=\" >= 1 AND \"or\" <> 0", "1\n");
         });
     }
 
@@ -2774,6 +2921,25 @@ public class CompiledFilterTest extends AbstractCairoTest {
         });
     }
 
+    private void assertNeverMatchingInRows(String sql, String expected) throws Exception {
+        sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+        assertQuery(sql).noLeakCheck().expectSize().noRandomAccess().returns(expected);
+        sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+        assertQuery(sql).noLeakCheck().expectSize().noRandomAccess().withPlanContaining("Async JIT Filter").returns(expected);
+    }
+
+    private void assertOperatorNamedColumnRows(String where, String expectedIds) throws Exception {
+        final String sql = "SELECT \"and\" FROM x " + where;
+        final String expected = "and\n" + expectedIds;
+        sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+        assertQuery(sql).noLeakCheck().returns(expected);
+        sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+        assertQuery(sql).noLeakCheck().returns(expected);
+        try (RecordCursorFactory factory = select(sql)) {
+            Assert.assertTrue(sql, factory.usesCompiledFilter());
+        }
+    }
+
     private static String allDayKeysExcept(int... excluded) {
         final StringBuilder sb = new StringBuilder("k\n");
         for (int k = 0; k <= 14; k++) {
@@ -2896,7 +3062,7 @@ public class CompiledFilterTest extends AbstractCairoTest {
             while (!(base instanceof AsyncWindowJoinFastRecordCursorFactory windowJoin)) {
                 base = base.getBaseFactory();
             }
-            Assert.assertEquals(query, isJitExpected, windowJoin.getAtom().getCompiledMasterFilter() != null);
+            Assert.assertEquals(query, isJitExpected, windowJoin.getAtom().getMasterFilter().getCompiledFilter() != null);
         }
     }
 

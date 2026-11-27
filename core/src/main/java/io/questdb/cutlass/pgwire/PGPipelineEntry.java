@@ -182,7 +182,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     // list of pair: column types (with format flag stored in first bit) AND additional type flag
     private final IntList pgResultSetColumnTypes;
     private final CancellationBinding queryCancellation = new CancellationBinding();
-    private final StringSink selectCacheKeySink = new StringSink();
+    private final SelectCacheKey selectCacheKey = new SelectCacheKey();
     private final Utf8StringSink utf8StringSink = new Utf8StringSink();
     private final ObjectPool<PGNonNullVarcharArrayView> varcharArrayViewPool = new ObjectPool<>(PGNonNullVarcharArrayView::new, 1);
     private final SqlExecutionOwner sqlExecutionOwner = new SqlExecutionOwner();
@@ -216,8 +216,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     private Utf8Sequence preparedStatementNameToDeallocate;
     private SqlExecutionResources queryExecutionResources;
     private MemoryTracker queryMemoryTracker;
-    // the select cache scope of the principal the statement was parsed for, see SelectCacheKey
-    private CharSequence selectCacheScope = null;
     private boolean selectIsCacheable = true;
     private long sqlAffectedRowCount = 0;
     // The count of rows sent that have been sent to the client per fetch. Client can either
@@ -301,10 +299,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             // make sure factory is not released when the pipeline entry is closed
             factory = null;
             // we don't have to use immutable string since ConcurrentAssociativeCache does it when needed
-            tasCache.put(SelectCacheKey.of(selectCacheScope, sqlText, selectCacheKeySink), tas);
+            tasCache.put(selectCacheKey.key(sqlText), tas);
             tas = null;
         } else if (tai != null) {
-            taiCache.put(sqlText, tai);
+            taiCache.put(selectCacheKey.insertKey(sqlText), tai);
             // make sure we don't close insert operation when the pipeline entry is closed
             tai = null;
         }
@@ -381,7 +379,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         queryCancellation.clear();
         queryMemoryTracker = null;
         queryExecutionResources = null;
-        selectCacheScope = null;
+        selectCacheKey.clear();
         sqlAffectedRowCount = 0;
         endSqlExecutionOwner();
         sqlReturnRowCount = 0;
@@ -527,6 +525,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     msgParseDefineBindVariableTypes(sqlExecutionContext.getBindVariableService());
                 }
                 CompiledQuery cq = compiler.compile(sqlText, sqlExecutionContext);
+                selectCacheKey.setCompiledBy(compiler);
                 // copy actual bind variable types as supplied by the client + defined by the SQL compiler
                 msgParseCopyOutTypeDescriptionTypeOIDs(sqlExecutionContext.getBindVariableService());
                 setupEntryAfterSQLCompilation(sqlExecutionContext, taiPool, cq);
@@ -583,6 +582,13 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
 
     public PGPipelineEntry getParentPreparedStatementPipelineEntry() {
         return parentPreparedStatementPipelineEntry;
+    }
+
+    /**
+     * The key the statement returns to the select or insert cache under, see {@link SelectCacheKey}.
+     */
+    public SelectCacheKey getSelectCacheKey() {
+        return selectCacheKey;
     }
 
     public short getShort(long address, long msgLimit, CharSequence errorMessage) throws PGMessageProcessingException {
@@ -832,12 +838,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 }
                 errorMsgSink.put(((FlyweightMessageContainer) th).getFlyweightMessage());
             } else {
-                String msg = th.getMessage();
-                if (msg != null) {
-                    getErrorMessageSink().put(msg);
-                } else {
-                    getErrorMessageSink().putAscii("Internal error. Exception type: ").putAscii(th.getClass().getSimpleName());
-                }
+                getErrorMessageSink().put(Misc.getMessageOrClassName(th));
             }
             if (th instanceof AssertionError) {
                 // assertion errors means either a questdb bug or data corruption ->
@@ -1148,11 +1149,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         this.sqlReturnRowCountLimit = rowCountLimit;
     }
 
-    // the scope must be immutable, see SecurityContext.getSelectCacheScope()
-    public void setSelectCacheScope(CharSequence selectCacheScope) {
-        this.selectCacheScope = selectCacheScope;
-    }
-
     public void setStateBind(boolean stateBind) {
         this.stateBind = stateBind;
     }
@@ -1356,7 +1352,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         this.operation = blueprint.operation;
         this.parentPreparedStatementPipelineEntry = blueprint.parentPreparedStatementPipelineEntry;
         this.namedStatement = blueprint.namedStatement;
-        this.selectCacheScope = blueprint.selectCacheScope;
+        this.selectCacheKey.copyOf(blueprint.selectCacheKey);
         this.sqlTag = blueprint.sqlTag;
         this.sqlText = blueprint.sqlText;
         this.sqlType = blueprint.sqlType;
@@ -1867,6 +1863,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                         final int index = pendingWriters.keyIndex(tableToken);
                         if (index < 0) {
                             updateOperation.withContext(sqlExecutionContext);
+                            // A statement that fails here leaves the parked writer and its rows to the
+                            // transaction, as any statement that fails before it writes does.
+                            updateOperation.validate();
                             // cached writers to remain in the list until transaction end
                             @SuppressWarnings("resource")
                             TableWriterAPI tableWriterAPI = pendingWriters.valueAt(index);
@@ -2570,12 +2569,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     errorMsgSink.put(message);
                 }
             } else {
-                String msg = th.getMessage();
-                if (msg != null) {
-                    getErrorMessageSink().put(msg);
-                } else {
-                    getErrorMessageSink().putAscii("no message provided (internal error)");
-                }
+                getErrorMessageSink().put(Misc.getMessageOrClassName(th));
                 if (th instanceof AssertionError || th instanceof NullPointerException) {
                     // an assertion error or an NPE mean either a questdb bug or data corruption ->
                     // we want to see a full stack trace in server logs and log it as critical

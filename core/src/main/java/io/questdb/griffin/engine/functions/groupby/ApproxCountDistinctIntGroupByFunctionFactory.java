@@ -36,6 +36,16 @@ import io.questdb.std.ObjList;
 public class ApproxCountDistinctIntGroupByFunctionFactory implements FunctionFactory {
 
     @Override
+    public EmptyGroupValue getEmptyGroupValue() {
+        return EmptyGroupValue.ZERO;
+    }
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.LONG;
+    }
+
+    @Override
     public String getSignature() {
         return "approx_count_distinct(Ii)";
     }

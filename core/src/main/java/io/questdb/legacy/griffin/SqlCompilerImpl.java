@@ -1,0 +1,9129 @@
+/*+*****************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2026 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.legacy.griffin;
+
+import io.questdb.MessageBus;
+import io.questdb.TelemetryEvent;
+import io.questdb.TelemetryOrigin;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoError;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.DefaultLifecycleManager;
+import io.questdb.cairo.EntityColumnFilter;
+import io.questdb.cairo.EntryUnavailableException;
+import io.questdb.cairo.ErrorTag;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.ImplicitCastException;
+import io.questdb.cairo.IndexBuilder;
+import io.questdb.cairo.IndexType;
+import io.questdb.cairo.ListColumnFilter;
+import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.OperationCodes;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TableNameRegistry;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TableWriterAPI;
+import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.TxReader;
+import io.questdb.cairo.VacuumColumnVersions;
+import io.questdb.cairo.file.BlockFileWriter;
+import io.questdb.cairo.mv.MatViewDefinition;
+import io.questdb.cairo.mv.MatViewRefreshJob;
+import io.questdb.cairo.mv.MatViewState;
+import io.questdb.cairo.mv.MatViewStateStore;
+import io.questdb.cairo.sql.BindVariableService;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.InsertOperation;
+import io.questdb.cairo.sql.OperationFuture;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.cairo.sql.VirtualRecord;
+import io.questdb.cairo.view.ViewCompilerExecutionContext;
+import io.questdb.cairo.view.ViewDefinition;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.cairo.wal.WalUtils;
+import io.questdb.cutlass.parquet.CopyExportRequestTask;
+import io.questdb.griffin.BatchCallback;
+import io.questdb.griffin.CharacterStore;
+import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.CompiledQueryImpl;
+import io.questdb.griffin.CopyDataProgressReporter;
+import io.questdb.griffin.EmptyRecordMetadata;
+import io.questdb.griffin.ExpiryPolicyVersionChangedException;
+import io.questdb.griffin.ExpiryReadPolicy;
+import io.questdb.griffin.ExpiryValidationResult;
+import io.questdb.griffin.FunctionFactoryCache;
+import io.questdb.griffin.InsertRowImpl;
+import io.questdb.griffin.OperatorExpression;
+import io.questdb.griffin.OperatorRegistry;
+import io.questdb.griffin.QueryRegistry;
+import io.questdb.griffin.RecordToRowCopier;
+import io.questdb.griffin.RecordToRowCopierUtils;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.QueryProgress;
+import io.questdb.griffin.engine.StaleViewCheckFactory;
+import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.groupby.TimestampSampler;
+import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
+import io.questdb.griffin.engine.ops.AlterOperationBuilder;
+import io.questdb.griffin.engine.ops.CopyCancelFactory;
+import io.questdb.griffin.engine.ops.CreateLiveViewOperation;
+import io.questdb.griffin.engine.ops.CreateTableOperation;
+import io.questdb.griffin.engine.ops.DropAllOperation;
+import io.questdb.griffin.engine.ops.GenericDropOperation;
+import io.questdb.griffin.engine.ops.GenericDropOperationBuilder;
+import io.questdb.griffin.engine.ops.InsertAsSelectOperationImpl;
+import io.questdb.griffin.engine.ops.InsertOperationImpl;
+import io.questdb.griffin.engine.ops.Operation;
+import io.questdb.griffin.engine.ops.UpdateOperation;
+import io.questdb.griffin.model.DateExpressionEvaluator;
+import io.questdb.legacy.cairo.RowExpiryUtil;
+import io.questdb.legacy.cairo.view.LegacyViewGraph;
+import io.questdb.legacy.griffin.engine.ops.CopyExportFactory;
+import io.questdb.legacy.griffin.engine.ops.CopyImportFactory;
+import io.questdb.legacy.griffin.engine.ops.CreateLiveViewOperationBuilder;
+import io.questdb.legacy.griffin.engine.ops.CreateMatViewOperation;
+import io.questdb.legacy.griffin.engine.ops.CreateMatViewOperationBuilder;
+import io.questdb.legacy.griffin.engine.ops.CreateTableOperationBuilder;
+import io.questdb.legacy.griffin.engine.ops.CreateViewOperation;
+import io.questdb.legacy.griffin.engine.ops.CreateViewOperationBuilder;
+import io.questdb.legacy.griffin.model.CompileViewModel;
+import io.questdb.legacy.griffin.model.ExecutionModel;
+import io.questdb.legacy.griffin.model.ExplainModel;
+import io.questdb.legacy.griffin.model.ExportModel;
+import io.questdb.legacy.griffin.model.ExpressionNode;
+import io.questdb.legacy.griffin.model.IQueryModel;
+import io.questdb.legacy.griffin.model.InsertModel;
+import io.questdb.legacy.griffin.model.QueryColumn;
+import io.questdb.legacy.griffin.model.QueryModel;
+import io.questdb.legacy.griffin.model.QueryModelWrapper;
+import io.questdb.legacy.griffin.model.RenameTableModel;
+import io.questdb.legacy.griffin.model.WindowExpression;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.log.LogRecord;
+import io.questdb.mp.continuation.SuspensionScope;
+import io.questdb.network.PeerDisconnectedException;
+import io.questdb.network.PeerIsSlowToReadException;
+import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.Chars;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FlyweightMessageContainer;
+import io.questdb.std.GenericLexer;
+import io.questdb.std.IntList;
+import io.questdb.std.LowerCaseAsciiCharSequenceObjHashMap;
+import io.questdb.std.LowerCaseCharSequenceHashSet;
+import io.questdb.std.LowerCaseCharSequenceObjHashMap;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjHashSet;
+import io.questdb.std.ObjList;
+import io.questdb.std.ObjectPool;
+import io.questdb.std.ReadOnlyObjList;
+import io.questdb.std.Transient;
+import io.questdb.std.datetime.CommonUtils;
+import io.questdb.std.datetime.DateLocaleFactory;
+import io.questdb.std.datetime.TimeZoneRules;
+import io.questdb.std.datetime.microtime.Micros;
+import io.questdb.std.datetime.millitime.Dates;
+import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Path;
+import io.questdb.std.str.Sinkable;
+import io.questdb.std.str.StringSink;
+import io.questdb.tasks.TelemetryTask;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
+
+import java.io.Closeable;
+import java.util.concurrent.locks.Lock;
+
+import static io.questdb.cairo.TableUtils.TABLE_KIND_REGULAR_TABLE;
+import static io.questdb.legacy.griffin.SqlKeywords.*;
+import static io.questdb.legacy.griffin.engine.ops.CreateMatViewOperation.validateMatViewPeriodLength;
+import static io.questdb.legacy.griffin.model.ExportModel.COPY_TYPE_FROM;
+import static io.questdb.std.GenericLexer.unquote;
+
+
+public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallback {
+    public static final String ALTER_TABLE_EXPECTED_TOKEN_DESCR =
+            "'add', 'alter', 'attach', 'detach', 'drop', 'convert', 'resume', 'rename', 'set' or 'squash'";
+    static final ObjList<String> sqlControlSymbols = new ObjList<>(8);
+    // null object used to skip null checks in batch method
+    private static final BatchCallback EMPTY_CALLBACK = new BatchCallback() {
+        @Override
+        public void postCompile(io.questdb.griffin.SqlCompiler compiler, CompiledQuery cq, CharSequence queryText) {
+        }
+
+        @Override
+        public boolean preCompile(io.questdb.griffin.SqlCompiler compiler, CharSequence sqlText) {
+            return true;
+        }
+    };
+    // Operators and functions whose result depends only on their arguments. A row-expiry predicate built
+    // only from these, the table's columns and constants gives each row the same result in every
+    // execution and every session, so the cleanup job may reclaim under it. Any other operator or
+    // function leaves the policy FILTER_ONLY: that costs disk, while the read filter keeps results correct.
+    private static final LowerCaseCharSequenceHashSet EXPIRY_ROW_ONLY_FUNCTIONS = new LowerCaseCharSequenceHashSet();
+    private static final Log LOG = LogFactory.getLog(SqlCompilerImpl.class);
+    // Raised from two places: once on the parsed model, where it has to win over the more general
+    // cross-table rejection, and once on the optimised one, for the joins the optimiser itself
+    // introduces. Shared so the two cannot drift apart.
+    private static final String UPDATE_WITH_JOIN_NOT_SUPPORTED = "UPDATE statements with join are not supported yet for WAL tables";
+    private static final boolean[][] columnConversionSupport = new boolean[ColumnType.NULL][ColumnType.NULL];
+    private static volatile Runnable insertSelectFactoryGenerationBarrier;
+    private static volatile Runnable viewFactoryGenerationBarrier;
+    protected final AlterOperationBuilder alterOperationBuilder;
+    protected final SqlCodeGenerator codeGenerator;
+    protected final CompiledQueryImpl compiledQuery;
+    protected final CairoConfiguration configuration;
+    protected final GenericDropOperationBuilder dropOperationBuilder;
+    protected final CairoEngine engine;
+    protected final LowerCaseAsciiCharSequenceObjHashMap<KeywordBasedExecutor> keywordBasedExecutors = new LowerCaseAsciiCharSequenceObjHashMap<>();
+    protected final GenericLexer lexer;
+    protected final SqlOptimiser optimiser;
+    protected final Path path;
+    protected final QueryRegistry queryRegistry;
+    private final BytecodeAssembler asm = new BytecodeAssembler();
+    private final BlockFileWriter blockFileWriter;
+    private final CharacterStore characterStore;
+    private final ObjList<CharSequence> columnNames = new ObjList<>();
+    private final ViewCompilerExecutionContext compileViewContext;
+    private final CharSequenceObjHashMap<String> dropAllTablesFailures = new CharSequenceObjHashMap<>();
+    private final EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
+    private final FilesFacade ff;
+    private final FunctionParser functionParser;
+    private final ListColumnFilter listColumnFilter = new ListColumnFilter();
+    // Name and position of each bare name in the last materialized view query compiled by compileMatViewQuery()
+    // that the optimiser read as a call to a zero-argument function, such as `version`; see
+    // buildStoredMatViewSql().
+    private final ObjList<String> matViewBareNoArgCallNames = new ObjList<>();
+    private final IntList matViewBareNoArgCallPositions = new IntList();
+    // (projection index, start, end) of each top-level wildcard in the last materialized view query parsed
+    // by compileMatViewQuery(); see captureMatViewWildcards().
+    private final IntList matViewWildcards = new IntList();
+    private final int maxRecompileAttempts;
+    private final MemoryMARW mem = Vm.getCMARWInstance();
+    private final MessageBus messageBus;
+    private final SqlParser parser;
+    private final TimestampValueRecord partitionFunctionRec = new TimestampValueRecord();
+    private final QueryBuilder queryBuilder;
+    private final ObjectPool<QueryColumn> queryColumnPool;
+    private final ObjectPool<QueryModel> queryModelPool;
+    private final ObjectPool<QueryModelWrapper> queryModelWrapperPool;
+    private final Path renamePath;
+    private final ObjectPool<ExpressionNode> sqlNodePool;
+    private final ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
+    private final ObjList<TableWriterAPI> tableWriters = new ObjList<>();
+    private final VacuumColumnVersions vacuumColumnVersions;
+    protected CharSequence sqlText;
+    private boolean closed = false;
+    // Helper var used to pass back count in cases it can't be done via method result.
+    private long insertCount;
+    // True when the wildcard of the last materialized view query parsed by compileMatViewQuery() is one the
+    // parser added to a query written without SELECT, such as `base WHERE v > 0`.
+    private boolean isMatViewWildcardArtificial;
+    //determines how compiler parses query text
+    //true - compiler treats whole input as single query and doesn't stop on ';'. Default mode.
+    //false - compiler treats input as list of statements and stops processing statement on ';'. Used in batch processing.
+    private boolean isSingleQueryMode = true;
+    // Number of items in the top-level select list of the last materialized view query parsed by
+    // compileMatViewQuery(), wildcards counted as one item each.
+    private int matViewProjectionSize;
+
+    public SqlCompilerImpl(CairoEngine engine) {
+        try {
+            this.path = new Path(255, MemoryTag.NATIVE_SQL_COMPILER);
+            this.renamePath = new Path(255, MemoryTag.NATIVE_SQL_COMPILER);
+            this.engine = engine;
+            this.configuration = engine.getConfiguration();
+            this.maxRecompileAttempts = configuration.getMaxSqlRecompileAttempts();
+            this.queryBuilder = new QueryBuilder(this);
+            this.ff = configuration.getFilesFacade();
+            this.messageBus = engine.getMessageBus();
+            this.sqlNodePool = new ObjectPool<>(ExpressionNode.FACTORY, configuration.getSqlExpressionPoolCapacity());
+            this.queryColumnPool = new ObjectPool<>(QueryColumn.FACTORY, configuration.getSqlColumnPoolCapacity());
+            this.queryModelPool = new ObjectPool<>(QueryModel.FACTORY, configuration.getSqlModelPoolCapacity());
+            this.queryModelWrapperPool = new ObjectPool<>(QueryModelWrapper.FACTORY, 2);
+            ObjectPool<WindowExpression> windowExpressionPool = new ObjectPool<>(WindowExpression.FACTORY, configuration.getWindowColumnPoolCapacity());
+            this.compiledQuery = new CompiledQueryImpl(engine);
+            this.characterStore = new CharacterStore(
+                    configuration.getSqlCharacterStoreCapacity(),
+                    configuration.getSqlCharacterStoreSequencePoolCapacity()
+            );
+
+            this.lexer = new GenericLexer(configuration.getSqlLexerPoolCapacity());
+            this.functionParser = new FunctionParser(configuration, LegacyPlannerImpl.getFunctionFactoryCache(engine));
+            final PostOrderTreeTraversalAlgo postOrderTreeTraversalAlgo = new PostOrderTreeTraversalAlgo();
+            this.codeGenerator = new SqlCodeGenerator(configuration, functionParser, postOrderTreeTraversalAlgo, queryColumnPool, sqlNodePool, this, path);
+            this.vacuumColumnVersions = new VacuumColumnVersions(engine);
+
+            // we have cyclical dependency here
+            functionParser.setSqlCodeGenerator(codeGenerator);
+
+            registerKeywordBasedExecutors();
+
+            configureLexer(lexer);
+
+
+            optimiser = newSqlOptimiser(
+                    configuration,
+                    characterStore,
+                    sqlNodePool,
+                    windowExpressionPool,
+                    queryColumnPool,
+                    queryModelPool,
+                    queryModelWrapperPool,
+                    postOrderTreeTraversalAlgo,
+                    functionParser,
+                    path
+            );
+
+            parser = new SqlParser(
+                    engine,
+                    configuration,
+                    characterStore,
+                    sqlNodePool,
+                    windowExpressionPool,
+                    queryColumnPool,
+                    queryModelPool,
+                    postOrderTreeTraversalAlgo
+            );
+            // Give the optimiser the same map the parser fills in, so enumerateColumns can reject a compile
+            // whose EXPIRE ROWS keep-filter was chosen from a metadata version the reader has moved past.
+            optimiser.setPendingExpiryReadVersions(parser.getPendingExpiryReadVersions());
+
+            alterOperationBuilder = createAlterOperationBuilder();
+            dropOperationBuilder = new GenericDropOperationBuilder();
+            queryRegistry = engine.getQueryRegistry();
+            blockFileWriter = new BlockFileWriter(ff, configuration.getCommitMode());
+            // we can pass 1 as worker count because actual query plan does not matter
+            // for COMPILE VIEW, what we care about is validating view dependencies
+            compileViewContext = new ViewCompilerExecutionContext(engine, 1);
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
+    }
+
+    // Lets a test put a hook function of its own into a predicate that has to reclaim.
+    @TestOnly
+    public static void addExpiryRowOnlyFunctionForTesting(CharSequence name) {
+        EXPIRY_ROW_ONLY_FUNCTIONS.add(name);
+    }
+
+    public static long copyOrderedBatched(
+            SqlExecutionContext context,
+            TableWriterAPI writer,
+            RecordMetadata metadata,
+            RecordCursor cursor,
+            RecordToRowCopier copier,
+            int cursorTimestampIndex,
+            long batchSize,
+            long o3MaxLag
+    ) {
+        return copyOrderedBatched(context, writer, metadata, cursor, copier, cursorTimestampIndex, batchSize, o3MaxLag, CopyDataProgressReporter.NOOP, -1);
+    }
+
+    public static long copyOrderedBatched(
+            SqlExecutionContext context,
+            TableWriterAPI writer,
+            RecordMetadata metadata,
+            RecordCursor cursor,
+            RecordToRowCopier copier,
+            int cursorTimestampIndex,
+            long batchSize,
+            long o3MaxLag,
+            CopyDataProgressReporter reporter,
+            int reportFrequency
+    ) {
+        assert batchSize > 0;
+        long rowCount;
+        int timestampColumnType = metadata.getColumnType(cursorTimestampIndex);
+        if (ColumnType.isSymbolOrString(timestampColumnType)) {
+            rowCount = copyOrderedBatchedStrTimestamp(context, writer, cursor, copier, cursorTimestampIndex, batchSize, o3MaxLag, reporter);
+        } else if (ColumnType.isVarchar(metadata.getColumnType(cursorTimestampIndex))) {
+            rowCount = copyOrderedBatchedVarcharTimestamp(context, writer, cursor, copier, cursorTimestampIndex, batchSize, o3MaxLag, reporter);
+        } else if (ColumnType.isNull(timestampColumnType)) {
+            rowCount = copyOrderedBatchedNullTimestamp(cursor, reporter);
+        } else {
+            rowCount = copyOrderedBatched0(context, writer, cursor, copier, timestampColumnType, cursorTimestampIndex, batchSize, o3MaxLag, reporter, reportFrequency);
+        }
+        return rowCount;
+    }
+
+    public static long copyUnordered(
+            SqlExecutionContext context,
+            RecordCursor cursor,
+            TableWriterAPI writer,
+            RecordToRowCopier copier
+    ) {
+        return copyUnordered(context, cursor, writer, copier, CopyDataProgressReporter.NOOP, -1);
+    }
+
+    /**
+     * Returns number of copied rows.
+     */
+    public static long copyUnordered(
+            SqlExecutionContext context,
+            RecordCursor cursor,
+            TableWriterAPI writer,
+            RecordToRowCopier copier,
+            CopyDataProgressReporter reporter,
+            int reportFrequency
+    ) {
+        long rowCount = 0;
+        final Record record = cursor.getRecord();
+        reporter.onProgress(CopyDataProgressReporter.Stage.Start, cursor.size());
+        while (cursor.hasNext()) {
+            context.getCircuitBreaker().statefulThrowExceptionIfTrippedOrYield();
+            TableWriter.Row row = writer.newRow();
+            copier.copy(context, record, row);
+            row.append();
+            rowCount++;
+            if (reportFrequency > 0 && rowCount % reportFrequency == 0) {
+                reporter.onProgress(CopyDataProgressReporter.Stage.Inserting, rowCount);
+            }
+        }
+        reporter.onProgress(CopyDataProgressReporter.Stage.Finish, rowCount);
+        return rowCount;
+    }
+
+    // public for testing
+    public static void expectKeyword(GenericLexer lexer, CharSequence keyword) throws SqlException {
+        CharSequence tok = SqlUtil.fetchNext(lexer);
+        if (tok == null) {
+            throw SqlException.position(lexer.getPosition()).put('\'').put(keyword).put("' expected");
+        }
+        if (!Chars.equalsLowerCaseAscii(tok, keyword)) {
+            throw SqlException.position(lexer.lastTokenPosition()).put('\'').put(keyword).put("' expected");
+        }
+    }
+
+    @TestOnly
+    public static @Nullable Throwable freePooledTableNameFunctionsForTesting(
+            ObjectPool<QueryModel> queryModelPool,
+            @Nullable Throwable failure
+    ) {
+        return freePooledTableNameFunctions(queryModelPool, failure);
+    }
+
+    @TestOnly
+    public static void removeExpiryRowOnlyFunctionForTesting(CharSequence name) {
+        EXPIRY_ROW_ONLY_FUNCTIONS.remove(name);
+    }
+
+    @TestOnly
+    public static void setInsertSelectFactoryGenerationBarrier(@Nullable Runnable barrier) {
+        insertSelectFactoryGenerationBarrier = barrier;
+    }
+
+    @TestOnly
+    public static void setViewFactoryGenerationBarrier(@Nullable Runnable barrier) {
+        viewFactoryGenerationBarrier = barrier;
+    }
+
+    @Override
+    public void clear() {
+        clearExceptSqlText();
+        sqlText = null;
+    }
+
+    @Override
+    public void close() {
+        if (closed) {
+            throw new IllegalStateException("close was already called");
+        }
+        closed = true;
+        // A compiler can be closed with an abandoned model still holding a factory, e.g. after a caller
+        // discards a generateExecutionModel() result. Pooled compilers sweep on return to the pool;
+        // this covers the ones a caller owns outright.
+        freeUntransferredTableNameFunctions();
+        Misc.free(vacuumColumnVersions);
+        Misc.free(path);
+        Misc.free(renamePath);
+        Misc.free(codeGenerator);
+        Misc.free(mem);
+        Misc.freeObjList(tableWriters);
+        Misc.free(blockFileWriter);
+        Misc.free(compileViewContext);
+    }
+
+    @Override
+    @NotNull
+    public CompiledQuery compile(@NotNull CharSequence sqlText, @NotNull SqlExecutionContext executionContext) throws SqlException {
+        clear();
+        // these are quick executions that do not require building of a model
+        lexer.of(sqlText);
+        isSingleQueryMode = true;
+
+        compileInner(executionContext, sqlText, true);
+
+        // Verify all input was consumed — reject trailing content.
+        // Skip in validation-only mode: handlers may return early without consuming all tokens.
+        if (!executionContext.isValidationOnly()) {
+            CharSequence tok = SqlUtil.fetchNext(lexer);
+            if (tok != null && !isSemicolon(tok)) {
+                throw SqlException.unexpectedToken(lexer.lastTokenPosition(), tok);
+            }
+        }
+
+        return compiledQuery;
+    }
+
+    /**
+     * Allows processing of batches of sql statements (sql scripts) separated by ';' .
+     * Each query is processed in sequence and processing stops on first error and whole batch gets discarded.
+     * Noteworthy difference between this and 'normal' query is that all empty queries get ignored, e.g.
+     * <br>
+     * select 1;<br>
+     * ; ;/* comment \*\/;--comment\n; - these get ignored <br>
+     * update a set b=c  ; <br>
+     * <p>
+     * Useful PG doc link :
+     *
+     * @param batchText        - block of queries to process
+     * @param executionContext - SQL execution context
+     * @param batchCallback    - callback to perform actions prior to or after batch part compilation, e.g. clear caches or execute command
+     * @throws SqlException              - in case of syntax error
+     * @throws PeerDisconnectedException - when peer is disconnected
+     * @throws PeerIsSlowToReadException - when peer is too slow
+     * @see <a href="https://www.postgresql.org/docs/current/protocol-flow.html#id-1.10.5.7.4">PostgreSQL documentation</a>
+     */
+    @Override
+    public void compileBatch(
+            @NotNull CharSequence batchText,
+            @NotNull SqlExecutionContext executionContext,
+            BatchCallback batchCallback,
+            @NotNull io.questdb.griffin.SqlCompiler owner
+    ) throws Exception {
+        clear();
+        lexer.of(batchText);
+        isSingleQueryMode = false;
+
+        if (batchCallback == null) {
+            batchCallback = EMPTY_CALLBACK;
+        }
+
+        int position;
+
+        while (lexer.hasNext()) {
+            // skip over empty statements that'd cause error in parser
+            position = getNextValidTokenPosition();
+            if (position == -1) {
+                return;
+            }
+
+            boolean recompileStale = true;
+            for (int retries = 0; recompileStale; retries++) {
+                clear(); // we don't use normal compile here because we can't reset existing lexer
+
+                // Fetch sqlText, this will move lexer pointer (state change).
+                // We try to avoid logging the entire sql batch, in case batch contains secrets
+                final CharSequence sqlText = batchText.subSequence(position, goToQueryEnd());
+
+                if (batchCallback.preCompile(owner, sqlText)) {
+                    // ok, the callback wants us to compile this query, let's go!
+
+                    // Re-position the lexer to where sqlText begins, and make that the point that
+                    // lexer.restart() rewinds to. A retry, in generateSelectWithRetries() or below,
+                    // must re-parse this statement, not the batch's first one.
+                    lexer.of(batchText, position, batchText.length());
+                    compileInner(executionContext, sqlText, true);
+
+                    // consume residual text, such as semicolon
+                    goToQueryEnd();
+                    // We've to move lexer because some query handlers don't consume all tokens
+                    // some code in postCompile might need full text of current query
+                    try {
+                        batchCallback.postCompile(owner, compiledQuery, sqlText);
+                        recompileStale = false;
+                    } catch (TableReferenceOutOfDateException e) {
+                        if (retries == maxRecompileAttempts) {
+                            throw e;
+                        }
+                        LOG.info().$safe(e.getFlyweightMessage()).$();
+                        // will recompile
+                        lexer.restart();
+                    }
+                } else {
+                    recompileStale = false;
+                }
+            }
+        }
+    }
+
+    /**
+     * {@inheritDoc}
+     * <p>
+     * Dispatches the operation to a type-specific {@code execute*} method based on its operation code.
+     * Each delegate returns {@code true} when the DDL took effect, or {@code false} for no-ops
+     * (e.g. {@code IF EXISTS} on a missing entity, {@code IF NOT EXISTS} on an existing one).
+     * The caller ({@link GenericDropOperation}, {@link CreateTableOperation}, etc.) uses this
+     * return value to decide whether to fire {@link io.questdb.cairo.DdlListener} callbacks.
+     * <p>
+     * {@code DROP ALL} is a special case: it fires {@link io.questdb.cairo.DdlListener#onTableOrViewOrMatViewDropped}
+     * per successfully dropped entity inside {@code executeDropAllTables}, so its return value
+     * only indicates whether at least one entity was dropped rather than gating a single callback.
+     */
+    @Override
+    public boolean execute(final Operation op, SqlExecutionContext executionContext) throws SqlException {
+        return switch (op.getOperationCode()) {
+            case OperationCodes.CREATE_TABLE -> executeCreateTable((CreateTableOperation) op, executionContext);
+            case OperationCodes.CREATE_VIEW -> executeCreateView((CreateViewOperation) op, executionContext);
+            case OperationCodes.CREATE_MAT_VIEW -> executeCreateMatView((CreateMatViewOperation) op, executionContext);
+            case OperationCodes.DROP_TABLE -> executeDropTable((GenericDropOperation) op, executionContext);
+            case OperationCodes.DROP_VIEW -> executeDropView((GenericDropOperation) op, executionContext);
+            case OperationCodes.DROP_MAT_VIEW -> executeDropMatView((GenericDropOperation) op, executionContext);
+            case OperationCodes.CREATE_LIVE_VIEW ->
+                    executeCreateLiveView((CreateLiveViewOperation) op, executionContext);
+            case OperationCodes.DROP_LIVE_VIEW -> executeDropLiveView((GenericDropOperation) op, executionContext);
+            case OperationCodes.DROP_ALL -> executeDropAllTables((DropAllOperation) op, executionContext);
+            default ->
+                    throw SqlException.position(0).put("Unsupported operation [code=").put(op.getOperationCode()).put(']');
+        };
+    }
+
+    /**
+     * Fast-path support for the row-expiry cleanup job. If {@code predicate} is {@code <ts> < T},
+     * {@code <ts> <= T}, or one of the symmetric shapes {@code T > <ts>} and {@code T >= <ts>} on the
+     * designated timestamp, and {@code T} references no column, this method returns {@code T} in the unit of
+     * that column. The cleanup then classifies a whole partition from its {@code [floor, nextFloor)} bounds,
+     * with no survivor scan: a partition fully below T has only expired rows (DROP), and a partition fully
+     * above T has none (SKIP). Returns
+     * {@link Numbers#LONG_NULL} for any other shape (custom or compound predicate, a {@code T < ts} /
+     * {@code ts > T} "keep-old" shape, non-constant T) or on any parse/bind/eval issue, which makes the
+     * caller fall back to the scan — so this is purely an optimisation and never affects correctness.
+     * <p>
+     * Both designated timestamp types use the fast path. A partition floor uses the unit of the column, but
+     * a {@code now()}-based T is in micros, so {@link #toTimestampUnit} converts T into the unit of the
+     * column. That conversion rounds T DOWN. A smaller T can only make the set of fully expired partitions
+     * smaller, so the job never drops a partition that holds a live row. A conversion that overflows gives
+     * LONG_NULL, and the caller then scans.
+     */
+    @Override
+    public long expiryTimestampThreshold(
+            SqlExecutionContext executionContext,
+            RecordMetadata metadata,
+            CharSequence predicate,
+            CharSequence timestampColumn
+    ) {
+        if (timestampColumn == null) {
+            return Numbers.LONG_NULL;
+        }
+        final int tsIndex = metadata.getColumnIndexQuiet(timestampColumn);
+        if (tsIndex < 0) {
+            return Numbers.LONG_NULL;
+        }
+        final int tsType = metadata.getColumnType(tsIndex);
+        if (!ColumnType.isTimestamp(tsType)) {
+            return Numbers.LONG_NULL;
+        }
+        Function f = null;
+        try {
+            clear();
+            lexer.of(predicate);
+            final ExpressionNode node = parser.expr(lexer, (QueryModel) null, this);
+            if (node == null || node.type != ExpressionNode.OPERATION || node.paramCount != 2
+                    || node.lhs == null || node.rhs == null) {
+                return Numbers.LONG_NULL;
+            }
+            // Accept both the canonical "<ts> < T | <ts> <= T" (timestamp on the left) and the equivalent
+            // symmetric "T > <ts> | T >= <ts>" (timestamp on the right). Both mean "expire everything below
+            // T"; the threshold node is the side that is NOT the timestamp column. A "T < <ts>" / "<ts> > T"
+            // ("expire recent, keep old") shape is deliberately NOT accepted here: its DROP direction is the
+            // opposite of the partition-bounds fast path.
+            // Resolve the operand by column index (unquote, strip qualifier, case-insensitive), the same way
+            // the monotonicity classifier does in expiryTimestampThresholdNode. A case- or quote-mismatched
+            // spelling of the timestamp column must take the same bounds fast path; otherwise the classifier
+            // proves the policy monotonic while this method returns LONG_NULL, and the cleanup job falls to
+            // the survivor scan with the SKIP generation cache on.
+            final boolean tsOnLeft = node.lhs.type == ExpressionNode.LITERAL
+                    && resolvePredicateColumnIndex(metadata, node.lhs.token) == tsIndex;
+            final boolean tsOnRight = node.rhs.type == ExpressionNode.LITERAL
+                    && resolvePredicateColumnIndex(metadata, node.rhs.token) == tsIndex;
+            final ExpressionNode thresholdNode;
+            if (tsOnLeft && (Chars.equals(node.token, "<") || Chars.equals(node.token, "<="))) {
+                thresholdNode = node.rhs;
+            } else if (tsOnRight && (Chars.equals(node.token, ">") || Chars.equals(node.token, ">="))) {
+                thresholdNode = node.lhs;
+            } else {
+                return Numbers.LONG_NULL;
+            }
+            if (exprReferencesColumn(thresholdNode)) {
+                return Numbers.LONG_NULL;
+            }
+            f = functionParser.parseFunction(thresholdNode, metadata, executionContext);
+            if (f == null || !ColumnType.isTimestamp(f.getType()) || !(f.isConstant() || f.isRuntimeConstant())) {
+                return Numbers.LONG_NULL;
+            }
+            f.init(null, executionContext);
+            final long threshold = f.getTimestamp(null);
+            if (threshold == Numbers.LONG_NULL) {
+                return Numbers.LONG_NULL; // a NULL T expires no row, and the survivor scan gives the same result
+            }
+            // Math.multiplyExact throws on overflow, and the catch below turns that into "no fast path".
+            return toTimestampUnit(threshold, f.getType(), tsType);
+        } catch (Exception e) {
+            return Numbers.LONG_NULL; // any issue -> no fast path; the caller scans (still correct)
+        } finally {
+            Misc.free(f);
+        }
+    }
+
+    @Override
+    public void freeUntransferredTableNameFunctions() {
+        final Throwable cleanupFailure = freePooledTableNameFunctions(queryModelPool, null);
+        if (cleanupFailure != null) {
+            // Nothing is in flight at this boundary, and the caller is either about to compile the next
+            // statement or to hand the compiler back. Report the close failure and carry on rather than
+            // charge it to work that has not started yet.
+            LOG.error().$("could not close table name function [error=").$(cleanupFailure).I$();
+        }
+    }
+
+    @Override
+    public ExecutionModel generateExecutionModel(CharSequence sqlText, SqlExecutionContext executionContext) throws SqlException {
+        clear();
+        lexer.of(sqlText);
+        return compileExecutionModel(executionContext, false, null);
+    }
+
+    @Override
+    public RecordCursorFactory generateViewFactory(CharSequence viewSql, SqlExecutionContext executionContext) throws SqlException {
+        return SqlUtil.generateFactory(this, generateExecutionModel(viewSql, executionContext), executionContext);
+    }
+
+    @Override
+    public RecordCursorFactory generateSelectWithRetries(
+            @Transient IQueryModel initialQueryModel,
+            @Nullable @Transient InsertModel insertModel,
+            @Transient SqlExecutionContext executionContext,
+            boolean generateProgressLogger
+    ) throws SqlException {
+        IQueryModel queryModel = initialQueryModel;
+        int remainingRetries = maxRecompileAttempts;
+        for (; ; ) {
+            try {
+                return generateSelectOneShot(queryModel, executionContext, generateProgressLogger);
+            } catch (TableReferenceOutOfDateException e) {
+                if (--remainingRetries < 0) {
+                    throw SqlException.position(0).put("too many ").put(e.getFlyweightMessage());
+                }
+                LOG.info().$("retrying plan [q=`").$(queryModel).$("`, fd=").$(executionContext.getRequestFd()).I$();
+                freeTableNameFunctions(queryModel);
+                clearExceptSqlText();
+                lexer.restart();
+                if (insertModel != null) {
+                    queryModel = compileExecutionModel(executionContext).getQueryModel();
+                    insertModel.setQueryModel(queryModel);
+                } else {
+                    queryModel = (IQueryModel) compileExecutionModel(executionContext);
+                }
+            }
+        }
+    }
+
+    @Override
+    public RecordCursorFactory generateSelectWithoutRetries(
+            @Transient IQueryModel queryModel,
+            @Transient SqlExecutionContext executionContext,
+            boolean generateProgressLogger
+    ) throws SqlException {
+        // Through generateSelectOneShot(), so that a subclass's wrapping of a plan covers this one.
+        return generateSelectOneShot(queryModel, executionContext, generateProgressLogger);
+    }
+
+    @Override
+    public ExecutionModel generateViewExecutionModel(
+            CharSequence viewSql,
+            SqlExecutionContext executionContext,
+            LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> outDependencies
+    ) throws SqlException {
+        clear();
+        lexer.of(viewSql);
+        return compileExecutionModel(executionContext, false, outDependencies);
+    }
+
+    @Override
+    public BytecodeAssembler getAsm() {
+        return asm;
+    }
+
+    @Override
+    public CairoEngine getEngine() {
+        return engine;
+    }
+
+    public FunctionFactoryCache getFunctionFactoryCache() {
+        return functionParser.getFunctionFactoryCache();
+    }
+
+    @TestOnly
+    public int getWhereClauseParserPoolSizeForTesting() {
+        return codeGenerator.getWhereClauseParserPoolSizeForTesting();
+    }
+
+    @Override
+    public boolean isExpiryCleanupReclaiming(
+            SqlExecutionContext executionContext,
+            RecordMetadata metadata,
+            CharSequence predicate
+    ) {
+        if (predicate == null) {
+            return false;
+        }
+        // A structural policy (KEEP LATEST, KEEP [N] HIGHEST/LOWEST, window) never reclaims, and its encoded
+        // text is not a scalar expression the classifier below could bind. Answer from the encoding alone.
+        if (RowExpiryUtil.isStructuralPolicy(predicate)) {
+            return false;
+        }
+        // Bind and classify the scalar expression once. Structural threshold recognition is unit-independent,
+        // so TIMESTAMP_NS designated columns and symmetric `T > ts` forms receive the same monotonicity proof
+        // as microsecond `ts < T`; the numeric micros threshold remains a separate partition-bounds fast path.
+        try {
+            final ExpiryValidationResult classification =
+                    validateExpiryPredicateOnMetadata(executionContext, metadata, predicate, 0);
+            return RowExpiryUtil.isReclaimingPolicy(predicate, classification.isMonotonic());
+        } catch (SqlException e) {
+            return false;
+        }
+    }
+
+    @Override
+    public QueryBuilder query() {
+        queryBuilder.clear();
+        return queryBuilder;
+    }
+
+    @TestOnly
+    @Override
+    public void setEnableJitNullChecks(boolean value) {
+        codeGenerator.setEnableJitNullChecks(value);
+    }
+
+    @TestOnly
+    @Override
+    public void setFullFatJoins(boolean value) {
+        codeGenerator.setFullFatJoins(value);
+    }
+
+    @Override
+    public ExpressionNode parseExpression(CharSequence expression) throws SqlException {
+        clear();
+        lexer.of(expression);
+        // Stamp the flag rather than inherit whatever the last parse() left behind.
+        // Both callers hand in a live view's stored ANCHOR EXPRESSION, which is a
+        // scalar expression and carries no ANCHOR clause of its own, so the clause
+        // stays refused here exactly as it is for any other bare expression.
+        parser.setAnchorAllowed(false);
+        return parser.expr(lexer, (IQueryModel) null, this);
+    }
+
+    @TestOnly
+    public void setUnionSymbolProjectionTestHook(@Nullable SqlCodeGenerator.UnionSymbolProjectionTestHook hook) {
+        codeGenerator.setUnionSymbolProjectionTestHook(hook);
+    }
+
+    @TestOnly
+    @Override
+    public ExpressionNode testParseExpression(CharSequence expression, IQueryModel model) throws SqlException {
+        clear();
+        lexer.of(expression);
+        return parser.expr(lexer, model, this);
+    }
+
+    // test only
+    @TestOnly
+    @Override
+    public void testParseExpression(CharSequence expression, ExpressionParserListener listener) throws SqlException {
+        clear();
+        lexer.of(expression);
+        parser.expr(lexer, listener, this);
+    }
+
+    /**
+     * Parses + binds {@code predicate} against {@code metadata} and asserts the result is a boolean
+     * expression consuming the ENTIRE text, with no root-level aggregate and no bind variables. The
+     * stored text is embedded verbatim into every read's generated SQL, so anything that read-path
+     * parse would choke on must be rejected here. Any parse/bind error is rewritten as a clear
+     * "invalid EXPIRE ROWS predicate" positioned at {@code position}. Runs on a freshly-borrowed
+     * compiler (its own lexer/parser/functionParser).
+     * <p>
+     * The last thing it does is bind the predicate a second time, wrapped exactly as a read wraps it,
+     * because binding the bare predicate does not answer the question the DDL is being asked. See
+     * {@link #validateExpiryKeepFilterBinds}.
+     */
+    @Override
+    public ExpiryValidationResult validateExpiryPredicateOnMetadata(
+            SqlExecutionContext executionContext,
+            RecordMetadata metadata,
+            CharSequence predicate,
+            int position
+    ) throws SqlException {
+        Function f = null;
+        try {
+            final ExpressionNode node;
+            try {
+                clear();
+                lexer.of(predicate);
+                node = parser.expr(lexer, (QueryModel) null, this);
+                // The expression parser stops at the first token it cannot absorb (e.g. `x > 5 oops`
+                // parses as `x > 5`), but the FULL text is what gets stored and embedded into every
+                // read's generated SQL, where the leftover token fails the parse. Require the whole
+                // predicate to be one expression, so what validates is exactly what reads execute.
+                final CharSequence trailingTok = SqlUtil.fetchNext(lexer);
+                if (trailingTok != null) {
+                    throw SqlException.$(position, "unexpected token after expression: ").put(trailingTok);
+                }
+                f = functionParser.parseFunction(node, metadata, executionContext);
+            } catch (SqlException | CairoException | ImplicitCastException e) {
+                // ImplicitCastException extends RuntimeException, not CairoException. A constant the bind
+                // folds - `i = 'abc'` against an INT column - raises one here, and it has to read as an
+                // invalid policy rather than escaping the DDL as a bare cast error.
+                final String reason = reasonOf(e);
+                throw SqlException.$(position, "invalid EXPIRE ROWS predicate: ").put(reason);
+            }
+            if (f == null || !ColumnType.isBoolean(f.getType())) {
+                throw SqlException.$(position, "invalid EXPIRE ROWS predicate: expected a boolean expression");
+            }
+            // The read filter embeds the predicate as an argument of a CASE expression, where an
+            // aggregate is illegal ("Aggregate function cannot be passed as an argument"). The
+            // function parser rejects an aggregate only when it is an argument of another function,
+            // so a bare root-level aggregate (e.g. `bool_and(flag)`) passes the bind above; reject it
+            // here so the view does not get created with a policy that fails every read.
+            if (f instanceof GroupByFunction) {
+                throw SqlException.$(position, "invalid EXPIRE ROWS predicate: aggregate functions are not supported");
+            }
+            // A stored predicate has no statement to supply bind values, so `v > $1` would fail on
+            // every read with "undefined bind variable"; reject it at definition time instead.
+            if (expiryExpressionHasBindVariable(node)) {
+                throw SqlException.$(position, "invalid EXPIRE ROWS predicate: bind variables are not supported");
+            }
+            final IntList referencedColumnIndexes = new IntList();
+            collectExpiryReferencedColumns(node, metadata, referencedColumnIndexes);
+            // A date variable in a string constant (`ts IN '$now - 1h..$now'`) reads the clock too. The
+            // function that evaluates such a string reads it in init() but reports neither
+            // isNonDeterministic() nor isRuntimeConstant(), so only the AST shows the clock read.
+            final boolean hasClock = expiryExpressionHasClock(node) || expiryExpressionHasDateVariable(node);
+            // The predicate counts as depending only on the row (isDeterministic) only when its AST proves
+            // that every node gives each row the same value in every execution and session. The cleanup job
+            // evaluates the predicate once per sweep under the root context, so a clock read, a session
+            // value such as current_user(), or any other function whose value can change could make it
+            // delete a row that a later read, or a reader in another session, keeps. The proof works on the
+            // AST rather than on the bound functions: a function reports isNonDeterministic(),
+            // isRuntimeConstant() or isRandom() reliably only when the answer is true, and some functions
+            // keep an operand, such as the IN list of a SYMBOL column, where no walk of the bound tree
+            // reaches it.
+            // A subquery (e.g. `sym IN (SELECT s FROM blacklist)`) reads other tables whose contents can
+            // change between evaluations, so a row expired now can un-expire later - physical cleanup
+            // under such a predicate could delete rows the read filter must show again. The expression
+            // parse above already rejects subqueries ("query is not allowed here": parser.expr runs with
+            // no query model), so none can be stored via DDL. The QUERY-node check is a second layer of
+            // protection: if a subquery ever does reach classification, the predicate is classified
+            // non-monotonic and the cleanup job skips physical deletion for it.
+            final boolean isDeterministic = !hasClock
+                    && !expiryExpressionHasQuery(node)
+                    && isExpiryRowOnlyExpression(node, metadata);
+            final int timestampIndex = metadata.getTimestampIndex();
+            final CharSequence timestampColumn = timestampIndex >= 0 ? metadata.getColumnName(timestampIndex) : null;
+            final ExpressionNode thresholdNode = expiryTimestampThresholdNode(node, metadata, timestampColumn);
+            final boolean isMonotonic = isDeterministic
+                    || isProvenAdvancingClockExpression(thresholdNode);
+            final ExpiryValidationResult result =
+                    new ExpiryValidationResult(hasClock, isDeterministic, isMonotonic, referencedColumnIndexes);
+            // Last, because it reuses this compiler's lexer and parser and so invalidates `node`.
+            validateExpiryKeepFilterBinds(executionContext, metadata, predicate, position);
+            // Also re-lexes, so it has to follow everything that reads `node`.
+            rejectUnusableConstantExpiryThreshold(executionContext, metadata, predicate, timestampColumn, position);
+            return result;
+        } finally {
+            Misc.free(f);
+        }
+    }
+
+    private static void addExpiryRowOnlyFunctions(String... names) {
+        for (String name : names) {
+            EXPIRY_ROW_ONLY_FUNCTIONS.add(name);
+        }
+    }
+
+    private static void addSupportedConversion(short fromType, short... toTypes) {
+        for (short toType : toTypes) {
+            columnConversionSupport[fromType][toType] = true;
+            // Make it symmetrical
+            columnConversionSupport[toType][fromType] = true;
+        }
+    }
+
+    // Appends a column name the way an expanded materialized view query spells it: always double-quoted, so
+    // no name can read as a keyword or start another clause, whatever the grammar treats as a keyword.
+    private static void appendMatViewColumnName(CharSink<?> sink, CharSequence name) {
+        sink.putAscii('"');
+        for (int i = 0, n = name.length(); i < n; i++) {
+            final char c = name.charAt(i);
+            if (c == '"') {
+                sink.putAscii('"');
+            }
+            sink.put(c);
+        }
+        sink.putAscii('"');
+    }
+
+    // returns number of copied rows
+    private static long copyOrderedBatched0(
+            SqlExecutionContext context,
+            TableWriterAPI writer,
+            RecordCursor cursor,
+            RecordToRowCopier copier,
+            int fromTimestampType,
+            int cursorTimestampIndex,
+            long batchSize,
+            long o3MaxLag,
+            CopyDataProgressReporter reporter,
+            int reportFrequency
+    ) {
+        long commitTarget = batchSize;
+        long rowCount = 0;
+        final Record record = cursor.getRecord();
+        reporter.onProgress(CopyDataProgressReporter.Stage.Start, cursor.size());
+        CommonUtils.TimestampUnitConverter converter = ColumnType.getTimestampDriver(writer.getMetadata().getTimestampType()).getTimestampUnitConverter(fromTimestampType);
+        if (converter == null) {
+            while (cursor.hasNext()) {
+                context.getCircuitBreaker().statefulThrowExceptionIfTrippedOrYield();
+                TableWriter.Row row = writer.newRow(record.getTimestamp(cursorTimestampIndex));
+                copier.copy(context, record, row);
+                row.append();
+                if (++rowCount >= commitTarget) {
+                    writer.ic(o3MaxLag);
+                    commitTarget = rowCount + batchSize;
+                }
+                if (reportFrequency > 0 && rowCount % reportFrequency == 0) {
+                    reporter.onProgress(CopyDataProgressReporter.Stage.Inserting, rowCount);
+                }
+            }
+        } else {
+            while (cursor.hasNext()) {
+                context.getCircuitBreaker().statefulThrowExceptionIfTrippedOrYield();
+                TableWriter.Row row = writer.newRow(converter.convert(record.getTimestamp(cursorTimestampIndex)));
+                copier.copy(context, record, row);
+                row.append();
+                if (++rowCount >= commitTarget) {
+                    writer.ic(o3MaxLag);
+                    commitTarget = rowCount + batchSize;
+                }
+                if (reportFrequency > 0 && rowCount % reportFrequency == 0) {
+                    reporter.onProgress(CopyDataProgressReporter.Stage.Inserting, rowCount);
+                }
+            }
+        }
+        reporter.onProgress(CopyDataProgressReporter.Stage.Finish, rowCount);
+
+        return rowCount;
+    }
+
+    // A NULL-typed column holds no value, and records that materialize rows, such as map records and
+    // sort chains, keep no bytes for it to read. Every row would get a NULL designated timestamp, which
+    // the writers reject, so the first row fails without reading it.
+    private static long copyOrderedBatchedNullTimestamp(RecordCursor cursor, CopyDataProgressReporter reporter) {
+        reporter.onProgress(CopyDataProgressReporter.Stage.Start, cursor.size());
+        if (cursor.hasNext()) {
+            throw CairoException.nonCritical().put("designated timestamp column cannot be NULL");
+        }
+        reporter.onProgress(CopyDataProgressReporter.Stage.Finish, 0);
+        return 0;
+    }
+
+    // returns number of copied rows
+    private static long copyOrderedBatchedStrTimestamp(
+            SqlExecutionContext context,
+            TableWriterAPI writer,
+            RecordCursor cursor,
+            RecordToRowCopier copier,
+            int cursorTimestampIndex,
+            long batchSize,
+            long o3MaxLag,
+            CopyDataProgressReporter reporter
+    ) {
+        long commitTarget = batchSize;
+        long rowCount = 0;
+        final Record record = cursor.getRecord();
+        final TimestampDriver timestampDriver = ColumnType.getTimestampDriver(writer.getMetadata().getTimestampType());
+        reporter.onProgress(CopyDataProgressReporter.Stage.Start, cursor.size());
+        while (cursor.hasNext()) {
+            context.getCircuitBreaker().statefulThrowExceptionIfTrippedOrYield();
+            // It's allowed to insert ISO formatted string to timestamp column
+            TableWriter.Row row = writer.newRow(timestampDriver.implicitCast(record.getStrA(cursorTimestampIndex)));
+            copier.copy(context, record, row);
+            row.append();
+            if (++rowCount >= commitTarget) {
+                writer.ic(o3MaxLag);
+                commitTarget = rowCount + batchSize;
+            }
+            if (rowCount % 50000 == 0) {
+                reporter.onProgress(CopyDataProgressReporter.Stage.Inserting, rowCount);
+            }
+        }
+        reporter.onProgress(CopyDataProgressReporter.Stage.Finish, rowCount);
+
+        return rowCount;
+    }
+
+    // returns number of copied rows
+    private static long copyOrderedBatchedVarcharTimestamp(
+            SqlExecutionContext context,
+            TableWriterAPI writer,
+            RecordCursor cursor,
+            RecordToRowCopier copier,
+            int cursorTimestampIndex,
+            long batchSize,
+            long o3MaxLag,
+            CopyDataProgressReporter reporter
+    ) {
+        final TimestampDriver timestampDriver = ColumnType.getTimestampDriver(writer.getMetadata().getTimestampType());
+        long commitTarget = batchSize;
+        long rowCount = 0;
+        final Record record = cursor.getRecord();
+        reporter.onProgress(CopyDataProgressReporter.Stage.Start, cursor.size());
+        while (cursor.hasNext()) {
+            context.getCircuitBreaker().statefulThrowExceptionIfTrippedOrYield();
+            // It's allowed to insert ISO formatted string to timestamp column
+            TableWriter.Row row = writer.newRow(timestampDriver.implicitCastVarchar(record.getVarcharA(cursorTimestampIndex)));
+            copier.copy(context, record, row);
+            row.append();
+            if (++rowCount >= commitTarget) {
+                writer.ic(o3MaxLag);
+                commitTarget = rowCount + batchSize;
+            }
+            if (rowCount % 50000 == 0) {
+                reporter.onProgress(CopyDataProgressReporter.Stage.Inserting, rowCount);
+            }
+        }
+        reporter.onProgress(CopyDataProgressReporter.Stage.Finish, rowCount);
+        return rowCount;
+    }
+
+    private static int estimateIndexValueBlockSizeFromReader(CairoConfiguration configuration, SqlExecutionContext executionContext, TableToken matViewToken, int columnIndex) {
+        final int indexValueBlockSize;
+        try (TableReader reader = executionContext.getReader(matViewToken)) {
+            int symbolCount = reader.getSymbolMapReader(columnIndex).getSymbolCount();
+            if (reader.getPartitionCount() == 0 || symbolCount == 0) {
+                // No data to estimate accurately, fall back to default.
+                return Numbers.ceilPow2(configuration.getIndexValueBlockSize());
+            }
+            // we are looking to estimate how many rowids we will need to store for each
+            // symbol per partition. To do that wee are assuming the following formula:
+            // max(2, table_row_count / table_partition_count / symbol_count / 4)
+            // here:
+            // 2 being the minimum number of row IDs per symbol
+            // div by 4 - we are looking to have 4 chained block for an average symbol to make sure we
+            // do not create overly-sparse index for symbols with row count below average.
+            long v = Math.max(2, reader.size() / reader.getPartitionCount() / symbolCount / 4);
+            if ((int) v != v) {
+                // overflow, assign sensible default (large)
+                indexValueBlockSize = 50_000_000;
+            } else {
+                indexValueBlockSize = (int) v;
+            }
+        }
+        return indexValueBlockSize;
+    }
+
+    /**
+     * Returns the {@code LITERAL} table source reachable from {@code model} that is not
+     * {@code targetTableName}, or {@code null} when every table the model names is the target. The
+     * target's own name may occur any number of times - an UPDATE reads and writes the same table,
+     * and a sub-query may name it again - so this counts distinct sources, not occurrences. Names
+     * are compared the way the name registry itself compares them, case-insensitively, so a
+     * differently-spelled or quoted reference to the target is still the target.
+     * <p>
+     * Only a literal source is examined here. {@code SqlParser#parseSelectFrom} records a model's
+     * source as either a {@code LITERAL}/{@code CONSTANT} name or a {@code FUNCTION} call and
+     * rejects anything else outright, and a function source has to return a cursor
+     * ({@code TableUtils#createCursorFunction}) - so a function source is caught, wherever it
+     * stands, by the cursor-function rejection in {@link #generateUpdate} instead. That split is
+     * deliberate: a table name is only comparable to the target in the model, while a function is
+     * only classifiable once instantiated.
+     * <p>
+     * A {@code SHOW} model is skipped for the same reason. Its table name expression is an argument
+     * and not always a table - {@code SHOW USER bob} names a user, {@code SHOW GROUPS g} a group -
+     * and several kinds set none at all, so the name here answers neither question. Every one of
+     * them materialises a cursor in {@code SqlOptimiser#parseFunctionAndEnumerateColumns}, which is
+     * where they are caught, with a message that does not have to guess what the name denotes.
+     * <p>
+     * The traversal is the same one {@code SqlCodeGenerator} uses to reach every model of a compiled
+     * query: down the nested-model chain, into each join model, into the union branch, and into the
+     * sub-query hanging off each expression model. That last one is what carries a scalar sub-query,
+     * an {@code IN (SELECT ...)} that was not rewritten into a join, and everything nested inside
+     * them; {@code IQueryModel#getExpressionModels()} is populated by the parser
+     * ({@code ExpressionTreeBuilder#onNode}) and survives code generation, which matters because
+     * {@code WhereClauseParser} may by then have lifted the sub-query out of the WHERE clause it was
+     * written in. A CTE needs no separate case: the parser inlines it as a nested model wherever it
+     * is referenced ({@code SqlParser#parseSelectFrom}).
+     */
+    private static ExpressionNode findForeignTableSource(IQueryModel model, CharSequence targetTableName) {
+        IQueryModel m = model;
+        do {
+            final ExpressionNode tableNameExpr = m.getTableNameExpr();
+            if (tableNameExpr != null
+                    && tableNameExpr.type == ExpressionNode.LITERAL
+                    && m.getSelectModelType() != IQueryModel.SELECT_MODEL_SHOW
+                    && !Chars.equalsIgnoreCase(targetTableName, unquote(tableNameExpr.token))) {
+                return tableNameExpr;
+            }
+
+            final ObjList<ExpressionNode> expressionModels = m.getExpressionModels();
+            for (int i = 0, n = expressionModels.size(); i < n; i++) {
+                // null once the optimiser has converted the sub-query into a join; the join model
+                // below then carries the same table.
+                final IQueryModel expressionModel = expressionModels.getQuick(i).queryModel;
+                if (expressionModel != null) {
+                    final ExpressionNode foreignSource = findForeignTableSource(expressionModel, targetTableName);
+                    if (foreignSource != null) {
+                        return foreignSource;
+                    }
+                }
+            }
+
+            // index 0 is the model itself
+            final ObjList<IQueryModel> joinModels = m.getJoinModels();
+            for (int i = 1, n = joinModels.size(); i < n; i++) {
+                final ExpressionNode foreignSource = findForeignTableSource(joinModels.getQuick(i), targetTableName);
+                if (foreignSource != null) {
+                    return foreignSource;
+                }
+            }
+
+            final IQueryModel unionModel = m.getUnionModel();
+            if (unionModel != null) {
+                final ExpressionNode foreignSource = findForeignTableSource(unionModel, targetTableName);
+                if (foreignSource != null) {
+                    return foreignSource;
+                }
+            }
+
+            m = m.getNestedModel();
+        } while (m != null);
+        return null;
+    }
+
+    // Returns where the name written at pos in text ends, or -1 when the text at pos does not spell the name.
+    // The name matches ignoring case, either plain and followed by the end of the text or by a character that
+    // is not a letter, digit or underscore, or double-quoted with pos on the opening quote.
+    private static int findBareNameEnd(String text, int pos, String name) {
+        final int len = name.length();
+        final int textLen = text.length();
+        if (pos < 0 || pos >= textLen) {
+            return -1;
+        }
+        if (text.charAt(pos) == '"') {
+            final int hi = pos + 1 + len;
+            return hi < textLen && text.regionMatches(true, pos + 1, name, 0, len) && text.charAt(hi) == '"' ? hi + 1 : -1;
+        }
+        final int hi = pos + len;
+        if (!text.regionMatches(true, pos, name, 0, len)) {
+            return -1;
+        }
+        if (hi < textLen && (Character.isLetterOrDigit(text.charAt(hi)) || text.charAt(hi) == '_')) {
+            return -1;
+        }
+        return hi;
+    }
+
+    // End (exclusive) of the wildcard item that starts at lo: the first '*' outside a quoted name, so `*`,
+    // `b.*` and `"my table".*` all end right after their asterisk. Returns -1 when the text has none.
+    private static int findWildcardEnd(CharSequence text, int lo) {
+        for (int i = lo, n = text.length(); i < n; i++) {
+            final char c = text.charAt(i);
+            if (c == '*') {
+                return i + 1;
+            }
+            if (c == '"' || c == '\'') {
+                // Skip to the closing quote; a doubled quote stays inside the name.
+                for (i++; i < n; i++) {
+                    if (text.charAt(i) == c) {
+                        if (i + 1 < n && text.charAt(i + 1) == c) {
+                            i++;
+                        } else {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        return -1;
+    }
+
+    private static CharSequence formatPartitionName(TableReader reader, long partitionTimestamp) {
+        final StringSink sink = Misc.getThreadLocalSink();
+        PartitionBy.setSinkForPartition(sink, reader.getMetadata().getTimestampType(), reader.getPartitionedBy(), partitionTimestamp);
+        return sink;
+    }
+
+    // True if both metadata have the same column names and types, in the same order, and the same
+    // designated timestamp.
+    private static boolean hasSameColumns(@Nullable RecordMetadata a, RecordMetadata b) {
+        if (a == null || a.getColumnCount() != b.getColumnCount() || a.getTimestampIndex() != b.getTimestampIndex()) {
+            return false;
+        }
+        for (int i = 0, n = a.getColumnCount(); i < n; i++) {
+            if (!Chars.equals(a.getColumnName(i), b.getColumnName(i)) || a.getColumnType(i) != b.getColumnType(i)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean isIPv4UpdateCast(int from, int to) {
+        return (from == ColumnType.STRING && to == ColumnType.IPv4)
+                || (from == ColumnType.IPv4 && to == ColumnType.STRING)
+                || (from == ColumnType.VARCHAR && to == ColumnType.IPv4)
+                || (from == ColumnType.IPv4 && to == ColumnType.VARCHAR);
+    }
+
+    // True for a character that already separates the expanded column list from its neighbour.
+    private static boolean isMatViewSpliceSeparator(char c) {
+        return Character.isWhitespace(c) || c == ',' || c == '(' || c == ')';
+    }
+
+    /**
+     * The compile-time partition layout checks (reject*On*Partitions) only gate statements a user
+     * submits. They are skipped when:
+     * <ul>
+     *     <li>the statement is re-compiled to apply a WAL transaction (non-structural ALTERs such as
+     *     ADD INDEX, and UPDATE, travel the WAL as SQL text, on the primary and on every replica).
+     *     The transaction was already acknowledged; the apply-time check reports the failure;</li>
+     *     <li>the node is read-only. The statement is refused by the read-only gate anyway, and
+     *     "replica access is read-only" is the error the user must see;</li>
+     *     <li>the operator allowed all partition operations
+     *     ({@code cairo.sql.all.partition.operations.allowed}). The statement then fails when
+     *     applied, as it did before these checks existed;</li>
+     *     <li>the target is a view. A view has no partitions and no reader; the view
+     *     modification check rejects the statement with "cannot modify view".</li>
+     * </ul>
+     */
+    private static boolean isPartitionLayoutCheckSkipped(SqlExecutionContext executionContext, TableToken tableToken) {
+        final CairoEngine engine = executionContext.getCairoEngine();
+        return tableToken.isView()
+                || executionContext.isWalApplication()
+                || engine.isReadOnlyMode()
+                || engine.getConfiguration().isAllPartitionOperationsAllowed();
+    }
+
+    private static boolean isTimestampUpdateCast(int from, int to) {
+        return ColumnType.isTimestamp(to) && ColumnType.isConvertibleFrom(from, to);
+    }
+
+    /**
+     * Copies the reason out of {@code e} so it survives being wrapped in a new {@link SqlException}.
+     * <p>
+     * {@link SqlException#position(int)} hands back the thread's shared carrier and clears its message
+     * sink, and only under {@code -ea} does it allocate a fresh instance instead. So on a production
+     * build {@code SqlException.$(pos, "prefix: ").put(e.getFlyweightMessage())} appends the new
+     * message to itself and the reason is gone, while every test sees the reason. Reading the sink
+     * before the wrapping exception is built is what keeps the two builds saying the same thing.
+     * <p>
+     * Call it into a local, never inline as an argument: Java evaluates the receiver of
+     * {@code SqlException.$(...).put(...)} first, so an inline call would read the sink after the
+     * clear and reproduce the very doubling it exists to prevent.
+     */
+    private static String reasonOf(FlyweightMessageContainer e) {
+        return Chars.toString(e.getFlyweightMessage());
+    }
+
+    /**
+     * Rejects ALTER ... ADD INDEX on a table that has a remotely-served (cold storage) partition.
+     * Such a partition has no local data file to build the index from, so the ADD INDEX would fail
+     * when applied - and on a WAL table that failure suspends the table. Rejecting the statement at
+     * compile time keeps the table healthy and gives the user an immediate error.
+     */
+    private static void rejectAddIndexOnColdPartitions(
+            SqlExecutionContext executionContext,
+            TableToken tableToken,
+            int position
+    ) throws SqlException {
+        if (isPartitionLayoutCheckSkipped(executionContext, tableToken)) {
+            return;
+        }
+        try (TableReader reader = executionContext.getReader(tableToken)) {
+            final TxReader txFile = reader.getTxFile();
+            for (int i = 0, n = txFile.getPartitionCount(); i < n; i++) {
+                if (txFile.isPartitionRemotelyServed(i)) {
+                    throw SqlException.position(position)
+                            .put("cannot add index, table has partitions in cold storage [table=").put(tableToken.getTableName())
+                            .put(", partition=").put(formatPartitionName(reader, txFile.getPartitionTimestampByIndex(i)))
+                            .put("]; an index cannot be built over partitions whose data is only in remote storage");
+                }
+            }
+        }
+    }
+
+    /**
+     * Rejects type changes on read-only or delta-active partitions before WAL submission.
+     * {@code TableWriter} cannot rewrite their column data. Rejecting these statements at
+     * compile time prevents WAL apply from suspending the table.
+     */
+    private static void rejectColumnTypeChange(
+            SqlExecutionContext executionContext,
+            TableToken tableToken,
+            int position
+    ) throws SqlException {
+        if (isPartitionLayoutCheckSkipped(executionContext, tableToken)) {
+            return;
+        }
+        try (TableReader reader = executionContext.getReader(tableToken)) {
+            final TxReader txFile = reader.getTxFile();
+            for (int i = 0, n = txFile.getPartitionCount(); i < n; i++) {
+                if (txFile.isPartitionReadOnly(i)) {
+                    final boolean isCold = txFile.isPartitionRemotelyServed(i);
+                    throw SqlException.position(position)
+                            .put(isCold
+                                    ? "cannot change column type, table has partitions in cold storage [table="
+                                    : "cannot change column type, table has read-only partitions [table=")
+                            .put(tableToken.getTableName())
+                            .put(", partition=").put(formatPartitionName(reader, txFile.getPartitionTimestampByIndex(i)))
+                            .put(isCold
+                                    ? "]; column data of partitions in cold storage cannot be rewritten"
+                                    : "]; column data of read-only partitions cannot be rewritten");
+                }
+                if (txFile.isPartitionDeltaActive(i)) {
+                    throw SqlException.position(position)
+                            .put("cannot change column type, table has delta-active partitions [table=")
+                            .put(tableToken.getTableName())
+                            .put(", partition=").put(formatPartitionName(reader, txFile.getPartitionTimestampByIndex(i)))
+                            .put("]; column data of delta-active partitions cannot be rewritten");
+                }
+            }
+        }
+    }
+
+    /**
+     * Rejects DEDUP ENABLE on a table with a delta-active partition before WAL submission.
+     * {@code TableWriter} refuses it on apply, which would suspend the table.
+     */
+    private static void rejectDedupEnable(
+            SqlExecutionContext executionContext,
+            TableToken tableToken,
+            int position
+    ) throws SqlException {
+        if (isPartitionLayoutCheckSkipped(executionContext, tableToken)) {
+            return;
+        }
+        try (TableReader reader = executionContext.getReader(tableToken)) {
+            final TxReader txFile = reader.getTxFile();
+            for (int i = 0, n = txFile.getPartitionCount(); i < n; i++) {
+                if (txFile.isPartitionDeltaActive(i)) {
+                    throw SqlException.position(position)
+                            .put("cannot enable deduplication, table has delta-active partitions [table=")
+                            .put(tableToken.getTableName())
+                            .put(", partition=").put(formatPartitionName(reader, txFile.getPartitionTimestampByIndex(i)))
+                            .put("]; delta-active partitions are insert-only");
+                }
+            }
+        }
+    }
+
+    /**
+     * Rejects UPDATE on a WAL table that has a parquet-format partition, including partitions in cold
+     * storage, or a Delta partition. Both are read-only for UPDATE; an UPDATE reaching one fails when applied, which on
+     * a WAL table suspends the table because an acknowledged UPDATE can never be skipped. Rejecting
+     * the statement at compile time keeps the table healthy and gives the user an immediate error.
+     * <p>
+     * Only called for WAL tables. A non-WAL UPDATE executes synchronously: {@code UpdateOperatorImpl}
+     * rejects it only when it reaches a parquet partition, and rolls it back, so an UPDATE restricted
+     * to native partitions keeps working there.
+     * <p>
+     * Skipped on the WAL apply path: an UPDATE already sequenced keeps its apply-time semantics,
+     * which {@code UpdateOperatorImpl} still enforces per updated partition.
+     */
+    private static void rejectUpdateOnParquetPartitions(
+            SqlExecutionContext executionContext,
+            TableToken tableToken,
+            int position
+    ) throws SqlException {
+        if (isPartitionLayoutCheckSkipped(executionContext, tableToken)) {
+            return;
+        }
+        try (TableReader reader = executionContext.getReader(tableToken)) {
+            final TxReader txFile = reader.getTxFile();
+            if (!reader.hasParquetPartitions() && !txFile.hasDeltaState()) {
+                return;
+            }
+            for (int i = 0, n = txFile.getPartitionCount(); i < n; i++) {
+                if (txFile.isPartitionParquet(i)) {
+                    throw SqlException.position(position)
+                            .put("cannot update table with parquet partitions [table=").put(tableToken.getTableName())
+                            .put(", partition=").put(formatPartitionName(reader, txFile.getPartitionTimestampByIndex(i)))
+                            .put("]; parquet partitions, including partitions in cold storage, are read-only");
+                }
+            }
+            for (int i = 0, n = txFile.getPartitionCount(); i < n; i++) {
+                if (txFile.isPartitionDeltaActive(i) || txFile.getPartitionHasDelta(i)) {
+                    throw SqlException.position(position)
+                            .put("cannot update table with delta partitions [table=").put(tableToken.getTableName())
+                            .put(", partition=").put(formatPartitionName(reader, txFile.getPartitionTimestampByIndex(i)))
+                            .put("]; delta partitions are read-only for UPDATE");
+                }
+            }
+        }
+    }
+
+    /**
+     * Rejects a WAL {@code UPDATE} that names any table other than the one it targets.
+     * <p>
+     * A WAL UPDATE is recorded as SQL text and re-executed on every node that applies it, so it may
+     * only read what re-execution is guaranteed to see identically. Its own target qualifies: the
+     * apply job holds that table's writer and applies seqTxn in order, so the table stands at
+     * exactly seqTxn-1 on every node. No other table does - sequencing is per-table and there is no
+     * cross-table barrier - and unlike the RNG seed and the clock, which the WAL event carries
+     * precisely so that replay is identical, nothing pins a second table's watermark. Left to run,
+     * such a statement would write different rows on different nodes and nothing would notice,
+     * because replication tracks seqTxn progress and not content.
+     * <p>
+     * This covers the tables the model names. The other way into node-local state is a cursor
+     * function, which names nothing in the model; {@link #generateUpdate} rejects those.
+     * <p>
+     * This runs while the execution model is compiled, ahead of code generation. Column-level
+     * authorization is applied as the update factory is generated, so on a WAL table this rejection
+     * reaches the caller before any permission check can deny the statement: a user lacking SELECT
+     * on the referenced columns sees the shape error rather than an access-denied one. The non-WAL
+     * path does not reach here and still reports the permission failure first.
+     * <p>
+     * Called only off the WAL apply path. A statement of this shape sequenced by an older build has
+     * to keep applying after an upgrade; refusing it there would suspend every table still holding
+     * one, which is a worse outcome than the divergence this prevents.
+     */
+    private static void rejectWalUpdateAcrossTables(IQueryModel updateQueryModel, TableToken tableToken) throws SqlException {
+        // UPDATE ... FROM is the other route to a second table and has always been rejected, further
+        // down in generateUpdate(). Its message is the more specific of the two, so raise it here
+        // rather than let the general one claim the shape first; generateUpdate() keeps its own copy
+        // of the check for the joins the optimiser derives from other shapes.
+        if (updateQueryModel.getNestedModel().containsJoin()) {
+            throw SqlException.position(0).put(UPDATE_WITH_JOIN_NOT_SUPPORTED);
+        }
+        final ExpressionNode foreignSource = findForeignTableSource(updateQueryModel, tableToken.getTableName());
+        if (foreignSource != null) {
+            throw SqlException.position(0)
+                    .put("UPDATE statements that reference another table are not supported for WAL tables [table=")
+                    .put(unquote(foreignSource.token))
+                    .put("]; the statement is replicated as SQL and re-executed on every node, and the referenced table is not synchronised with this one, so nodes could write different data");
+        }
+    }
+
+    private int addColumnWithType(
+            @Nullable AlterOperationBuilder addColumn,
+            CharSequence columnName,
+            int columnNamePosition
+    ) throws SqlException {
+        CharSequence tok;
+        tok = expectToken(lexer, "column type");
+        int typePosition = lexer.lastTokenPosition();
+
+        int columnType = SqlUtil.toPersistedType(tok, typePosition);
+
+        int dim = SqlUtil.parseArrayDimensionality(lexer, columnType, typePosition);
+        if (dim > 0) {
+            if (!ColumnType.isSupportedArrayElementType(columnType)) {
+                throw SqlException.position(typePosition)
+                        .put("unsupported array element type [type=")
+                        .put(ColumnType.nameOf(columnType))
+                        .put(']');
+            }
+            columnType = ColumnType.encodeArrayType(ColumnType.tagOf(columnType), dim);
+        }
+
+        if (columnType == ColumnType.DECIMAL) {
+            columnType = SqlParser.parseDecimalColumnType(lexer);
+        } else if (columnType == ColumnType.GEOHASH) {
+            columnType = SqlParser.parseGeoHashColumnType(lexer);
+        }
+
+        tok = SqlUtil.fetchNext(lexer);
+
+        // check for an unmatched bracket
+        if (tok != null && Chars.equals(tok, ']')) {
+            throw SqlException.position(typePosition).put(columnName).put(" has an unmatched `]` - were you trying to define an array?");
+        } else {
+            lexer.unparseLast();
+        }
+
+        tok = SqlUtil.fetchNext(lexer);
+        final int indexValueBlockCapacity;
+        final boolean cache;
+        int symbolCapacity;
+        byte indexType = IndexType.NONE;
+
+        if (
+                ColumnType.isSymbol(columnType)
+                        && tok != null
+                        && !Chars.equals(tok, ',')
+                        && !Chars.equals(tok, ';')
+        ) {
+            if (isCapacityKeyword(tok)) {
+                tok = expectToken(lexer, "symbol capacity");
+
+                final boolean negative;
+                final int errorPos = lexer.lastTokenPosition();
+                if (Chars.equals(tok, '-')) {
+                    negative = true;
+                    tok = expectToken(lexer, "symbol capacity");
+                } else {
+                    negative = false;
+                }
+
+                try {
+                    symbolCapacity = Numbers.parseInt(tok);
+                } catch (NumericException e) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "numeric capacity expected");
+                }
+
+                if (negative) {
+                    symbolCapacity = -symbolCapacity;
+                }
+
+                TableUtils.validateSymbolCapacity(errorPos, symbolCapacity);
+
+                tok = SqlUtil.fetchNext(lexer);
+            } else {
+                symbolCapacity = configuration.getDefaultSymbolCapacity();
+            }
+
+            if (Chars.equalsLowerCaseAsciiNc("cache", tok)) {
+                cache = true;
+                tok = SqlUtil.fetchNext(lexer);
+            } else if (Chars.equalsLowerCaseAsciiNc("nocache", tok)) {
+                cache = false;
+                tok = SqlUtil.fetchNext(lexer);
+            } else {
+                cache = configuration.getDefaultSymbolCacheFlag();
+            }
+
+            TableUtils.validateSymbolCapacityCached(cache, symbolCapacity, lexer.lastTokenPosition());
+
+            boolean indexed = Chars.equalsLowerCaseAsciiNc("index", tok);
+            boolean indexTypeExplicit = false;
+            if (indexed) {
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok != null && isTypeKeyword(tok)) {
+                    indexTypeExplicit = true;
+                    tok = expectToken(lexer, "index type name");
+                    indexType = IndexType.valueOf(tok);
+                    if (indexType == IndexType.NONE) {
+                        throw SqlException.$(lexer.lastTokenPosition(), "unknown index type: ").put(tok);
+                    }
+                    tok = SqlUtil.fetchNext(lexer);
+                    if (tok != null && IndexType.isPosting(indexType)) {
+                        if (SqlKeywords.isDeltaKeyword(tok)) {
+                            indexType = IndexType.POSTING_DELTA;
+                            tok = SqlUtil.fetchNext(lexer);
+                        } else if (SqlKeywords.isEfKeyword(tok)) {
+                            indexType = IndexType.POSTING_EF;
+                            tok = SqlUtil.fetchNext(lexer);
+                        }
+                    }
+                } else {
+                    indexType = configuration.getDefaultSymbolIndexType();
+                }
+            }
+
+            if (Chars.equalsLowerCaseAsciiNc("capacity", tok)) {
+                if (indexed && !indexTypeExplicit) {
+                    indexType = IndexType.BITMAP;
+                } else if (indexed && indexType != IndexType.BITMAP) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "CAPACITY is only supported for BITMAP index type");
+                }
+                tok = expectToken(lexer, "symbol index capacity");
+
+                try {
+                    indexValueBlockCapacity = Numbers.parseInt(tok);
+                } catch (NumericException e) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "numeric capacity expected");
+                }
+                SqlUtil.fetchNext(lexer);
+            } else {
+                indexValueBlockCapacity = configuration.getIndexValueBlockSize();
+            }
+        } else { // set defaults
+            // ignore `NULL` and `NOT NULL`
+            if (tok != null && isNotKeyword(tok)) {
+                tok = SqlUtil.fetchNext(lexer);
+            }
+
+            if (tok != null && isNullKeyword(tok)) {
+                SqlUtil.fetchNext(lexer);
+            }
+
+            cache = configuration.getDefaultSymbolCacheFlag();
+            indexValueBlockCapacity = configuration.getIndexValueBlockSize();
+            symbolCapacity = configuration.getDefaultSymbolCapacity();
+        }
+
+        if (addColumn != null) {
+            addColumn.addColumnToList(
+                    columnName,
+                    columnNamePosition,
+                    columnType,
+                    Numbers.ceilPow2(symbolCapacity),
+                    cache,
+                    indexType,
+                    Numbers.ceilPow2(indexValueBlockCapacity),
+                    false
+            );
+        }
+        lexer.unparseLast();
+        return columnType;
+    }
+
+    private void alterTableAddColumn(
+            SqlExecutionContext executionContext,
+            int tableNamePosition,
+            TableToken tableToken,
+            TableRecordMetadata tableMetadata
+    ) throws SqlException {
+        // add columns to table
+        CharSequence tok = SqlUtil.fetchNext(lexer);
+
+        // ignore `column`
+        if (tok != null && !isColumnKeyword(tok)) {
+            lexer.unparseLast();
+        }
+
+        AlterOperationBuilder addColumn = alterOperationBuilder.ofAddColumn(
+                tableNamePosition,
+                tableToken,
+                tableMetadata.getTableId()
+        );
+
+        int semicolonPos = -1;
+        do {
+            tok = maybeExpectToken(lexer, "'column' or column name", semicolonPos < 0);
+
+            if (semicolonPos >= 0) {
+                if (tok != null) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "',' expected");
+                }
+                break;
+            }
+
+            if (isIfKeyword(tok)) {
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok != null && isNotKeyword(tok)) {
+                    tok = SqlUtil.fetchNext(lexer);
+                    if (tok != null && isExistsKeyword(tok)) {
+                        tok = SqlUtil.fetchNext(lexer); // captured column name
+                        final int columnNamePosition = lexer.lastTokenPosition();
+                        final int columnIndex = tableMetadata.getColumnIndexQuiet(unquote(tok));
+                        if (columnIndex != -1) {
+                            // peek at the type token to capture its position for error reporting
+                            expectToken(lexer, "column type");
+                            final int typePosition = lexer.lastTokenPosition();
+                            lexer.unparseLast();
+                            // parse and validate the full column definition without adding to the operation
+                            CharSequence existingColumnName = tableMetadata.getColumnName(columnIndex);
+                            int columnType = addColumnWithType(null, existingColumnName, columnNamePosition);
+                            final int existingType = tableMetadata.getColumnType(columnIndex);
+                            if (existingType != columnType) {
+                                throw SqlException
+                                        .$(typePosition, "column already exists with a different column type [current type=")
+                                        .put(ColumnType.nameOf(existingType))
+                                        .put(", requested type=")
+                                        .put(ColumnType.nameOf(columnType))
+                                        .put(']');
+                            }
+                            // addColumnWithType called lexer.unparseLast(), so fetch the delimiter
+                            tok = SqlUtil.fetchNext(lexer);
+                            if (tok == null || (!isSingleQueryMode && isSemicolon(tok))) {
+                                break;
+                            }
+                            semicolonPos = Chars.equals(tok, ';') ? lexer.lastTokenPosition() : -1;
+                            if (semicolonPos < 0 && !Chars.equals(tok, ',')) {
+                                throw SqlException.$(lexer.lastTokenPosition(), "',' expected");
+                            }
+                            continue;
+                        }
+                    } else {
+                        throw SqlException.$(lexer.lastTokenPosition(), "unexpected token '").put(tok)
+                                .put("' for if not exists");
+                    }
+                } else {
+                    throw SqlException.$(lexer.lastTokenPosition(), "'not' expected");
+                }
+            } else {
+                CharSequence unquotedTok = unquote(tok);
+                int index = tableMetadata.getColumnIndexQuiet(unquotedTok);
+                if (index != -1) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "column '").put(unquotedTok).put("' already exists");
+                }
+            }
+
+            CharSequence columnName = GenericLexer.immutableOf(unquote(tok));
+            int columnNamePosition = lexer.lastTokenPosition();
+
+            if (!TableUtils.isValidColumnName(columnName, configuration.getMaxFileNameLength())) {
+                throw SqlException.$(lexer.lastTokenPosition(), " new column name contains invalid characters");
+            }
+
+            addColumnWithType(addColumn, columnName, columnNamePosition);
+            tok = SqlUtil.fetchNext(lexer);
+
+            if (tok == null || (!isSingleQueryMode && isSemicolon(tok))) {
+                break;
+            }
+
+            semicolonPos = Chars.equals(tok, ';') ? lexer.lastTokenPosition() : -1;
+            if (semicolonPos < 0 && !Chars.equals(tok, ',')) {
+                addColumnSuffix(executionContext, tok, tableToken, alterOperationBuilder);
+                compiledQuery.ofAlter(alterOperationBuilder.build());
+                return;
+            }
+        } while (true);
+
+        addColumnSuffix(executionContext, null, tableToken, alterOperationBuilder);
+        compiledQuery.ofAlter(alterOperationBuilder.build());
+        if (alterOperationBuilder.getExtraStrInfo().size() == 0) {
+            // there is no column to add, set the done flag to avoid execution of the query
+            compiledQuery.done();
+        }
+    }
+
+    private void alterTableChangeColumnType(
+            SqlExecutionContext executionContext,
+            int tableNamePosition,
+            TableToken tableToken,
+            int columnNamePosition,
+            CharSequence columnName,
+            TableRecordMetadata tableMetadata,
+            int columnIndex
+    ) throws SqlException {
+        AlterOperationBuilder changeColumn = alterOperationBuilder.ofColumnChangeType(
+                tableNamePosition,
+                tableToken,
+                tableMetadata.getTableId()
+        );
+        int existingColumnType = tableMetadata.getColumnType(columnIndex);
+        int newColumnType = addColumnWithType(changeColumn, columnName, columnNamePosition);
+        CharSequence tok = SqlUtil.fetchNext(lexer);
+        if (tok != null && !isSemicolon(tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put("] while trying to change column type");
+        }
+        if (columnIndex == tableMetadata.getTimestampIndex()) {
+            throw SqlException.$(lexer.lastTokenPosition(), "cannot change type of designated timestamp column");
+        }
+        if (newColumnType == existingColumnType) {
+            throw SqlException.$(lexer.lastTokenPosition(), "column '").put(columnName)
+                    .put("' type is already '").put(ColumnType.nameOf(existingColumnType)).put('\'');
+        } else {
+            if (!isCompatibleColumnTypeChange(existingColumnType, newColumnType)) {
+                throw SqlException.$(lexer.lastTokenPosition(), "incompatible column type change [existing=")
+                        .put(ColumnType.nameOf(existingColumnType)).put(", new=").put(ColumnType.nameOf(newColumnType)).put(']');
+            }
+        }
+        executionContext.getSecurityContext().authorizeAlterTableAlterColumnType(tableToken, alterOperationBuilder.getExtraStrInfo());
+        rejectColumnTypeChange(executionContext, tableToken, tableNamePosition);
+        compiledQuery.ofAlter(alterOperationBuilder.build());
+    }
+
+    private void alterTableChangeSymbolCapacity(
+            SqlExecutionContext executionContext,
+            int tableNamePosition,
+            TableToken tableToken,
+            int columnNamePosition,
+            CharSequence columnName,
+            TableRecordMetadata tableMetadata,
+            int columnIndex
+    ) throws SqlException {
+        columnNames.clear();
+        if (columnName != null) {
+            columnNames.add(columnName);
+        }
+        executionContext.getSecurityContext().authorizeAlterTableAlterSymbolCapacity(tableToken, columnNames);
+
+        final int existingColumnType = tableMetadata.getColumnType(columnIndex);
+        if (!ColumnType.isSymbol(existingColumnType)) {
+            throw SqlException.walRecoverable(columnNamePosition).put("column '").put(columnName).put("' is not of symbol type");
+        }
+        expectKeyword(lexer, "capacity");
+
+        CharSequence tok = expectToken(lexer, "numeric capacity");
+
+        final boolean negative;
+        final int errorPos = lexer.lastTokenPosition();
+        if (Chars.equals(tok, '-')) {
+            negative = true;
+            tok = expectToken(lexer, "numeric capacity");
+        } else {
+            negative = false;
+        }
+
+        int symbolCapacity;
+        try {
+            symbolCapacity = Numbers.parseInt(tok);
+        } catch (NumericException e) {
+            throw SqlException.$(lexer.lastTokenPosition(), "numeric capacity expected");
+        }
+
+        if (negative) {
+            symbolCapacity = -symbolCapacity;
+        }
+
+        TableUtils.validateSymbolCapacity(errorPos, symbolCapacity);
+
+        tok = SqlUtil.fetchNext(lexer);
+        if (tok != null && !isSemicolon(tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put("] while trying to change symbol capacity");
+        }
+
+        alterOperationBuilder.ofSymbolCapacityChange(
+                tableNamePosition,
+                tableToken,
+                tableMetadata.getTableId()
+        );
+        alterOperationBuilder.addColumnToList(
+                columnName,
+                columnNamePosition,
+                ColumnType.SYMBOL,
+                Numbers.ceilPow2(symbolCapacity),
+                configuration.getDefaultSymbolCacheFlag(), // ignored
+                IndexType.NONE, // ignored
+                Numbers.ceilPow2(configuration.getIndexValueBlockSize()), // ignored
+                false // ignored
+        );
+
+        compiledQuery.ofAlter(alterOperationBuilder.build());
+    }
+
+    private void alterTableColumnAddIndex(
+            SqlExecutionContext executionContext,
+            int tableNamePosition,
+            TableToken tableToken,
+            int columnNamePosition,
+            CharSequence columnName,
+            TableRecordMetadata metadata,
+            int indexValueBlockSize,
+            byte indexType,
+            @Nullable ObjList<CharSequence> coveringColumnNames,
+            @Nullable IntList coveringColumnPositions
+    ) throws SqlException {
+        final int columnIndex = metadata.getColumnIndexQuiet(columnName);
+        if (columnIndex == -1) {
+            throw SqlException.invalidColumn(columnNamePosition, columnName);
+        }
+
+        final int type = metadata.getColumnType(columnIndex);
+        if (!ColumnType.isSymbol(type)) {
+            throw SqlException.position(columnNamePosition).put("indexes are only supported for symbol type [column=").put(columnName).put(", type=").put(ColumnType.nameOf(type)).put(']');
+        }
+
+        if (coveringColumnNames != null) {
+            for (int i = 0, n = coveringColumnNames.size(); i < n; i++) {
+                CharSequence covName = coveringColumnNames.get(i);
+                // Positions list is parallel to names; when callers pass null
+                // (internal re-use) we report the column-name position as a
+                // best-effort fallback rather than 0.
+                int covPos = coveringColumnPositions != null ? coveringColumnPositions.getQuick(i) : columnNamePosition;
+                int covIdx = metadata.getColumnIndexQuiet(covName);
+                if (covIdx == -1) {
+                    throw SqlException.$(covPos, "INCLUDE column does not exist [column=").put(covName).put(']');
+                }
+                if (covIdx == columnIndex) {
+                    throw SqlException.$(covPos, "INCLUDE must not contain the indexed column [column=").put(covName).put(']');
+                }
+                for (int j = 0; j < i; j++) {
+                    if (metadata.getColumnIndexQuiet(coveringColumnNames.get(j)) == covIdx) {
+                        throw SqlException.$(covPos, "duplicate column in INCLUDE [column=").put(covName).put(']');
+                    }
+                }
+            }
+        }
+
+        // Auto-append the designated timestamp on POSTING indexes, but only
+        // when the user gave an INCLUDE clause with at least one column. A bare
+        // ALTER TABLE ... ADD INDEX TYPE POSTING (no INCLUDE) is a plain,
+        // non-covering posting index; the timestamp is auto-added only to round
+        // out an explicit covering set, never to turn a non-covering index into
+        // a covering one on its own.
+        if (IndexType.isPosting(indexType) && configuration.isPostingIndexAutoIncludeTimestamp()
+                && coveringColumnNames != null && coveringColumnNames.size() > 0) {
+            int tsIndex = metadata.getTimestampIndex();
+            if (tsIndex >= 0 && tsIndex != columnIndex) {
+                CharSequence tsName = metadata.getColumnName(tsIndex);
+                boolean isTimestampAlreadyIncluded = false;
+                for (int i = 0, n = coveringColumnNames.size(); i < n; i++) {
+                    if (metadata.getColumnIndexQuiet(coveringColumnNames.get(i)) == tsIndex) {
+                        isTimestampAlreadyIncluded = true;
+                        break;
+                    }
+                }
+                if (!isTimestampAlreadyIncluded) {
+                    coveringColumnNames.add(tsName);
+                }
+            }
+        }
+
+        if (indexValueBlockSize == -1) {
+            indexValueBlockSize = configuration.getIndexValueBlockSize();
+        }
+
+        alterOperationBuilder.ofAddIndex(
+                tableNamePosition,
+                tableToken,
+                metadata.getTableId(),
+                columnName,
+                Numbers.ceilPow2(indexValueBlockSize),
+                indexType,
+                coveringColumnNames
+        );
+        // Authorize against the indexed column only. Covering INCLUDE columns
+        // are not part of the ADD INDEX privilege; passing them here would let
+        // an enterprise ACL conflate INDEX and READ permissions.
+        columnNames.clear();
+        columnNames.add(columnName);
+        executionContext.getSecurityContext().authorizeAlterTableAddIndex(tableToken, columnNames);
+        rejectAddIndexOnColdPartitions(executionContext, tableToken, tableNamePosition);
+        compiledQuery.ofAlter(alterOperationBuilder.build());
+    }
+
+    private void alterTableColumnCacheFlag(
+            SqlExecutionContext executionContext,
+            int tableNamePosition,
+            TableToken tableToken,
+            int columnNamePosition,
+            CharSequence columnName,
+            TableRecordMetadata metadata,
+            boolean cache
+    ) throws SqlException {
+        int columnIndex = metadata.getColumnIndexQuiet(columnName);
+        if (columnIndex == -1) {
+            throw SqlException.invalidColumn(columnNamePosition, columnName);
+        }
+
+        final int type = metadata.getColumnType(columnIndex);
+        if (!ColumnType.isSymbol(type)) {
+            throw SqlException.position(columnNamePosition).put("cache is only supported for symbol type [column=").put(columnName).put(", type=").put(ColumnType.nameOf(type)).put(']');
+        }
+
+        if (cache) {
+            alterOperationBuilder.ofCacheSymbol(tableNamePosition, tableToken, metadata.getTableId(), columnName);
+        } else {
+            alterOperationBuilder.ofRemoveCacheSymbol(tableNamePosition, tableToken, metadata.getTableId(), columnName);
+        }
+
+        executionContext.getSecurityContext().authorizeAlterTableAlterColumnCache(tableToken, alterOperationBuilder.getExtraStrInfo());
+        compiledQuery.ofAlter(alterOperationBuilder.build());
+    }
+
+    private void alterTableColumnDropIndex(
+            SqlExecutionContext executionContext,
+            int tableNamePosition,
+            TableToken tableToken,
+            int columnNamePosition,
+            CharSequence columnName,
+            TableRecordMetadata metadata
+    ) throws SqlException {
+        int columnIndex = metadata.getColumnIndexQuiet(columnName);
+        if (columnIndex == -1) {
+            throw SqlException.invalidColumn(columnNamePosition, columnName);
+        }
+
+        final int type = metadata.getColumnType(columnIndex);
+        if (!ColumnType.isSymbol(type)) {
+            throw SqlException.position(columnNamePosition).put("indexes are only supported for symbol type [column=").put(columnName).put(", type=").put(ColumnType.nameOf(type)).put(']');
+        }
+
+        alterOperationBuilder.ofDropIndex(tableNamePosition, tableToken, metadata.getTableId(), columnName, columnNamePosition);
+        executionContext.getSecurityContext().authorizeAlterTableDropIndex(tableToken, alterOperationBuilder.getExtraStrInfo());
+        compiledQuery.ofAlter(alterOperationBuilder.build());
+    }
+
+    private void alterTableDedupEnable(
+            SqlExecutionContext executionContext,
+            int tableNamePosition,
+            TableToken tableToken,
+            TableRecordMetadata tableMetadata,
+            GenericLexer lexer
+    ) throws SqlException {
+        if (!tableMetadata.isWalEnabled()) {
+            throw SqlException.$(tableNamePosition, "deduplication is only supported for WAL tables");
+        }
+        CharSequence tok = SqlUtil.fetchNext(lexer);
+
+        boolean tsIncludedInDedupColumns = false;
+
+        // ALTER TABLE abc DEDUP <ENABLE> UPSERT|SKIP KEYS(a, b)
+        // ENABLE word is not mandatory to be compatible v7.3
+        // where it was omitted from the syntax
+        if (tok != null && isEnableKeyword(tok)) {
+            tok = SqlUtil.fetchNext(lexer);
+        }
+
+        final int dedupMode;
+        if (tok != null && isUpsertKeyword(tok)) {
+            dedupMode = TableUtils.DEDUP_MODE_UPSERT;
+        } else if (tok != null && isSkipKeyword(tok)) {
+            dedupMode = TableUtils.DEDUP_MODE_SKIP;
+        } else {
+            throw SqlException.position(lexer.lastTokenPosition()).put("expected 'upsert' or 'skip'");
+        }
+        AlterOperationBuilder setDedup = alterOperationBuilder.ofDedupEnable(
+                tableNamePosition,
+                tableToken,
+                dedupMode
+        );
+
+        tok = SqlUtil.fetchNext(lexer);
+        if (tok == null || !isKeysKeyword(tok)) {
+            throw SqlException.position(lexer.lastTokenPosition()).put("expected 'keys'");
+        }
+
+        tok = SqlUtil.fetchNext(lexer);
+        if (tok != null && Chars.equals(tok, '(')) {
+            tok = SqlUtil.fetchNext(lexer);
+
+            int columnListPos = lexer.lastTokenPosition();
+
+            while (tok != null && !Chars.equals(tok, ')')) {
+                validateLiteral(lexer.lastTokenPosition(), tok);
+                final CharSequence columnName = unquote(tok);
+
+                int colIndex = tableMetadata.getColumnIndexQuiet(columnName);
+                if (colIndex < 0) {
+                    throw SqlException.position(lexer.lastTokenPosition()).put("deduplicate key column not found [column=").put(columnName).put(']');
+                }
+
+                if (colIndex == tableMetadata.getTimestampIndex()) {
+                    tsIncludedInDedupColumns = true;
+                }
+                setDedup.setDedupKeyFlag(tableMetadata.getWriterIndex(colIndex));
+
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok != null && Chars.equals(tok, ',')) {
+                    tok = SqlUtil.fetchNext(lexer);
+                }
+            }
+
+            if (tok == null || !Chars.equals(tok, ')')) {
+                throw SqlException.position(lexer.getPosition()).put("')' expected");
+            }
+
+            if (!tsIncludedInDedupColumns) {
+                throw SqlException.position(columnListPos).put("deduplicate key list must include dedicated timestamp column");
+            }
+
+        } else {
+            throw SqlException.$(lexer.getPosition(), "deduplicate key column list expected");
+        }
+        rejectDedupEnable(executionContext, tableToken, tableNamePosition);
+        compiledQuery.ofAlter(setDedup.build());
+    }
+
+    private void alterTableDropColumn(
+            SqlExecutionContext executionContext,
+            int tableNamePosition,
+            TableToken tableToken,
+            TableRecordMetadata metadata
+    ) throws SqlException {
+        AlterOperationBuilder dropColumnStatement = alterOperationBuilder.ofDropColumn(tableNamePosition, tableToken, metadata.getTableId());
+        int semicolonPos = -1;
+        do {
+            CharSequence tok = unquote(maybeExpectToken(lexer, "column name", semicolonPos < 0));
+            if (semicolonPos >= 0) {
+                if (tok != null) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "',' expected");
+                }
+                break;
+            }
+
+            if (metadata.getColumnIndexQuiet(tok) == -1) {
+                throw SqlException.invalidColumn(lexer.lastTokenPosition(), tok);
+            }
+
+            CharSequence columnName = tok;
+            dropColumnStatement.ofDropColumn(columnName);
+            tok = SqlUtil.fetchNext(lexer);
+
+            if (tok == null || (!isSingleQueryMode && isSemicolon(tok))) {
+                break;
+            }
+
+            semicolonPos = Chars.equals(tok, ';') ? lexer.lastTokenPosition() : -1;
+            if (semicolonPos < 0 && !Chars.equals(tok, ',')) {
+                throw SqlException.$(lexer.lastTokenPosition(), "',' expected");
+            }
+        } while (true);
+
+        executionContext.getSecurityContext().authorizeAlterTableDropColumn(tableToken, dropColumnStatement.getExtraStrInfo());
+        compiledQuery.ofAlter(alterOperationBuilder.build());
+    }
+
+    private void alterTableDropConvertDetachOrAttachPartition(
+            TableRecordMetadata tableMetadata,
+            TableToken tableToken,
+            int action,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        final int pos = lexer.lastTokenPosition();
+        TableReader reader = null;
+        TableReader layoutReader = null;
+        if (!tableMetadata.isWalEnabled() || executionContext.isWalApplication()) {
+            reader = executionContext.getReader(tableToken);
+        }
+
+        try {
+            if (reader != null && !PartitionBy.isPartitioned(reader.getMetadata().getPartitionBy())) {
+                throw SqlException.$(pos, "table is not partitioned");
+            }
+            // Conversion and DETACH check partition layout before WAL; a WAL table has no reader yet.
+            TableReader partitionCheckReader = null;
+            if ((action == PartitionAction.CONVERT_TO_PARQUET || action == PartitionAction.CONVERT_TO_NATIVE
+                    || action == PartitionAction.DETACH)
+                    && !isPartitionLayoutCheckSkipped(executionContext, tableToken)) {
+                if (reader == null) {
+                    layoutReader = executionContext.getReader(tableToken);
+                }
+                partitionCheckReader = reader != null ? reader : layoutReader;
+            }
+
+            final CharSequence tok = expectToken(lexer, "'list' or 'where'");
+            if (isListKeyword(tok)) {
+                alterTableDropConvertDetachOrAttachPartitionByList(tableMetadata, tableToken, reader, partitionCheckReader, pos, action);
+            } else if (isWhereKeyword(tok)) {
+                AlterOperationBuilder alterOperationBuilder = switch (action) {
+                    case PartitionAction.DROP ->
+                            this.alterOperationBuilder.ofDropPartition(pos, tableToken, tableMetadata.getTableId());
+                    case PartitionAction.DETACH ->
+                            this.alterOperationBuilder.ofDetachPartition(pos, tableToken, tableMetadata.getTableId());
+                    case PartitionAction.CONVERT_TO_PARQUET, PartitionAction.CONVERT_TO_NATIVE -> {
+                        final boolean toParquet = action == PartitionAction.CONVERT_TO_PARQUET;
+                        yield this.alterOperationBuilder.ofConvertPartition(pos, tableToken, tableMetadata.getTableId(), toParquet);
+                    }
+                    default ->
+                            throw SqlException.$(pos, "WHERE clause can only be used with command DROP PARTITION, DETACH PARTITION or CONVERT PARTITION");
+                };
+
+                final int functionPosition = lexer.getPosition();
+                try (Function function = parsePartitionFilter(tableMetadata, executionContext)) {
+                    if (partitionCheckReader != null) {
+                        rejectPartitionChange(partitionCheckReader, tableToken, function, Long.MIN_VALUE,
+                                action, functionPosition);
+                    }
+                    if (reader != null) {
+                        int affected = filterPartitions(function, functionPosition, reader, alterOperationBuilder);
+                        if (affected == 0) {
+                            throw CairoException.partitionManipulationRecoverable().position(functionPosition)
+                                    .put("no partitions matched WHERE clause");
+                        }
+                    }
+                    // Check for WITH clause for CONVERT TO PARQUET
+                    CharSequence nextTok = SqlUtil.fetchNext(lexer);
+                    if (action == PartitionAction.CONVERT_TO_PARQUET && nextTok != null && isWithKeyword(nextTok)) {
+                        parseConvertToParquetWithClause(alterOperationBuilder, tableMetadata);
+                        nextTok = SqlUtil.fetchNext(lexer);
+                    }
+                    if (nextTok != null && !isSemicolon(nextTok)) {
+                        throw SqlException.$(lexer.lastTokenPosition(), "unexpected token");
+                    }
+                    compiledQuery.ofAlter(this.alterOperationBuilder.build());
+                }
+            } else {
+                throw SqlException.$(lexer.lastTokenPosition(), "'list' or 'where' expected");
+            }
+        } finally {
+            Misc.free(reader);
+            Misc.free(layoutReader);
+        }
+    }
+
+    private void alterTableDropConvertDetachOrAttachPartitionByList(
+            TableRecordMetadata tableMetadata,
+            TableToken tableToken,
+            @Nullable TableReader reader,
+            @Nullable TableReader partitionCheckReader,
+            int pos,
+            int action
+    ) throws SqlException {
+        final AlterOperationBuilder alterOperationBuilder;
+        switch (action) {
+            case PartitionAction.CONVERT_TO_PARQUET:
+            case PartitionAction.CONVERT_TO_NATIVE:
+                final boolean toParquet = action == PartitionAction.CONVERT_TO_PARQUET;
+                alterOperationBuilder = this.alterOperationBuilder.ofConvertPartition(pos, tableToken, tableMetadata.getTableId(), toParquet);
+                break;
+            case PartitionAction.DROP:
+                alterOperationBuilder = this.alterOperationBuilder.ofDropPartition(pos, tableToken, tableMetadata.getTableId());
+                break;
+            case PartitionAction.FORCE_DROP:
+                alterOperationBuilder = this.alterOperationBuilder.ofForceDropPartition(pos, tableToken, tableMetadata.getTableId());
+                break;
+            case PartitionAction.FORCE_REINDEX:
+                // the caller set the builder up, with the column to reindex
+                alterOperationBuilder = this.alterOperationBuilder;
+                break;
+            case PartitionAction.DETACH:
+                alterOperationBuilder = this.alterOperationBuilder.ofDetachPartition(pos, tableToken, tableMetadata.getTableId());
+                break;
+            case PartitionAction.ATTACH:
+                // attach
+                alterOperationBuilder = this.alterOperationBuilder.ofAttachPartition(pos, tableToken, tableMetadata.getTableId());
+                break;
+            default:
+                alterOperationBuilder = null;
+                assert false;
+        }
+
+        int semicolonPos = -1;
+        do {
+            CharSequence tok = maybeExpectToken(lexer, "partition name", semicolonPos < 0);
+            if (semicolonPos >= 0) {
+                if (tok != null) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "',' expected");
+                }
+                break;
+            }
+            if (Chars.equals(tok, ',') || Chars.equals(tok, ';')) {
+                throw SqlException.$(lexer.lastTokenPosition(), "partition name missing");
+            }
+            final CharSequence partitionName = unquote(tok); // potentially a full timestamp, or part of it
+            final int lastPosition = lexer.lastTokenPosition();
+
+            // reader == null means it's compilation for WAL table
+            // before applying to WAL writer
+            final int timestampType;
+            final int partitionBy;
+            if (reader != null) {
+                partitionBy = reader.getPartitionedBy();
+                timestampType = reader.getMetadata().getTimestampType();
+            } else {
+                try (TableMetadata meta = engine.getTableMetadata(tableToken)) {
+                    partitionBy = meta.getPartitionBy();
+                    timestampType = meta.getTimestampType();
+                }
+            }
+            try {
+                // When force drop partitions, allow to specify partitions with the full format and split part timestamp
+                // like 2022-02-26T155900-000001
+                // Otherwise ignore the split time part.
+                int hi = action == PartitionAction.FORCE_DROP ? partitionName.length() : -1;
+                long timestamp = PartitionBy.parsePartitionDirName(partitionName, timestampType, partitionBy, 0, hi);
+                if (partitionCheckReader != null) {
+                    rejectPartitionChange(partitionCheckReader, tableToken, null, timestamp,
+                            action, lastPosition);
+                }
+                alterOperationBuilder.addPartitionToList(timestamp, lastPosition);
+            } catch (CairoException e) {
+                throw SqlException.$(lexer.lastTokenPosition(), e.getFlyweightMessage());
+            }
+
+            tok = SqlUtil.fetchNext(lexer);
+            if (tok == null || (!isSingleQueryMode && isSemicolon(tok))) {
+                break;
+            }
+
+            semicolonPos = Chars.equals(tok, ';') ? lexer.lastTokenPosition() : -1;
+            if (semicolonPos < 0 && !Chars.equals(tok, ',')) {
+                if (action == PartitionAction.CONVERT_TO_PARQUET && isWithKeyword(tok)) {
+                    parseConvertToParquetWithClause(alterOperationBuilder, tableMetadata);
+                    tok = SqlUtil.fetchNext(lexer);
+                    if (tok != null && !isSemicolon(tok)) {
+                        throw SqlException.$(lexer.lastTokenPosition(), "unexpected token after WITH clause");
+                    }
+                    break;
+                }
+                throw SqlException.$(lexer.lastTokenPosition(), "',' expected");
+            }
+        } while (true);
+
+        compiledQuery.ofAlter(alterOperationBuilder.build());
+    }
+
+    /**
+     * {@code ALTER TABLE t FORCE REINDEX PARQUET [COLUMN c] [PARTITION LIST 'p1', ...]}: rebuilds the indexes of the
+     * parquet partitions, every parquet partition when there is no list, into new partition directory versions
+     * through the table writer. FORCE: it bypasses the WAL and is a node-local maintenance command, so it runs at
+     * parse time, like REINDEX, and on a replica too.
+     */
+    private void alterTableForceReindex(
+            SqlExecutionContext executionContext,
+            @Transient CharSequence sqlText,
+            int tableNamePosition,
+            TableToken tableToken,
+            TableRecordMetadata tableMetadata
+    ) throws SqlException {
+        CharSequence tok = expectToken(lexer, "'parquet'");
+        if (!isParquetKeyword(tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "'parquet' expected");
+        }
+        tok = SqlUtil.fetchNext(lexer);
+        String columnName = null;
+        if (tok != null && isColumnKeyword(tok)) {
+            tok = expectToken(lexer, "column name");
+            final int columnNamePosition = lexer.lastTokenPosition();
+            columnName = Chars.toString(unquote(tok));
+            if (tableMetadata.getColumnIndexQuiet(columnName) < 0) {
+                throw SqlException.invalidColumn(columnNamePosition, columnName);
+            }
+            // The WAL sequencer metadata does not track indexes added or dropped by ALTER, the table metadata does
+            try (TableMetadata metadata = engine.getTableMetadata(tableToken)) {
+                final int columnIndex = metadata.getColumnIndexQuiet(columnName);
+                if (columnIndex < 0 || !metadata.isColumnIndexed(columnIndex)) {
+                    throw SqlException.$(columnNamePosition, "column is not indexed [column=").put(columnName).put(']');
+                }
+            }
+            tok = SqlUtil.fetchNext(lexer);
+        }
+
+        columnNames.clear();
+        if (columnName != null) {
+            columnNames.add(columnName);
+        }
+        executionContext.getSecurityContext().authorizeTableReindex(tableToken, columnNames);
+
+        alterOperationBuilder.ofForceReindex(tableNamePosition, tableToken, tableMetadata.getTableId(), columnName);
+        if (tok != null && isPartitionKeyword(tok)) {
+            tok = expectToken(lexer, "'list'");
+            if (!isListKeyword(tok)) {
+                throw SqlException.$(lexer.lastTokenPosition(), "'list' expected");
+            }
+            alterTableDropConvertDetachOrAttachPartitionByList(tableMetadata, tableToken, null, null, lexer.lastTokenPosition(), PartitionAction.FORCE_REINDEX);
+        } else if (tok == null || isSemicolon(tok)) {
+            compiledQuery.ofAlter(alterOperationBuilder.build());
+        } else {
+            throw SqlException.$(lexer.lastTokenPosition(), "'partition' expected");
+        }
+
+        if (!executionContext.isValidationOnly()) {
+            compiledQuery.withSqlText(Chars.toString(sqlText));
+            // Without an event sequence a busy writer fails the statement, as the writer lock of REINDEX does
+            try (OperationFuture future = compiledQuery.execute(executionContext, null, true)) {
+                future.await();
+            }
+        }
+        compiledQuery.ofRepair();
+    }
+
+    private void alterTableRenameColumn(
+            SqlExecutionContext executionContext,
+            int tableNamePosition,
+            TableToken tableToken,
+            TableRecordMetadata metadata
+    ) throws SqlException {
+        AlterOperationBuilder renameColumnStatement = alterOperationBuilder.ofRenameColumn(tableNamePosition, tableToken, metadata.getTableId());
+        int hadSemicolonPos = -1;
+
+        do {
+            CharSequence tok = unquote(maybeExpectToken(lexer, "current column name", hadSemicolonPos < 0));
+            if (hadSemicolonPos >= 0) {
+                if (tok != null) {
+                    throw SqlException.$(hadSemicolonPos, "',' expected");
+                }
+                break;
+            }
+            int columnIndex = metadata.getColumnIndexQuiet(tok);
+            if (columnIndex == -1) {
+                throw SqlException.invalidColumn(lexer.lastTokenPosition(), tok);
+            }
+            CharSequence existingName = GenericLexer.immutableOf(tok);
+
+            tok = expectToken(lexer, "'to' expected");
+            if (!isToKeyword(tok)) {
+                throw SqlException.$(lexer.lastTokenPosition(), "'to' expected'");
+            }
+
+            tok = unquote(expectToken(lexer, "new column name"));
+            if (Chars.equals(existingName, tok)) {
+                throw SqlException.$(lexer.lastTokenPosition(), "new column name is identical to existing name");
+            }
+
+            if (metadata.getColumnIndexQuiet(tok) > -1) {
+                throw SqlException.$(lexer.lastTokenPosition(), " column already exists");
+            }
+
+            if (!TableUtils.isValidColumnName(tok, configuration.getMaxFileNameLength())) {
+                throw SqlException.$(lexer.lastTokenPosition(), " new column name contains invalid characters");
+            }
+
+            CharSequence newName = GenericLexer.immutableOf(tok);
+            renameColumnStatement.ofRenameColumn(existingName, newName);
+
+            tok = SqlUtil.fetchNext(lexer);
+
+            if (tok == null || (!isSingleQueryMode && isSemicolon(tok))) {
+                break;
+            }
+
+            hadSemicolonPos = Chars.equals(tok, ';') ? lexer.lastTokenPosition() : -1;
+            if (hadSemicolonPos < 0 && !Chars.equals(tok, ',')) {
+                throw SqlException.$(lexer.lastTokenPosition(), "',' expected");
+            }
+        } while (true);
+
+        executionContext.getSecurityContext().authorizeAlterTableRenameColumn(tableToken, alterOperationBuilder.getExtraStrInfo());
+        compiledQuery.ofAlter(alterOperationBuilder.build());
+    }
+
+    private void alterTableResume(int tableNamePosition, TableToken tableToken, long resumeFromTxn, SqlExecutionContext executionContext) {
+        try {
+            if (!executionContext.isValidationOnly()) {
+                // Lifts the runtime SUSPEND WAL only if it succeeds. A config-listed table stays suspended
+                // until removed from config.
+                engine.getTableSequencerAPI().resumeTable(tableToken, resumeFromTxn);
+                executionContext.storeTelemetry(TelemetryEvent.WAL_APPLY_RESUME, TelemetryOrigin.WAL_APPLY);
+            }
+            compiledQuery.ofTableResume();
+        } catch (CairoException ex) {
+            LOG.critical().$("table resume failed [table=").$(tableToken)
+                    .$(", msg=").$safe(ex.getFlyweightMessage())
+                    .$(", errno=").$(ex.getErrno())
+                    .I$();
+            ex.position(tableNamePosition);
+            throw ex;
+        }
+        if (!executionContext.isValidationOnly()) {
+            try {
+                engine.getMatViewStateStore().reenqueuePendingOnResume(tableToken);
+            } catch (Throwable th) {
+                // The resume itself durably succeeded; a redelivery enqueue failure must not fail
+                // the statement. The store's retry flags keep the surviving facets discoverable by
+                // the next refresh-job tick.
+                LOG.error().$("could not redeliver pending materialized view work after resume [table=").$(tableToken)
+                        .$(", ex=").$(th)
+                        .I$();
+            }
+        }
+    }
+
+    private void alterTableSetFormat(
+            TableToken tableToken, int tableNamePosition, TableRecordMetadata tableMetadata
+    ) throws SqlException {
+        final int formatPos = lexer.getPosition();
+        CharSequence tok = expectToken(lexer, "'parquet' or 'native'");
+        final int format;
+        if (isParquetKeyword(tok)) {
+            format = TableUtils.TABLE_FORMAT_PARQUET;
+        } else if (isNativeKeyword(tok)) {
+            format = TableUtils.TABLE_FORMAT_NATIVE;
+        } else {
+            throw SqlException.$(lexer.lastTokenPosition(), "'parquet' or 'native' expected");
+        }
+        if (format == TableUtils.TABLE_FORMAT_PARQUET) {
+            try (TableMetadata metadata = engine.getTableMetadata(tableToken)) {
+                if (!PartitionBy.isPartitioned(metadata.getPartitionBy())) {
+                    throw SqlException.$(formatPos, "FORMAT PARQUET is only supported on partitioned tables");
+                }
+                if (!metadata.isWalEnabled()) {
+                    throw SqlException.$(formatPos, "FORMAT PARQUET is only supported on WAL tables");
+                }
+            }
+            if (tableToken.isMatView()) {
+                throw SqlException.$(formatPos, "FORMAT PARQUET is not supported on materialized views");
+            }
+        }
+        final AlterOperationBuilder setFormat = alterOperationBuilder.ofSetTableFormat(
+                tableNamePosition,
+                tableToken,
+                tableMetadata.getTableId(),
+                format
+        );
+        compiledQuery.ofAlter(setFormat.build());
+    }
+
+    private void alterTableSetParam(
+            CharSequence paramName, CharSequence value, int paramNamePosition,
+            TableToken tableToken, int tableNamePosition, int tableId
+    ) throws SqlException {
+        if (isMaxUncommittedRowsKeyword(paramName)) {
+            int maxUncommittedRows;
+            try {
+                maxUncommittedRows = Numbers.parseInt(value);
+            } catch (NumericException e) {
+                throw SqlException.$(paramNamePosition, "invalid value [value=").put(value)
+                        .put(",parameter=").put(paramName)
+                        .put(']');
+            }
+            if (maxUncommittedRows < 0) {
+                throw SqlException.$(paramNamePosition, "maxUncommittedRows must be non negative");
+            }
+            compiledQuery.ofAlter(alterOperationBuilder.ofSetParamUncommittedRows(
+                    tableNamePosition, tableToken, tableId, maxUncommittedRows).build());
+        } else if (isO3MaxLagKeyword(paramName)) {
+            long o3MaxLag = SqlUtil.expectMicros(value, paramNamePosition);
+            if (o3MaxLag < 0) {
+                throw SqlException.$(paramNamePosition, "o3MaxLag must be non negative");
+            }
+            compiledQuery.ofAlter(alterOperationBuilder.ofSetO3MaxLag(tableNamePosition, tableToken, tableId, o3MaxLag).build());
+        } else {
+            throw SqlException.$(paramNamePosition, "unknown parameter '").put(paramName).put('\'');
+        }
+    }
+
+    private void alterTableSetParquetEncoding(
+            SqlExecutionContext executionContext,
+            int tableNamePosition,
+            TableToken tableToken,
+            CharSequence columnName,
+            TableRecordMetadata tableMetadata,
+            int columnIndex
+    ) throws SqlException {
+        int columnType = tableMetadata.getColumnType(columnIndex);
+        int parquetEncodingConfig = SqlUtil.parseParquetConfig(lexer, columnType);
+
+        CharSequence tok = SqlUtil.fetchNext(lexer);
+        if (tok != null && !isSemicolon(tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put(']');
+        }
+
+        alterOperationBuilder.ofSetParquetEncoding(
+                tableNamePosition,
+                tableToken,
+                tableMetadata.getTableId(),
+                columnName,
+                parquetEncodingConfig
+        );
+        executionContext.getSecurityContext().authorizeAlterTableSetParquetSettings(tableToken);
+        compiledQuery.ofAlter(alterOperationBuilder.build());
+    }
+
+    private void alterTableSetType(
+            SqlExecutionContext executionContext,
+            int pos,
+            TableToken tableToken,
+            byte walFlag
+    ) throws SqlException {
+        if (engine.isReadOnlyMode()) {
+            // SET TYPE writes the _convert marker via createConvertFile during compilation,
+            // outside the engine writer chokepoint, so the per-statement ingress write-gate (which
+            // runs after compile() for parse-time-executed statements) cannot stop it. Refuse the
+            // instant the node is read-only. This eager check also orders before the auth call:
+            // isReadOnlyMode() flips first, while a connection's security context may still be the
+            // PRIMARY one that authorizeAlterTableSetType() would accept, so the check must precede
+            // the auth call. The eager check alone does not close the demote window though -- a
+            // demote landing between here and the marker write would still strand the marker on a
+            // demoting node; the role-switch read-lock hold around the write below is what closes it.
+            throw CairoException.readOnlyAccess();
+        }
+        executionContext.getSecurityContext().authorizeAlterTableSetType(tableToken);
+        // A SET TYPE to the table's current type converts nothing: it cancels a pending request,
+        // so no refusal stands in its way.
+        final boolean isCancel = (walFlag == TableUtils.TABLE_TYPE_WAL) == tableToken.isWal();
+        try {
+            try (TableReader reader = isCancel ? null : engine.getReader(tableToken)) {
+                if (reader != null && !PartitionBy.isPartitioned(reader.getMetadata().getPartitionBy())) {
+                    throw SqlException.$(pos, "Cannot convert non-partitioned table");
+                }
+                if (reader != null && reader.getTxFile().hasDeltaState()) {
+                    throw SqlException.$(pos, "cannot change table type, table has a delta-active partition or delta data");
+                }
+                // Converting a WAL table to non-WAL is allowed with parquet partitions: the conversion does
+                // not rewrite them, so they stay parquet and remain readable either way.
+            }
+            if (!isCancel) {
+                validateAlterTableSetType(pos, tableToken);
+            }
+
+            if (!executionContext.isValidationOnly()) {
+                // Demote write-fence for the parse-time SET TYPE marker write. The eager check above
+                // ran while the node was still PRIMARY, but createConvertFile externalizes the
+                // _convert marker (acted on at the next restart to flip the table's WAL<->non-WAL
+                // format); a demote landing between that eager check and here would write the marker
+                // on an already-demoting node, where at restart it would convert the now-replica
+                // table's format and diverge from the primary. Hold the role-switch READ lock across
+                // an authoritative in-lock isReadOnlyMode() re-check and the write: either the flip
+                // ran first (refuse) or this runs fully as PRIMARY while the flip's write acquire
+                // waits. The fence is a no-op for pure-OSS deployments (uncontended read lock, static
+                // flag).
+                final Lock lock = engine.getRoleSwitchReadLock();
+                lock.lock();
+                try {
+                    if (engine.isReadOnlyMode()) {
+                        throw CairoException.readOnlyAccess();
+                    }
+                    engine.fireRoleSwitchMintObserver();
+                    path.of(configuration.getDbRoot()).concat(tableToken.getDirName());
+                    if (isCancel) {
+                        ff.removeQuiet(path.concat(WalUtils.CONVERT_FILE_NAME).$());
+                    } else {
+                        TableUtils.createConvertFile(ff, path, walFlag);
+                    }
+                } finally {
+                    lock.unlock();
+                }
+            }
+            compiledQuery.ofTableSetType();
+        } catch (CairoException e) {
+            throw SqlException.position(pos)
+                    .put(e.getFlyweightMessage())
+                    .put("[errno=").put(e.getErrno()).put(']');
+        }
+    }
+
+    private void alterTableSuspend(int tableNamePosition, TableToken tableToken, ErrorTag errorTag, String errorMessage, SqlExecutionContext executionContext) {
+        try {
+            if (!executionContext.isValidationOnly()) {
+                engine.addWalApplySuspended(tableToken);
+                engine.getTableSequencerAPI().suspendTable(tableToken, errorTag, errorMessage);
+                executionContext.storeTelemetry(TelemetryEvent.WAL_APPLY_SUSPEND, TelemetryOrigin.WAL_APPLY);
+            }
+            compiledQuery.ofTableSuspend();
+        } catch (CairoException ex) {
+            LOG.critical().$("table suspend failed [table=").$(tableToken)
+                    .$(", error=").$safe(ex.getFlyweightMessage())
+                    .$(", errno=").$(ex.getErrno())
+                    .I$();
+            ex.position(tableNamePosition);
+            throw ex;
+        }
+    }
+
+    private void alterViewExecution(SqlExecutionContext executionContext, TableToken viewToken, String viewSql, int viewSqlPosition) throws SqlException {
+        if (viewToken.isSystem()) {
+            throw SqlException.position(viewSqlPosition)
+                    .put("cannot modify system view [name=")
+                    .put(viewToken.getTableName())
+                    .put(']');
+        }
+        final LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies = new LowerCaseCharSequenceObjHashMap<>();
+        // True while replaceViewDefinition() runs. A failure there is a storage failure, not a compile error,
+        // so it reaches the caller unchanged: a failed flush keeps its data-sync classification and carries
+        // no position in the view SQL.
+        boolean isWritingDefinition = false;
+        final boolean wasViewCompile = executionContext.isViewCompile();
+        executionContext.setViewCompile(true);
+        try (SqlCompiler compiler = LegacyPlannerImpl.getSqlCompiler(engine)) {
+            int remainingRetries = maxRecompileAttempts;
+            for (; ; ) {
+                final long expiryPolicyVersion = engine.getMetadataCache().getExpiryPolicyVersion();
+                ExecutionModel executionModel = null;
+                boolean isRetry = false;
+                // The in-flight exception, so the cleanup below can attach a close failure to it rather
+                // than replace it. Stays null on the retry path, where nothing is in flight.
+                Throwable failure = null;
+                try {
+                    executionModel = compiler.generateExecutionModel(viewSql, executionContext);
+                    final IQueryModel queryModel = executionModel.getQueryModel();
+                    dependencies.clear();
+                    SqlUtil.collectTableAndColumnReferences(engine, queryModel, dependencies);
+                    LegacyViewGraph.validateNoCycle(viewToken, queryModel);
+
+                    final Runnable barrier = viewFactoryGenerationBarrier;
+                    if (barrier != null) {
+                        barrier.run();
+                    }
+                    try (RecordCursorFactory factory = compiler.generateSelectWithRetries(
+                            queryModel,
+                            null,
+                            executionContext,
+                            false
+                    )) {
+                        final RecordMetadata metadata = factory.getMetadata();
+                        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                            final CharSequence columnName = metadata.getColumnName(i);
+                            if (!TableUtils.isValidColumnName(columnName, configuration.getMaxFileNameLength())) {
+                                throw SqlException.position(0)
+                                        .put("invalid column name [name=")
+                                        .put(columnName)
+                                        .put(", position=")
+                                        .put(i)
+                                        .put(']');
+                            }
+                        }
+                        // test the cursor, if no exception thrown viewSql is working
+                        // Nobody is handed the row this reads, so the open is flagged like the probe in
+                        // executeCreateView: an audited view in the new body must not record a read.
+                        final boolean wasMetadataProbe = executionContext.isMetadataProbe();
+                        executionContext.setMetadataProbe(true);
+                        final RecordCursor cursor;
+                        try {
+                            cursor = factory.getCursor(executionContext);
+                        } finally {
+                            executionContext.setMetadataProbe(wasMetadataProbe);
+                        }
+                        try (cursor) {
+                            cursor.hasNext();
+                        }
+                    }
+
+                    if (expiryPolicyVersion != engine.getMetadataCache().getExpiryPolicyVersion()) {
+                        isRetry = true;
+                    } else {
+                        executionContext.getSecurityContext().authorizeAlterView(viewToken);
+                        if (!executionContext.isValidationOnly()) {
+                            isWritingDefinition = true;
+                            engine.replaceViewDefinition(viewToken, viewSql, dependencies, blockFileWriter, path);
+                            isWritingDefinition = false;
+                        }
+                        if (expiryPolicyVersion == engine.getMetadataCache().getExpiryPolicyVersion()) {
+                            compiledQuery.ofAlterView();
+                            return;
+                        }
+                        isRetry = true;
+                    }
+                } catch (TableReferenceOutOfDateException e) {
+                    isRetry = true;
+                    if (remainingRetries == 0) {
+                        final SqlException sqlException = SqlException.$(0, e.getFlyweightMessage());
+                        failure = sqlException;
+                        throw sqlException;
+                    }
+                } catch (Throwable th) {
+                    failure = th;
+                    throw th;
+                } finally {
+                    if (isRetry) {
+                        freeTableNameFunctions(executionModel, failure);
+                    }
+                }
+
+                if (--remainingRetries < 0) {
+                    throw SqlException.position(0).put("too many row-expiry policy changes during view compilation");
+                }
+                LOG.info().$("retrying view after metadata or row-expiry policy change [view=")
+                        .$(viewToken).$(", fd=").$(executionContext.getRequestFd()).I$();
+            }
+        } catch (SqlException e) {
+            // position is reported from the view SQL, we have to adjust it
+            e.setPosition(viewSqlPosition + e.getPosition());
+            throw e;
+        } catch (CairoException e) {
+            // An authorization failure (e.g. no ALTER VIEW permission) must keep its identity so the
+            // caller reports it as forbidden, and a failure while writing the definition must keep its
+            // storage classification. Rewrapping either as a SqlException would downgrade it to a
+            // generic SQL error, so re-throw it unchanged. Only genuine compile errors get the view SQL
+            // position adjustment.
+            if (e.isAuthorizationError() || isWritingDefinition) {
+                throw e;
+            }
+            // position is reported from the view SQL, we have to adjust it
+            throw SqlException.$(viewSqlPosition + e.getPosition(), e.getFlyweightMessage());
+        } finally {
+            executionContext.setViewCompile(wasViewCompile);
+        }
+    }
+
+    // Writes the columns a passthrough view's top-level wildcard expands to now, which are the view's columns,
+    // each double-quoted, in place of the wildcard at [wildcardLo, wildcardHi) of selectText. A query written
+    // without SELECT gets `select <columns> from ` in front of where it starts.
+    private void appendMatViewWildcardExpansion(
+            StringSink sink,
+            String selectText,
+            int wildcardLo,
+            int wildcardHi,
+            RecordMetadata metadata,
+            int wildcardIndex,
+            int expandedCount
+    ) {
+        if (isMatViewWildcardArtificial) {
+            // The query has no SELECT of its own: write one in front of where the query starts.
+            sink.putAscii("select ");
+        } else if (wildcardLo > 0 && !isMatViewSpliceSeparator(selectText.charAt(wildcardLo - 1))) {
+            // `SELECT*FROM t`: keep the column list from running into the token before it.
+            sink.putAscii(' ');
+        }
+        for (int i = 0; i < expandedCount; i++) {
+            if (i > 0) {
+                sink.putAscii(", ");
+            }
+            appendMatViewColumnName(sink, metadata.getColumnName(wildcardIndex + i));
+        }
+        if (isMatViewWildcardArtificial) {
+            sink.putAscii(" from ");
+        } else if (wildcardHi < selectText.length() && !isMatViewSpliceSeparator(selectText.charAt(wildcardHi))) {
+            // `SELECT *FROM t`: keep the column list from running into the token after it.
+            sink.putAscii(' ');
+        }
+    }
+
+    private TableToken authorizeCompileView(SqlExecutionContext executionContext, CompileViewModel model) {
+        final CharSequence viewName = unquote(model.getTableName());
+        // an object the principal may not see fails exactly like a missing one, before the kind check
+        final TableToken tt = executionContext.getVisibleTableTokenIfExists(viewName);
+        if (tt == null) {
+            throw CairoException.viewDoesNotExist(viewName);
+        }
+        if (!tt.isView()) {
+            throw CairoException.nonCritical().put(viewName).put(" is not a view");
+        }
+
+        executionContext.getSecurityContext().authorizeViewCompile(tt);
+        return tt;
+    }
+
+    /**
+     * Requires the caller to hold SELECT on every column a scalar EXPIRE ROWS predicate reads. The cleanup job
+     * evaluates the stored predicate under the root context and physically deletes the rows it matches, so
+     * without this check a caller could set a policy on a column they cannot read and learn its values from
+     * which rows survive. A predicate that references no column reads no column data; it still requires
+     * SELECT on some column, because an empty column list means "every column" to the security context.
+     */
+    private void authorizeExpiryPredicateSelect(
+            SqlExecutionContext executionContext,
+            TableToken tableToken,
+            RecordMetadata metadata,
+            ExpiryValidationResult validationResult
+    ) {
+        final IntList columnIndexes = validationResult.getReferencedColumnIndexes();
+        if (columnIndexes.size() == 0) {
+            executionContext.getSecurityContext().authorizeSelectOnAnyColumn(tableToken);
+            return;
+        }
+        columnNames.clear();
+        for (int i = 0, n = columnIndexes.size(); i < n; i++) {
+            columnNames.add(metadata.getColumnName(columnIndexes.getQuick(i)));
+        }
+        executionContext.getSecurityContext().authorizeSelect(tableToken, columnNames);
+    }
+
+    private CharSequence authorizeInsertForCopy(SqlExecutionContext executionContext, ExportModel model) {
+        final CharSequence tableName = unquote(model.getTableName());
+        final TableToken tt = engine.getTableTokenIfExists(tableName);
+        if (tt != null) {
+            // for existing table user have to have INSERT permission
+            // if the table is to be created, later we will check for CREATE TABLE permission instead
+            executionContext.getSecurityContext().authorizeInsert(tt);
+        }
+        return tableName;
+    }
+
+    private void authorizeSelectForCopy(SqlExecutionContext executionContext, ExportModel model) throws SqlException {
+        final CharSequence tableName = unquote(model.getTableName());
+        for (int retries = 0; ; retries++) {
+            final TableToken tt = engine.verifyTableName(tableName);
+            // a table the principal may not see fails exactly like a missing one does in verifyTableName()
+            if (!executionContext.getSecurityContext().isTableVisible(tt)) {
+                throw CairoException.tableDoesNotExist(tableName);
+            }
+            // COPY <table> TO exports every column, so every column must be readable
+            try (TableMetadata metadata = engine.getTableMetadata(tt)) {
+                columnNames.clear();
+                for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                    columnNames.add(metadata.getColumnName(i));
+                }
+                executionContext.getSecurityContext().authorizeSelect(tt, columnNames);
+                return;
+            } catch (TableReferenceOutOfDateException e) {
+                if (retries >= maxRecompileAttempts) {
+                    throw SqlException.position(model.getTableNameExpr().position)
+                            .put("table schema changed too many times [table=").put(tableName).put(']');
+                }
+                // DROP/CREATE can replace the token before metadata opens. Resolve the name and
+                // check visibility again rather than authorize the replacement with the old token.
+            }
+        }
+    }
+
+    // Returns the query a materialized view stores, or null to store the query as written. A passthrough view's
+    // refresh compiles the stored query with every bare name read as a column (see
+    // SqlExecutionContext.allowBareNoArgFunctionCalls()), so once the base table drops or renames a column the
+    // query reads, refresh fails instead of calling a function of the same name. Two edits keep the stored query
+    // meaning what it means at CREATE:
+    // - Each bare name the optimiser read as a call to a zero-argument function gets its parentheses, so
+    //   `version` is stored as `version()`.
+    // - The top-level wildcard of a passthrough view is replaced by the columns it expands to now. The view's
+    //   schema is fixed at CREATE, so a column the base table gains later stays out of the view instead of
+    //   widening the query past that schema and invalidating the view on its next refresh. The names come from
+    //   the view's columns, so a wildcard that repeats a column the select list also names
+    //   (`SELECT ts, * FROM base`) expands to the deduplicated name ts1, which the base does not have, and
+    //   CREATE rejects it.
+    // The stored query, edited or not, is compiled with bare names read as columns and has to produce exactly the
+    // same column names, types and designated timestamp as the original, so the stored query stays equivalent to
+    // what the user wrote at CREATE. The check runs on every CREATE: a bare name read as a call that the edits
+    // missed fails it with an invalid column, rather than leaving a view whose refresh fails, or whose refresh
+    // reads a column the base table gains later under that name. An aggregating view's refresh reads a bare
+    // name that matches no column as a call, and the check covers it too: CREATE compiles the user's query with
+    // that same reading, so every bare name CREATE reads as a call is already stored with its parentheses.
+    private @Nullable String buildStoredMatViewSql(
+            SqlExecutionContext executionContext,
+            CreateMatViewOperation createMatViewOp,
+            RecordMetadata metadata
+    ) throws SqlException {
+        final boolean expandWildcard = createMatViewOp.isPassthrough() && matViewWildcards.size() > 0;
+        final int callCount = matViewBareNoArgCallPositions.size();
+        final CreateTableOperation createTableOp = createMatViewOp.getCreateTableOperation();
+        final int selectTextPosition = createTableOp.getSelectTextPosition();
+        final String selectText = createTableOp.getSelectText();
+        final int selectTextLen = selectText.length();
+
+        // Each edit is a (start, end, call index) triple over the query text; the wildcard has call index -1.
+        final IntList edits = new IntList();
+        int wildcardIndex = -1;
+        int wildcardLo = -1;
+        int wildcardHi = -1;
+        int expandedCount = 0;
+        if (expandWildcard) {
+            if (matViewWildcards.size() > 3) {
+                // The parser already rejects a second wildcard: its synthesized name *1 is not a valid column
+                // name. Were one to get through, its columns would carry deduplicated names (k1, v1, ...) that
+                // the base table does not have, so they could not be written back as column references.
+                throw SqlException.$(selectTextPosition + matViewWildcards.getQuick(4),
+                        "passthrough materialized view query can have only one wildcard in the select list");
+            }
+            wildcardIndex = matViewWildcards.getQuick(0);
+            wildcardLo = matViewWildcards.getQuick(1);
+            wildcardHi = matViewWildcards.getQuick(2);
+            final int columnCount = metadata.getColumnCount();
+            expandedCount = columnCount - (matViewProjectionSize - 1);
+            if (wildcardLo < 0 || wildcardHi < wildcardLo || wildcardHi > selectTextLen
+                    || expandedCount < 1 || wildcardIndex + expandedCount > columnCount) {
+                throw SqlException.$(selectTextPosition + Math.max(wildcardLo, 0),
+                        "could not expand the wildcard of the materialized view query, list the columns explicitly");
+            }
+            edits.add(wildcardLo);
+            edits.add(wildcardHi);
+            edits.add(-1);
+        }
+        for (int i = 0; i < callCount; i++) {
+            final String name = matViewBareNoArgCallNames.getQuick(i);
+            final int pos = matViewBareNoArgCallPositions.getQuick(i);
+            final int end = findBareNameEnd(selectText, pos, name);
+            if (end < 0) {
+                throw SqlException.$(selectTextPosition + Math.max(pos, 0),
+                                "could not store the function call of the materialized view query, write it as ")
+                        .put(name).put("()");
+            }
+            edits.add(pos);
+            edits.add(end);
+            edits.add(i);
+        }
+        edits.sortGroups(3);
+
+        final StringSink sink = new StringSink();
+        int copied = 0;
+        int prevLo = -1;
+        for (int i = 0, n = edits.size(); i < n; i += 3) {
+            final int lo = edits.getQuick(i);
+            final int hi = edits.getQuick(i + 1);
+            final int call = edits.getQuick(i + 2);
+            if (lo < copied) {
+                if (call >= 0 && lo == prevLo && hi == copied) {
+                    // The optimiser read the same name twice.
+                    continue;
+                }
+                throw SqlException.$(selectTextPosition + lo,
+                        "could not store the function call of the materialized view query, write it with parentheses");
+            }
+            sink.put(selectText, copied, lo);
+            if (call < 0) {
+                appendMatViewWildcardExpansion(sink, selectText, wildcardLo, wildcardHi, metadata, wildcardIndex, expandedCount);
+            } else {
+                sink.put(matViewBareNoArgCallNames.getQuick(call)).putAscii("()");
+            }
+            prevLo = lo;
+            copied = hi;
+        }
+        sink.put(selectText, copied, selectTextLen);
+        final String storedSql = sink.toString();
+
+        RecordMetadata storedMetadata = null;
+        String compileError = null;
+        final ExpiryReadPolicy previousExpiryReadPolicy = executionContext.getExpiryReadPolicy();
+        final CharSequence previousMaterializingViewName = executionContext.getExpiryMaterializingViewName();
+        final boolean previousAllowBareNoArgFunctionCalls = executionContext.allowBareNoArgFunctionCalls();
+        executionContext.setExpiryReadPolicy(ExpiryReadPolicy.REJECT, createMatViewOp.getTableName());
+        executionContext.setAllowBareNoArgFunctionCalls(false);
+        // A compiler of its own, whose optimiser has no sink armed, so the recorded calls stay as they are.
+        try (
+                SqlCompiler compiler = LegacyPlannerImpl.getSqlCompiler(engine);
+                RecordCursorFactory factory = compiler.compile(storedSql, executionContext).getRecordCursorFactory()
+        ) {
+            storedMetadata = GenericRecordMetadata.copyOf(factory.getMetadata());
+        } catch (SqlException e) {
+            compileError = e.getFlyweightMessage().toString();
+        } finally {
+            executionContext.setAllowBareNoArgFunctionCalls(previousAllowBareNoArgFunctionCalls);
+            executionContext.setExpiryReadPolicy(previousExpiryReadPolicy, previousMaterializingViewName);
+        }
+        if (compileError != null || !hasSameColumns(storedMetadata, metadata)) {
+            final SqlException e;
+            if (expandWildcard) {
+                e = SqlException.$(selectTextPosition + wildcardLo,
+                        "could not expand the wildcard of the materialized view query, list the columns explicitly");
+            } else if (callCount > 0) {
+                e = SqlException.$(selectTextPosition + matViewBareNoArgCallPositions.getQuick(0),
+                        "could not store the function calls of the materialized view query, write them with parentheses");
+            } else {
+                e = SqlException.$(selectTextPosition, "could not store the materialized view query");
+            }
+            if (compileError != null) {
+                e.put(" [error=").put(compileError).put(']');
+            }
+            throw e;
+        }
+        return edits.size() > 0 ? storedSql : null;
+    }
+
+    // Records each wildcard in the top-level select list of a materialized view query as a
+    // (projection index, start, end) triple, with start and end positions in the query text. The
+    // optimizer expands wildcards in place, so this runs on the parsed model, before optimise().
+    // A query written without SELECT, such as `base WHERE v > 0`, gets a wildcard from the parser that
+    // has no text of its own; its start and end are both the position where the query starts.
+    private void captureMatViewWildcards(IQueryModel queryModel, CharSequence selectText) {
+        matViewWildcards.clear();
+        isMatViewWildcardArtificial = queryModel.isArtificialStar();
+        final ObjList<QueryColumn> columns = queryModel.getColumns();
+        matViewProjectionSize = columns.size();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            final ExpressionNode ast = columns.getQuick(i).getAst();
+            if (ast != null && ast.isWildcard()) {
+                matViewWildcards.add(i);
+                if (isMatViewWildcardArtificial) {
+                    matViewWildcards.add(queryModel.getModelPosition());
+                    matViewWildcards.add(queryModel.getModelPosition());
+                } else {
+                    matViewWildcards.add(ast.position);
+                    matViewWildcards.add(findWildcardEnd(selectText, ast.position));
+                }
+            }
+        }
+    }
+
+    // COPY FROM creates the table when it is missing, so its target collides with any existing object,
+    // visible or not, the way CREATE TABLE does.
+    private void checkViewModification(ExecutionModel executionModel) throws SqlException {
+        final CharSequence name = executionModel.getTableName();
+        final TableToken tableToken = engine.getTableTokenIfExists(name);
+        checkViewModification(tableToken, executionModel.getTableNameExpr().position);
+    }
+
+    private void checkViewModification(TableToken tableToken) throws SqlException {
+        checkViewModification(tableToken, lexer.lastTokenPosition());
+    }
+
+    private void checkViewModification(TableToken tableToken, int position) throws SqlException {
+        if (tableToken == null || tableToken.getType() == TableToken.Type.TABLE) {
+            return;
+        }
+        throw SqlException.position(position).put("cannot modify ").put(tableToken.getType().keyword()).put(" [view=").put(tableToken.getTableName()).put(']');
+    }
+
+    // For statements that modify an existing table: an object the principal may not see is not disclosed
+    // as a view here, and the statement goes on to fail like it does for a missing table.
+    private void checkVisibleViewModification(ExecutionModel executionModel, SqlExecutionContext executionContext) throws SqlException {
+        final TableToken tableToken = executionContext.getVisibleTableTokenIfExists(executionModel.getTableName());
+        checkViewModification(tableToken, executionModel.getTableNameExpr().position);
+    }
+
+    private void clearExceptSqlText() {
+        // Close what the discarded attempt still owns while its models are still enumerable.
+        // ObjectPool.clear() only rewinds the position, after which the attempt's models are gone from
+        // view and the next next() silently nulls the field. Running here covers every retry site,
+        // which all funnel through this method.
+        freeUntransferredTableNameFunctions();
+        sqlNodePool.clear();
+        characterStore.clear();
+        queryColumnPool.clear();
+        queryModelPool.clear();
+        queryModelWrapperPool.clear();
+        optimiser.clear();
+        parser.clear();
+        alterOperationBuilder.clear();
+        dropOperationBuilder.clear();
+        functionParser.clear();
+        compiledQuery.clear();
+        columnNames.clear();
+    }
+
+    private void compileAlter(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
+        CharSequence tok = SqlUtil.fetchNext(lexer);
+        if (tok == null || (!isTableKeyword(tok) && !isMaterializedKeyword(tok) && !isLiveKeyword(tok) && !isViewKeyword(tok))) {
+            compileAlterExt(executionContext, tok);
+            return;
+        }
+
+        if (isTableKeyword(tok)) {
+            compileAlterTable(executionContext, sqlText);
+        } else if (isMaterializedKeyword(tok)) {
+            compileAlterMatView(executionContext);
+        } else if (isLiveKeyword(tok)) {
+            compileAlterLiveView(executionContext);
+        } else {
+            compileAlterView(executionContext);
+        }
+    }
+
+    /**
+     * {@code ALTER LIVE VIEW <name> RESUME|SUSPEND WAL}. Mirrors compileAlterMatView.
+     * <p>
+     * A live view is a WAL table, so a failing inline apply suspends it like any other, and
+     * hasPendingLiveViewApply then skips it until an operator RESUMEs. That recovery was
+     * unreachable: compileAlterTable rejects every ALTER on a non-TABLE token up front, and no
+     * ALTER LIVE VIEW grammar existed - so an idle view stayed suspended, serving a stale prefix,
+     * with DROP + recreate the only escape.
+     * <p>
+     * Only the WAL-control verbs live here; the structural ones stay rejected, since a live view's
+     * schema is a function of its SELECT.
+     */
+    private void compileAlterLiveView(SqlExecutionContext executionContext) throws SqlException {
+        expectKeyword(lexer, "view");
+        final int liveViewNamePosition = lexer.getPosition();
+        CharSequence tok = expectToken(lexer, "live view name");
+        assertNameIsQuotedOrNotAKeyword(tok, liveViewNamePosition);
+        final TableToken liveViewToken = tableExistsOrFail(liveViewNamePosition, unquote(tok), executionContext);
+        if (!liveViewToken.isLiveView()) {
+            throw SqlException.$(lexer.lastTokenPosition(), "live view name expected");
+        }
+        tok = expectToken(lexer, "'resume' or 'suspend'");
+        if (isResumeKeyword(tok)) {
+            parseResumeWal(liveViewToken, liveViewNamePosition, executionContext);
+        } else if (isSuspendKeyword(tok)) {
+            parseSuspendWal(liveViewToken, liveViewNamePosition, executionContext);
+        } else {
+            throw SqlException.$(lexer.lastTokenPosition(), "'resume' or 'suspend' expected");
+        }
+    }
+
+    private void compileAlterMatView(SqlExecutionContext executionContext) throws SqlException {
+        expectKeyword(lexer, "view");
+        final int matViewNamePosition = lexer.getPosition();
+        CharSequence tok = expectToken(lexer, "materialized view name");
+        assertNameIsQuotedOrNotAKeyword(tok, matViewNamePosition);
+        final CharSequence matViewName = unquote(tok);
+        // Before any resolution, for the same reason as in compileAlterTable. A mat view cannot be
+        // renamed, but DROP + CREATE can still hand its name to a different view between the ALTER
+        // being sequenced and WAL-applied, and only the writer knows which view the statement meant.
+        executionContext.setStatementTargetTableName(matViewName);
+        final TableToken matViewToken = viewExistsOrFail(matViewName, executionContext, SqlException.matViewDoesNotExist(matViewNamePosition, matViewName));
+        if (!matViewToken.isMatView()) {
+            throw SqlException.$(lexer.lastTokenPosition(), "materialized view name expected");
+        }
+        final MatViewDefinition viewDefinition = engine.getDependentViewGraph().getViewDefinition(matViewToken);
+        if (viewDefinition == null) {
+            throw SqlException.$(lexer.lastTokenPosition(), "materialized view does not exist");
+        }
+
+        try (TableRecordMetadata tableMetadata = engine.getTableMetadata(matViewToken)) {
+            tok = SqlUtil.fetchNext(lexer);
+            if (tok == null || (!isAlterKeyword(tok) && !isResumeKeyword(tok) && !isRebaseKeyword(tok) && !isSuspendKeyword(tok) && !isSetKeyword(tok) && !isDropKeyword(tok))) {
+                compileAlterMatViewExt(executionContext, tok, matViewToken, matViewNamePosition);
+                return;
+            }
+            if (isAlterKeyword(tok)) {
+                expectKeyword(lexer, "column");
+                final int columnNamePosition = lexer.getPosition();
+                tok = expectToken(lexer, "column name");
+                final CharSequence columnName = GenericLexer.immutableOf(unquote(tok));
+                final int columnIndex = tableMetadata.getColumnIndexQuiet(columnName);
+                if (columnIndex == -1) {
+                    throw SqlException.walRecoverable(columnNamePosition).put("column '").put(columnName)
+                            .put("' does not exist in materialized view '").put(matViewToken.getTableName()).put('\'');
+                }
+
+                tok = expectToken(lexer, "'symbol capacity', 'add index' or 'drop index'");
+                if (SqlKeywords.isSymbolKeyword(tok)) {
+                    alterTableChangeSymbolCapacity(
+                            executionContext,
+                            matViewNamePosition,
+                            matViewToken,
+                            columnNamePosition,
+                            columnName,
+                            tableMetadata,
+                            columnIndex
+                    );
+                } else if (SqlKeywords.isAddKeyword(tok)) {
+                    expectKeyword(lexer, "index");
+
+                    if (tableMetadata.isColumnIndexed(columnIndex)) {
+                        throw SqlException.walRecoverable(columnNamePosition).put("column '").put(columnName)
+                                .put("' already indexed");
+                    }
+                    int columnType = tableMetadata.getColumnType(columnIndex);
+                    if (columnType != ColumnType.SYMBOL) {
+                        throw SqlException.walRecoverable(columnNamePosition).put("column '").put(columnName)
+                                .put("' is of type '").put(ColumnType.nameOf(columnType)).put("'. Index supports column type 'SYMBOL' only.");
+                    }
+
+                    final int indexValueBlockSize;
+                    final boolean sizeInferred;
+                    byte indexType = configuration.getDefaultSymbolIndexType();
+                    boolean indexTypeExplicit = false;
+
+                    tok = SqlUtil.fetchNext(lexer);
+                    if (tok == null || isSemicolon(tok)) {
+                        indexValueBlockSize = estimateIndexValueBlockSizeFromReader(configuration, executionContext, matViewToken, columnIndex);
+                        sizeInferred = true;
+                    } else {
+                        // ADD INDEX TYPE POSTING [DELTA|EF]
+                        if (isTypeKeyword(tok)) {
+                            indexTypeExplicit = true;
+                            tok = expectToken(lexer, "index type name");
+                            byte parsedType = IndexType.valueOf(tok);
+                            if (parsedType == IndexType.NONE) {
+                                throw SqlException.$(lexer.lastTokenPosition(), "unknown index type: ").put(tok);
+                            }
+                            indexType = parsedType;
+                            tok = SqlUtil.fetchNext(lexer);
+                            if (tok != null && IndexType.isPosting(indexType)) {
+                                if (SqlKeywords.isDeltaKeyword(tok)) {
+                                    indexType = IndexType.POSTING_DELTA;
+                                    tok = SqlUtil.fetchNext(lexer);
+                                } else if (SqlKeywords.isEfKeyword(tok)) {
+                                    indexType = IndexType.POSTING_EF;
+                                    tok = SqlUtil.fetchNext(lexer);
+                                }
+                            }
+                        }
+                        if (tok == null || isSemicolon(tok)) {
+                            indexValueBlockSize = estimateIndexValueBlockSizeFromReader(configuration, executionContext, matViewToken, columnIndex);
+                            sizeInferred = true;
+                        } else {
+                            if (!SqlKeywords.isCapacityKeyword(tok)) {
+                                throw SqlException.$(lexer.lastTokenPosition(), "'capacity' keyword expected");
+                            }
+                            if (!indexTypeExplicit) {
+                                indexType = IndexType.BITMAP;
+                            } else if (indexType != IndexType.BITMAP) {
+                                throw SqlException.$(lexer.lastTokenPosition(), "CAPACITY is only supported for BITMAP index type");
+                            }
+                            tok = expectToken(lexer, "index capacity value");
+                            try {
+                                indexValueBlockSize = Numbers.parseInt(tok);
+                                sizeInferred = false;
+                            } catch (NumericException e) {
+                                throw SqlException.$(lexer.lastTokenPosition(), "index capacity value must be numeric");
+                            }
+                        }
+                    }
+
+                    LOG.info().$("adding mat view index [viewName=").$(matViewToken)
+                            .$(", column=").$safe(columnName)
+                            .$(", indexValueBlockSize=").$(indexValueBlockSize)
+                            .$(", sizeInferred=").$(sizeInferred)
+                            .I$();
+
+                    alterTableColumnAddIndex(
+                            executionContext,
+                            matViewNamePosition,
+                            matViewToken,
+                            columnNamePosition,
+                            columnName,
+                            tableMetadata,
+                            indexValueBlockSize,
+                            indexType,
+                            null,
+                            null
+                    );
+                } else if (SqlKeywords.isDropKeyword(tok)) {
+                    expectKeyword(lexer, "index");
+
+                    if (!tableMetadata.isColumnIndexed(columnIndex)) {
+                        throw SqlException.walRecoverable(columnNamePosition).put("column '").put(columnName)
+                                .put("' is not indexed");
+                    }
+
+                    alterTableColumnDropIndex(
+                            executionContext,
+                            matViewNamePosition,
+                            matViewToken,
+                            columnNamePosition,
+                            columnName,
+                            tableMetadata
+                    );
+                } else {
+                    throw SqlException.$(lexer.lastTokenPosition(), "'symbol capacity', 'add index' or 'drop index' expected");
+                }
+            } else if (isSetKeyword(tok)) {
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok == null || (!isTtlKeyword(tok) && !isRefreshKeyword(tok) && !isExpireKeyword(tok))) {
+                    compileAlterMatViewSetExt(executionContext, tok, matViewToken, matViewNamePosition);
+                    return;
+                }
+                if (isTtlKeyword(tok)) {
+                    alterTableOrMatViewSetTtl(matViewToken, matViewNamePosition, tableMetadata);
+                } else if (isExpireKeyword(tok)) {
+                    // ALTER MATERIALIZED VIEW <v> SET EXPIRE ROWS WHEN <pred> [CLEANUP EVERY <dur>].
+                    // Mat views are WAL tables; alterTableSetExpire is object-type-agnostic (it parses
+                    // the clause, validates the predicate against the view, and builds SET_EXPIRE ->
+                    // setMetaExpiry), so we route the mat-view token straight through it.
+                    executionContext.getSecurityContext().authorizeAlterTableSetParam(matViewToken);
+                    alterTableSetExpire(executionContext, matViewToken, matViewNamePosition, tableMetadata);
+                } else if (isRefreshKeyword(tok)) {
+                    tok = expectToken(lexer, "'immediate' or 'manual' or 'period' or 'every' or 'limit'");
+                    if (isLimitKeyword(tok)) {
+                        // SET REFRESH LIMIT
+                        executionContext.getSecurityContext().authorizeAlterMatViewSetRefreshLimit(matViewToken);
+                        final int limitHoursOrMonths = SqlParser.parseTtlHoursOrMonths(lexer);
+                        final AlterOperationBuilder setRefreshLimit = alterOperationBuilder.ofSetMatViewRefreshLimit(
+                                matViewNamePosition,
+                                matViewToken,
+                                tableMetadata.getTableId(),
+                                limitHoursOrMonths
+                        );
+                        compiledQuery.ofAlter(setRefreshLimit.build());
+                    } else if (isImmediateKeyword(tok) || isManualKeyword(tok) || isEveryKeyword(tok) || isPeriodKeyword(tok)) {
+                        // SET REFRESH [IMMEDIATE | MANUAL | EVERY <interval>] ...
+                        executionContext.getSecurityContext().authorizeAlterMatViewSetRefreshType(matViewToken);
+                        int refreshType = MatViewDefinition.REFRESH_TYPE_IMMEDIATE;
+                        int every = 0;
+                        char everyUnit = 0;
+                        long timerStartUs = Numbers.LONG_NULL;
+                        String timerTimeZone = null;
+                        TimeZoneRules tzRulesMicros = null;
+                        int length = 0;
+                        char lengthUnit = 0;
+                        int delay = 0;
+                        char delayUnit = 0;
+
+                        if (isImmediateKeyword(tok)) {
+                            tok = SqlUtil.fetchNext(lexer);
+                        } else if (isManualKeyword(tok)) {
+                            refreshType = MatViewDefinition.REFRESH_TYPE_MANUAL;
+                            tok = SqlUtil.fetchNext(lexer);
+                        } else if (isEveryKeyword(tok)) {
+                            tok = expectToken(lexer, "interval");
+                            every = CommonUtils.getStrideMultiple(tok, lexer.lastTokenPosition());
+                            everyUnit = CommonUtils.getStrideUnit(tok, lexer.lastTokenPosition());
+                            SqlParser.validateMatViewEveryUnit(everyUnit, lexer.lastTokenPosition());
+                            refreshType = MatViewDefinition.REFRESH_TYPE_TIMER;
+                            tok = SqlUtil.fetchNext(lexer);
+                        }
+
+                        if (tok != null && isPeriodKeyword(tok)) {
+                            if (viewDefinition.isPassthrough()) {
+                                // Mirrors the CREATE-time rejection. A passthrough view has no SAMPLE BY
+                                // bucket to align a period to: its sampling interval only sets the
+                                // granularity of refresh ranges.
+                                throw SqlException.$(lexer.lastTokenPosition(), "PERIOD is not supported for non-aggregating (passthrough) materialized views");
+                            }
+                            final TimestampSampler periodSamplerMicros;
+                            expectKeyword(lexer, "(");
+                            tok = expectToken(lexer, "'length' or 'sample'");
+                            if (isLengthKeyword(tok)) {
+                                // REFRESH ... PERIOD(LENGTH <interval> [TIME ZONE '<timezone>'] [DELAY <interval>])
+                                tok = expectToken(lexer, "LENGTH interval");
+                                length = CommonUtils.getStrideMultiple(tok, lexer.lastTokenPosition());
+                                lengthUnit = CommonUtils.getStrideUnit(tok, lexer.lastTokenPosition());
+                                validateMatViewPeriodLength(length, lengthUnit, lexer.lastTokenPosition());
+                                periodSamplerMicros = TimestampSamplerFactory.getInstance(
+                                        MicrosTimestampDriver.INSTANCE,
+                                        length,
+                                        lengthUnit,
+                                        lexer.lastTokenPosition()
+                                );
+                                tok = expectToken(lexer, "'time zone' or 'delay' or ')'");
+
+                                if (isTimeKeyword(tok)) {
+                                    expectKeyword(lexer, "zone");
+                                    tok = expectToken(lexer, "TIME ZONE name");
+                                    if (Chars.equals(tok, ')') || isDelayKeyword(tok)) {
+                                        throw SqlException.position(lexer.lastTokenPosition()).put("TIME ZONE name expected");
+                                    }
+                                    timerTimeZone = unquote(tok).toString();
+                                    try {
+                                        tzRulesMicros = MicrosTimestampDriver.INSTANCE.getTimezoneRules(DateLocaleFactory.EN_LOCALE, timerTimeZone);
+                                    } catch (CairoException e) {
+                                        throw SqlException.position(lexer.lastTokenPosition()).put(e.getFlyweightMessage());
+                                    }
+                                    tok = expectToken(lexer, "'delay' or ')'");
+                                }
+
+                                if (isDelayKeyword(tok)) {
+                                    tok = expectToken(lexer, "DELAY interval");
+                                    delay = CommonUtils.getStrideMultiple(tok, lexer.lastTokenPosition());
+                                    delayUnit = CommonUtils.getStrideUnit(tok, lexer.lastTokenPosition());
+                                    SqlParser.validateMatViewPeriodDelay(length, lengthUnit, delay, delayUnit, lexer.lastTokenPosition());
+                                    tok = expectToken(lexer, "')'");
+                                }
+                            } else if (isSampleKeyword(tok)) {
+                                // REFRESH ... PERIOD(SAMPLE BY INTERVAL)
+                                // Align the period to the SAMPLE BY bucket.
+                                expectKeyword(lexer, "by");
+                                expectKeyword(lexer, "interval");
+                                tok = expectToken(lexer, "')'");
+
+                                length = (int) Math.min(viewDefinition.getSamplingInterval(), Integer.MAX_VALUE);
+                                lengthUnit = viewDefinition.getSamplingIntervalUnit();
+                                validateMatViewPeriodLength(length, lengthUnit, lexer.lastTokenPosition());
+                                periodSamplerMicros = TimestampSamplerFactory.getInstance(
+                                        MicrosTimestampDriver.INSTANCE,
+                                        length,
+                                        lengthUnit,
+                                        lexer.lastTokenPosition()
+                                );
+
+                                timerTimeZone = viewDefinition.getTimeZone();
+                                if (timerTimeZone != null) {
+                                    // The view definition holds the rules of the SAMPLE BY time zone in the base
+                                    // table's timestamp unit, nanoseconds for a TIMESTAMP_NS table, but the period
+                                    // timer counts in microseconds.
+                                    tzRulesMicros = MicrosTimestampDriver.INSTANCE.getTimezoneRules(DateLocaleFactory.EN_LOCALE, timerTimeZone);
+                                }
+                                if (viewDefinition.getTimeZoneOffset() != null) {
+                                    final long val = Dates.parseOffset(viewDefinition.getTimeZoneOffset());
+                                    if (val == Numbers.LONG_NULL) {
+                                        throw SqlException.position(lexer.lastTokenPosition()).put("invalid offset: ").put(viewDefinition.getTimeZoneOffset());
+                                    }
+                                    if (Numbers.decodeLowInt(val) != 0) {
+                                        throw SqlException.position(lexer.lastTokenPosition()).put("PERIOD (SAMPLE BY INTERVAL) can't be used with WITH OFFSET");
+                                    }
+                                }
+                            } else {
+                                throw SqlException.position(lexer.lastTokenPosition()).put("'length' or 'sample' expected");
+                            }
+
+                            // Period timer start is at the boundary of the current period.
+                            final long nowMicros = configuration.getMicrosecondClock().getTicks();
+                            final long nowLocalMicros = tzRulesMicros != null ? nowMicros + tzRulesMicros.getOffset(nowMicros) : nowMicros;
+                            timerStartUs = periodSamplerMicros.round(nowLocalMicros);
+
+                            if (!Chars.equals(tok, ')')) {
+                                throw SqlException.position(lexer.lastTokenPosition()).put("')' expected");
+                            }
+                            tok = SqlUtil.fetchNext(lexer);
+                        } else if (refreshType == MatViewDefinition.REFRESH_TYPE_TIMER) {
+                            if (tok != null && isStartKeyword(tok)) {
+                                // REFRESH EVERY <interval> [START '<datetime>' [TIME ZONE '<timezone>']]
+                                tok = expectToken(lexer, "START timestamp");
+                                try {
+                                    timerStartUs = MicrosTimestampDriver.INSTANCE.parseFloorLiteral(unquote(tok));
+                                } catch (NumericException e) {
+                                    throw SqlException.$(lexer.lastTokenPosition(), "invalid START timestamp value");
+                                }
+                                tok = maybeExpectToken(lexer, "'time zone'", false);
+
+                                if (isTimeKeyword(tok)) {
+                                    expectKeyword(lexer, "zone");
+                                    tok = expectToken(lexer, "TIME ZONE name");
+                                    timerTimeZone = unquote(tok).toString();
+                                    // validate time zone
+                                    try {
+                                        MicrosTimestampDriver.INSTANCE.getTimezoneRules(DateLocaleFactory.EN_LOCALE, timerTimeZone);
+                                    } catch (CairoException e) {
+                                        throw SqlException.position(lexer.lastTokenPosition()).put(e.getFlyweightMessage());
+                                    }
+                                    tok = SqlUtil.fetchNext(lexer);
+                                }
+                            } else {
+                                // REFRESH EVERY <interval> AS
+                                // Don't forget to set timer params.
+                                timerStartUs = configuration.getMicrosecondClock().getTicks();
+                            }
+                        }
+
+                        if (tok != null && !isSemicolon(tok)) {
+                            throw SqlException.unexpectedToken(lexer.lastTokenPosition(), tok);
+                        }
+
+                        final AlterOperationBuilder setTimer = alterOperationBuilder.ofSetMatViewRefresh(
+                                matViewNamePosition,
+                                matViewToken,
+                                tableMetadata.getTableId(),
+                                refreshType,
+                                every,
+                                everyUnit,
+                                timerStartUs,
+                                timerTimeZone,
+                                length,
+                                lengthUnit,
+                                delay,
+                                delayUnit
+                        );
+                        compiledQuery.ofAlter(setTimer.build());
+                    } else {
+                        throw SqlException.$(lexer.lastTokenPosition(), "'immediate' or 'manual' or 'period' or 'every' or 'limit' expected");
+                    }
+                } else {
+                    throw SqlException.$(lexer.lastTokenPosition(), "'ttl', 'expire' or 'refresh' expected");
+                }
+            } else if (isDropKeyword(tok)) {
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok == null || !isExpireKeyword(tok)) {
+                    compileAlterMatViewDropExt(executionContext, tok, matViewToken, matViewNamePosition);
+                    return;
+                }
+                // ALTER MATERIALIZED VIEW <v> DROP EXPIRE — object-type-agnostic, reuse the table path.
+                executionContext.getSecurityContext().authorizeAlterTableSetParam(matViewToken);
+                alterTableDropExpire(matViewToken, matViewNamePosition, tableMetadata);
+            } else if (isResumeKeyword(tok)) {
+                parseResumeWal(matViewToken, matViewNamePosition, executionContext);
+            } else if (isRebaseKeyword(tok)) {
+                parseRebaseWal(matViewToken, matViewNamePosition, executionContext);
+            } else if (isSuspendKeyword(tok)) {
+                parseSuspendWal(matViewToken, matViewNamePosition, executionContext);
+            }
+        } catch (CairoException e) {
+            LOG.info().$("could not alter materialized view [view=").$(matViewToken.getTableName())
+                    .$(", msg=").$safe(e.getFlyweightMessage())
+                    .$(", errno=").$(e.getErrno())
+                    .I$();
+            if (e.getPosition() == 0) {
+                e.position(lexer.lastTokenPosition());
+            }
+            throw e;
+        }
+    }
+
+    private void compileAlterTable(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
+        final int tableNamePosition = lexer.getPosition();
+        CharSequence tok = expectToken(lexer, "table name");
+        assertNameIsQuotedOrNotAKeyword(tok, tableNamePosition);
+        final CharSequence targetTableName = unquote(tok);
+        // Before any resolution, for the same reason as in compileExecutionModel0's UPDATE case.
+        executionContext.setStatementTargetTableName(targetTableName);
+        final TableToken tableToken = tableExistsOrFailForWal(tableNamePosition, targetTableName, executionContext);
+        checkViewModification(tableToken);
+        final SecurityContext securityContext = executionContext.getSecurityContext();
+
+        try (TableRecordMetadata tableMetadata = executionContext.getMetadataForWrite(tableToken)) {
+            tok = expectToken(lexer, ALTER_TABLE_EXPECTED_TOKEN_DESCR);
+
+            if (isAddKeyword(tok)) {
+                executionContext.getSecurityContext().authorizeAlterTableAddColumn(tableToken);
+                alterTableAddColumn(executionContext, tableNamePosition, tableToken, tableMetadata);
+            } else if (isConvertKeyword(tok)) {
+                tok = expectToken(lexer, "'partition'");
+                if (!isPartitionKeyword(tok)) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "'partition' expected");
+                }
+                tok = expectToken(lexer, "'to'");
+                if (!isToKeyword(tok)) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "'to' expected");
+                }
+                tok = expectToken(lexer, "'parquet' or 'native'");
+                final int action;
+                if (isParquetKeyword(tok)) {
+                    action = PartitionAction.CONVERT_TO_PARQUET;
+                    executionContext.getSecurityContext().authorizeAlterTableConvertPartitionToParquet(tableToken);
+                } else if (isNativeKeyword(tok)) {
+                    action = PartitionAction.CONVERT_TO_NATIVE;
+                    executionContext.getSecurityContext().authorizeAlterTableConvertPartitionToNative(tableToken);
+                } else {
+                    throw SqlException.$(lexer.lastTokenPosition(), "'parquet' or 'native' expected");
+                }
+                alterTableDropConvertDetachOrAttachPartition(tableMetadata, tableToken, action, executionContext);
+            } else if (isDropKeyword(tok)) {
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok == null || (!isColumnKeyword(tok) && !isPartitionKeyword(tok) && !isExpireKeyword(tok))) {
+                    compileAlterTableDropExt(executionContext, tok, tableToken, tableNamePosition);
+                    return;
+                }
+                if (isColumnKeyword(tok)) {
+                    alterTableDropColumn(executionContext, tableNamePosition, tableToken, tableMetadata);
+                } else if (isPartitionKeyword(tok)) {
+                    executionContext.getSecurityContext().authorizeAlterTableDropPartition(tableToken);
+                    alterTableDropConvertDetachOrAttachPartition(tableMetadata, tableToken, PartitionAction.DROP, executionContext);
+                } else if (isExpireKeyword(tok)) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "EXPIRE ROWS is only supported on materialized views");
+                }
+            } else if (isRenameKeyword(tok)) {
+                tok = expectToken(lexer, "'column'");
+                if (isColumnKeyword(tok)) {
+                    alterTableRenameColumn(executionContext, tableNamePosition, tableToken, tableMetadata);
+                } else {
+                    throw SqlException.$(lexer.lastTokenPosition(), "'column' expected");
+                }
+            } else if (isAttachKeyword(tok)) {
+                tok = expectToken(lexer, "'partition'");
+                if (isPartitionKeyword(tok)) {
+                    executionContext.getSecurityContext().authorizeAlterTableAttachPartition(tableToken);
+                    if (!executionContext.isWalApplication()) {
+                        validateAlterTableAttachOrDetach(tableNamePosition, tableToken, true);
+                    }
+                    alterTableDropConvertDetachOrAttachPartition(tableMetadata, tableToken, PartitionAction.ATTACH, executionContext);
+                } else {
+                    throw SqlException.$(lexer.lastTokenPosition(), "'partition' expected");
+                }
+            } else if (isDetachKeyword(tok)) {
+                tok = expectToken(lexer, "'partition'");
+                if (isPartitionKeyword(tok)) {
+                    executionContext.getSecurityContext().authorizeAlterTableDetachPartition(tableToken);
+                    if (!executionContext.isWalApplication()) {
+                        validateAlterTableAttachOrDetach(tableNamePosition, tableToken, false);
+                    }
+                    alterTableDropConvertDetachOrAttachPartition(tableMetadata, tableToken, PartitionAction.DETACH, executionContext);
+                } else {
+                    throw SqlException.$(lexer.lastTokenPosition(), "'partition' expected");
+                }
+            } else if (isForceKeyword(tok)) {
+                tok = expectToken(lexer, "'drop' or 'reindex'");
+                if (isReindexKeyword(tok)) {
+                    alterTableForceReindex(executionContext, sqlText, tableNamePosition, tableToken, tableMetadata);
+                } else if (isDropKeyword(tok)) {
+                    tok = expectToken(lexer, "'partition'");
+                    if (isPartitionKeyword(tok)) {
+                        tok = expectToken(lexer, "'list'");
+                        if (isListKeyword(tok)) {
+                            executionContext.getSecurityContext().authorizeAlterTableDropPartition(tableToken);
+                            alterTableDropConvertDetachOrAttachPartitionByList(tableMetadata, tableToken, null, null, lexer.lastTokenPosition(), PartitionAction.FORCE_DROP);
+                        } else {
+                            throw SqlException.$(lexer.lastTokenPosition(), "'list' expected");
+                        }
+                    } else {
+                        throw SqlException.$(lexer.lastTokenPosition(), "'partition' expected");
+                    }
+                } else {
+                    throw SqlException.$(lexer.lastTokenPosition(), "'drop' or 'reindex' expected");
+                }
+            } else if (isAlterKeyword(tok)) {
+                tok = expectToken(lexer, "'column'");
+                if (isColumnKeyword(tok)) {
+                    final int columnNamePosition = lexer.getPosition();
+                    tok = expectToken(lexer, "column name");
+                    final CharSequence columnName = GenericLexer.immutableOf(unquote(tok));
+                    final int columnIndex = tableMetadata.getColumnIndexQuiet(columnName);
+                    if (columnIndex == -1) {
+                        throw SqlException.walRecoverable(columnNamePosition).put("column '").put(columnName)
+                                .put("' does not exist in table '").put(tableToken.getTableName()).put('\'');
+                    }
+
+                    tok = expectToken(lexer, "'add index' or 'drop index' or 'type' or 'cache' or 'nocache' or 'symbol'");
+                    if (isAddKeyword(tok)) {
+                        expectKeyword(lexer, "index");
+                        tok = SqlUtil.fetchNext(lexer);
+                        int indexValueCapacity = -1;
+                        byte indexType = configuration.getDefaultSymbolIndexType();
+                        boolean indexTypeExplicit = false;
+                        ObjList<CharSequence> coveringColumnNames = null;
+                        IntList coveringColumnPositions = null;
+
+                        if (tok != null && !isSemicolon(tok)) {
+                            // ADD INDEX TYPE POSTING [DELTA|EF]
+                            if (isTypeKeyword(tok)) {
+                                indexTypeExplicit = true;
+                                tok = expectToken(lexer, "index type name");
+                                byte parsedType = IndexType.valueOf(tok);
+                                if (parsedType == IndexType.NONE) {
+                                    throw SqlException.$(lexer.lastTokenPosition(), "unknown index type: ").put(tok);
+                                }
+                                indexType = parsedType;
+                                tok = SqlUtil.fetchNext(lexer);
+                                // Handle sub-tokens DELTA and EF for POSTING index type
+                                if (tok != null && IndexType.isPosting(indexType)) {
+                                    if (SqlKeywords.isDeltaKeyword(tok)) {
+                                        indexType = IndexType.POSTING_DELTA;
+                                        tok = SqlUtil.fetchNext(lexer);
+                                    } else if (SqlKeywords.isEfKeyword(tok)) {
+                                        indexType = IndexType.POSTING_EF;
+                                        tok = SqlUtil.fetchNext(lexer);
+                                    }
+                                }
+                            }
+                            // tok might be INCLUDE, CAPACITY, semicolon, or null
+                            if (tok != null && !isSemicolon(tok) && SqlKeywords.isIncludeKeyword(tok)) {
+                                if (!indexTypeExplicit) {
+                                    indexType = IndexType.POSTING;
+                                } else if (!IndexType.isPosting(indexType)) {
+                                    throw SqlException.$(lexer.lastTokenPosition(), "INCLUDE is only supported for POSTING index type");
+                                }
+                                coveringColumnNames = new ObjList<>();
+                                coveringColumnPositions = new IntList();
+                                tok = expectToken(lexer, "'('");
+                                if (!Chars.equals(tok, '(')) {
+                                    throw SqlException.$(lexer.lastTokenPosition(), "'(' expected");
+                                }
+                                tok = expectToken(lexer, "column name");
+                                if (Chars.equals(tok, ')')) {
+                                    throw SqlException.$(lexer.lastTokenPosition(), "at least one column name expected in INCLUDE");
+                                }
+                                do {
+                                    coveringColumnNames.add(GenericLexer.immutableOf(unquote(tok)));
+                                    coveringColumnPositions.add(lexer.lastTokenPosition());
+                                    tok = expectToken(lexer, "',' or ')'");
+                                    if (Chars.equals(tok, ',')) {
+                                        tok = expectToken(lexer, "column name");
+                                    }
+                                } while (!Chars.equals(tok, ')'));
+                                if (!Chars.equals(tok, ')')) {
+                                    throw SqlException.$(lexer.lastTokenPosition(), "')' expected");
+                                }
+                                tok = SqlUtil.fetchNext(lexer);
+                            }
+                            if (tok != null && !isSemicolon(tok)) {
+                                if (!isCapacityKeyword(tok)) {
+                                    throw SqlException.$(lexer.lastTokenPosition(), "'capacity' expected");
+                                }
+                                if (!indexTypeExplicit) {
+                                    indexType = IndexType.BITMAP;
+                                } else if (indexType != IndexType.BITMAP) {
+                                    throw SqlException.$(lexer.lastTokenPosition(), "CAPACITY is only supported for BITMAP index type");
+                                }
+                                tok = expectToken(lexer, "capacity value");
+                                try {
+                                    indexValueCapacity = Numbers.parseInt(tok);
+                                    if (indexValueCapacity <= 0) {
+                                        throw SqlException.$(lexer.lastTokenPosition(), "positive integer literal expected as index capacity");
+                                    }
+                                } catch (NumericException e) {
+                                    throw SqlException.$(lexer.lastTokenPosition(), "positive integer literal expected as index capacity");
+                                }
+                            }
+                        }
+
+                        alterTableColumnAddIndex(
+                                executionContext,
+                                tableNamePosition,
+                                tableToken,
+                                columnNamePosition,
+                                columnName,
+                                tableMetadata,
+                                indexValueCapacity,
+                                indexType,
+                                coveringColumnNames,
+                                coveringColumnPositions
+                        );
+                    } else if (isDropKeyword(tok)) {
+                        tok = expectToken(lexer, "'index'");
+                        if (isIndexKeyword(tok)) {
+                            tok = SqlUtil.fetchNext(lexer);
+                            if (tok != null && !isSemicolon(tok)) {
+                                throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put("] while trying to drop index");
+                            }
+                            alterTableColumnDropIndex(
+                                    executionContext,
+                                    tableNamePosition,
+                                    tableToken,
+                                    columnNamePosition,
+                                    columnName,
+                                    tableMetadata
+                            );
+                        } else {
+                            throw SqlException.$(lexer.lastTokenPosition(), "'index' expected");
+                        }
+                    } else if (isCacheKeyword(tok)) {
+                        alterTableColumnCacheFlag(
+                                executionContext,
+                                tableNamePosition,
+                                tableToken,
+                                columnNamePosition,
+                                columnName,
+                                tableMetadata,
+                                true
+                        );
+                    } else if (isNoCacheKeyword(tok)) {
+                        alterTableColumnCacheFlag(
+                                executionContext,
+                                tableNamePosition,
+                                tableToken,
+                                columnNamePosition,
+                                columnName,
+                                tableMetadata,
+                                false
+                        );
+                    } else if (isTypeKeyword(tok)) {
+                        alterTableChangeColumnType(
+                                executionContext,
+                                tableNamePosition,
+                                tableToken,
+                                columnNamePosition,
+                                columnName,
+                                tableMetadata,
+                                columnIndex
+                        );
+                    } else if (isSymbolKeyword(tok)) {
+                        alterTableChangeSymbolCapacity(
+                                executionContext,
+                                tableNamePosition,
+                                tableToken,
+                                columnNamePosition,
+                                columnName,
+                                tableMetadata,
+                                columnIndex
+                        );
+                    } else if (isSetKeyword(tok)) {
+                        tok = expectToken(lexer, "'parquet'");
+                        if (isParquetKeyword(tok)) {
+                            alterTableSetParquetEncoding(
+                                    executionContext,
+                                    tableNamePosition,
+                                    tableToken,
+                                    columnName,
+                                    tableMetadata,
+                                    columnIndex
+                            );
+                        } else {
+                            throw SqlException.$(lexer.lastTokenPosition(), "'parquet' expected");
+                        }
+                    } else {
+                        throw SqlException.$(lexer.lastTokenPosition(), "'add', 'drop', 'set', 'symbol', 'cache' or 'nocache' expected").put(" found '").put(tok).put('\'');
+                    }
+                } else {
+                    throw SqlException.$(lexer.lastTokenPosition(), "'column' or 'partition' expected");
+                }
+            } else if (isSetKeyword(tok)) {
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok == null || (!isParamKeyword(tok) && !isTtlKeyword(tok) && !isTypeKeyword(tok) && !isExpireKeyword(tok) && !isFormatKeyword(tok))) {
+                    compileAlterTableSetExt(executionContext, tok, tableToken, tableNamePosition);
+                    return;
+                }
+                if (isParamKeyword(tok)) {
+                    executionContext.getSecurityContext().authorizeAlterTableSetParam(tableToken);
+                    final int paramNamePosition = lexer.getPosition();
+                    tok = expectToken(lexer, "param name");
+                    final CharSequence paramName = GenericLexer.immutableOf(tok);
+                    tok = expectToken(lexer, "'='");
+                    if (tok.length() == 1 && tok.charAt(0) == '=') {
+                        CharSequence value = GenericLexer.immutableOf(SqlUtil.fetchNext(lexer));
+                        alterTableSetParam(paramName, value, paramNamePosition, tableToken, tableNamePosition, tableMetadata.getTableId());
+                    } else {
+                        throw SqlException.$(lexer.lastTokenPosition(), "'=' expected");
+                    }
+                } else if (isTtlKeyword(tok)) {
+                    alterTableOrMatViewSetTtl(tableToken, tableNamePosition, tableMetadata);
+                } else if (isExpireKeyword(tok)) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "EXPIRE ROWS is only supported on materialized views");
+                } else if (isFormatKeyword(tok)) {
+                    alterTableSetFormat(tableToken, tableNamePosition, tableMetadata);
+                } else if (isTypeKeyword(tok)) {
+                    tok = expectToken(lexer, "'bypass' or 'wal'");
+                    if (isBypassKeyword(tok)) {
+                        tok = expectToken(lexer, "'wal'");
+                        if (isWalKeyword(tok)) {
+                            alterTableSetType(executionContext, tableNamePosition, tableToken, (byte) 0);
+                        } else {
+                            throw SqlException.$(lexer.lastTokenPosition(), "'wal' expected");
+                        }
+                    } else if (isWalKeyword(tok)) {
+                        alterTableSetType(executionContext, tableNamePosition, tableToken, (byte) 1);
+                    } else {
+                        throw SqlException.$(lexer.lastTokenPosition(), "'bypass' or 'wal' expected");
+                    }
+                }
+            } else if (isResumeKeyword(tok)) {
+                parseResumeWal(tableToken, tableNamePosition, executionContext);
+            } else if (isRebaseKeyword(tok)) {
+                parseRebaseWal(tableToken, tableNamePosition, executionContext);
+            } else if (isSuspendKeyword(tok)) {
+                parseSuspendWal(tableToken, tableNamePosition, executionContext);
+            } else if (isSquashKeyword(tok)) {
+                executionContext.getSecurityContext().authorizeAlterTableDropPartition(tableToken);
+                tok = expectToken(lexer, "'partitions'");
+                if (isPartitionsKeyword(tok)) {
+                    compiledQuery.ofAlter(alterOperationBuilder.ofSquashPartitions(tableNamePosition, tableToken).build());
+                } else {
+                    throw SqlException.$(lexer.lastTokenPosition(), "'partitions' expected");
+                }
+            } else if (isDedupKeyword(tok) || isDeduplicateKeyword(tok)) {
+                tok = expectToken(lexer, "'dedup columns'");
+
+                if (isDisableKeyword(tok)) {
+                    executionContext.getSecurityContext().authorizeAlterTableDedupDisable(tableToken);
+                    final AlterOperationBuilder setDedup = alterOperationBuilder.ofDedupDisable(
+                            tableNamePosition,
+                            tableToken
+                    );
+                    compiledQuery.ofAlter(setDedup.build());
+                } else {
+                    lexer.unparseLast();
+                    executionContext.getSecurityContext().authorizeAlterTableDedupEnable(tableToken);
+                    alterTableDedupEnable(executionContext, tableNamePosition, tableToken, tableMetadata, lexer);
+                }
+            } else if (isEnableKeyword(tok)) {
+                compileAlterTableEnableExt(executionContext, tok, tableToken, tableNamePosition);
+            } else if (isDisableKeyword(tok)) {
+                compileAlterTableDisableExt(executionContext, tok, tableToken, tableNamePosition);
+            } else {
+                compileAlterTableExt(executionContext, tok, tableToken, tableNamePosition);
+            }
+        } catch (CairoException e) {
+            LOG.info().$("could not alter table [table=").$(tableToken)
+                    .$(", msg=").$safe(e.getFlyweightMessage())
+                    .$(", errno=").$(e.getErrno())
+                    .I$();
+            if (e.getPosition() == 0) {
+                e.position(lexer.lastTokenPosition());
+            }
+            throw e;
+        }
+    }
+
+    private void compileAlterView(SqlExecutionContext executionContext) throws SqlException {
+        final int viewNamePosition = lexer.getPosition();
+        CharSequence tok = expectToken(lexer, "view name");
+        assertNameIsQuotedOrNotAKeyword(tok, viewNamePosition);
+        final CharSequence viewName = unquote(tok);
+        final TableToken viewToken = viewExistsOrFail(viewName, executionContext, SqlException.viewDoesNotExist(viewNamePosition, viewName));
+        if (!viewToken.isView()) {
+            throw SqlException.$(lexer.lastTokenPosition(), "view name expected");
+        }
+        if (engine.getViewGraph().getViewDefinition(viewToken) == null) {
+            throw SqlException.$(lexer.lastTokenPosition(), "view does not exist");
+        }
+
+        tok = expectToken(lexer, "'as'");
+        if (!isAsKeyword(tok)) {
+            throw SqlException.position(lexer.lastTokenPosition()).put("'as' expected");
+        }
+
+        final int viewSqlPosition = lexer.getPosition();
+        final String viewSql = parser.parseViewSql(lexer, this);
+        if (isAuditedView(viewToken)) {
+            // The new body keeps the view's audited flag, so its AUDITED declarations are held to
+            // what a read of the view needs, here rather than on every read that follows.
+            validateAuditedViewBody(viewToken, parser.getViewSqlModel(), executionContext);
+        }
+
+        alterViewExecution(executionContext, viewToken, viewSql, viewSqlPosition);
+    }
+
+    private void compileBegin(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
+        // BEGIN [TRANSACTION] — consume the optional keyword
+        CharSequence tok = SqlUtil.fetchNext(lexer);
+        if (tok != null && !isTransactionKeyword(tok)) {
+            lexer.unparseLast();
+        }
+        compiledQuery.ofBegin();
+    }
+
+    private void compileCancel(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
+        CharSequence tok = SqlUtil.fetchNext(lexer);
+        if (tok == null || !isQueryKeyword(tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "'QUERY' expected'");
+        }
+
+        tok = SqlUtil.fetchNext(lexer);
+        int position = lexer.lastTokenPosition();
+        try {
+            long queryId = Numbers.parseLong(tok);
+            tok = SqlUtil.fetchNext(lexer);
+            if (tok != null && !isSemicolon(tok)) {
+                throw SqlException.unexpectedToken(lexer.lastTokenPosition(), tok);
+            }
+            try {
+                if (!executionContext.isValidationOnly()) {
+                    if (!executionContext.getCairoEngine().getQueryRegistry().cancel(queryId, executionContext)) {
+                        throw SqlException.$(position, "query to cancel not found in registry [id=").put(queryId).put(']');
+                    }
+                }
+            } catch (CairoException e) {
+                throw SqlException.$(position, e.getFlyweightMessage());
+            }
+            compiledQuery.ofCancelQuery();
+        } catch (NumericException e) {
+            throw SqlException.$(position, "non-negative integer literal expected as query id");
+        }
+    }
+
+    private void compileCheckpoint(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
+        executionContext.getSecurityContext().authorizeDatabaseSnapshot();
+        executionContext.getCircuitBreaker().resetTimer();
+        CharSequence tok = expectToken(lexer, "'create' or 'release'");
+
+        if (isCreateKeyword(tok)) {
+            if (!executionContext.isValidationOnly()) {
+                engine.checkpointCreate(executionContext.getCircuitBreaker(), false);
+            }
+            compiledQuery.ofCheckpointCreate();
+        } else if (Chars.equalsLowerCaseAscii(tok, "release")) {
+            if (!executionContext.isValidationOnly()) {
+                engine.checkpointRelease();
+            }
+            compiledQuery.ofCheckpointRelease();
+        } else {
+            throw SqlException.position(lexer.lastTokenPosition()).put("'create' or 'release' expected");
+        }
+    }
+
+    private void compileCommit(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
+        // COMMIT [TRANSACTION] — consume the optional keyword
+        CharSequence tok = SqlUtil.fetchNext(lexer);
+        if (tok != null && !isTransactionKeyword(tok)) {
+            lexer.unparseLast();
+        }
+        compiledQuery.ofCommit();
+    }
+
+    private RecordCursorFactory compileCopyCancel(SqlExecutionContext executionContext, ExportModel model) throws SqlException {
+        assert model.isCancel();
+
+        long cancelCopyID;
+        String cancelCopyIDStr = Chars.toString(unquote(model.getTableName()));
+        try {
+            cancelCopyID = Numbers.parseHexLong(cancelCopyIDStr);
+        } catch (NumericException e) {
+            throw SqlException.$(0, "copy cancel ID format is invalid: '").put(cancelCopyIDStr).put('\'');
+        }
+
+        RecordCursorFactory _import = null, _export = null;
+
+        if (configuration.getSqlCopyInputRoot() != null) {
+            try {
+                _import = query()
+                        .$("select * from '")
+                        .$(engine.getConfiguration().getSystemTableNamePrefix())
+                        .$("text_import_log' where id = '")
+                        .$(cancelCopyIDStr)
+                        .$("' limit -1")
+                        .compile(executionContext).getRecordCursorFactory();
+            } catch (SqlException e) {
+                if (!e.isTableDoesNotExist()) {
+                    throw e;
+                }
+            }
+        }
+
+        if (configuration.getSqlCopyExportRoot() != null && !configuration.isReadOnlyInstance()) {
+            try {
+                _export = query()
+                        .$("select * from '")
+                        .$(engine.getConfiguration().getSystemTableNamePrefix())
+                        .$("copy_export_log' where id = '")
+                        .$(cancelCopyIDStr)
+                        .$("' limit -1")
+                        .compile(executionContext).getRecordCursorFactory();
+            } catch (SqlException e) {
+                if (!e.isTableDoesNotExist()) {
+                    throw e;
+                }
+            }
+        }
+
+        return new CopyCancelFactory(
+                engine.getCopyImportContext(),
+                engine.getCopyExportContext(),
+                cancelCopyID,
+                cancelCopyIDStr,
+                _import,
+                _export
+        );
+    }
+
+    private RecordCursorFactory compileCopyFrom(SqlExecutionContext executionContext, ExportModel model) throws SqlException {
+        assert !model.isCancel();
+        final CharSequence tableName = authorizeInsertForCopy(executionContext, model);
+
+        if (model.getTimestampColumnName() == null
+                && ((model.getPartitionBy() != -1 && model.getPartitionBy() != PartitionBy.NONE))) {
+            throw SqlException.$(-1, "invalid option used for import without a designated timestamp (format or partition by)");
+        }
+        if (model.getDelimiter() < 0) {
+            model.setDelimiter((byte) ',');
+        }
+
+        final ExpressionNode fileNameNode = model.getFileName();
+        final CharSequence fileName = fileNameNode != null ? GenericLexer.assertNoDots(unquote(fileNameNode.token), fileNameNode.position) : null;
+        assert fileName != null;
+
+        return new CopyImportFactory(
+                messageBus,
+                engine.getCopyImportContext(),
+                Chars.toString(tableName),
+                Chars.toString(fileName),
+                model
+        );
+    }
+
+    private RecordCursorFactory compileCopyTo(SqlExecutionContext executionContext, ExportModel model, CharSequence sqlText) throws SqlException {
+        assert !model.isCancel();
+
+        if (engine.getConfiguration().isReadOnlyInstance()) {
+            throw SqlException.$(0, "COPY TO is not supported on read-only instance");
+        }
+
+        if (Chars.isBlank(engine.getConfiguration().getSqlCopyExportRoot())) {
+            throw SqlException.$(0, "COPY TO is disabled ['cairo.sql.copy.export.root' is not set?]");
+        }
+
+        if (model.getTableName() != null) {
+            authorizeSelectForCopy(executionContext, model);
+        }
+
+        if (!model.isParquetFormat()) {
+            throw SqlException.$(0, "export format must be specified, supported formats: 'parquet'");
+        }
+        model.validCompressOptions();
+        return new CopyExportFactory(
+                engine,
+                model,
+                executionContext.getSecurityContext(),
+                sqlText
+        );
+    }
+
+    private void compileDeallocate(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
+        CharSequence statementName = unquote(expectToken(lexer, "statement name"));
+        CharSequence tok = SqlUtil.fetchNext(lexer);
+        if (tok != null && !Chars.equals(tok, ';')) {
+            throw SqlException.unexpectedToken(lexer.lastTokenPosition(), tok);
+        }
+        compiledQuery.ofDeallocate(statementName);
+    }
+
+    private void compileDrop(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
+        // drop does not have passwords
+        QueryProgress.logStart(-1, sqlText, executionContext, false);
+        // the selected method depends on the second token, we have already seen DROP
+        CharSequence tok = SqlUtil.fetchNext(lexer);
+        if (tok != null) {
+            // DROP TABLE [ IF EXISTS ] name [;]
+            if (isTableKeyword(tok)) {
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok == null) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "expected ").put("[IF EXISTS] table-name");
+                }
+                boolean hasIfExists = false;
+                int tableNamePosition = lexer.lastTokenPosition();
+                if (isIfKeyword(tok)) {
+                    tok = SqlUtil.fetchNext(lexer);
+                    if (tok == null || !isExistsKeyword(tok)) {
+                        throw SqlException.$(lexer.lastTokenPosition(), "expected ").put("EXISTS table-name");
+                    }
+                    hasIfExists = true;
+                    tableNamePosition = lexer.getPosition();
+                } else {
+                    lexer.unparseLast(); // tok has table name
+                }
+
+                tok = expectToken(lexer, "table name");
+                assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+
+                final CharSequence tableName = unquote(tok);
+                // define operation to make sure we generate correct errors in case of syntax check failure;
+                // an object the principal may not see must not fail the kind check below and disclose itself
+                final TableToken tt = executionContext.getVisibleTableTokenIfExists(tableName);
+                if (tt != null && (tt.isView() || tt.isMatView() || tt.isLiveView())) {
+                    // Live views are rejected here as well as at execute time, so DROP TABLE on
+                    // one fails the compile-only /validate endpoint too. Keep the message
+                    // identical to the execute-time one so the user-visible contract is unchanged.
+                    if (tt.isLiveView()) {
+                        throw SqlException.$(lexer.lastTokenPosition(), "table name expected, got live view name: ").put(tableName);
+                    }
+                    throw SqlException.$(lexer.lastTokenPosition(), "table name expected, got view or materialized view name");
+                }
+                dropOperationBuilder.clear();
+                dropOperationBuilder.setOperationCode(OperationCodes.DROP_TABLE);
+                dropOperationBuilder.setEntityName(tableName);
+                dropOperationBuilder.setEntityNamePosition(tableNamePosition);
+                dropOperationBuilder.setIfExists(hasIfExists);
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok != null && !Chars.equals(tok, ';')) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put(']');
+                }
+                dropOperationBuilder.setSqlText(sqlText);
+                compiledQuery.ofDrop(dropOperationBuilder.build());
+                // DROP VIEW [ IF EXISTS ] name [;]
+            } else if (isViewKeyword(tok)) {
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok == null) {
+                    throw SqlException.$(lexer.getPosition(), "expected ").put("[IF EXISTS] view-name");
+                }
+                boolean hasIfExists = false;
+                int viewNamePosition = lexer.lastTokenPosition();
+                if (isIfKeyword(tok)) {
+                    tok = SqlUtil.fetchNext(lexer);
+                    if (tok == null || !isExistsKeyword(tok)) {
+                        throw SqlException.$(lexer.getPosition(), "expected ").put("EXISTS view-name");
+                    }
+                    hasIfExists = true;
+                    viewNamePosition = lexer.getPosition();
+                } else {
+                    lexer.unparseLast(); // tok has table name
+                }
+
+                tok = expectToken(lexer, "view name");
+                assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+
+                final CharSequence viewName = GenericLexer.unquote(tok);
+                // define operation to make sure we generate correct errors in case of syntax check failure;
+                // an object the principal may not see must not fail the kind check below and disclose itself
+                final TableToken tt = executionContext.getVisibleTableTokenIfExists(viewName);
+                if (tt != null && !tt.isView()) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "view name expected, got ").put(tt.getType().keyword()).put(" name");
+                }
+                dropOperationBuilder.clear();
+                dropOperationBuilder.setOperationCode(OperationCodes.DROP_VIEW);
+                dropOperationBuilder.setEntityName(viewName);
+                dropOperationBuilder.setEntityNamePosition(viewNamePosition);
+                dropOperationBuilder.setIfExists(hasIfExists);
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok != null && !Chars.equals(tok, ';')) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put(']');
+                }
+                dropOperationBuilder.setSqlText(sqlText);
+                compiledQuery.ofDrop(dropOperationBuilder.build());
+                // DROP LIVE VIEW [ IF EXISTS ] name [;]
+            } else if (isLiveKeyword(tok)) {
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok == null || !isViewKeyword(tok)) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "expected VIEW");
+                }
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok == null) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "expected ").put("[IF EXISTS] live-view-name");
+                }
+                boolean hasIfExists = false;
+                int liveViewNamePosition = lexer.lastTokenPosition();
+                if (isIfKeyword(tok)) {
+                    tok = SqlUtil.fetchNext(lexer);
+                    if (tok == null || !isExistsKeyword(tok)) {
+                        throw SqlException.$(lexer.lastTokenPosition(), "expected ").put("EXISTS live-view-name");
+                    }
+                    hasIfExists = true;
+                    liveViewNamePosition = lexer.getPosition();
+                } else {
+                    lexer.unparseLast();
+                }
+
+                tok = expectToken(lexer, "live view name");
+                assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+
+                final CharSequence liveViewName = GenericLexer.unquote(tok);
+                dropOperationBuilder.clear();
+                dropOperationBuilder.setOperationCode(OperationCodes.DROP_LIVE_VIEW);
+                dropOperationBuilder.setEntityName(liveViewName);
+                dropOperationBuilder.setEntityNamePosition(liveViewNamePosition);
+                dropOperationBuilder.setIfExists(hasIfExists);
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok != null && !Chars.equals(tok, ';')) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put(']');
+                }
+                dropOperationBuilder.setSqlText(sqlText);
+                compiledQuery.ofDrop(dropOperationBuilder.build());
+                // DROP MATERIALIZED VIEW [ IF EXISTS ] name [;]
+            } else if (isMaterializedKeyword(tok)) {
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok == null || !isViewKeyword(tok)) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "expected VIEW");
+                }
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok == null) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "expected ").put("[IF EXISTS] mat-view-name");
+                }
+                boolean hasIfExists = false;
+                int matViewNamePosition = lexer.lastTokenPosition();
+                if (isIfKeyword(tok)) {
+                    tok = SqlUtil.fetchNext(lexer);
+                    if (tok == null || !isExistsKeyword(tok)) {
+                        throw SqlException.$(lexer.lastTokenPosition(), "expected ").put("EXISTS mat-view-name");
+                    }
+                    hasIfExists = true;
+                    matViewNamePosition = lexer.getPosition();
+                } else {
+                    lexer.unparseLast(); // tok has table name
+                }
+
+                tok = expectToken(lexer, "materialized view name");
+                assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+
+                final CharSequence matViewName = unquote(tok);
+                // define operation to make sure we generate correct errors in case of syntax check failure;
+                // an object the principal may not see must not fail the kind check below and disclose itself
+                final TableToken tt = executionContext.getVisibleTableTokenIfExists(matViewName);
+                if (tt != null && !tt.isMatView()) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "materialized view name expected, got ").put(tt.getType().keyword()).put(" name");
+                }
+                dropOperationBuilder.clear();
+                dropOperationBuilder.setOperationCode(OperationCodes.DROP_MAT_VIEW);
+                dropOperationBuilder.setEntityName(matViewName);
+                dropOperationBuilder.setEntityNamePosition(matViewNamePosition);
+                dropOperationBuilder.setIfExists(hasIfExists);
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok != null && !Chars.equals(tok, ';')) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put(']');
+                }
+                dropOperationBuilder.setSqlText(sqlText);
+                compiledQuery.ofDrop(dropOperationBuilder.build());
+            } else if (isAllKeyword(tok)) {
+                // DROP ALL[;] or legacy DROP ALL TABLES [;]
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok != null && isTablesKeyword(tok)) {
+                    tok = SqlUtil.fetchNext(lexer);
+                }
+                if (tok != null && !Chars.equals(tok, ';')) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put(']');
+                } else {
+                    compiledQuery.ofDrop(DropAllOperation.INSTANCE);
+                }
+            } else {
+                compileDropOther(executionContext, tok, lexer.lastTokenPosition());
+            }
+        } else {
+            compileDropReportExpected(lexer.getPosition());
+        }
+    }
+
+    private ExecutionModel compileExecutionModel(SqlExecutionContext executionContext) throws SqlException {
+        return compileExecutionModel(executionContext, true, null);
+    }
+
+    // viewDependencies, when not null, receives the tables and columns a SELECT reads, as
+    // optimiseViewQuery() collects them for a view definition.
+    private ExecutionModel compileExecutionModel(
+            SqlExecutionContext executionContext,
+            boolean generateCompileViewEvents,
+            @Nullable LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> viewDependencies
+    ) throws SqlException {
+        // Re-parse and re-optimise here when a racing EXPIRE ROWS change invalidates the parser's policy
+        // decision. Ordinary compilation owns this retry. Materializing compilation entered in REJECT mode
+        // propagates the signal to its outer CREATE or refresh guard so one event cannot consume two budgets.
+        // Bounded so a burst of policy changes cannot loop forever.
+        int remainingExpiryPolicyRetries = maxRecompileAttempts;
+        final boolean rejectExpiryOnEntry = executionContext.getExpiryReadPolicy() == ExpiryReadPolicy.REJECT;
+        for (; ; ) {
+            ExecutionModel model = null;
+            try {
+                model = parser.parse(lexer, executionContext, this);
+                if (executionContext.isMatViewRefresh() && model.getModelType() == ExecutionModel.QUERY) {
+                    // The optimiser expands wildcards in place, so only the parsed model still shows them.
+                    executionContext.setTopLevelProjectionWildcard(SqlUtil.hasTopLevelWildcard((IQueryModel) model));
+                }
+                if (viewDependencies != null && model.getModelType() == ExecutionModel.QUERY) {
+                    return optimiseViewQuery((IQueryModel) model, executionContext, viewDependencies);
+                }
+                if (model.getModelType() != ExecutionModel.EXPLAIN) {
+                    return compileExecutionModel0(executionContext, model);
+                } else {
+                    final ExplainModel explainModel = (ExplainModel) model;
+                    final ExecutionModel innerModel = compileExplainExecutionModel0(executionContext, explainModel.getInnerExecutionModel());
+                    explainModel.setModel(innerModel);
+                    return explainModel;
+                }
+            } catch (ExpiryPolicyVersionChangedException e) {
+                if (rejectExpiryOnEntry) {
+                    throw e;
+                }
+                if (--remainingExpiryPolicyRetries < 0) {
+                    // Out of retries: enqueue view compiles the same way the general failure path below does
+                    // (a harmless re-check signal), then report a plain error. The earlier retries loop back
+                    // instead of returning, so they leave this out.
+                    if (model != null && generateCompileViewEvents && !executionContext.isValidationOnly()) {
+                        enqueueCompileViews(model);
+                    }
+                    throw SqlException.position(0).put("too many row-expiry policy changes during compilation");
+                }
+                LOG.info().$("retrying model after row-expiry policy version change [fd=")
+                        .$(executionContext.getRequestFd()).I$();
+                clearExceptSqlText();
+                lexer.restart();
+            } catch (Throwable e) {
+                // Model compilation optimises but never generates, so a throw here - the INSERT column
+                // count check, UPDATE column validation, an authorization failure - can leave cursor
+                // functions the optimiser instantiated for FROM/JOIN table functions with no owner.
+                optimiser.freeTableFactoriesInFlight(e);
+                if (model != null && generateCompileViewEvents && !executionContext.isValidationOnly()) {
+                    enqueueCompileViews(model);
+                }
+                throw e;
+            }
+        }
+    }
+
+    private ExecutionModel compileExecutionModel0(SqlExecutionContext executionContext, ExecutionModel model) throws SqlException {
+        switch (model.getModelType()) {
+            case ExecutionModel.QUERY:
+                return optimiser.optimise((IQueryModel) model, executionContext, this);
+            case ExecutionModel.INSERT: {
+                final InsertModel insertModel = (InsertModel) model;
+                if (insertModel.getQueryModel() != null) {
+                    validateAndOptimiseInsertAsSelect(executionContext, insertModel);
+                } else {
+                    lightlyValidateInsertModel(insertModel);
+                }
+                // a table the principal may not see authorizes exactly like a missing one
+                final TableToken tableToken = executionContext.getVisibleTableTokenIfExists(insertModel.getTableName());
+                executionContext.getSecurityContext().authorizeInsert(tableToken);
+                return insertModel;
+            }
+            case ExecutionModel.UPDATE:
+                final IQueryModel queryModel = (IQueryModel) model;
+                // Must precede every resolution below, including the nested model's own scan inside
+                // optimiseUpdate(): the target name occurs twice in an UPDATE, as the target and as
+                // the scanned table, and on the WAL apply path both must resolve to the writer's
+                // table while any other table in the statement resolves normally.
+                executionContext.setStatementTargetTableName(queryModel.getTableName());
+                TableToken tableToken = executionContext.getTableToken(queryModel.getTableName());
+                // a table the principal may not see fails exactly like a missing one does in
+                // getTableToken(), before its metadata is read
+                if (!executionContext.getSecurityContext().isTableVisible(tableToken)) {
+                    throw CairoException.tableDoesNotExist(queryModel.getTableName());
+                }
+                try (TableRecordMetadata metadata = executionContext.getMetadataForWrite(tableToken)) {
+                    // Before optimiseUpdate(), which is what fixes the check to this spot rather
+                    // than to generateUpdate() where the WAL join rejection lives: optimising an
+                    // UPDATE rewrites its model into fresh instances that no longer carry the
+                    // parser's record of which sub-queries the statement contains.
+                    if (metadata.isWalEnabled() && !executionContext.isWalApplication()) {
+                        rejectWalUpdateAcrossTables(queryModel, tableToken);
+                        // Opens the window generateUpdate() closes. It has to start here rather than
+                        // at code generation because optimiseUpdate() already instantiates the
+                        // cursor function of a FROM source and caches it on the model
+                        // (SqlOptimiser#parseFunctionAndEnumerateColumns), so by code generation time
+                        // that one is never instantiated again. Everything instantiated between here
+                        // and there belongs to this statement.
+                        functionParser.resetCursorFunctionInstantiated();
+                    }
+                    optimiser.optimiseUpdate(queryModel, executionContext, metadata, this);
+                    // After optimiseUpdate(), which authorizes the statement, so an unauthorized
+                    // user sees the permission failure rather than the partition layout.
+                    if (metadata.isWalEnabled()) {
+                        rejectUpdateOnParquetPartitions(executionContext, tableToken, queryModel.getModelPosition());
+                    }
+                    return model;
+                }
+            default:
+                return model;
+        }
+    }
+
+    private ExecutionModel compileExplainExecutionModel0(SqlExecutionContext executionContext, ExecutionModel model) throws SqlException {
+        // CREATE TABLE AS SELECT and CREATE MATERIALIZED VIEW have an unoptimized SELECT model after the parsing.
+        // We optimize and validate the model during the execution, but in case of EXPLAIN the model is
+        // directly compiled into a factory, so we need to optimize it before proceeding.
+        switch (model.getModelType()) {
+            case ExecutionModel.CREATE_TABLE:
+                executionContext.getSecurityContext().authorizeTableCreate();
+                final CreateTableOperationBuilder createTableBuilder = (CreateTableOperationBuilder) model;
+                if (createTableBuilder.getQueryModel() != null) {
+                    final IQueryModel selectModel = optimiser.optimise(createTableBuilder.getQueryModel(), executionContext, this);
+                    createTableBuilder.setSelectModel(selectModel);
+                }
+                return model;
+            case ExecutionModel.CREATE_MAT_VIEW:
+                executionContext.getSecurityContext().authorizeMatViewCreate();
+                final CreateMatViewOperationBuilder createMatViewBuilder = (CreateMatViewOperationBuilder) model;
+                if (createMatViewBuilder.getQueryModel() != null) {
+                    final IQueryModel selectModel = optimiser.optimise(createMatViewBuilder.getQueryModel(), executionContext, this);
+                    createMatViewBuilder.setSelectModel(selectModel);
+                }
+                return model;
+            case ExecutionModel.CREATE_LIVE_VIEW:
+                // Authorize for parity with CREATE MAT VIEW so a restricted user cannot probe a plan
+                // they may not create. Then optimise like the two arms above: falling through with
+                // the raw parser model made generateExplain() codegen an unoptimised SELECT, which
+                // trips "wtf? ts" under -ea and an AIOOBE without - an Error escaping compile(),
+                // i.e. a 500 on HTTP/pgwire instead of a plan.
+                //
+                // The live-view codegen flag is armed in generateExplain, not here: nothing in
+                // SqlOptimiser reads isLiveViewCompile(), so arming it around this call alone would
+                // leave it false for the code generation that actually reads it.
+                executionContext.getSecurityContext().authorizeLiveViewCreate();
+                final CreateLiveViewOperationBuilder createLiveViewBuilder = (CreateLiveViewOperationBuilder) model;
+                if (createLiveViewBuilder.getQueryModel() != null) {
+                    final IQueryModel selectModel = optimiser.optimise(createLiveViewBuilder.getQueryModel(), executionContext, this);
+                    createLiveViewBuilder.setSelectModel(selectModel);
+                }
+                return model;
+        }
+        return compileExecutionModel0(executionContext, model);
+    }
+
+    private RecordCursorFactory compileExplainWithExpiryPolicyRetries(
+            ExplainModel initialExplainModel,
+            SqlExecutionContext executionContext,
+            long initialExpiryPolicyVersion
+    ) throws SqlException {
+        ExplainModel explainModel = initialExplainModel;
+        long expiryPolicyVersion = initialExpiryPolicyVersion;
+        int remainingRetries = maxRecompileAttempts;
+        try {
+            for (; ; ) {
+                final RecordCursorFactory factory = generateExplain(explainModel, executionContext);
+                final long currentExpiryPolicyVersion = engine.getMetadataCache().getExpiryPolicyVersion();
+                if (expiryPolicyVersion == currentExpiryPolicyVersion) {
+                    return factory;
+                }
+
+                Misc.free(factory);
+                if (--remainingRetries < 0) {
+                    throw SqlException.position(0).put("too many row-expiry policy changes during compilation");
+                }
+                LOG.info().$("retrying explain after row-expiry policy change [fd=")
+                        .$(executionContext.getRequestFd()).I$();
+                freeTableNameFunctions(explainModel);
+                clearExceptSqlText();
+                lexer.restart();
+                expiryPolicyVersion = engine.getMetadataCache().getExpiryPolicyVersion();
+                final ExecutionModel executionModel = compileExecutionModel(executionContext);
+                if (executionModel.getModelType() != ExecutionModel.EXPLAIN) {
+                    throw SqlException.position(0).put("EXPLAIN query expected");
+                }
+                explainModel = (ExplainModel) executionModel;
+            }
+        } catch (Throwable th) {
+            // A retry re-parses into a fresh explainModel that compileUsingModel's catch cannot
+            // reach, so release the current model's table-name functions here. Idempotent when
+            // codegen already consumed them or when the model is the one compileUsingModel frees.
+            freeTableNameFunctionsOnError(explainModel, th);
+            throw th;
+        }
+    }
+
+    private void compileInner(
+            @NotNull SqlExecutionContext executionContext,
+            CharSequence sqlText,
+            boolean generateProgressLogger
+    ) throws SqlException {
+        final SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
+        if (!circuitBreaker.isTimerSet()) {
+            circuitBreaker.resetTimer();
+        }
+        final CharSequence tok = SqlUtil.fetchNext(lexer);
+        if (tok == null) {
+            compiledQuery.ofEmpty();
+            return;
+        }
+
+        final KeywordBasedExecutor executor = keywordBasedExecutors.get(tok);
+        final long beginNanos = configuration.getNanosecondClock().getTicks();
+
+        if (executor != null) {
+            // an executor can return compiled query with NONE type as a fallback to execution model
+            try {
+                // we cannot log start of the executor SQL because we do not know if it
+                // contains secrets or not.
+
+                executor.execute(executionContext, sqlText);
+                // executor might decide that SQL contains secret, otherwise we're logging it
+                this.sqlText = executionContext.containsSecret() ? "** redacted for privacy **" : sqlText;
+                // An executor that leaves compiledQuery at NONE gave up and fell back to the
+                // execution model below (e.g. compileCreate() bails out for every CREATE
+                // TABLE/VIEW/MATERIALIZED VIEW that isn't CREATE OR REPLACE VIEW). That fallback
+                // path owns completion logging for the statement -- either directly in
+                // compileUsingModel(), or later when the built Operation actually executes (e.g.
+                // executeCreateTable()). Logging "fin" here too would double-log completion.
+                if (compiledQuery.getType() != CompiledQuery.NONE) {
+                    QueryProgress.logEnd(-1, this.sqlText, executionContext, beginNanos);
+                }
+            } catch (Throwable th) {
+                // Executor is all-in-one, it parses SQL text and executes it right away. The convention is
+                // that before parsing secrets the executor will notify the execution context. In that, even if
+                // executor fails, the secret SQL text must not be logged
+                this.sqlText = executionContext.containsSecret() ? "** redacted for privacy** " : sqlText;
+                QueryProgress.logError(th, -1, this.sqlText, executionContext, beginNanos);
+                throw th;
+            }
+        } else {
+            this.sqlText = sqlText;
+        }
+        // executor is allowed to give up on the execution and fall back to standard behaviour
+        if (executor == null || compiledQuery.getType() == CompiledQuery.NONE) {
+            compileUsingModel(executionContext, beginNanos, generateProgressLogger);
+        }
+        final short type = compiledQuery.getType();
+        if ((type == CompiledQuery.ALTER || type == CompiledQuery.UPDATE) && !executionContext.isWalApplication()) {
+            compiledQuery.withSqlText(Chars.toString(sqlText));
+        }
+        compiledQuery.withContext(executionContext);
+    }
+
+    private InsertOperation compileInsert(InsertModel insertModel, SqlExecutionContext executionContext) throws SqlException {
+        // todo: consider moving this method to InsertModel
+        // A connection authorized while the node was PRIMARY keeps a read-write security
+        // context across an in-place demote. Check the live engine state before touching the
+        // table registry, so the caller sees "replica access is read-only" rather than
+        // "table does not exist" when the table has not yet been replicated to this node.
+        if (engine.isReadOnlyMode()) {
+            throw CairoException.readOnlyAccess();
+        }
+        final ExpressionNode tableNameExpr = insertModel.getTableNameExpr();
+        InsertOperationImpl insertOperation = null;
+        Function timestampFunction = null;
+        ObjList<Function> valueFunctions = null;
+        TableToken token = tableExistsOrFail(tableNameExpr.position, tableNameExpr.token, executionContext);
+
+        try (TableRecordMetadata metadata = executionContext.getMetadataForWrite(token)) {
+            final long metadataVersion = metadata.getMetadataVersion();
+            insertOperation = new InsertOperationImpl(engine, metadata.getTableToken(), metadataVersion);
+            final int metadataTimestampIndex = metadata.getTimestampIndex();
+            final ObjList<CharSequence> columnNameList = insertModel.getColumnNameList();
+            final int columnSetSize = columnNameList.size();
+            int designatedTimestampPosition = 0;
+            for (int tupleIndex = 0, n = insertModel.getRowTupleCount(); tupleIndex < n; tupleIndex++) {
+                timestampFunction = null;
+                listColumnFilter.clear();
+                if (columnSetSize > 0) {
+                    valueFunctions = new ObjList<>(columnSetSize);
+                    for (int i = 0; i < columnSetSize; i++) {
+                        int metadataColumnIndex = metadata.getColumnIndexQuiet(columnNameList.getQuick(i));
+                        if (metadataColumnIndex > -1) {
+                            final ExpressionNode node = insertModel.getRowTupleValues(tupleIndex).getQuick(i);
+                            final Function function = functionParser.parseFunction(
+                                    node,
+                                    EmptyRecordMetadata.INSTANCE,
+                                    executionContext
+                            );
+
+                            insertValidateFunctionAndAddToList(
+                                    insertModel,
+                                    tupleIndex,
+                                    valueFunctions,
+                                    metadata,
+                                    metadataTimestampIndex,
+                                    i,
+                                    metadataColumnIndex,
+                                    function,
+                                    node.position,
+                                    executionContext.getBindVariableService()
+                            );
+
+                            if (metadataTimestampIndex == metadataColumnIndex) {
+                                timestampFunction = function;
+                                designatedTimestampPosition = node.position;
+                            }
+                        } else {
+                            throw SqlException.invalidColumn(insertModel.getColumnPosition(i), columnNameList.getQuick(i));
+                        }
+                    }
+                } else {
+                    final int columnCount = metadata.getColumnCount();
+                    final ObjList<ExpressionNode> values = insertModel.getRowTupleValues(tupleIndex);
+                    final int valueCount = values.size();
+                    if (columnCount != valueCount) {
+                        throw SqlException.$(
+                                        insertModel.getEndOfRowTupleValuesPosition(tupleIndex),
+                                        "row value count does not match column count [expected="
+                                ).put(columnCount).put(", actual=").put(values.size())
+                                .put(", tuple=").put(tupleIndex + 1).put(']');
+                    }
+                    valueFunctions = new ObjList<>(columnCount);
+
+                    for (int i = 0; i < columnCount; i++) {
+                        final ExpressionNode node = values.getQuick(i);
+
+                        Function function = functionParser.parseFunction(node, EmptyRecordMetadata.INSTANCE, executionContext);
+                        insertValidateFunctionAndAddToList(
+                                insertModel,
+                                tupleIndex,
+                                valueFunctions,
+                                metadata,
+                                metadataTimestampIndex,
+                                i,
+                                i,
+                                function,
+                                node.position,
+                                executionContext.getBindVariableService()
+                        );
+
+                        if (metadataTimestampIndex == i) {
+                            timestampFunction = function;
+                            designatedTimestampPosition = node.position;
+                        }
+                    }
+                }
+
+                // validate timestamp
+                if (metadataTimestampIndex > -1) {
+                    if (timestampFunction == null) {
+                        throw SqlException.$(0, "insert statement must populate timestamp");
+                    } else if (ColumnType.isNull(timestampFunction.getType()) || timestampFunction.isNullConstant()) {
+                        throw SqlException.$(designatedTimestampPosition, "designated timestamp column cannot be NULL");
+                    }
+                }
+
+                VirtualRecord record = new VirtualRecord(valueFunctions);
+                RecordToRowCopier copier = RecordToRowCopierUtils.generateCopier(
+                        asm,
+                        record,
+                        metadata,
+                        listColumnFilter,
+                        configuration
+                );
+                insertOperation.addInsertRow(new InsertRowImpl(
+                                record,
+                                copier,
+                                timestampFunction,
+                                designatedTimestampPosition,
+                                tupleIndex,
+                                metadata.getTimestampType()
+                        )
+                );
+            }
+            return insertOperation;
+        } catch (Throwable th) {
+            Misc.free(insertOperation);
+            Misc.free(timestampFunction);
+            Misc.freeObjList(valueFunctions);
+            throw th;
+        }
+    }
+
+    private InsertOperation compileInsertAsSelect(
+            ExecutionModel initialExecutionModel,
+            SqlExecutionContext executionContext,
+            long initialExpiryPolicyVersion
+    ) throws SqlException {
+        ExecutionModel executionModel = initialExecutionModel;
+        long expiryPolicyVersion = initialExpiryPolicyVersion;
+        int remainingRetries = maxRecompileAttempts;
+        try {
+            for (; ; ) {
+                final Runnable barrier = insertSelectFactoryGenerationBarrier;
+                if (barrier != null) {
+                    barrier.run();
+                }
+                final InsertOperation insertOperation = compileInsertAsSelectOneShot(executionModel, executionContext);
+                final long currentExpiryPolicyVersion = engine.getMetadataCache().getExpiryPolicyVersion();
+                if (expiryPolicyVersion == currentExpiryPolicyVersion) {
+                    return insertOperation;
+                }
+
+                Misc.free(insertOperation);
+                if (--remainingRetries < 0) {
+                    throw SqlException.position(0).put("too many row-expiry policy changes during compilation");
+                }
+                LOG.info().$("retrying insert-select after row-expiry policy change [fd=")
+                        .$(executionContext.getRequestFd()).I$();
+                freeTableNameFunctions(executionModel.getQueryModel());
+                clearExceptSqlText();
+                lexer.restart();
+                expiryPolicyVersion = engine.getMetadataCache().getExpiryPolicyVersion();
+                executionModel = compileExecutionModel(executionContext);
+                if (executionModel.getModelType() != ExecutionModel.INSERT
+                        || executionModel.getQueryModel() == null) {
+                    throw SqlException.position(0).put("INSERT SELECT query expected");
+                }
+            }
+        } catch (Throwable th) {
+            // A retry re-parses into a fresh executionModel that compileUsingModel's catch
+            // cannot reach, so release the current model's table-name functions here. Idempotent
+            // when codegen already consumed them or when the model is the one compileUsingModel
+            // frees.
+            freeTableNameFunctionsOnError(executionModel, th);
+            throw th;
+        }
+    }
+
+    private InsertOperation compileInsertAsSelectOneShot(ExecutionModel executionModel, SqlExecutionContext executionContext) throws SqlException {
+        // A connection authorized while the node was PRIMARY keeps a read-write security
+        // context across an in-place demote. Check the live engine state before touching the
+        // table registry, so the caller sees "replica access is read-only" rather than
+        // "table does not exist" when the table has not yet been replicated to this node.
+        if (engine.isReadOnlyMode()) {
+            throw CairoException.readOnlyAccess();
+        }
+        final InsertModel model = (InsertModel) executionModel;
+        final ExpressionNode tableNameExpr = model.getTableNameExpr();
+        TableToken tableToken = tableExistsOrFail(tableNameExpr.position, tableNameExpr.token, executionContext);
+        RecordCursorFactory factory = null;
+
+        try (TableRecordMetadata writerMetadata = executionContext.getMetadataForWrite(tableToken)) {
+            final long metadataVersion = writerMetadata.getMetadataVersion();
+            factory = generateSelectWithRetries(model.getQueryModel(), model, executionContext, true);
+            final RecordMetadata cursorMetadata = factory.getMetadata();
+            // Convert sparse writer metadata into dense
+            final int writerTimestampIndex = writerMetadata.getTimestampIndex();
+            final int cursorTimestampIndex = cursorMetadata.getTimestampIndex();
+            final int cursorColumnCount = cursorMetadata.getColumnCount();
+
+            final RecordToRowCopier copier;
+            final ObjList<CharSequence> columnNameList = model.getColumnNameList();
+            final int columnSetSize = columnNameList.size();
+            int timestampIndexFound = -1;
+            if (columnSetSize > 0) {
+                // validate type cast
+                // clear list column filter to re-populate it again
+                listColumnFilter.clear();
+
+                for (int i = 0; i < columnSetSize; i++) {
+                    CharSequence columnName = columnNameList.get(i);
+                    int index = writerMetadata.getColumnIndexQuiet(columnName);
+                    if (index == -1) {
+                        throw SqlException.invalidColumn(model.getColumnPosition(i), columnName);
+                    }
+
+                    int fromType = cursorMetadata.getColumnType(i);
+                    int toType = writerMetadata.getColumnType(index);
+                    if (ColumnType.isConvertibleFrom(fromType, toType)) {
+                        listColumnFilter.add(index + 1);
+                    } else {
+                        throw SqlException.inconvertibleTypes(
+                                model.getColumnPosition(i),
+                                fromType,
+                                cursorMetadata.getColumnName(i),
+                                toType,
+                                writerMetadata.getColumnName(index)
+                        );
+                    }
+
+                    if (index == writerTimestampIndex) {
+                        timestampIndexFound = i;
+                        if (!ColumnType.isTimestamp(fromType) && fromType != ColumnType.STRING) {
+                            throw SqlException.$(tableNameExpr.position, "expected timestamp column but type is ").put(ColumnType.nameOf(fromType));
+                        }
+                    }
+                }
+
+                // fail when target table requires chronological data and cursor cannot provide it
+                if (timestampIndexFound < 0 && writerTimestampIndex >= 0) {
+                    throw SqlException.$(tableNameExpr.position, "select clause must provide timestamp column");
+                }
+                copier = RecordToRowCopierUtils.generateCopier(asm, cursorMetadata, writerMetadata, listColumnFilter, configuration);
+            } else {
+                // fail when target table requires chronological data and cursor cannot provide it
+                if (writerTimestampIndex > -1 && cursorTimestampIndex == -1) {
+                    if (cursorColumnCount <= writerTimestampIndex) {
+                        throw SqlException.$(tableNameExpr.position, "select clause must provide timestamp column");
+                    } else {
+                        int columnType = ColumnType.tagOf(cursorMetadata.getColumnType(writerTimestampIndex));
+                        if (columnType != ColumnType.TIMESTAMP && columnType != ColumnType.STRING && columnType != ColumnType.VARCHAR && columnType != ColumnType.NULL) {
+                            throw SqlException.$(tableNameExpr.position, "expected timestamp column but type is ").put(ColumnType.nameOf(columnType));
+                        }
+                    }
+                }
+
+                if (writerTimestampIndex > -1 && cursorTimestampIndex > -1 && writerTimestampIndex != cursorTimestampIndex) {
+                    throw SqlException
+                            .$(tableNameExpr.position, "designated timestamp of existing table (").put(writerTimestampIndex)
+                            .put(") does not match designated timestamp in select query (")
+                            .put(cursorTimestampIndex)
+                            .put(')');
+                }
+                timestampIndexFound = writerTimestampIndex;
+
+                final int n = writerMetadata.getColumnCount();
+                if (n > cursorMetadata.getColumnCount()) {
+                    throw SqlException.$(model.getSelectKeywordPosition(), "not enough columns selected");
+                }
+
+                for (int i = 0; i < n; i++) {
+                    int fromType = cursorMetadata.getColumnType(i);
+                    int toType = writerMetadata.getColumnType(i);
+                    if (ColumnType.isConvertibleFrom(fromType, toType)) {
+                        continue;
+                    }
+
+                    // We are going on a limp here. There is nowhere to position this error in our model.
+                    // We will try to position on column (i) inside cursor's query model. Assumption is that
+                    // it will always have a column, e.g. has been processed by optimiser
+                    assert i < model.getQueryModel().getBottomUpColumns().size();
+                    throw SqlException.inconvertibleTypes(
+                            model.getQueryModel().getBottomUpColumns().getQuick(i).getAst().position,
+                            fromType,
+                            cursorMetadata.getColumnName(i),
+                            toType,
+                            writerMetadata.getColumnName(i)
+                    );
+                }
+
+                entityColumnFilter.of(writerMetadata.getColumnCount());
+
+                copier = RecordToRowCopierUtils.generateCopier(
+                        asm,
+                        cursorMetadata,
+                        writerMetadata,
+                        entityColumnFilter,
+                        configuration
+                );
+            }
+
+            return new InsertAsSelectOperationImpl(engine, tableToken, factory, copier,
+                    metadataVersion, timestampIndexFound, model.getBatchSize(), model.getO3MaxLag());
+        } catch (Throwable e) {
+            Misc.free(factory);
+            throw e;
+        }
+    }
+
+    private void compileLegacyCheckpoint(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
+        executionContext.getSecurityContext().authorizeDatabaseSnapshot();
+        CharSequence tok = expectToken(lexer, "'prepare' or 'complete'");
+
+        if (Chars.equalsLowerCaseAscii(tok, "prepare")) {
+            if (!executionContext.isValidationOnly()) {
+                executionContext.getCircuitBreaker().resetTimer();
+                engine.snapshotCreate(executionContext.getCircuitBreaker());
+            }
+            compiledQuery.ofCheckpointCreate();
+        } else if (Chars.equalsLowerCaseAscii(tok, "complete")) {
+            if (!executionContext.isValidationOnly()) {
+                engine.checkpointRelease();
+            }
+            compiledQuery.ofCheckpointRelease();
+        } else {
+            throw SqlException.position(lexer.lastTokenPosition()).put("'prepare' or 'complete' expected");
+        }
+    }
+
+    private void compileMatViewQuery(
+            @Transient @NotNull SqlExecutionContext executionContext,
+            @NotNull CreateMatViewOperation createMatViewOp
+    ) throws SqlException {
+        final CreateTableOperation createTableOp = createMatViewOp.getCreateTableOperation();
+        lexer.of(createTableOp.getSelectText());
+        clear();
+
+        SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
+        if (!circuitBreaker.isTimerSet()) {
+            circuitBreaker.resetTimer();
+        }
+        final CharSequence tok = SqlUtil.fetchNext(lexer);
+        if (tok == null) {
+            throw SqlException.$(lexer.lastTokenPosition(), "SELECT query expected");
+        }
+        lexer.unparseLast();
+
+        sqlText = createTableOp.getSelectText();
+        compiledQuery.withContext(executionContext);
+
+        final int startPos = lexer.getPosition();
+        final long beginNanos = configuration.getNanosecondClock().getTicks();
+
+        final int selectTextPosition = createTableOp.getSelectTextPosition();
+        final ExpiryReadPolicy previousExpiryReadPolicy = executionContext.getExpiryReadPolicy();
+        final CharSequence previousMaterializingViewName = executionContext.getExpiryMaterializingViewName();
+        executionContext.setExpiryReadPolicy(ExpiryReadPolicy.REJECT, createMatViewOp.getTableName());
+        // Armed through generateSelectWithRetries() too: a retry optimises the query again, and the calls
+        // recorded have to come from the pass that builds the factory.
+        optimiser.setBareNoArgCallSink(matViewBareNoArgCallNames, matViewBareNoArgCallPositions);
+        try {
+            final IQueryModel queryModel;
+            final boolean cacheable;
+            try {
+                try {
+                    final ExecutionModel executionModel = parser.parse(lexer, executionContext, this);
+                    if (executionModel.getModelType() != ExecutionModel.QUERY) {
+                        throw SqlException.$(startPos, "SELECT query expected");
+                    }
+                    captureMatViewWildcards((IQueryModel) executionModel, createTableOp.getSelectText());
+                    queryModel = optimiser.optimise((IQueryModel) executionModel, executionContext, this);
+                    // The optimiser created the FROM/JOIN cursor functions and the SHOW statements while
+                    // non-deterministic functions were still allowed, so FunctionParser did not check them
+                    // for the materialized view yet.
+                    functionParser.getExecutionRequirements().checkStoredView(executionContext);
+                } catch (SqlException e) {
+                    e.setPosition(e.getPosition() + selectTextPosition);
+                    throw e;
+                }
+                createMatViewOp.validateAndUpdateMetadataFromModel(executionContext, optimiser.getFunctionFactoryCache(), queryModel);
+                // See compileUsingModel(): read before generation, so a throw here cannot orphan the generated
+                // factory tree, and the read cannot land on a model the retry path has already recycled. Inside
+                // this try on purpose -- a throw must still free the table factories optimise() left in flight.
+                cacheable = queryModel.isCacheable();
+            } catch (Throwable th) {
+                // Rejecting the query after optimise() returned leaves the cursor functions it
+                // instantiated for FROM/JOIN table functions unowned: generation, which takes them over,
+                // has not run yet, and this throw skips generateSelectWithRetries below, whose
+                // generateSelectOneShot() would otherwise sweep them.
+                optimiser.freeTableFactoriesInFlight(th);
+                throw th;
+            }
+
+            final boolean ogAllowNonDeterministic = executionContext.allowNonDeterministicFunctions();
+            executionContext.setAllowNonDeterministicFunction(false);
+            try {
+                compiledQuery.ofSelect(generateSelectWithRetries(queryModel, null, executionContext, false), cacheable);
+            } catch (SqlException e) {
+                e.setPosition(e.getPosition() + selectTextPosition);
+                throw e;
+            } finally {
+                executionContext.setAllowNonDeterministicFunction(ogAllowNonDeterministic);
+            }
+        } catch (Throwable th) {
+            QueryProgress.logError(th, -1, sqlText, executionContext, beginNanos);
+            throw th;
+        } finally {
+            optimiser.setBareNoArgCallSink(null, null);
+            executionContext.setExpiryReadPolicy(previousExpiryReadPolicy, previousMaterializingViewName);
+        }
+    }
+
+    // PG compatibility no-op: RESET ALL, CLOSE ALL, UNLISTEN *, DISCARD ALL — consume exactly one argument.
+    private void compileNoOp(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
+        expectToken(lexer, "argument");
+        compiledQuery.ofSet();
+    }
+
+    private void compileRefresh(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
+        CharSequence tok = expectToken(lexer, "'materialized'");
+        if (!isMaterializedKeyword(tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "'materialized' expected'");
+        }
+
+        tok = expectToken(lexer, "'view'");
+        if (!isViewKeyword(tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "'view' expected'");
+        }
+
+        tok = expectToken(lexer, "materialized view name");
+        if (isSemicolon(tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "materialized view name expected");
+        }
+        assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+
+        final CharSequence matViewName = unquote(tok);
+        // an object the principal may not see fails exactly like a missing one, before the kind check
+        final TableToken matViewToken = executionContext.getVisibleTableTokenIfExists(matViewName);
+        if (matViewToken == null) {
+            throw SqlException.matViewDoesNotExist(lexer.lastTokenPosition(), matViewName);
+        }
+        if (!matViewToken.isMatView()) {
+            throw SqlException.$(lexer.lastTokenPosition(), "materialized view name expected, got table name");
+        }
+
+        final MatViewDefinition matViewDefinition = engine.getDependentViewGraph().getViewDefinition(matViewToken);
+        if (matViewDefinition == null) {
+            throw SqlException.$(lexer.lastTokenPosition(), "materialized view does not exist or is not ready for refresh");
+        }
+        final TimestampDriver driver = matViewDefinition.getBaseTableTimestampDriver();
+
+        tok = expectToken(lexer, "'full' or 'incremental' or 'range' or 'stats'");
+        final boolean fullRefresh = isFullKeyword(tok);
+        // STATS is a sentinel for "reset the cost-model EMA values" -- not a
+        // data refresh. Handled inline here rather than through the refresh
+        // queue because it's a synchronous metadata-only operation.
+        final boolean isStatsReset = SqlKeywords.isStatsKeyword(tok);
+        long from = Numbers.LONG_NULL;
+        long to = Numbers.LONG_NULL;
+        if (isRangeKeyword(tok)) {
+            expectKeyword(lexer, "from");
+            tok = expectToken(lexer, "FROM timestamp");
+            try {
+                from = driver.parseFloorLiteral(unquote(tok));
+            } catch (NumericException e) {
+                throw SqlException.$(lexer.lastTokenPosition(), "invalid FROM timestamp value");
+            }
+            expectKeyword(lexer, "to");
+            tok = expectToken(lexer, "TO timestamp");
+            try {
+                to = driver.parseFloorLiteral(unquote(tok));
+            } catch (NumericException e) {
+                throw SqlException.$(lexer.lastTokenPosition(), "invalid TO timestamp value");
+            }
+            if (from > to) {
+                throw SqlException.$(lexer.lastTokenPosition(), "TO timestamp must not be earlier than FROM timestamp");
+            }
+        } else if (!fullRefresh && !isStatsReset && !isIncrementalKeyword(tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "'full', 'incremental', 'range' or 'stats' expected");
+        }
+
+        tok = SqlUtil.fetchNext(lexer);
+        if (tok != null && !isSemicolon(tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put("] while trying to refresh materialized view");
+        }
+
+        executionContext.getSecurityContext().authorizeMatViewRefresh(matViewToken);
+        if (!executionContext.isValidationOnly()) {
+            if (engine.isReadOnlyMode()) {
+                // A connection authorized while the node was PRIMARY keeps a read-write security
+                // context across an in-place demote, so authorizeMatViewRefresh above still passes.
+                // Refuse the instant the node goes read-only, mirroring the per-statement write gates
+                // on the pg-wire and HTTP /exec paths -- otherwise this enqueues an async refresh that
+                // writes to a node that is already demoting and loses the write once it settles.
+                throw CairoException.readOnlyAccess();
+            }
+            final MatViewStateStore matViewStateStore = engine.getMatViewStateStore();
+            if (isStatsReset) {
+                final MatViewState viewState = matViewStateStore.getViewState(matViewToken);
+                if (viewState != null) {
+                    if (viewState.tryLock()) {
+                        try {
+                            viewState.refreshStats();
+                        } finally {
+                            // This stats reset is a lock-holder like any refresh: its unlock must finalize an
+                            // invalidation that deferred during the hold. See MatViewRefreshJob#finalizeAndUnlock.
+                            // The finalize releases the latch before any wake enqueue, and the stats reset itself
+                            // durably succeeded, so a wake enqueue failure must not fail the statement (mirroring
+                            // ALTER TABLE RESUME WAL). The store's retry flags keep the deferred facets
+                            // discoverable by the next refresh-job tick.
+                            try {
+                                MatViewRefreshJob.finalizeAndUnlock(engine, matViewStateStore, matViewToken, viewState, false);
+                            } catch (Throwable th) {
+                                LOG.error().$("could not deliver deferred materialized view work after stats reset [view=").$(matViewToken)
+                                        .$(", ex=").$(th)
+                                        .I$();
+                            }
+                        }
+                    } else {
+                        throw SqlException.$(lexer.lastTokenPosition(), "materialized view is currently refreshing, retry stats reset later");
+                    }
+                }
+            } else if (fullRefresh) {
+                matViewStateStore.enqueueFullRefresh(matViewToken);
+            } else if (from != Numbers.LONG_NULL) {
+                matViewStateStore.enqueueRangeRefresh(matViewToken, from, to);
+            } else {
+                matViewStateStore.enqueueIncrementalRefresh(matViewToken);
+            }
+        }
+        compiledQuery.ofRefreshMatView();
+    }
+
+    private void compileReindex(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
+        CharSequence tok = SqlUtil.fetchNext(lexer);
+        if (tok == null || !isTableKeyword(tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "TABLE expected");
+        }
+
+        tok = SqlUtil.fetchNext(lexer);
+        if (tok == null || Chars.equals(tok, ',')) {
+            throw SqlException.$(lexer.getPosition(), "table name expected");
+        }
+
+        if (Chars.isQuoted(tok)) {
+            tok = unquote(tok);
+        }
+        final TableToken tableToken = tableExistsOrFail(lexer.lastTokenPosition(), tok, executionContext);
+
+        checkViewModification(tableToken);
+
+        try (IndexBuilder indexBuilder = new IndexBuilder(configuration)) {
+            indexBuilder.of(path.of(configuration.getDbRoot()).concat(tableToken.getDirName()));
+
+            tok = SqlUtil.fetchNext(lexer);
+            CharSequence columnName = null;
+
+            if (tok != null && isColumnKeyword(tok)) {
+                tok = SqlUtil.fetchNext(lexer);
+                if (Chars.isQuoted(tok)) {
+                    tok = unquote(tok);
+                }
+                if (tok == null || TableUtils.isValidColumnName(tok, configuration.getMaxFileNameLength())) {
+                    columnName = GenericLexer.immutableOf(tok);
+                    tok = SqlUtil.fetchNext(lexer);
+                }
+            }
+
+            CharSequence partition = null;
+            if (tok != null && isPartitionKeyword(tok)) {
+                tok = SqlUtil.fetchNext(lexer);
+
+                if (Chars.isQuoted(tok)) {
+                    tok = unquote(tok);
+                }
+                partition = tok;
+                tok = SqlUtil.fetchNext(lexer);
+            }
+
+            if (tok == null || !isLockKeyword(tok)) {
+                throw SqlException.$(lexer.getPosition(), "LOCK EXCLUSIVE expected");
+            }
+
+            tok = SqlUtil.fetchNext(lexer);
+            if (tok == null || !isExclusiveKeyword(tok)) {
+                throw SqlException.$(lexer.getPosition(), "LOCK EXCLUSIVE expected");
+            }
+
+            tok = SqlUtil.fetchNext(lexer);
+            if (tok != null && !isSemicolon(tok)) {
+                throw SqlException.$(lexer.getPosition(), "EOF expected");
+            }
+
+            columnNames.clear();
+            if (columnName != null) {
+                columnNames.add(columnName);
+            }
+            executionContext.getSecurityContext().authorizeTableReindex(tableToken, columnNames);
+            if (!executionContext.isValidationOnly()) {
+                indexBuilder.reindex(partition, columnName);
+            }
+        }
+        compiledQuery.ofRepair();
+    }
+
+    private void compileRollback(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
+        // ROLLBACK [TRANSACTION] — consume the optional keyword
+        CharSequence tok = SqlUtil.fetchNext(lexer);
+        if (tok != null && !isTransactionKeyword(tok)) {
+            lexer.unparseLast();
+        }
+        compiledQuery.ofRollback();
+    }
+
+    private void compileSelectWithExpiryPolicyRetries(
+            IQueryModel initialQueryModel,
+            SqlExecutionContext executionContext,
+            boolean generateProgressLogger,
+            long initialExpiryPolicyVersion
+    ) throws SqlException {
+        IQueryModel queryModel = initialQueryModel;
+        long expiryPolicyVersion = initialExpiryPolicyVersion;
+        int remainingRetries = maxRecompileAttempts;
+        try {
+            for (; ; ) {
+                // Read the flag before generating: generateSelectWithRetries() recompiles the execution
+                // model on a retry, and clearExceptSqlText() recycles this one back into the model pool.
+                // Only the optimiser sets the flag, and it has already run, so the value is final here.
+                final boolean cacheable = queryModel.isCacheable();
+                final RecordCursorFactory factory = generateSelectWithRetries(
+                        queryModel,
+                        null,
+                        executionContext,
+                        generateProgressLogger
+                );
+                final long currentExpiryPolicyVersion = engine.getMetadataCache().getExpiryPolicyVersion();
+                if (expiryPolicyVersion == currentExpiryPolicyVersion) {
+                    compiledQuery.ofSelect(factory, cacheable);
+                    return;
+                }
+
+                Misc.free(factory);
+                if (--remainingRetries < 0) {
+                    throw SqlException.position(0).put("too many row-expiry policy changes during compilation");
+                }
+                LOG.info().$("retrying plan after row-expiry policy change [q=`").$(queryModel)
+                        .$("`, fd=").$(executionContext.getRequestFd()).I$();
+                freeTableNameFunctions(queryModel);
+                clearExceptSqlText();
+                lexer.restart();
+                expiryPolicyVersion = engine.getMetadataCache().getExpiryPolicyVersion();
+                final ExecutionModel executionModel = compileExecutionModel(executionContext);
+                if (executionModel.getModelType() != ExecutionModel.QUERY) {
+                    throw SqlException.position(0).put("SELECT query expected");
+                }
+                queryModel = (IQueryModel) executionModel;
+            }
+        } catch (Throwable th) {
+            // A retry re-parses into a fresh queryModel that compileUsingModel's catch cannot
+            // reach (it frees only the model it parsed), so release the current model's
+            // table-name functions here. freeTableNameFunctions() nulls each field, so this is
+            // a no-op when codegen already consumed them or when the model is the one that
+            // compileUsingModel frees.
+            freeTableNameFunctionsOnError(queryModel, th);
+            throw th;
+        }
+    }
+
+    private void compileSet(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
+        // SET [SESSION | LOCAL] name { = | TO } value [, value]*
+        // PG compatibility no-op — validate syntax, then discard.
+        CharSequence tok = expectToken(lexer, "parameter name");
+
+        // skip optional SESSION / LOCAL prefix
+        if (Chars.equalsLowerCaseAscii("session", tok) || Chars.equalsLowerCaseAscii("local", tok)) {
+            expectToken(lexer, "parameter name");
+        }
+
+        tok = expectToken(lexer, "'=' or 'TO'");
+        if (Chars.equals(tok, '=') || isToKeyword(tok)) {
+            // Standard form: validate value [, value]*
+            do {
+                expectToken(lexer, "value");
+            } while ((tok = SqlUtil.fetchNext(lexer)) != null && !isSemicolon(tok) && Chars.equals(tok, ','));
+        } else {
+            // Non-standard form (e.g., SET TIME ZONE 'UTC'): consume remaining tokens
+            //noinspection StatementWithEmptyBody
+            while ((tok = SqlUtil.fetchNext(lexer)) != null && !isSemicolon(tok)) {
+            }
+        }
+
+        if (tok != null) {
+            lexer.unparseLast();
+        }
+        compiledQuery.ofSet();
+    }
+
+    private void compileTruncate(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
+        CharSequence tok;
+        tok = SqlUtil.fetchNext(lexer);
+
+        if (tok == null) {
+            throw SqlException.$(lexer.getPosition(), "TABLE expected");
+        }
+
+        if (!isTableKeyword(tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "TABLE expected");
+        }
+
+        tok = SqlUtil.fetchNext(lexer);
+        boolean hasIfExists = false;
+        if (tok != null && isIfKeyword(tok)) {
+            tok = SqlUtil.fetchNext(lexer);
+            if (tok == null || !isExistsKeyword(tok)) {
+                throw SqlException.$(lexer.lastTokenPosition(), "expected ").put("EXISTS table-name");
+            }
+            hasIfExists = true;
+            tok = SqlUtil.fetchNext(lexer);
+        }
+
+        if (tok != null && isOnlyKeyword(tok)) {
+            tok = SqlUtil.fetchNext(lexer);
+        }
+
+        if (tok != null && isWithKeyword(tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "table name expected");
+        }
+
+        tableWriters.clear();
+        try {
+            do {
+                if (tok == null || Chars.equals(tok, ',')) {
+                    throw SqlException.$(lexer.getPosition(), "table name expected");
+                }
+
+                if (Chars.isQuoted(tok)) {
+                    tok = unquote(tok);
+                }
+
+                // a table the principal may not see truncates exactly like a missing one, IF EXISTS included
+                final TableToken tableToken = executionContext.getVisibleTableTokenIfExists(tok);
+                if (tableToken == null && !hasIfExists) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "table does not exist [table=").put(tok).put(']');
+                }
+                if (tableToken != null) {
+                    checkViewModification(tableToken);
+                    executionContext.getSecurityContext().authorizeTableTruncate(tableToken);
+                    // Validation parses and resolves the table but must not acquire the writer
+                    // (which locks the table) or truncate any data.
+                    if (!executionContext.isValidationOnly()) {
+                        try {
+                            tableWriters.add(engine.getTableWriterAPI(tableToken, "truncateTables"));
+                        } catch (CairoException e) {
+                            if (e.isAuthorizationError()) {
+                                // A read-only refusal (e.g. a demoted replica) already carries the
+                                // clean, actionable message; surface it as-is instead of masking it
+                                // behind the generic "could not be truncated" wrap.
+                                throw e;
+                            }
+                            LOG.info().$("table busy [table=").$(tok).$(", e=").$((Throwable) e).I$();
+                            throw SqlException.$(lexer.lastTokenPosition(), "table '").put(tok).put("' could not be truncated: ").put(e);
+                        }
+                    }
+                }
+
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok == null || Chars.equals(tok, ';') || isKeepKeyword(tok)) {
+                    break;
+                }
+                if (!Chars.equalsNc(tok, ',')) {
+                    throw SqlException.$(lexer.getPosition(), "',' or 'keep' expected");
+                }
+
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok != null && isKeepKeyword(tok)) {
+                    throw SqlException.$(lexer.getPosition(), "table name expected");
+                }
+            } while (true);
+
+            boolean keepSymbolTables = false;
+            if (tok != null && isKeepKeyword(tok)) {
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok == null || !isSymbolKeyword(tok)) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "SYMBOL expected");
+                }
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok == null || !isMapsKeyword(tok)) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "MAPS expected");
+                }
+                keepSymbolTables = true;
+                tok = SqlUtil.fetchNext(lexer);
+            }
+
+            if (tok != null && !Chars.equals(tok, ';')) {
+                throw SqlException.unexpectedToken(lexer.lastTokenPosition(), tok);
+            }
+
+            final long queryId = queryRegistry.register(sqlText, executionContext);
+            try {
+                for (int i = 0, n = tableWriters.size(); i < n; i++) {
+                    final TableWriterAPI writer = tableWriters.getQuick(i);
+                    try {
+                        if (writer.getMetadata().isWalEnabled()) {
+                            // Demote write-fence for the parse-time TRUNCATE mint. The writer was
+                            // acquired while the node was still PRIMARY (the eager getTableWriterAPI
+                            // gate passed), but truncateSoft() externalizes a replicated WAL sequencer
+                            // txn; a demote landing between that eager gate and here would mint on an
+                            // already-demoting node whose uploader is gone, acknowledging a truncate the
+                            // peer never receives. Hold the role-switch READ lock across an authoritative
+                            // in-lock isReadOnlyMode() re-check and truncateSoft(): either the flip ran
+                            // first (refuse, the finally below frees the still-uncommitted writers) or
+                            // this runs fully as PRIMARY while the flip's write acquire waits. The fence
+                            // is a no-op for pure-OSS deployments (uncontended read lock, static flag).
+                            if (engine.isReadOnlyMode()) {
+                                throw CairoException.readOnlyAccess();
+                            }
+                            final Lock lock = engine.getRoleSwitchReadLock();
+                            lock.lock();
+                            try {
+                                if (engine.isReadOnlyMode()) {
+                                    throw CairoException.readOnlyAccess();
+                                }
+                                engine.fireRoleSwitchMintObserver();
+                                writer.truncateSoft();
+                            } finally {
+                                lock.unlock();
+                            }
+                        } else {
+                            // TRUNCATE queues no compile of the views over the table: a compile over the
+                            // emptied table fails a view whose compile reads the rows, such as a PIVOT IN
+                            // sub-query. A view compile that meets the lock of the table's readers keeps
+                            // the view's state and compiles the view again later, see ViewCompilerJob.
+                            final TableToken tableToken = writer.getTableToken();
+                            if (engine.lockReaders(tableToken)) {
+                                try {
+                                    if (keepSymbolTables) {
+                                        writer.truncateSoft();
+                                    } else {
+                                        writer.truncate();
+                                    }
+                                } finally {
+                                    engine.unlockReaders(tableToken);
+                                }
+                            } else {
+                                throw SqlException.$(0, "there is an active query against '").put(tableToken.getTableName()).put("'. Try again.");
+                            }
+                        }
+                    } catch (CairoException | CairoError e) {
+                        LOG.error().$("could not truncate [table=").$(writer.getTableToken()).$(", e=").$((Sinkable) e).I$();
+                        throw e;
+                    }
+                }
+            } finally {
+                queryRegistry.unregister(queryId, executionContext);
+            }
+        } finally {
+            Misc.freeObjListAndClear(tableWriters);
+        }
+        compiledQuery.ofTruncate();
+    }
+
+    private UpdateOperation compileUpdateWithExpiryPolicyRetries(
+            IQueryModel initialUpdateQueryModel,
+            SqlExecutionContext executionContext,
+            long initialExpiryPolicyVersion
+    ) throws SqlException {
+        IQueryModel updateQueryModel = initialUpdateQueryModel;
+        long expiryPolicyVersion = initialExpiryPolicyVersion;
+        int remainingRetries = maxRecompileAttempts;
+        try {
+            for (; ; ) {
+                final TableToken tableToken = executionContext.getTableToken(updateQueryModel.getTableName());
+                final UpdateOperation updateOperation;
+                try (TableRecordMetadata metadata = executionContext.getMetadataForWrite(tableToken)) {
+                    updateOperation = generateUpdate(updateQueryModel, executionContext, metadata);
+                }
+                final long currentExpiryPolicyVersion = engine.getMetadataCache().getExpiryPolicyVersion();
+                if (expiryPolicyVersion == currentExpiryPolicyVersion) {
+                    return updateOperation;
+                }
+
+                Misc.free(updateOperation);
+                if (--remainingRetries < 0) {
+                    throw SqlException.position(0).put("too many row-expiry policy changes during compilation");
+                }
+                LOG.info().$("retrying update after row-expiry policy change [fd=")
+                        .$(executionContext.getRequestFd()).I$();
+                freeTableNameFunctions(updateQueryModel);
+                clearExceptSqlText();
+                lexer.restart();
+                expiryPolicyVersion = engine.getMetadataCache().getExpiryPolicyVersion();
+                final ExecutionModel executionModel = compileExecutionModel(executionContext);
+                if (executionModel.getModelType() != ExecutionModel.UPDATE) {
+                    throw SqlException.position(0).put("UPDATE query expected");
+                }
+                updateQueryModel = (IQueryModel) executionModel;
+            }
+        } catch (Throwable th) {
+            // A retry re-parses into a fresh updateQueryModel that compileUsingModel's catch
+            // cannot reach, so release the current model's table-name functions here. Idempotent
+            // when codegen already consumed them or when the model is the one compileUsingModel
+            // frees.
+            freeTableNameFunctionsOnError(updateQueryModel, th);
+            throw th;
+        }
+    }
+
+    private void compileUsingModel(SqlExecutionContext executionContext, long beginNanos, boolean generateProgressLogger) throws SqlException {
+        // This method will not populate sql cache directly; factories are assumed to be non-reentrant, and once
+        // factory is out of this method, the caller assumes full ownership over it. However, the caller may
+        // choose to return the factory back to this or any other instance of compiler for safekeeping
+
+        // lexer would have parsed first token to determine direction of execution flow
+        lexer.unparseLast();
+        codeGenerator.clear();
+        long sqlId = -1;
+
+        ExecutionModel executionModel = null;
+        try {
+            // Snapshot before parsing: the parser makes both policy and no-policy decisions while building the
+            // model. Reject that model if a SET/DROP transition changes the epoch during parsing. Every path
+            // that generates a factory from the model retains this snapshot through factory generation.
+            long expiryPolicyVersion;
+            int remainingExpiryPolicyRetries = maxRecompileAttempts;
+            final boolean rejectExpiryOnEntry = executionContext.getExpiryReadPolicy() == ExpiryReadPolicy.REJECT;
+            for (; ; ) {
+                expiryPolicyVersion = engine.getMetadataCache().getExpiryPolicyVersion();
+                try {
+                    executionModel = compileExecutionModel(executionContext);
+                } catch (SqlException e) {
+                    if (!e.isMaterializationExpiryConflict()) {
+                        throw e;
+                    }
+                    if (expiryPolicyVersion == engine.getMetadataCache().getExpiryPolicyVersion()) {
+                        throw e;
+                    }
+                    if (rejectExpiryOnEntry) {
+                        throw ExpiryPolicyVersionChangedException.INSTANCE;
+                    }
+                    if (--remainingExpiryPolicyRetries < 0) {
+                        throw SqlException.position(0).put("too many row-expiry policy changes during compilation");
+                    }
+                    clearExceptSqlText();
+                    lexer.restart();
+                    continue;
+                }
+                if (expiryPolicyVersion == engine.getMetadataCache().getExpiryPolicyVersion()) {
+                    break;
+                }
+                if (rejectExpiryOnEntry) {
+                    throw ExpiryPolicyVersionChangedException.INSTANCE;
+                }
+                if (--remainingExpiryPolicyRetries < 0) {
+                    throw SqlException.position(0).put("too many row-expiry policy changes during compilation");
+                }
+                LOG.info().$("retrying model after row-expiry policy change [fd=")
+                        .$(executionContext.getRequestFd()).I$();
+                freeTableNameFunctions(executionModel);
+                clearExceptSqlText();
+                lexer.restart();
+            }
+            switch (executionModel.getModelType()) {
+                case ExecutionModel.QUERY:
+                    compileSelectWithExpiryPolicyRetries(
+                            (IQueryModel) executionModel,
+                            executionContext,
+                            generateProgressLogger,
+                            expiryPolicyVersion
+                    );
+                    break;
+                case ExecutionModel.CREATE_TABLE:
+                    compiledQuery.ofCreateTable(((CreateTableOperationBuilder) executionModel)
+                            .build(this, executionContext, sqlText));
+                    break;
+                case ExecutionModel.CREATE_VIEW:
+                    compiledQuery.ofCreateView(((CreateViewOperationBuilder) executionModel)
+                            .build(this, executionContext, sqlText));
+                    break;
+                case ExecutionModel.CREATE_MAT_VIEW:
+                    compiledQuery.ofCreateMatView(((CreateMatViewOperationBuilder) executionModel)
+                            .build(this, executionContext, sqlText));
+                    break;
+                case ExecutionModel.CREATE_LIVE_VIEW:
+                    compiledQuery.ofCreateLiveView(((CreateLiveViewOperationBuilder) executionModel)
+                            .build(sqlText));
+                    break;
+                case ExecutionModel.COPY:
+                    QueryProgress.logStart(sqlId, sqlText, executionContext, false);
+                    if (executionModel.getTableName() != null) {
+                        assert executionModel.getModelType() == ExecutionModel.COPY;
+                        if (((ExportModel) executionModel).getType() == COPY_TYPE_FROM) {
+                            checkViewModification(executionModel);
+                        }
+                    }
+                    copy(executionContext, (ExportModel) executionModel);
+                    QueryProgress.logEnd(sqlId, sqlText, executionContext, beginNanos);
+                    break;
+                case ExecutionModel.RENAME_TABLE:
+                    if (!executionContext.isValidationOnly()) {
+                        sqlId = queryRegistry.register(sqlText, executionContext);
+                        QueryProgress.logStart(sqlId, sqlText, executionContext, false);
+                        checkVisibleViewModification(executionModel, executionContext);
+                        final RenameTableModel rtm = (RenameTableModel) executionModel;
+                        engine.rename(
+                                executionContext.getSecurityContext(),
+                                path,
+                                mem,
+                                unquote(rtm.getFrom().token),
+                                renamePath,
+                                unquote(rtm.getTo().token)
+                        );
+                        QueryProgress.logEnd(sqlId, sqlText, executionContext, beginNanos);
+                    }
+                    compiledQuery.ofRenameTable();
+                    break;
+                case ExecutionModel.UPDATE:
+                    QueryProgress.logStart(sqlId, sqlText, executionContext, false);
+                    checkVisibleViewModification(executionModel, executionContext);
+                    final IQueryModel updateQueryModel = (IQueryModel) executionModel;
+                    compiledQuery.ofUpdate(compileUpdateWithExpiryPolicyRetries(
+                            updateQueryModel,
+                            executionContext,
+                            expiryPolicyVersion
+                    ));
+                    QueryProgress.logEnd(sqlId, sqlText, executionContext, beginNanos);
+                    // update is delayed until operation execution (for non-wal tables) or pushed to wal job completely
+                    break;
+                case ExecutionModel.EXPLAIN:
+                    QueryProgress.logStart(sqlId, sqlText, executionContext, false);
+                    // Like SELECT, EXPLAIN registers when it opens its base cursor, so the open runs
+                    // under the query memory tracker.
+                    final RecordCursorFactory explainFactory = compileExplainWithExpiryPolicyRetries(
+                            (ExplainModel) executionModel,
+                            executionContext,
+                            expiryPolicyVersion
+                    );
+                    compiledQuery.ofExplain(generateProgressLogger
+                            ? new QueryProgress(queryRegistry, sqlText, explainFactory)
+                            : explainFactory);
+                    QueryProgress.logEnd(sqlId, sqlText, executionContext, beginNanos);
+                    break;
+                case ExecutionModel.COMPILE_VIEW:
+                    QueryProgress.logStart(sqlId, sqlText, executionContext, false);
+                    compileView(executionContext, (CompileViewModel) executionModel);
+                    QueryProgress.logEnd(sqlId, sqlText, executionContext, beginNanos);
+                    break;
+                default:
+                    checkVisibleViewModification(executionModel, executionContext);
+                    final InsertModel insertModel = (InsertModel) executionModel;
+                    // we use SQL Compiler state (reusing objects) to generate InsertOperation
+                    if (insertModel.getQueryModel() != null) {
+                        // InsertSelect progress will be recorded during the execute phase, to accurately reflect its real select progress.
+                        compiledQuery.ofInsert(compileInsertAsSelect(insertModel, executionContext, expiryPolicyVersion), true);
+                    } else {
+                        QueryProgress.logStart(sqlId, sqlText, executionContext, false);
+                        compiledQuery.ofInsert(compileInsert(insertModel, executionContext), false);
+                        QueryProgress.logEnd(sqlId, sqlText, executionContext, beginNanos);
+                    }
+                    break;
+            }
+
+            short type = compiledQuery.getType();
+            if (type == CompiledQuery.RENAME_TABLE) { // non-wal rename table is complete at this point
+                queryRegistry.unregister(sqlId, executionContext);
+            }
+        } catch (Throwable th) {
+            freeTableNameFunctionsOnError(executionModel, th);
+            // A throw between optimisation and generation leaves open the table functions of the
+            // models the walk above does not reach.
+            optimiser.freeUnclaimedTableFactories(th);
+            // unregister query on error
+            queryRegistry.unregister(sqlId, executionContext);
+
+            QueryProgress.logError(th, sqlId, sqlText, executionContext, beginNanos);
+            throw th;
+        }
+    }
+
+    private void compileVacuum(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
+        CharSequence tok = expectToken(lexer, "'table'");
+        // It used to be VACUUM PARTITIONS but become VACUUM TABLE
+        boolean partitionsKeyword = isPartitionsKeyword(tok);
+        if (partitionsKeyword || isTableKeyword(tok)) {
+            tok = expectToken(lexer, "table name");
+            assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+            CharSequence tableName = GenericLexer.assertNoDotsAndSlashes(unquote(tok), lexer.lastTokenPosition());
+            int tableNamePos = lexer.lastTokenPosition();
+            CharSequence eol = SqlUtil.fetchNext(lexer);
+            if (eol == null || Chars.equals(eol, ';')) {
+                final TableToken tableToken = tableExistsOrFail(lexer.lastTokenPosition(), tableName, executionContext);
+                checkViewModification(tableToken);
+                try (TableReader rdr = executionContext.getReader(tableToken)) {
+                    int partitionBy = rdr.getMetadata().getPartitionBy();
+                    if (PartitionBy.isPartitioned(partitionBy)) {
+                        executionContext.getSecurityContext().authorizeTableVacuum(rdr.getTableToken());
+                        // Validation parses, resolves the table and checks it is partitioned, but
+                        // must not schedule any purge work.
+                        if (!executionContext.isValidationOnly() && !TableUtils.schedulePurgeO3Partitions(
+                                messageBus,
+                                rdr.getTableToken(),
+                                rdr.getMetadata().getTimestampType(),
+                                partitionBy
+                        )) {
+                            throw SqlException.$(
+                                    tableNamePos,
+                                    "cannot schedule vacuum action, queue is full, please retry " +
+                                            "or increase Purge Discovery Queue Capacity"
+                            );
+                        }
+                    } else if (partitionsKeyword) {
+                        throw SqlException.$(lexer.lastTokenPosition(), "table '").put(tableName).put("' is not partitioned");
+                    }
+                    if (!executionContext.isValidationOnly()) {
+                        vacuumColumnVersions.run(rdr);
+                    }
+                    compiledQuery.ofVacuum();
+                }
+            } else {
+                throw SqlException.$(lexer.lastTokenPosition(), "end of line or ';' expected");
+            }
+        } else {
+            throw SqlException.$(lexer.lastTokenPosition(), "'partitions' expected");
+        }
+    }
+
+    private void compileView(SqlExecutionContext executionContext, CompileViewModel compileViewModel) throws SqlException {
+        final TableToken viewToken = authorizeCompileView(executionContext, compileViewModel);
+
+        final ViewDefinition viewDefinition = engine.getViewGraph().getViewDefinition(viewToken);
+        if (viewDefinition == null) {
+            LOG.error().$("missing view, probably dropped concurrently [token=").$(viewToken).I$();
+            throw CairoException.viewDoesNotExist(viewToken.getTableName());
+        }
+
+        try (SqlCompiler compiler = LegacyPlannerImpl.getSqlCompiler(engine)) {
+            compiler.generateExecutionModel(viewDefinition.getViewSql(), compileViewContext);
+        } catch (SqlException | CairoException e) {
+            // position would be reported from the view SQL, so we are overriding it,
+            // it should point to the name of the view in 'COMPILE VIEW viewName'
+            throw SqlException.$(compileViewModel.getTableNameExpr().position, e.getFlyweightMessage());
+        } finally {
+            if (!executionContext.isValidationOnly()) {
+                engine.getViewStateStore().enqueueCompile(viewToken);
+            }
+        }
+        compiledQuery.ofCompileView();
+    }
+
+    private long compileViewQuery(
+            @Transient @NotNull SqlExecutionContext executionContext,
+            @NotNull CreateViewOperation createViewOp
+    ) throws SqlException {
+        final CreateTableOperation createTableOp = createViewOp.getCreateTableOperation();
+        lexer.of(createTableOp.getSelectText());
+        clear();
+
+        SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
+        if (!circuitBreaker.isTimerSet()) {
+            circuitBreaker.resetTimer();
+        }
+        final CharSequence tok = SqlUtil.fetchNext(lexer);
+        if (tok == null) {
+            throw SqlException.$(lexer.lastTokenPosition(), "SELECT query expected");
+        }
+        lexer.unparseLast();
+
+        sqlText = createTableOp.getSelectText();
+        compiledQuery.withContext(executionContext);
+
+        final int startPos = lexer.getPosition();
+        final long beginNanos = configuration.getNanosecondClock().getTicks();
+
+        final int selectTextPosition = createTableOp.getSelectTextPosition();
+        final LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies = new LowerCaseCharSequenceObjHashMap<>();
+        try {
+            int remainingRetries = maxRecompileAttempts;
+            for (; ; ) {
+                final long expiryPolicyVersion = engine.getMetadataCache().getExpiryPolicyVersion();
+                IQueryModel queryModel = null;
+                RecordCursorFactory factory = null;
+                boolean isRetry = false;
+                // The in-flight exception, so the cleanup below can attach a close failure to it rather
+                // than replace it. Stays null on the retry path, where nothing is in flight.
+                Throwable failure = null;
+                try {
+                    final ExecutionModel executionModel = parser.parse(lexer, executionContext, this);
+                    if (executionModel.getModelType() != ExecutionModel.QUERY) {
+                        throw SqlException.$(startPos, "SELECT query expected");
+                    }
+                    queryModel = optimiseViewQuery((IQueryModel) executionModel, executionContext, dependencies);
+                    createViewOp.validateAndUpdateMetadataFromModel(executionContext, optimiser.getFunctionFactoryCache(), queryModel);
+
+                    final Runnable barrier = viewFactoryGenerationBarrier;
+                    if (barrier != null) {
+                        barrier.run();
+                    }
+                    factory = generateSelectOneShot(queryModel, executionContext, false);
+                    if (expiryPolicyVersion == engine.getMetadataCache().getExpiryPolicyVersion()) {
+                        final LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> operationDependencies =
+                                createViewOp.getViewDefinition().getDependencies();
+                        operationDependencies.clear();
+                        operationDependencies.putAll(dependencies);
+                        compiledQuery.ofSelect(factory, queryModel.isCacheable());
+                        return expiryPolicyVersion;
+                    }
+                    isRetry = true;
+                } catch (TableReferenceOutOfDateException e) {
+                    isRetry = true;
+                    if (remainingRetries == 0) {
+                        final SqlException sqlException = SqlException.$(selectTextPosition, e.getFlyweightMessage());
+                        failure = sqlException;
+                        throw sqlException;
+                    }
+                } catch (SqlException e) {
+                    e.setPosition(e.getPosition() + selectTextPosition);
+                    failure = e;
+                    throw e;
+                } catch (Throwable th) {
+                    failure = th;
+                    throw th;
+                } finally {
+                    if (isRetry) {
+                        if (failure != null) {
+                            Misc.free(factory, failure);
+                        } else {
+                            Misc.free(factory);
+                        }
+                        freeTableNameFunctions(queryModel, failure);
+                    }
+                    if (failure != null) {
+                        // A throw after optimise() returned and before generation took the table
+                        // functions over leaves them with no owner. Generation that fails has already
+                        // freed them, which leaves this call nothing to do.
+                        optimiser.freeTableFactoriesInFlight(failure);
+                    }
+                }
+
+                if (--remainingRetries < 0) {
+                    throw SqlException.position(selectTextPosition).put("too many row-expiry policy changes during view compilation");
+                }
+                LOG.info().$("retrying view after metadata or row-expiry policy change [view=")
+                        .$(createViewOp.getTableName()).$(", fd=").$(executionContext.getRequestFd()).I$();
+                clearExceptSqlText();
+                lexer.restart();
+            }
+        } catch (Throwable th) {
+            QueryProgress.logError(th, -1, sqlText, executionContext, beginNanos);
+            throw th;
+        }
+    }
+
+    private void copy(SqlExecutionContext executionContext, ExportModel exportModel) throws SqlException {
+        if (!exportModel.isCancel() && Chars.equalsLowerCaseAscii(exportModel.getFileName().token, "stdin")) {
+            // no-op implementation
+            authorizeInsertForCopy(executionContext, exportModel);
+            compiledQuery.ofCopyRemote();
+        } else {
+            final RecordCursorFactory copyFactory;
+            if (exportModel.isCancel()) {
+                copyFactory = compileCopyCancel(executionContext, exportModel);
+            } else {
+                if (exportModel.getType() == COPY_TYPE_FROM) {
+                    copyFactory = compileCopyFrom(executionContext, exportModel);
+                } else {
+                    copyFactory = compileCopyTo(executionContext, exportModel, sqlText);
+                }
+            }
+            compiledQuery.ofPseudoSelect(copyFactory);
+        }
+    }
+
+    // returns number of copied rows
+    private long copyTableData(
+            SqlExecutionContext context,
+            RecordCursor cursor,
+            RecordMetadata metadata,
+            TableWriterAPI writer,
+            RecordMetadata writerMetadata,
+            RecordToRowCopier recordToRowCopier,
+            long batchSize,
+            long o3MaxLag,
+            @NotNull CopyDataProgressReporter reporter,
+            int reportFrequency
+    ) {
+        int timestampIndex = writerMetadata.getTimestampIndex();
+        long rowCount;
+        if (timestampIndex == -1) {
+            rowCount = copyUnordered(context, cursor, writer, recordToRowCopier, reporter, reportFrequency);
+        } else if (batchSize > 0) {
+            rowCount = copyOrderedBatched(context, writer, metadata, cursor, recordToRowCopier, timestampIndex, batchSize, o3MaxLag, reporter, configuration.getParquetExportCopyReportFrequencyLines());
+        } else {
+            rowCount = copyOrderedBatched(context, writer, metadata, cursor, recordToRowCopier, timestampIndex, Long.MAX_VALUE, o3MaxLag, reporter, configuration.getParquetExportCopyReportFrequencyLines());
+        }
+        writer.commit();
+        return rowCount;
+    }
+
+    /**
+     * Sets insertCount to number of copied rows.
+     */
+    private void copyTableDataAndUnlock(
+            SqlExecutionContext context,
+            TableToken tableToken,
+            boolean isWalEnabled,
+            RecordCursor cursor,
+            RecordMetadata cursorMetadata,
+            long batchSize,
+            long o3MaxLag,
+            CopyDataProgressReporter reporter
+    ) {
+        TableWriterAPI writerAPI = null;
+        TableWriter writer = null;
+
+        try {
+            if (!isWalEnabled) {
+                writerAPI = writer = new TableWriter(
+                        engine.getConfiguration(),
+                        tableToken,
+                        engine.getMessageBus(),
+                        null,
+                        false,
+                        DefaultLifecycleManager.INSTANCE,
+                        engine.getConfiguration().getDbRoot(),
+                        engine.getDdlListener(tableToken),
+                        engine
+                );
+            } else {
+                writerAPI = engine.getTableWriterAPI(tableToken, "create as select");
+            }
+
+            RecordMetadata writerMetadata = writerAPI.getMetadata();
+            entityColumnFilter.of(writerMetadata.getColumnCount());
+            this.insertCount = copyTableData(
+                    context,
+                    cursor,
+                    cursorMetadata,
+                    writerAPI,
+                    writerMetadata,
+                    RecordToRowCopierUtils.generateCopier(
+                            asm,
+                            cursorMetadata,
+                            writerMetadata,
+                            entityColumnFilter,
+                            configuration
+                    ),
+                    batchSize,
+                    o3MaxLag,
+                    reporter,
+                    configuration.getParquetExportCopyReportFrequencyLines()
+            );
+        } catch (CairoException e) {
+            // Close writer, the table will be removed
+            writerAPI = Misc.free(writerAPI);
+            writer = null;
+            throw e;
+        } finally {
+            if (isWalEnabled) {
+                Misc.free(writerAPI);
+            } else {
+                engine.unlock(context.getSecurityContext(), tableToken, writer, false);
+            }
+        }
+    }
+
+    private void enqueueCompileViews(ExecutionModel model) {
+        final IQueryModel queryModel = model.getQueryModel();
+        if (queryModel == null) {
+            return;
+        }
+
+        // The parser records each view it expands once, wherever the statement reads it, and hands
+        // the record to every model this failure path can hold. A view the parse expanded but the
+        // statement never reads, such as one in an unused CTE, gets a harmless extra re-check.
+        final ObjList<ViewDefinition> referencedViews = queryModel.getReferencedViews();
+        for (int i = 0, n = referencedViews.size(); i < n; i++) {
+            // resolve by name, to re-check the view now registered under it
+            final ViewDefinition viewDefinition = getViewDefinition(referencedViews.getQuick(i).getViewToken().getTableName());
+            if (viewDefinition != null) {
+                engine.getViewStateStore().enqueueCompile(viewDefinition.getViewToken());
+            }
+        }
+    }
+
+    private boolean executeCreateLiveView(CreateLiveViewOperation op, SqlExecutionContext executionContext) throws SqlException {
+        final long sqlId = queryRegistry.register(op.getSqlText(), executionContext);
+        final long beginNanos = configuration.getNanosecondClock().getTicks();
+        QueryProgress.logStart(sqlId, op.getSqlText(), executionContext, false);
+        try {
+            executionContext.getSecurityContext().authorizeLiveViewCreate();
+            // Reject a name already taken up front, mirroring CREATE MATERIALIZED VIEW so
+            // the collision wording names the offending kind:
+            //   - a table / regular view / materialized view collision is always an error
+            //     ("table or view with the requested name already exists"), even under
+            //     IF NOT EXISTS - otherwise the shared create helper silently no-ops the
+            //     IF NOT EXISTS branch and a user is left believing a live view exists when
+            //     the name is actually a plain table;
+            //   - a same-kind live-view collision without IF NOT EXISTS reports "live view
+            //     already exists" (mirroring "materialized view already exists") instead of
+            //     the generic "table exists" createLiveView would otherwise surface.
+            // A same-kind IF NOT EXISTS is a no-op, as it is for CREATE MATERIALIZED VIEW. It returns
+            // before createLiveView compiles the body: a live view an earlier release created may use
+            // functions that CREATE now rejects, and replaying its DDL must keep working. The no-op in
+            // createLiveView still covers a live view created concurrently after this check.
+            final TableToken existingToken = executionContext.getTableTokenIfExists(op.getViewName());
+            if (existingToken != null) {
+                if (!existingToken.isLiveView()) {
+                    throw SqlException.$(op.getViewNamePosition(), "table or view with the requested name already exists");
+                }
+                if (!op.isIgnoreIfExists()) {
+                    throw SqlException.$(op.getViewNamePosition(), "live view already exists");
+                }
+                QueryProgress.logEnd(sqlId, op.getSqlText(), executionContext, beginNanos);
+                return false;
+            }
+            // validate base table exists and is WAL; a base table the principal may not see fails like a
+            // missing one, before the checks below can disclose what kind of object it is
+            final TableToken baseTableToken = executionContext.getVisibleTableTokenIfExists(op.getBaseTableName());
+            if (baseTableToken == null) {
+                throw SqlException.$(op.getBaseTableNamePosition(), "base table does not exist [name=").put(op.getBaseTableName()).put(']');
+            }
+            if (!engine.isWalTable(baseTableToken)) {
+                throw SqlException.$(op.getBaseTableNamePosition(), "base table must be a WAL table [name=").put(op.getBaseTableName()).put(']');
+            }
+            if (baseTableToken.isLiveView()) {
+                // Live-on-live composition is not supported; live views may
+                // become composable once the apply pipeline supports LV-as-base.
+                // Position at the base table name.
+                throw SqlException.$(op.getBaseTableNamePosition(),
+                        "live views are not allowed as base tables in V1 [name=").put(op.getBaseTableName()).put(']');
+            }
+
+            engine.createLiveView(op, baseTableToken, executionContext);
+            QueryProgress.logEnd(sqlId, op.getSqlText(), executionContext, beginNanos);
+            return true;
+        } catch (Throwable th) {
+            QueryProgress.logError(th, sqlId, op.getSqlText(), executionContext, beginNanos);
+            throw th;
+        } finally {
+            queryRegistry.unregister(sqlId, executionContext);
+        }
+    }
+
+    private boolean executeCreateMatView(CreateMatViewOperation createMatViewOp, SqlExecutionContext executionContext) throws SqlException {
+        if (createMatViewOp.getRefreshType() != MatViewDefinition.REFRESH_TYPE_IMMEDIATE
+                && createMatViewOp.getRefreshType() != MatViewDefinition.REFRESH_TYPE_TIMER
+                && createMatViewOp.getRefreshType() != MatViewDefinition.REFRESH_TYPE_MANUAL) {
+            throw SqlException.$(createMatViewOp.getTableNamePosition(), "unexpected refresh type: ").put(createMatViewOp.getRefreshType());
+        }
+
+        final long sqlId = queryRegistry.register(createMatViewOp.getSqlText(), executionContext);
+        final long beginNanos = configuration.getNanosecondClock().getTicks();
+        QueryProgress.logStart(sqlId, createMatViewOp.getSqlText(), executionContext, false);
+        try {
+            final int status = executionContext.getTableStatus(path, createMatViewOp.getTableName());
+            if (status == TableUtils.TABLE_EXISTS) {
+                final TableToken tt = executionContext.getTableTokenIfExists(createMatViewOp.getTableName());
+                if (tt != null && !tt.isMatView()) {
+                    throw SqlException.$(createMatViewOp.getTableNamePosition(), "table or view with the requested name already exists");
+                }
+                if (createMatViewOp.ignoreIfExists()) {
+                    createMatViewOp.updateOperationFutureTableToken(tt);
+                } else {
+                    throw SqlException.$(createMatViewOp.getTableNamePosition(), "materialized view already exists");
+                }
+                QueryProgress.logEnd(sqlId, createMatViewOp.getSqlText(), executionContext, beginNanos);
+                return false;
+            } else {
+                CharSequence volumeAlias = createMatViewOp.getVolumeAlias();
+                if (volumeAlias != null) {
+                    CharSequence volumePath = configuration.getVolumeDefinitions().resolveAlias(volumeAlias);
+                    if (volumePath != null) {
+                        if (!ff.isDirOrSoftLinkDir(path.of(volumePath).$())) {
+                            throw CairoException.critical(0).position(createMatViewOp.getVolumePosition())
+                                    .put("not a valid path for volume [alias=")
+                                    .put(volumeAlias).put(", path=").put(path).put(']');
+                        }
+                    } else {
+                        throw SqlException.position(createMatViewOp.getVolumePosition()).put("volume alias is not allowed [alias=")
+                                .put(volumeAlias).put(']');
+                    }
+                }
+
+                MatViewDefinition matViewDefinition = null;
+                TableToken matViewToken = null;
+
+                final CreateTableOperation createTableOp = createMatViewOp.getCreateTableOperation();
+                if (createTableOp.getSelectText() != null) {
+                    for (int retryCount = 0; ; retryCount++) {
+                        final long initialExpiryPolicyVersion = engine.getMetadataCache().getExpiryPolicyVersion();
+                        RecordCursorFactory newFactory = null;
+                        RecordCursor newCursor = null;
+                        try {
+                            compileMatViewQuery(executionContext, createMatViewOp);
+                            newFactory = compiledQuery.getRecordCursorFactory();
+                            // Opened to validate the metadata, and closed with no row read. Flagged
+                            // like the probe in executeCreateView, so that an audited view in the
+                            // SELECT does not record a read that never happened.
+                            final boolean wasMetadataProbe = executionContext.isMetadataProbe();
+                            executionContext.setMetadataProbe(true);
+                            try {
+                                newCursor = newFactory.getCursor(executionContext);
+                            } finally {
+                                executionContext.setMetadataProbe(wasMetadataProbe);
+                            }
+                            final RecordMetadata metadata = newFactory.getMetadata();
+                            try (TableReader baseReader = engine.getReader(createMatViewOp.getBaseTableName())) {
+                                createMatViewOp.validateAndUpdateMetadataFromSelect(metadata, baseReader.getMetadata(), newFactory.getScanDirection());
+                            }
+                            // Reject a bad EXPIRE ROWS policy before the view exists.
+                            validateCreateMatViewExpiryPolicy(executionContext, createMatViewOp, createTableOp, metadata);
+                            // Each pass calls setMatViewSql(), even with null, so the view stores what the pass
+                            // that creates it built.
+                            createMatViewOp.setMatViewSql(buildStoredMatViewSql(executionContext, createMatViewOp, metadata));
+
+                            if (initialExpiryPolicyVersion != engine.getMetadataCache().getExpiryPolicyVersion()) {
+                                if (retryCount == maxRecompileAttempts) {
+                                    throw SqlException.position(0).put("too many row-expiry policy changes during materialized view compilation");
+                                }
+                                continue;
+                            }
+
+                            matViewDefinition = engine.createMatView(
+                                    executionContext.getSecurityContext(),
+                                    mem,
+                                    blockFileWriter,
+                                    path,
+                                    createMatViewOp.ignoreIfExists(),
+                                    createMatViewOp,
+                                    !createMatViewOp.isWalEnabled(),
+                                    volumeAlias != null
+                            );
+                            matViewToken = matViewDefinition.getMatViewToken();
+                            break;
+                        } catch (TableReferenceOutOfDateException e) {
+                            if (e instanceof ExpiryPolicyVersionChangedException) {
+                                if (retryCount == maxRecompileAttempts) {
+                                    throw SqlException.position(0).put("too many row-expiry policy changes during materialized view compilation");
+                                }
+                                LOG.info().$("retrying materialized view after row-expiry policy change [q=`")
+                                        .$(createTableOp.getSelectText()).$("`]").$();
+                                continue;
+                            }
+                            if (retryCount == maxRecompileAttempts) {
+                                throw SqlException.$(0, e.getFlyweightMessage());
+                            }
+                            LOG.info().$("retrying plan [q=`").$(createTableOp.getSelectText()).$("`]").$();
+                        } catch (SqlException e) {
+                            if (!e.isMaterializationExpiryConflict()) {
+                                throw e;
+                            }
+                            if (initialExpiryPolicyVersion == engine.getMetadataCache().getExpiryPolicyVersion()) {
+                                throw e;
+                            }
+                            if (retryCount == maxRecompileAttempts) {
+                                throw SqlException.position(0).put("too many row-expiry policy changes during materialized view compilation");
+                            }
+                        } catch (Throwable th) {
+                            throw th;
+                        } finally {
+                            Misc.free(newCursor);
+                            Misc.free(newFactory);
+                        }
+                    }
+                    assert matViewDefinition != null && matViewToken != null;
+                    createMatViewOp.updateOperationFutureTableToken(matViewToken);
+                } else {
+                    throw SqlException.$(createTableOp.getTableNamePosition(), "materialized view requires a SELECT statement");
+                }
+            }
+            QueryProgress.logEnd(sqlId, createMatViewOp.getSqlText(), executionContext, beginNanos);
+            return true;
+        } catch (Throwable th) {
+            if (th instanceof CairoException) {
+                ((CairoException) th).position(createMatViewOp.getTableNamePosition());
+            }
+            QueryProgress.logError(th, sqlId, createMatViewOp.getSqlText(), executionContext, beginNanos);
+            throw th;
+        } finally {
+            queryRegistry.unregister(sqlId, executionContext);
+        }
+    }
+
+    private boolean executeCreateTable(CreateTableOperation createTableOp, SqlExecutionContext executionContext) throws SqlException {
+        boolean needRegister = createTableOp.needRegister();
+        long sqlId = 0;
+        long beginNanos = 0;
+        if (needRegister) {
+            sqlId = queryRegistry.register(createTableOp.getSqlText(), executionContext);
+            beginNanos = configuration.getNanosecondClock().getTicks();
+            QueryProgress.logStart(sqlId, createTableOp.getSqlText(), executionContext, false);
+            executionContext.setUseSimpleCircuitBreaker(true);
+        }
+
+        try {
+            // Fast path for CREATE TABLE IF NOT EXISTS in scenario when the table already exists
+            final int status = executionContext.getTableStatus(path, createTableOp.getTableName());
+            if (status == TableUtils.TABLE_EXISTS) {
+                final TableToken tt = executionContext.getTableTokenIfExists(createTableOp.getTableName());
+                if (tt != null && (tt.isView() || tt.isMatView() || tt.isLiveView())) {
+                    // Mirrors executeCreateLiveView: a cross-kind collision is always an error, even
+                    // under IF NOT EXISTS. Letting a live view satisfy IF NOT EXISTS would silently
+                    // no-op the CREATE and leave the user believing a plain table exists when the
+                    // name is actually a live view.
+                    throw SqlException.$(createTableOp.getTableNamePosition(), tt.isLiveView()
+                            ? "live view with the requested name already exists"
+                            : "view or materialized view with the requested name already exists");
+                }
+                if (createTableOp.ignoreIfExists()) {
+                    createTableOp.updateOperationFutureTableToken(tt);
+                } else {
+                    throw SqlException.$(createTableOp.getTableNamePosition(), "table already exists");
+                }
+                if (needRegister) {
+                    QueryProgress.logEnd(sqlId, createTableOp.getSqlText(), executionContext, beginNanos);
+                }
+                return false;
+            } else {
+                // create table (...) ... in volume volumeAlias;
+                CharSequence volumeAlias = createTableOp.getVolumeAlias();
+                if (volumeAlias != null) {
+                    CharSequence volumePath = configuration.getVolumeDefinitions().resolveAlias(volumeAlias);
+                    if (volumePath != null) {
+                        if (!ff.isDirOrSoftLinkDir(path.of(volumePath).$())) {
+                            throw CairoException.critical(0).position(createTableOp.getVolumePosition())
+                                    .put("not a valid path for volume [alias=")
+                                    .put(volumeAlias).put(", path=").put(path).put(']');
+                        }
+                    } else {
+                        throw SqlException.position(createTableOp.getVolumePosition()).put("volume alias is not allowed [alias=")
+                                .put(volumeAlias).put(']');
+                    }
+                }
+
+                final TableToken tableToken;
+                if (createTableOp.getSelectText() != null) {
+                    this.insertCount = -1;
+                    final int position = createTableOp.getTableNamePosition();
+                    RecordCursorFactory newFactory = null;
+                    RecordCursor newCursor;
+                    for (int retryCount = 0; ; retryCount++) {
+                        try {
+                            lexer.of(createTableOp.getSelectText());
+                            clearExceptSqlText();
+                            compileInner(executionContext, createTableOp.getSelectText(), false);
+                            Misc.free(newFactory);
+                            newFactory = compiledQuery.getRecordCursorFactory();
+                            newCursor = newFactory.getCursor(executionContext);
+                            break;
+                        } catch (TableReferenceOutOfDateException e) {
+                            if (retryCount == maxRecompileAttempts) {
+                                Misc.free(newFactory);
+                                throw SqlException.$(createTableOp.getSelectTextPosition(), e.getFlyweightMessage());
+                            }
+                            LOG.info().$("retrying plan [q=`").$(createTableOp.getSelectText()).$("`]").$();
+                        } catch (SqlException e) {
+                            e.setPosition(e.getPosition() + createTableOp.getSelectTextPosition());
+                            Misc.free(newFactory);
+                            throw e;
+                        } catch (Throwable th) {
+                            Misc.free(newFactory);
+                            throw th;
+                        }
+                    }
+
+                    try (
+                            RecordCursorFactory factory = newFactory;
+                            RecordCursor cursor = newCursor
+                    ) {
+                        final RecordMetadata metadata = factory.getMetadata();
+                        createTableOp.validateAndUpdateMetadataFromSelect(metadata, factory.getScanDirection());
+                        boolean keepLock = !createTableOp.isWalEnabled();
+                        // A kept lock belongs to the carrier thread, so the copy must not suspend and resume elsewhere.
+                        final SuspensionScope.CarrierScope suspensionScope = keepLock ? SuspensionScope.scope() : null;
+                        final SuspensionScope.Mode previousMode = keepLock ? SuspensionScope.enterBlocking(suspensionScope) : null;
+                        try {
+                            // todo: test create table if exists with select
+                            tableToken = engine.createTable(
+                                    executionContext.getSecurityContext(),
+                                    mem,
+                                    path,
+                                    createTableOp.ignoreIfExists(),
+                                    createTableOp,
+                                    keepLock,
+                                    volumeAlias != null,
+                                    createTableOp.getTableKind()
+                            );
+
+                            try {
+                                copyTableDataAndUnlock(
+                                        executionContext,
+                                        tableToken,
+                                        createTableOp.isWalEnabled(),
+                                        cursor,
+                                        metadata,
+                                        createTableOp.getBatchSize(),
+                                        createTableOp.getBatchO3MaxLag(),
+                                        createTableOp.getCopyDataProgressReporter()
+                                );
+                            } catch (Throwable e) {
+                                if (e instanceof CairoException ce) {
+                                    ce.position(position);
+                                    LogRecord record = LOG.error()
+                                            .$("could not create table as select [message=").$safe(ce.getFlyweightMessage());
+                                    if (!ce.isCancellation()) {
+                                        record.$(", errno=").$(ce.getErrno());
+                                    }
+                                    record.I$();
+                                } else {
+                                    LOG.error().$("could not create table as select [message=").$safe(e instanceof FlyweightMessageContainer
+                                            ? ((FlyweightMessageContainer) e).getFlyweightMessage() : e.getMessage()).I$();
+                                }
+                                engine.dropTableOrViewOrMatView(path, tableToken);
+                                engine.unlockTableName(tableToken);
+                                throw e;
+                            }
+                        } finally {
+                            if (keepLock) {
+                                SuspensionScope.restoreMode(suspensionScope, previousMode);
+                            }
+                        }
+                    }
+                    createTableOp.updateOperationFutureTableToken(tableToken);
+                    createTableOp.updateOperationFutureAffectedRowsCount(insertCount);
+                } else {
+                    try {
+                        if (createTableOp.getLikeTableName() != null) {
+                            // LIKE copies the schema of the table, so a table the principal may not see
+                            // fails exactly like a missing one
+                            final TableToken likeTableToken = executionContext.getVisibleTableTokenIfExists(createTableOp.getLikeTableName());
+                            if (likeTableToken == null) {
+                                throw SqlException
+                                        .$(createTableOp.getLikeTableNamePosition(), "table does not exist [table=")
+                                        .put(createTableOp.getLikeTableName()).put(']');
+                            }
+
+                            try (TableMetadata likeTableMetadata = executionContext.getCairoEngine().getTableMetadata(likeTableToken)) {
+                                createTableOp.updateFromLikeTableMetadata(likeTableMetadata);
+                                tableToken = engine.createTable(
+                                        executionContext.getSecurityContext(),
+                                        mem,
+                                        path,
+                                        createTableOp.ignoreIfExists(),
+                                        createTableOp,
+                                        false,
+                                        volumeAlias != null,
+                                        TABLE_KIND_REGULAR_TABLE
+                                );
+                            }
+                        } else {
+                            tableToken = engine.createTable(
+                                    executionContext.getSecurityContext(),
+                                    mem,
+                                    path,
+                                    createTableOp.ignoreIfExists(),
+                                    createTableOp,
+                                    false,
+                                    volumeAlias != null,
+                                    TABLE_KIND_REGULAR_TABLE
+                            );
+                        }
+                        createTableOp.updateOperationFutureTableToken(tableToken);
+                    } catch (EntryUnavailableException e) {
+                        throw SqlException.$(createTableOp.getTableNamePosition(), "table already exists");
+                    } catch (CairoException e) {
+                        if (e.isAuthorizationError() || e.isCancellation()) {
+                            // No point printing stack trace for authorization or cancellation errors
+                            LOG.error().$("could not create table [error=").$safe(e.getFlyweightMessage()).I$();
+                        } else {
+                            LOG.error().$("could not create table [error=").$((Throwable) e).I$();
+                        }
+                        if (e.isInterruption()) {
+                            throw e;
+                        }
+                        throw SqlException.$(createTableOp.getTableNamePosition(), "Could not create table, ")
+                                .put(e.getFlyweightMessage());
+                    }
+                }
+            }
+            if (needRegister) {
+                QueryProgress.logEnd(sqlId, createTableOp.getSqlText(), executionContext, beginNanos);
+            }
+            return true;
+        } catch (Throwable e) {
+            if (e instanceof CairoException) {
+                ((CairoException) e).position(createTableOp.getTableNamePosition());
+            }
+            if (needRegister) {
+                QueryProgress.logError(e, sqlId, createTableOp.getSqlText(), executionContext, beginNanos);
+            }
+            throw e;
+        } finally {
+            if (needRegister) {
+                executionContext.setUseSimpleCircuitBreaker(false);
+                queryRegistry.unregister(sqlId, executionContext);
+            }
+        }
+    }
+
+    private boolean executeCreateView(CreateViewOperation createViewOp, SqlExecutionContext executionContext) throws SqlException {
+        final long sqlId = queryRegistry.register(createViewOp.getSqlText(), executionContext);
+        final long beginNanos = configuration.getNanosecondClock().getTicks();
+        QueryProgress.logStart(sqlId, createViewOp.getSqlText(), executionContext, false);
+        final boolean wasViewCompile = executionContext.isViewCompile();
+        executionContext.setViewCompile(true);
+        try {
+            final int status = executionContext.getTableStatus(path, createViewOp.getTableName());
+            if (status == TableUtils.TABLE_EXISTS) {
+                final TableToken tt = executionContext.getTableTokenIfExists(createViewOp.getTableName());
+                if (tt != null && !tt.isView()) {
+                    throw SqlException.$(createViewOp.getTableNamePosition(), "table or materialized view with the requested name already exists");
+                }
+                if (createViewOp.ignoreIfExists()) {
+                    createViewOp.updateOperationFutureTableToken(tt);
+                } else {
+                    throw SqlException.$(createViewOp.getTableNamePosition(), "view already exists");
+                }
+                QueryProgress.logEnd(sqlId, createViewOp.getSqlText(), executionContext, beginNanos);
+                return false;
+            } else {
+                final ViewDefinition viewDefinition;
+                final TableToken viewToken;
+
+                final CreateTableOperation createTableOp = createViewOp.getCreateTableOperation();
+                if (createTableOp.getSelectText() != null) {
+                    RecordCursorFactory newFactory = null;
+                    RecordCursor newCursor;
+                    long expiryPolicyVersion;
+                    for (int retryCount = 0; ; retryCount++) {
+                        try {
+                            expiryPolicyVersion = compileViewQuery(executionContext, createViewOp);
+                            Misc.free(newFactory);
+                            newFactory = compiledQuery.getRecordCursorFactory();
+                            // This cursor exists to report column types, not to hand anyone rows.
+                            // Flag it so that an audited view in the SELECT does not record a read.
+                            // The flag covers the cursor open only: the compile above runs with it
+                            // clear, so whatever consumes it has to emit at open, not at generate.
+                            // Restored rather than cleared - any execution context may set this, so
+                            // an outer probe has to survive an inner one.
+                            final boolean wasMetadataProbe = executionContext.isMetadataProbe();
+                            executionContext.setMetadataProbe(true);
+                            try {
+                                newCursor = newFactory.getCursor(executionContext);
+                            } finally {
+                                executionContext.setMetadataProbe(wasMetadataProbe);
+                            }
+                            if (expiryPolicyVersion != engine.getMetadataCache().getExpiryPolicyVersion()) {
+                                Misc.free(newCursor);
+                                newFactory = Misc.free(newFactory);
+                                if (retryCount == maxRecompileAttempts) {
+                                    throw SqlException.position(0).put("too many row-expiry policy changes during view compilation");
+                                }
+                                LOG.info().$("retrying view after row-expiry policy change [view=")
+                                        .$(createViewOp.getTableName()).$(", fd=").$(executionContext.getRequestFd()).I$();
+                                continue;
+                            }
+                            break;
+                        } catch (TableReferenceOutOfDateException e) {
+                            if (retryCount == maxRecompileAttempts) {
+                                Misc.free(newFactory);
+                                throw SqlException.$(0, e.getFlyweightMessage());
+                            }
+                            LOG.info().$("retrying plan [q=`").$(createTableOp.getSelectText()).$("`]").$();
+                        } catch (Throwable th) {
+                            Misc.free(newFactory);
+                            throw th;
+                        }
+                    }
+
+                    try {
+                        final RecordMetadata metadata = newFactory.getMetadata();
+                        createViewOp.validateAndUpdateMetadataFromSelect(metadata, newFactory.getScanDirection());
+
+                        viewDefinition = engine.createView(
+                                executionContext.getSecurityContext(),
+                                mem,
+                                blockFileWriter,
+                                path,
+                                createViewOp.ignoreIfExists(),
+                                createViewOp,
+                                metadata
+                        );
+                        viewToken = viewDefinition.getViewToken();
+                        if (expiryPolicyVersion != engine.getMetadataCache().getExpiryPolicyVersion()) {
+                            refreshViewDefinitionAfterExpiryPolicyChange(
+                                    createTableOp.getSelectText(),
+                                    createTableOp.getSelectTextPosition(),
+                                    executionContext,
+                                    viewToken
+                            );
+                        }
+                    } finally {
+                        Misc.free(newCursor);
+                        Misc.free(newFactory);
+                    }
+
+                    createViewOp.updateOperationFutureTableToken(viewToken);
+                    engine.getViewStateStore().enqueueCompile(viewToken);
+                    TelemetryTask.store(engine.getTelemetry(), TelemetryOrigin.NO_MATTERS, TelemetryEvent.VIEW_CREATE);
+                } else {
+                    throw SqlException.$(createTableOp.getTableNamePosition(), "view requires a SELECT statement");
+                }
+            }
+            QueryProgress.logEnd(sqlId, createViewOp.getSqlText(), executionContext, beginNanos);
+            return true;
+        } catch (Throwable th) {
+            if (th instanceof CairoException) {
+                ((CairoException) th).position(createViewOp.getTableNamePosition());
+            }
+            QueryProgress.logError(th, sqlId, createViewOp.getSqlText(), executionContext, beginNanos);
+            throw th;
+        } finally {
+            executionContext.setViewCompile(wasViewCompile);
+            queryRegistry.unregister(sqlId, executionContext);
+        }
+    }
+
+    private boolean executeDropAllTables(DropAllOperation op, SqlExecutionContext executionContext) {
+        // collect failures
+        dropAllTablesFailures.clear();
+        tableTokenBucket.clear();
+        engine.getTableTokens(tableTokenBucket, false);
+        final SecurityContext securityContext = executionContext.getSecurityContext();
+        TableToken tableToken;
+        boolean hasDroppedAny = false;
+        for (int i = 0, n = tableTokenBucket.size(); i < n; i++) {
+            tableToken = tableTokenBucket.get(i);
+            // An object the principal may not see is left alone like one that does not exist: the
+            // failure report below names every object the drop could not remove.
+            if (!tableToken.isSystem() && securityContext.isTableVisible(tableToken)) {
+                final String tableName = tableToken.getTableName();
+                try {
+                    if (tableToken.isLiveView()) {
+                        securityContext.authorizeLiveViewDrop(tableToken);
+                    } else if (tableToken.isView()) {
+                        securityContext.authorizeViewDrop(tableToken);
+                        if (isAuditedView(tableToken)) {
+                            securityContext.authorizeAuditView();
+                        }
+                    } else if (tableToken.isMatView()) {
+                        securityContext.authorizeMatViewDrop(tableToken);
+                    } else {
+                        securityContext.authorizeTableDrop(tableToken);
+                        // Same veto executeDropTable applies. DROP ALL TABLES skips system tables,
+                        // which an undroppable table need not be, so without this the one route
+                        // that drops every table at once would be the route around the veto. The
+                        // throw lands in dropAllTablesFailures below, so the rest still drop.
+                        engine.checkTableDroppable(tableToken);
+                    }
+                    if (tableToken.isLiveView()) {
+                        // A live view carries state the generic drop does not know about:
+                        // the registry entry, the dependents graph edge and the durable
+                        // _lv.drop sentinel. It also has to fence the refresh worker before
+                        // the table teardown. dropLiveView does all of that and calls
+                        // dropTableOrViewOrMatView itself.
+                        engine.dropLiveView(tableName, securityContext);
+                    } else {
+                        engine.dropTableOrViewOrMatView(path, tableToken);
+                    }
+                    hasDroppedAny = true;
+                    op.onTableOrViewOrMatViewDropped(engine.getDdlListener(tableName), tableToken);
+                } catch (Exception e) {
+                    LOG.error().$("Error while dropping table, view or materialized view [").$(tableName).$(", error=").$(e).I$();
+                    dropAllTablesFailures.put(tableName, e.getMessage());
+                }
+            }
+        }
+        if (dropAllTablesFailures.size() > 0) {
+            final CairoException ex = CairoException.nonCritical().put("Failures while dropping tables, views and materialized views [");
+            CharSequence tableName;
+            String message;
+            final ReadOnlyObjList<CharSequence> keys = dropAllTablesFailures.keys();
+            for (int i = 0, n = keys.size(); i < n; i++) {
+                tableName = keys.get(i);
+                message = dropAllTablesFailures.get(tableName);
+                ex.put('\'').put(tableName).put("': ").put(message);
+                if (i + 1 < n) {
+                    ex.put(", ");
+                }
+            }
+            throw ex.put(']');
+        }
+        return hasDroppedAny;
+    }
+
+    private boolean executeDropLiveView(GenericDropOperation op, SqlExecutionContext executionContext) throws SqlException {
+        final String name = op.getEntityName();
+        // an object the principal may not see drops exactly like a missing one, IF EXISTS included
+        final TableToken tableToken = executionContext.getVisibleTableTokenIfExists(name);
+        if (tableToken != null && !tableToken.isLiveView()) {
+            throw SqlException.$(op.getEntityNamePosition(), "live view name expected [name=").put(name).put(']');
+        }
+        // Determine existence from the durable LV token, NOT the registry instance. When the
+        // live-view feature is disabled at restart, buildViewGraphs loads the token (and _lv stays
+        // on disk) but deliberately registers no instance - an unattended one would pin the base
+        // WAL floor forever. Gating the drop on a non-null instance would leave such a view
+        // undroppable: a plain DROP threw "does not exist" and DROP ... IF EXISTS silently no-opped.
+        if (tableToken == null) {
+            if (op.ifExists()) {
+                return false;
+            }
+            throw SqlException.$(op.getEntityNamePosition(), "live view does not exist [name=").put(name).put(']');
+        }
+        // Authorize against the token resolved above (already null-checked, so the enterprise
+        // per-object ACL dereference is safe). engine.dropLiveView is null-instance-safe: it
+        // re-authorizes, stamps the _lv.drop sentinel, and performs the full on-disk teardown
+        // whether or not a refresh instance is registered.
+        executionContext.getSecurityContext().authorizeLiveViewDrop(tableToken);
+        engine.dropLiveView(name, executionContext.getSecurityContext());
+        return true;
+    }
+
+    private boolean executeDropMatView(
+            GenericDropOperation op,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        // an object the principal may not see drops exactly like a missing one, IF EXISTS included
+        final TableToken tableToken = sqlExecutionContext.getVisibleTableTokenIfExists(op.getEntityName());
+        if (tableToken == null || TableNameRegistry.isLocked(tableToken)) {
+            if (op.ifExists()) {
+                return false;
+            }
+            throw SqlException.matViewDoesNotExist(op.getEntityNamePosition(), op.getEntityName());
+        }
+        if (!tableToken.isMatView()) {
+            throw SqlException.$(op.getEntityNamePosition(), "materialized view name expected, got ").put(tableToken.getType().keyword()).put(" name");
+        }
+        sqlExecutionContext.getSecurityContext().authorizeMatViewDrop(tableToken);
+
+        final String sqlText = op.getSqlText();
+        final long queryId = queryRegistry.register(sqlText, sqlExecutionContext);
+        try {
+            engine.dropTableOrViewOrMatView(path, tableToken);
+        } catch (CairoException ex) {
+            if ((ex.isTableDropped() || ex.isTableDoesNotExist()) && op.ifExists()) {
+                // all good, mat view dropped already
+                return false;
+            } else if (!op.ifExists() && ex.isTableDropped()) {
+                // Concurrently dropped, this should report mat view does not exist
+                throw CairoException.matViewDoesNotExist(op.getEntityName());
+            }
+            throw ex;
+        } finally {
+            queryRegistry.unregister(queryId, sqlExecutionContext);
+        }
+        return true;
+    }
+
+    private boolean executeDropTable(
+            GenericDropOperation op,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        // an object the principal may not see drops exactly like a missing one, IF EXISTS included
+        final TableToken tableToken = sqlExecutionContext.getVisibleTableTokenIfExists(op.getEntityName());
+        if (tableToken == null || TableNameRegistry.isLocked(tableToken)) {
+            if (op.ifExists()) {
+                return false;
+            }
+            throw SqlException.tableDoesNotExist(op.getEntityNamePosition(), op.getEntityName());
+        }
+        if (tableToken.getType() != TableToken.Type.TABLE) {
+            throw SqlException.$(op.getEntityNamePosition(), "table name expected, got ").put(tableToken.getType().keyword()).put(" name: ").put(op.getEntityName());
+        }
+        sqlExecutionContext.getSecurityContext().authorizeTableDrop(tableToken);
+        engine.checkTableDroppable(tableToken);
+
+        final String sqlText = op.getSqlText();
+        final long queryId = queryRegistry.register(sqlText, sqlExecutionContext);
+        try {
+            engine.dropTableOrViewOrMatView(path, tableToken);
+        } catch (CairoException ex) {
+            if ((ex.isTableDropped() || ex.isTableDoesNotExist()) && op.ifExists()) {
+                // all good, table dropped already
+                return false;
+            } else if (!op.ifExists() && ex.isTableDropped()) {
+                // Concurrently dropped, this should report table does not exist
+                throw CairoException.tableDoesNotExist(op.getEntityName());
+            }
+            throw ex;
+        } finally {
+            queryRegistry.unregister(queryId, sqlExecutionContext);
+        }
+        return true;
+    }
+
+    private boolean executeDropView(
+            GenericDropOperation op,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        // an object the principal may not see drops exactly like a missing one, IF EXISTS included
+        final TableToken tableToken = sqlExecutionContext.getVisibleTableTokenIfExists(op.getEntityName());
+        if (tableToken == null || TableNameRegistry.isLocked(tableToken)) {
+            if (op.ifExists()) {
+                return false;
+            }
+            throw SqlException.viewDoesNotExist(op.getEntityNamePosition(), op.getEntityName());
+        }
+        if (!tableToken.isView()) {
+            throw SqlException.$(op.getEntityNamePosition(), "view name expected, got ").put(tableToken.getType().keyword()).put(" name");
+        }
+        if (tableToken.isSystem()) {
+            throw SqlException.$(op.getEntityNamePosition(), "cannot drop a system view");
+        }
+        sqlExecutionContext.getSecurityContext().authorizeViewDrop(tableToken);
+        if (isAuditedView(tableToken)) {
+            // Dropping is the only route by which an audited view loses its marking, so it is gated
+            // like setting it. Redefinition is not such a route: ALTER VIEW and CREATE OR REPLACE
+            // VIEW over an existing view both land in ViewGraph.updateView - compileCreate
+            // intercepts the latter and executes it as an alter - and that carries the current flag
+            // forward rather than taking one from the statement. Only a CREATE over a name that
+            // does not exist yet sets the flag from the statement, and there is nothing to lose
+            // there. Asserted by ViewAuditTest.testRedefiningAnAuditedViewKeepsTheFlag.
+            sqlExecutionContext.getSecurityContext().authorizeAuditView();
+        }
+
+        final String sqlText = op.getSqlText();
+        final long queryId = queryRegistry.register(sqlText, sqlExecutionContext);
+        try {
+            engine.dropTableOrViewOrMatView(path, tableToken);
+            TelemetryTask.store(engine.getTelemetry(), TelemetryOrigin.NO_MATTERS, TelemetryEvent.VIEW_DROP);
+        } catch (CairoException ex) {
+            if ((ex.isTableDropped() || ex.isTableDoesNotExist()) && op.ifExists()) {
+                // all good, mat view dropped already
+                return false;
+            } else if (!op.ifExists() && ex.isTableDropped()) {
+                // Concurrently dropped, this should report view does not exist
+                throw CairoException.viewDoesNotExist(op.getEntityName());
+            }
+            throw ex;
+        } finally {
+            queryRegistry.unregister(queryId, sqlExecutionContext);
+        }
+        return true;
+    }
+
+    private int filterApply(
+            Function filter,
+            int functionPosition,
+            AlterOperationBuilder changePartitionStatement,
+            long timestamp
+    ) {
+        if (matchesPartition(filter, timestamp)) {
+            changePartitionStatement.addPartitionToList(timestamp, functionPosition);
+            return 1;
+        }
+        return 0;
+    }
+
+    private int filterPartitions(
+            Function filter,
+            int filterPosition,
+            TableReader reader,
+            AlterOperationBuilder changePartitionStatement
+    ) {
+        int affectedPartitions = 0;
+        // Iterate partitions in descending order, so if folders are missing on disk,
+        // removePartition does not fail to determine the next minTimestamp
+        final int partitionCount = reader.getPartitionCount();
+        if (partitionCount > 0) { // table may be empty
+            // perform the action on the first and last partition in the end, those are more expensive than others
+            long firstPartition = reader.getTxFile().getPartitionFloor(reader.getPartitionTimestampByIndex(0));
+            long lastPartition = reader.getTxFile().getPartitionFloor(reader.getPartitionTimestampByIndex(partitionCount - 1));
+
+            long lastLogicalPartition = Long.MIN_VALUE;
+            for (int partitionIndex = 1; partitionIndex < partitionCount - 1; partitionIndex++) {
+                long physicalTimestamp = reader.getPartitionTimestampByIndex(partitionIndex);
+                long logicalTimestamp = reader.getTxFile().getPartitionFloor(physicalTimestamp);
+                if (logicalTimestamp != lastLogicalPartition && logicalTimestamp != firstPartition && logicalTimestamp != lastPartition) {
+                    if (filterApply(filter, filterPosition, changePartitionStatement, logicalTimestamp) > 0) {
+                        affectedPartitions++;
+                        lastLogicalPartition = logicalTimestamp;
+                    }
+                }
+            }
+
+            // perform the action on the first and last partition, dropping them have to read min/max timestamp of the next first/last partition
+            affectedPartitions += filterApply(filter, filterPosition, changePartitionStatement, firstPartition);
+            if (firstPartition != lastPartition) {
+                affectedPartitions += filterApply(filter, filterPosition, changePartitionStatement, lastPartition);
+            }
+        }
+        return affectedPartitions;
+    }
+
+    private void freeTableNameFunctions(ExecutionModel executionModel) {
+        freeTableNameFunctions(executionModel, null);
+    }
+
+    /**
+     * Releases the table-name functions a statement still owns. EXPLAIN keeps the real statement
+     * one level down and answers null to {@link ExecutionModel#getQueryModel()}, so unwrap it first
+     * or its query graph goes unvisited.
+     */
+    private void freeTableNameFunctions(ExecutionModel executionModel, @Nullable Throwable failure) {
+        if (executionModel instanceof ExplainModel explainModel) {
+            freeTableNameFunctions(explainModel.getInnerExecutionModel(), failure);
+        } else if (executionModel != null) {
+            SqlCodeGenerator.freeTableNameFunctions(executionModel.getQueryModel(), failure);
+        }
+    }
+
+    private void freeTableNameFunctions(IQueryModel queryModel) {
+        SqlCodeGenerator.freeTableNameFunctions(queryModel, null);
+    }
+
+    private void freeTableNameFunctions(IQueryModel queryModel, @Nullable Throwable failure) {
+        SqlCodeGenerator.freeTableNameFunctions(queryModel, failure);
+    }
+
+    /**
+     * Releases the table-name functions while an exception is in flight. The exception reaches
+     * {@code Misc.free}, so a close failure attaches to it as a suppressed exception; a failure raised
+     * anywhere else in the walk attaches here. Either way the original exception is the one that
+     * propagates.
+     */
+    private void freeTableNameFunctionsOnError(ExecutionModel executionModel, @NotNull Throwable failure) {
+        try {
+            freeTableNameFunctions(executionModel, failure);
+        } catch (Throwable cleanupFailure) {
+            if (cleanupFailure != failure) {
+                failure.addSuppressed(cleanupFailure);
+            }
+        }
+    }
+
+    private void freeTableNameFunctionsOnError(IQueryModel queryModel, @NotNull Throwable failure) {
+        try {
+            freeTableNameFunctions(queryModel, failure);
+        } catch (Throwable cleanupFailure) {
+            if (cleanupFailure != failure) {
+                failure.addSuppressed(cleanupFailure);
+            }
+        }
+    }
+
+    private RecordCursorFactory generateExplain(ExplainModel model, SqlExecutionContext executionContext) throws SqlException {
+        final ExecutionModel innerModel = model.getInnerExecutionModel();
+        if (innerModel.getModelType() == ExecutionModel.UPDATE) {
+            IQueryModel updateQueryModel = innerModel.getQueryModel();
+            final IQueryModel selectQueryModel = updateQueryModel.getNestedModel();
+            final RecordCursorFactory recordCursorFactory = generateUpdateFactory(
+                    updateQueryModel.getUpdateTableToken(),
+                    selectQueryModel,
+                    updateQueryModel,
+                    executionContext
+            );
+            return codeGenerator.generateExplain(updateQueryModel, recordCursorFactory, model.getFormat());
+        }
+        final IQueryModel queryModel = innerModel.getQueryModel();
+        if (queryModel == null) {
+            return codeGenerator.generateExplain(model, null);
+        }
+        // ExplainPlanFactory opens the cursor of the plan it prints, which runs the plan's
+        // sub-queries, and the plan can print what they read. So the plan is generated the way the
+        // statement generates it, through generateSelectOneShot(): what a subclass wraps a plan
+        // in there, such as Enterprise's audit of view reads, wraps this one too.
+        final RecordCursorFactory factory;
+        if (innerModel.getModelType() == ExecutionModel.CREATE_LIVE_VIEW) {
+            // Arm the live-view compile flag around CODE GENERATION, which is the only thing that
+            // reads it: SqlCodeGenerator (the symbol partition-key sink, anchor collection),
+            // WhereClauseParser (a SqlCodeGenerator field - it suppresses indexed-symbol filters
+            // for a live view) and CompiledFilterIRSerializer. SqlOptimiser never reads it, so
+            // arming it only around optimise() in compileExplainExecutionModel0 left it false here
+            // and printed a plan the real CREATE never generates (an indexed symbol scan). Mirrors
+            // the arm CairoEngine.createLiveView wraps its compile() in.
+            executionContext.setLiveViewCompile(true);
+            try {
+                factory = generateSelectOneShot(queryModel, executionContext, false);
+            } finally {
+                executionContext.setLiveViewCompile(false);
+            }
+        } else {
+            factory = generateSelectOneShot(queryModel, executionContext, false);
+        }
+        return codeGenerator.generateExplain(model, factory);
+    }
+
+    private UpdateOperation generateUpdate(IQueryModel updateQueryModel, SqlExecutionContext executionContext, TableRecordMetadata metadata) throws SqlException {
+        TableToken updateTableToken = updateQueryModel.getUpdateTableToken();
+        final IQueryModel selectQueryModel = updateQueryModel.getNestedModel();
+
+        // Update IQueryModel structure is
+        // IQueryModel with SET column expressions
+        // |-- IQueryModel of select-virtual or select-choose of data selected for update
+        final RecordCursorFactory recordCursorFactory = generateUpdateFactory(
+                updateTableToken,
+                selectQueryModel,
+                updateQueryModel,
+                executionContext
+        );
+        final RecordMetadata updateMetadata = recordCursorFactory.getMetadata();
+        final int updateColumnCount = updateMetadata.getColumnCount();
+        final ObjList<CharSequence> updateColumnNames = new ObjList<>(updateColumnCount);
+        for (int i = 0; i < updateColumnCount; i++) {
+            updateColumnNames.add(updateMetadata.getColumnName(i));
+        }
+
+        final int liveWalProgressPosition = functionParser.getExecutionRequirements().getPosition(
+                SqlExecutionRequirements.REQUIRES_LIVE_WAL_PROGRESS
+        );
+        if (!executionContext.isWalApplication() && liveWalProgressPosition >= 0) {
+            recordCursorFactory.close();
+            throw SqlException.position(liveWalProgressPosition)
+                    .put("UPDATE cannot require live WAL progress");
+        }
+
+        if (!metadata.isWalEnabled() || executionContext.isWalApplication()) {
+            return new UpdateOperation(
+                    updateTableToken,
+                    selectQueryModel.getTableId(),
+                    selectQueryModel.getMetadataVersion(),
+                    lexer.getPosition(),
+                    recordCursorFactory,
+                    updateColumnNames
+            );
+        } else {
+            recordCursorFactory.close();
+
+            if (selectQueryModel.containsJoin()) {
+                throw SqlException.position(0).put(UPDATE_WITH_JOIN_NOT_SUPPORTED);
+            }
+
+            // The second half of the cross-table rejection begun in compileExecutionModel0(): the
+            // tables a WAL UPDATE may read are checked there, on the names in the model, and the
+            // node-local state it may read is checked here, on the functions the statement actually
+            // instantiated. A cursor-typed function reads a table it names through the execution
+            // context (table_partitions, table_columns, wal_transactions), a node-local file
+            // (read_parquet), or this process's own state (all_tables, tables, query_activity,
+            // reader_pool, memory_metrics, ...) - none of which the WAL event pins the way it pins
+            // the RNG seed and the clock, so re-execution on another node can compute other rows.
+            // The purely generative ones, long_sequence and generate_series, are refused with the
+            // rest: telling them apart needs a list of names, and three rounds of this guard showed
+            // that a list of names is what goes stale.
+            //
+            // Keyed on the instantiated function's type rather than on the factory or the name,
+            // because one name can be both: sleep(long) is a cursor while sleep(boolean) is a plain
+            // boolean, and only the cursor one is a hazard. That is also what makes the check
+            // position-independent - a FROM source, a projected column and a predicate operand all
+            // reach FunctionParser#checkAndCreateFunction - which the earlier per-position checks
+            // were not.
+            if (functionParser.isCursorFunctionInstantiated()) {
+                throw SqlException.position(0)
+                        .put("UPDATE statements that read a cursor function are not supported for WAL tables")
+                        .put("; the statement is replicated as SQL and re-executed on every node, and a cursor function reads a table or node-local state that is not synchronised with this one, so nodes could write different data");
+            }
+
+            return new UpdateOperation(
+                    updateTableToken,
+                    metadata.getTableId(),
+                    metadata.getMetadataVersion(),
+                    lexer.getPosition(),
+                    updateColumnNames
+            );
+        }
+    }
+
+    private RecordCursorFactory generateUpdateFactory(
+            TableToken tableToken,
+            @Transient IQueryModel selectQueryModel,
+            @Transient IQueryModel updateQueryModel,
+            @Transient SqlExecutionContext executionContext
+    ) throws SqlException {
+        final IntList tableColumnTypes = selectQueryModel.getUpdateTableColumnTypes();
+        final ObjList<CharSequence> tableColumnNames = selectQueryModel.getUpdateTableColumnNames();
+
+        RecordCursorFactory updateToDataCursorFactory = generateSelectOneShot(selectQueryModel, executionContext, false);
+        try {
+            if (!updateToDataCursorFactory.supportsUpdateRowId(tableToken)) {
+                // in theory this should never happen because all valid UPDATE statements should result in
+                // a query plan with real row ids but better to check to prevent data corruption
+                throw SqlException.$(updateQueryModel.getModelPosition(), "Unsupported SQL complexity for the UPDATE statement");
+            }
+
+            // Check that updateDataFactoryMetadata match types of table to be updated exactly
+            final RecordMetadata updateDataFactoryMetadata = updateToDataCursorFactory.getMetadata();
+            for (int i = 0, n = updateDataFactoryMetadata.getColumnCount(); i < n; i++) {
+                int virtualColumnType = updateDataFactoryMetadata.getColumnType(i);
+                CharSequence updateColumnName = updateDataFactoryMetadata.getColumnName(i);
+                int tableColumnIndex = tableColumnNames.indexOf(updateColumnName);
+                int tableColumnType = tableColumnTypes.get(tableColumnIndex);
+
+                if (virtualColumnType != tableColumnType && !isIPv4UpdateCast(virtualColumnType, tableColumnType) && !isTimestampUpdateCast(virtualColumnType, tableColumnType)) {
+                    if (!ColumnType.isSymbolOrString(tableColumnType) || !ColumnType.isConvertibleFrom(virtualColumnType, ColumnType.STRING)) {
+                        if (tableColumnType != ColumnType.VARCHAR || !ColumnType.isConvertibleFrom(virtualColumnType, ColumnType.VARCHAR)) {
+                            // get column position
+                            ExpressionNode setRhs = updateQueryModel.getNestedModel().getColumns().getQuick(i).getAst();
+                            throw SqlException.inconvertibleTypes(setRhs.position, virtualColumnType, "", tableColumnType, updateColumnName);
+                        }
+                    }
+                }
+            }
+            return updateToDataCursorFactory;
+        } catch (Throwable th) {
+            updateToDataCursorFactory.close();
+            throw th;
+        }
+    }
+
+    private int getNextValidTokenPosition() throws SqlException {
+        while (lexer.hasNext()) {
+            CharSequence token = SqlUtil.fetchNext(lexer);
+            if (token == null) {
+                return -1;
+            } else if (!isSemicolon(token)) {
+                lexer.unparseLast();
+                return lexer.lastTokenPosition();
+            }
+        }
+
+        return -1;
+    }
+
+    private ViewDefinition getViewDefinition(CharSequence viewName) {
+        final TableToken viewToken = engine.getTableTokenIfExists(viewName);
+        if (viewToken == null) {
+            return null;
+        }
+        return engine.getViewGraph().getViewDefinition(viewToken);
+    }
+
+    private int goToQueryEnd() throws SqlException {
+        CharSequence token;
+        lexer.unparseLast();
+        while (lexer.hasNext()) {
+            token = SqlUtil.fetchNext(lexer);
+            if (token == null || isSemicolon(token)) {
+                break;
+            }
+        }
+
+        return lexer.getPosition();
+    }
+
+    private void insertValidateFunctionAndAddToList(
+            InsertModel model,
+            int tupleIndex,
+            ObjList<Function> valueFunctions,
+            RecordMetadata metadata,
+            int metadataTimestampIndex,
+            int insertColumnIndex,
+            int metadataColumnIndex,
+            Function function,
+            int functionPosition,
+            BindVariableService bindVariableService
+    ) throws SqlException {
+        final int columnType = metadata.getColumnType(metadataColumnIndex);
+        if (ColumnType.isUndefined(function.getType())) {
+            function.assignType(columnType, bindVariableService);
+        }
+
+        if (ColumnType.isConvertibleFrom(function.getType(), columnType)) {
+            if (metadataColumnIndex == metadataTimestampIndex) {
+                return;
+            }
+
+            valueFunctions.add(function);
+            listColumnFilter.add(metadataColumnIndex + 1);
+            return;
+        }
+
+        Function implicitCast = functionParser.createImplicitCast(functionPosition, function, columnType);
+        if (implicitCast != null) {
+            valueFunctions.add(implicitCast);
+            listColumnFilter.add(metadataColumnIndex + 1);
+            return;
+        }
+
+        throw SqlException.inconvertibleTypes(
+                functionPosition,
+                function.getType(),
+                model.getRowTupleValues(tupleIndex).getQuick(insertColumnIndex).token,
+                metadata.getColumnType(metadataColumnIndex),
+                metadata.getColumnName(metadataColumnIndex)
+        );
+    }
+
+    private boolean isAuditedView(TableToken tableToken) {
+        if (!tableToken.isView()) {
+            return false;
+        }
+        final ViewDefinition viewDefinition = engine.getViewGraph().getViewDefinition(tableToken);
+        return viewDefinition != null && viewDefinition.isAudited();
+    }
+
+    private boolean isCompatibleColumnTypeChange(int from, int to) {
+        return columnConversionSupport[ColumnType.tagOf(from)][ColumnType.tagOf(to)];
+    }
+
+    private void lightlyValidateInsertModel(InsertModel model) throws SqlException {
+        ExpressionNode tableNameExpr = model.getTableNameExpr();
+        if (tableNameExpr.type != ExpressionNode.LITERAL) {
+            throw SqlException.$(tableNameExpr.position, "literal expected");
+        }
+
+        int columnNameListSize = model.getColumnNameList().size();
+
+        if (columnNameListSize > 0) {
+            for (int i = 0, n = model.getRowTupleCount(); i < n; i++) {
+                if (columnNameListSize != model.getRowTupleValues(i).size()) {
+                    throw SqlException.$(
+                                    model.getEndOfRowTupleValuesPosition(i),
+                                    "row value count does not match column count [expected="
+                            ).put(columnNameListSize)
+                            .put(", actual=").put(model.getRowTupleValues(i).size())
+                            .put(", tuple=").put(i + 1)
+                            .put(']');
+                }
+            }
+        }
+    }
+
+    // TODO: We may need a better approach to let users specify which columns should have bloom filters
+    //  when converting partitions to Parquet. The current WITH clause approach only works for explicit
+    //  ALTER TABLE ... CONVERT PARTITION ... TO PARQUET statements. When automatic partition conversion
+    //  to Parquet is supported in the future, we will need a different mechanism (e.g., table-level
+    //  configuration or metadata) to specify bloom filter columns and FPP.
+    // Optimises the parsed SELECT of a view and collects the tables and columns it reads into
+    // dependencies, the set a view definition records. The parsed model keeps a "SELECT *" over a base
+    // table as a "*" wildcard, which optimise() expands into the columns the table has now; the wildcard
+    // is what lets the view keep covering columns added to the base table later, the view-as-security-
+    // boundary contract in Enterprise. The optimised model adds the columns the query reads that the
+    // parsed model does not name, such as those of a row-expiry read filter, which the parsed model hides
+    // behind its synthetic sub-query. optimise() changes the model in place, so the parsed references
+    // are collected before it runs.
+    private IQueryModel optimiseViewQuery(
+            IQueryModel parsedModel,
+            SqlExecutionContext executionContext,
+            LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies
+    ) throws SqlException {
+        dependencies.clear();
+        SqlUtil.collectTableAndColumnReferences(engine, parsedModel, dependencies);
+        final IQueryModel queryModel = optimiser.optimise(parsedModel, executionContext, this);
+        SqlUtil.collectTableAndColumnReferences(engine, queryModel, dependencies);
+        return queryModel;
+    }
+
+    private void parseConvertToParquetWithClause(
+            AlterOperationBuilder alterOperationBuilder,
+            TableRecordMetadata tableMetadata
+    ) throws SqlException {
+        CharSequence bloomFilterColumns = null;
+        double fpp = Double.NaN;
+
+        CharSequence tok = expectToken(lexer, "'('");
+        if (!Chars.equals(tok, '(')) {
+            throw SqlException.$(lexer.lastTokenPosition(), "'(' expected");
+        }
+
+        while (true) {
+            tok = expectToken(lexer, "bloom_filter_columns or fpp");
+
+            if (isBloomFilterColumnsKeyword(tok)) {
+                if (bloomFilterColumns != null) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "duplicate bloom_filter_columns option");
+                }
+                tok = expectToken(lexer, "'='");
+                if (!Chars.equals(tok, '=')) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "'=' expected");
+                }
+                tok = expectToken(lexer, "column names");
+                int bloomFilterColumnsPosition = lexer.lastTokenPosition();
+                bloomFilterColumns = unquote(tok);
+                CopyExportRequestTask.validateBloomFilterColumns(bloomFilterColumns, tableMetadata, bloomFilterColumnsPosition);
+            } else if (isFppKeyword(tok)) {
+                if (!Double.isNaN(fpp)) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "duplicate fpp option");
+                }
+                tok = expectToken(lexer, "'='");
+                if (!Chars.equals(tok, '=')) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "'=' expected");
+                }
+                tok = GenericLexer.unquote(expectToken(lexer, "fpp value"));
+                try {
+                    fpp = Numbers.parseDouble(tok);
+                    if (!Double.isFinite(fpp) || fpp <= 0 || fpp >= 1) {
+                        throw SqlException.$(lexer.lastTokenPosition(), "fpp must be between 0 and 1 (exclusive)");
+                    }
+                } catch (NumericException e) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "invalid fpp value");
+                }
+            } else {
+                throw SqlException.$(lexer.lastTokenPosition(), "bloom_filter_columns or fpp expected");
+            }
+
+            tok = SqlUtil.fetchNext(lexer);
+            if (tok == null) {
+                throw SqlException.$(lexer.getPosition(), "')' expected");
+            }
+            if (Chars.equals(tok, ')')) {
+                break;
+            }
+            if (!Chars.equals(tok, ',')) {
+                throw SqlException.$(lexer.lastTokenPosition(), "',' or ')' expected");
+            }
+        }
+
+        alterOperationBuilder.setParquetConversionOptions(bloomFilterColumns, fpp);
+    }
+
+    private void parseRebaseWal(TableToken tableToken, int tableNamePosition, SqlExecutionContext executionContext) throws SqlException {
+        CharSequence tok = expectToken(lexer, "'wal'");
+        if (!isWalKeyword(tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "'wal' expected");
+        }
+        if (!engine.isWalTable(tableToken)) {
+            throw SqlException.$(lexer.lastTokenPosition(), tableToken.getTableName()).put(" is not a WAL table.");
+        }
+        tok = SqlUtil.fetchNext(lexer);
+        String targetDir = null;
+        if (tok != null && !Chars.equals(tok, ';')) {
+            // ALTER TABLE <t> REBASE WAL INTO '<dirName>': the replica-side variant. Instead of minting a
+            // fresh dir, it reconstructs the table into the primary's already-chosen rebased dir so the
+            // replica follows the primary's rebase past a poison-pill WAL transaction.
+            if (!isIntoKeyword(tok)) {
+                throw SqlException.$(lexer.lastTokenPosition(), "'into' expected");
+            }
+            tok = expectToken(lexer, "target directory name");
+            targetDir = unquote(tok).toString();
+            try {
+                TableUtils.getTableIdFromTableDir(targetDir);
+            } catch (NumericException e) {
+                throw SqlException.$(lexer.lastTokenPosition(), "invalid rebase target directory [dir=").put(targetDir).put(']');
+            }
+            if (Chars.indexOf(targetDir, '/') != -1 || Chars.indexOf(targetDir, '\\') != -1 || Chars.contains(targetDir, "..")) {
+                throw SqlException.$(lexer.lastTokenPosition(), "invalid rebase target directory [dir=").put(targetDir).put(']');
+            }
+            tok = SqlUtil.fetchNext(lexer);
+            if (tok != null && !Chars.equals(tok, ';')) {
+                throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [token=").put(tok).put(']');
+            }
+        }
+        executionContext.getSecurityContext().authorizeRebaseWal(tableToken);
+        validateRebaseWal(tableNamePosition, tableToken);
+        if (!executionContext.isValidationOnly()) {
+            if (targetDir == null) {
+                engine.rebaseWalTable(tableToken);
+            } else {
+                engine.rebaseWalTableInto(tableToken, targetDir);
+            }
+        }
+        compiledQuery.ofRebaseWal();
+    }
+
+    private void parseResumeWal(TableToken tableToken, int tableNamePosition, SqlExecutionContext executionContext) throws SqlException {
+        CharSequence tok = expectToken(lexer, "'wal'");
+        if (!isWalKeyword(tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "'wal' expected");
+        }
+        if (!engine.isWalTable(tableToken)) {
+            throw SqlException.$(lexer.lastTokenPosition(), tableToken.getTableName()).put(" is not a WAL table.");
+        }
+
+        tok = SqlUtil.fetchNext(lexer); // optional FROM part
+        long fromTxn = -1;
+        if (tok != null && !Chars.equals(tok, ';')) {
+            if (isFromKeyword(tok)) {
+                tok = expectToken(lexer, "'transaction' or 'txn'");
+                if (!(isTransactionKeyword(tok) || isTxnKeyword(tok))) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "'transaction' or 'txn' expected");
+                }
+                CharSequence txnValue = expectToken(lexer, "transaction value");
+                try {
+                    fromTxn = Numbers.parseLong(txnValue);
+                } catch (NumericException e) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "invalid value [value=").put(txnValue).put(']');
+                }
+            } else {
+                throw SqlException.$(lexer.lastTokenPosition(), "'from' expected");
+            }
+        }
+        executionContext.getSecurityContext().authorizeResumeWal(tableToken);
+        if (fromTxn > 0) {
+            // Only a positive transaction can skip anything, see TableSequencerAPI.resumeTable().
+            engine.checkTableResumableFromTxn(tableToken, tableNamePosition);
+        }
+        alterTableResume(tableNamePosition, tableToken, fromTxn, executionContext);
+    }
+
+    private void parseSuspendWal(TableToken tableToken, int tableNamePosition, SqlExecutionContext executionContext) throws SqlException {
+        CharSequence tok = expectToken(lexer, "'wal'");
+        if (!isWalKeyword(tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "'wal' expected");
+        }
+        if (!engine.isWalTable(tableToken)) {
+            throw SqlException.$(lexer.lastTokenPosition(), tableToken.getTableName()).put(" is not a WAL table.");
+        }
+
+        ErrorTag errorTag = ErrorTag.NONE;
+        String errorMessage = "";
+
+        tok = SqlUtil.fetchNext(lexer); // optional WITH part
+        if (tok != null && !Chars.equals(tok, ';')) {
+            if (isWithKeyword(tok)) {
+                tok = expectToken(lexer, "error code/tag");
+                final CharSequence errorCodeOrTagValue = unquote(tok).toString();
+                try {
+                    final int errorCode = Numbers.parseInt(errorCodeOrTagValue);
+                    errorTag = ErrorTag.resolveTag(errorCode);
+                } catch (NumericException e) {
+                    try {
+                        errorTag = ErrorTag.resolveTag(errorCodeOrTagValue);
+                    } catch (CairoException cairoException) {
+                        throw SqlException.$(lexer.lastTokenPosition(), "invalid value [value=").put(errorCodeOrTagValue).put(']');
+                    }
+                }
+                final CharSequence comma = expectToken(lexer, "','");
+                if (!Chars.equals(comma, ',')) {
+                    throw SqlException.position(lexer.getPosition()).put("',' expected");
+                }
+                tok = expectToken(lexer, "error message");
+                errorMessage = unquote(tok).toString();
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok != null && !Chars.equals(tok, ';')) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [token=").put(tok).put(']');
+                }
+            } else {
+                throw SqlException.$(lexer.lastTokenPosition(), "'with' expected");
+            }
+        }
+        executionContext.getSecurityContext().authorizeSuspendWal(tableToken);
+        engine.checkTableSuspendable(tableToken, tableNamePosition);
+        alterTableSuspend(tableNamePosition, tableToken, errorTag, errorMessage, executionContext);
+    }
+
+    private void refreshViewDefinitionAfterExpiryPolicyChange(
+            String viewSql,
+            int viewSqlPosition,
+            SqlExecutionContext executionContext,
+            TableToken viewToken
+    ) throws SqlException {
+        final LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies = new LowerCaseCharSequenceObjHashMap<>();
+        try (SqlCompiler compiler = LegacyPlannerImpl.getSqlCompiler(engine)) {
+            int remainingRetries = maxRecompileAttempts;
+            for (; ; ) {
+                final long expiryPolicyVersion = engine.getMetadataCache().getExpiryPolicyVersion();
+                ExecutionModel executionModel = null;
+                boolean isSuccess = false;
+                // The in-flight exception, so the cleanup below can attach a close failure to it rather
+                // than replace it. Stays null on the retry path, where nothing is in flight.
+                Throwable failure = null;
+                try {
+                    // the same dependencies CREATE VIEW records, which the definition it replaces holds
+                    executionModel = compiler.generateViewExecutionModel(viewSql, executionContext, dependencies);
+                    final IQueryModel queryModel = executionModel.getQueryModel();
+                    LegacyViewGraph.validateNoCycle(viewToken, queryModel);
+                    try (RecordCursorFactory factory = compiler.generateSelectWithRetries(
+                            queryModel,
+                            null,
+                            executionContext,
+                            false
+                    )) {
+                        // Nobody is handed the row this reads, so the open is flagged like the probe in
+                        // executeCreateView: an audited view in the body must not record a read.
+                        final boolean wasMetadataProbe = executionContext.isMetadataProbe();
+                        executionContext.setMetadataProbe(true);
+                        final RecordCursor cursor;
+                        try {
+                            cursor = factory.getCursor(executionContext);
+                        } finally {
+                            executionContext.setMetadataProbe(wasMetadataProbe);
+                        }
+                        try (cursor) {
+                            cursor.hasNext();
+                        }
+                    }
+                    if (expiryPolicyVersion == engine.getMetadataCache().getExpiryPolicyVersion()) {
+                        engine.replaceViewDefinition(viewToken, viewSql, dependencies, blockFileWriter, path);
+                        if (expiryPolicyVersion == engine.getMetadataCache().getExpiryPolicyVersion()) {
+                            isSuccess = true;
+                            return;
+                        }
+                    }
+                } catch (TableReferenceOutOfDateException e) {
+                    if (remainingRetries == 0) {
+                        final SqlException sqlException = SqlException.$(viewSqlPosition, e.getFlyweightMessage());
+                        failure = sqlException;
+                        throw sqlException;
+                    }
+                } catch (Throwable th) {
+                    failure = th;
+                    throw th;
+                } finally {
+                    // Free the re-parsed model's table-name functions on every exit except a clean
+                    // success: on retry (the policy version moved) or on any thrown error the model still
+                    // owns them, and this nested pooled compiler has no outer catch to release them. On
+                    // success the probe cursor's try-with-resources has already closed the factory, which
+                    // took ownership of the functions and freed them. freeTableNameFunctions() nulls each
+                    // field, so it is a no-op wherever codegen already consumed them.
+                    if (!isSuccess) {
+                        freeTableNameFunctions(executionModel, failure);
+                    }
+                }
+                if (--remainingRetries < 0) {
+                    throw SqlException.position(viewSqlPosition).put("too many row-expiry policy changes during view compilation");
+                }
+            }
+        }
+    }
+
+    /**
+     * Rejects, before WAL submission, CONVERT PARTITION or DETACH PARTITION of a delta-active
+     * partition, DETACH PARTITION of a read-only one, soft links included, and CONVERT PARTITION
+     * TO NATIVE of a read-only parquet one. TableWriter refuses the delta-active ones too, and WAL
+     * apply would skip the whole ALTER. Read-only can be local, as a soft link's is, so the writer
+     * detaches it. The writer refuses a read-only conversion, which would suspend WAL apply. A
+     * partition already in the target format stays the usual no-op. Checks the partitions that
+     * {@code filter} selects, or else the one at {@code listedTimestamp}.
+     */
+    private void rejectPartitionChange(
+            TableReader reader,
+            TableToken tableToken,
+            @Nullable Function filter,
+            long listedTimestamp,
+            int action,
+            int position
+    ) throws SqlException {
+        final TxReader txFile = reader.getTxFile();
+        final boolean isDetach = action == PartitionAction.DETACH;
+        final boolean toParquet = action == PartitionAction.CONVERT_TO_PARQUET;
+        if (toParquet && !txFile.hasAnyDeltaActive()) {
+            return;
+        }
+        for (int i = 0, n = txFile.getPartitionCount(); i < n; i++) {
+            final boolean isDeltaActive = txFile.isPartitionDeltaActive(i);
+            final boolean isRefused = isDetach
+                    ? isDeltaActive || txFile.isPartitionReadOnly(i)
+                    : txFile.isPartitionParquet(i) != toParquet && (isDeltaActive || (!toParquet && txFile.isPartitionReadOnly(i)));
+            if (!isRefused) {
+                continue;
+            }
+            final long partitionTimestamp = txFile.getPartitionTimestampByIndex(i);
+            final long logicalTimestamp = txFile.getPartitionFloor(partitionTimestamp);
+            final boolean selected;
+            if (filter != null) {
+                partitionFunctionRec.setTimestamp(logicalTimestamp);
+                selected = filter.getBool(partitionFunctionRec);
+            } else {
+                selected = logicalTimestamp == listedTimestamp;
+            }
+            if (!selected) {
+                continue;
+            }
+            throw SqlException.position(position)
+                    .put(switch (action) {
+                        case PartitionAction.DETACH -> isDeltaActive
+                                ? "cannot detach partition, partition is delta-active [table="
+                                : "cannot detach partition, partition is read-only [table=";
+                        case PartitionAction.CONVERT_TO_PARQUET ->
+                                "cannot convert partition to parquet, partition is delta-active [table=";
+                        default -> isDeltaActive
+                                ? "cannot convert parquet partition to native, partition is delta-active [table="
+                                : txFile.isPartitionRemote(i)
+                                  ? "cannot convert parquet partition to native, partition is in cold storage and read-only;"
+                                    + " query it in place, or copy its rows into another table [table="
+                                  : "cannot convert parquet partition to native, partition is read-only [table=";
+                    })
+                    .put(tableToken.getTableName())
+                    .put(", partition=").put(formatPartitionName(reader, logicalTimestamp))
+                    .put(']');
+        }
+    }
+
+    // A table the principal may not see fails exactly like a missing one, before the statement reads
+    // any of its metadata, e.g. validates the column names of an INSERT against it. ALTER TABLE uses
+    // tableExistsOrFailForWal(), which also lets WAL recovery name such a table.
+    private TableToken tableExistsOrFail(int position, CharSequence tableName, SqlExecutionContext executionContext) throws SqlException {
+        if (executionContext.getTableStatus(path, tableName) != TableUtils.TABLE_EXISTS) {
+            throw SqlException.tableDoesNotExist(position, tableName);
+        }
+        final TableToken token = executionContext.getVisibleTableTokenIfExists(tableName);
+        if (token == null) {
+            throw SqlException.tableDoesNotExist(position, tableName);
+        }
+        return token;
+    }
+
+    private TableToken tableExistsOrFailForWal(int position, CharSequence tableName, SqlExecutionContext executionContext) throws SqlException {
+        if (executionContext.getTableStatus(path, tableName) != TableUtils.TABLE_EXISTS) {
+            throw SqlException.tableDoesNotExist(position, tableName);
+        }
+        final TableToken token = executionContext.getTableTokenIfExists(tableName);
+        if (token == null) {
+            throw SqlException.tableDoesNotExist(position, tableName);
+        }
+        final SecurityContext securityContext = executionContext.getSecurityContext();
+        if (!securityContext.isTableVisible(token)) {
+            // Only WAL recovery can name an otherwise invisible table. Check permission before
+            // reading its kind or metadata; an unauthorized caller still sees a missing table.
+            final CharSequence action = SqlUtil.fetchNext(lexer);
+            try {
+                if (action != null && isResumeKeyword(action)) {
+                    securityContext.authorizeResumeWal(token);
+                } else if (action != null && isRebaseKeyword(action)) {
+                    securityContext.authorizeRebaseWal(token);
+                } else if (action != null && isSuspendKeyword(action)) {
+                    securityContext.authorizeSuspendWal(token);
+                } else {
+                    throw SqlException.tableDoesNotExist(position, tableName);
+                }
+            } catch (CairoException e) {
+                if (!e.isAuthorizationError()) {
+                    throw e;
+                }
+                throw SqlException.tableDoesNotExist(position, tableName);
+            } finally {
+                if (action != null) {
+                    lexer.unparseLast();
+                }
+            }
+        }
+        return token;
+    }
+
+    private void validateAndOptimiseInsertAsSelect(SqlExecutionContext executionContext, InsertModel model) throws SqlException {
+        final IQueryModel queryModel = optimiser.optimise(model.getQueryModel(), executionContext, this);
+        int columnNameListSize = model.getColumnNameList().size();
+        if (columnNameListSize > 0 && queryModel.getBottomUpColumns().size() != columnNameListSize) {
+            throw SqlException.$(model.getTableNameExpr().position, "column count mismatch");
+        }
+        model.setQueryModel(queryModel);
+    }
+
+    // A view the principal may not see fails exactly like a missing one, see tableExistsOrFail().
+    private TableToken viewExistsOrFail(CharSequence viewName, SqlExecutionContext executionContext, SqlException notExistException) throws SqlException {
+        if (executionContext.getTableStatus(path, viewName) != TableUtils.TABLE_EXISTS) {
+            throw notExistException;
+        }
+        final TableToken viewToken = executionContext.getVisibleTableTokenIfExists(viewName);
+        if (viewToken == null) {
+            throw notExistException;
+        }
+        return viewToken;
+    }
+
+    /**
+     * Closes every table-name function still attached to a query model the current attempt allocated,
+     * and empties each slot before closing it. The pool position bounds the sweep, so a model stays
+     * reachable here even when an optimiser rewrite disconnects it from the model graph the caller
+     * holds. Detaching first also makes a repeated sweep, or a graph walk that ran ahead of this one,
+     * a no-op rather than a double close.
+     * <p>
+     * The sweep visits every slot even when a close throws.
+     *
+     * @param queryModelPool the pool that allocated the attempt's models, or null when compiler
+     *                       construction failed before the pool was initialized
+     * @param failure        the caller's in-flight failure, or null when it has none
+     * @return the failure to propagate: the caller's own failure when it passed one, carrying any
+     * close failures as suppressed exceptions; otherwise the first close failure with the later ones
+     * suppressed, or null when every close succeeded
+     */
+    static @Nullable Throwable freePooledTableNameFunctions(@Nullable ObjectPool<QueryModel> queryModelPool, @Nullable Throwable failure) {
+        Throwable outcome = failure;
+        if (queryModelPool == null) {
+            return outcome;
+        }
+        for (int i = 0, n = queryModelPool.getPos(); i < n; i++) {
+            outcome = Misc.freeBestEffort(outcome, queryModelPool.peekQuick(i).takeTableNameFunction());
+        }
+        return outcome;
+    }
+
+    static void configureLexer(GenericLexer lexer) {
+        for (int i = 0, k = sqlControlSymbols.size(); i < k; i++) {
+            lexer.defineSymbol(sqlControlSymbols.getQuick(i));
+        }
+        // note: it's safe to take any registry (new or old) because we don't use precedence here
+        OperatorRegistry registry = OperatorExpression.getRegistry();
+        for (int i = 0, k = registry.operators.size(); i < k; i++) {
+            OperatorExpression op = registry.operators.getQuick(i);
+            if (op.isSymbol()) {
+                lexer.defineSymbol(op.operator.token);
+            }
+        }
+    }
+
+    protected static CharSequence expectToken(GenericLexer lexer, CharSequence expected) throws SqlException {
+        CharSequence tok = SqlUtil.fetchNext(lexer);
+
+        if (tok == null) {
+            throw SqlException.position(lexer.getPosition()).put(expected).put(" expected");
+        }
+
+        if (Chars.equals(tok, ';')) {
+            throw SqlException.position(lexer.lastTokenPosition()).put(expected).put(" expected");
+        }
+        return tok;
+    }
+
+    protected static CharSequence maybeExpectToken(GenericLexer lexer, CharSequence expected, boolean expect) throws SqlException {
+        CharSequence tok = SqlUtil.fetchNext(lexer);
+        if (expect) {
+            if (tok == null) {
+                throw SqlException.position(lexer.getPosition()).put(expected).put(" expected");
+            }
+
+            if (Chars.equals(tok, ';')) {
+                throw SqlException.position(lexer.lastTokenPosition()).put(expected).put(" expected");
+            }
+        }
+        return tok;
+    }
+
+    protected void addColumnSuffix(
+            @Transient SqlExecutionContext executionContext,
+            @Nullable CharSequence tok,
+            TableToken tableToken,
+            AlterOperationBuilder alterOperationBuilder
+    ) throws SqlException {
+        if (tok != null) {
+            throw SqlException.$(lexer.lastTokenPosition(), "',' expected");
+        }
+    }
+
+    protected void alterTableDropExpire(TableToken tableToken, int tableNamePosition, TableRecordMetadata tableMetadata) throws SqlException {
+        CharSequence tok = SqlUtil.fetchNext(lexer);
+        // Accept an optional ROWS keyword so DROP EXPIRE and DROP EXPIRE ROWS are both valid, symmetric with
+        // SET EXPIRE ROWS.
+        if (tok != null && isRowsKeyword(tok)) {
+            tok = SqlUtil.fetchNext(lexer);
+        }
+        if (tok != null && !isSemicolon(tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put("] while trying to drop row-expiry policy");
+        }
+        // null predicate + 0 interval encodes "no policy" — clears the EXPIRE ROWS policy.
+        final AlterOperationBuilder dropExpire = alterOperationBuilder.ofSetExpire(
+                tableNamePosition,
+                tableToken,
+                tableMetadata.getTableId(),
+                null,
+                0
+        );
+        compiledQuery.ofAlter(dropExpire.build());
+    }
+
+    protected void alterTableOrMatViewSetTtl(TableToken tableToken, int tableNamePosition, TableRecordMetadata tableMetadata) throws SqlException {
+        final int ttlValuePos = lexer.getPosition();
+        final int ttlHoursOrMonths = SqlParser.parseTtlHoursOrMonths(lexer);
+        try (TableMetadata metadata = engine.getTableMetadata(tableToken)) {
+            PartitionBy.validateTtlGranularity(metadata.getPartitionBy(), ttlHoursOrMonths, ttlValuePos);
+        }
+        final AlterOperationBuilder setTtl = alterOperationBuilder.ofSetTtl(
+                tableNamePosition,
+                tableToken,
+                tableMetadata.getTableId(),
+                ttlHoursOrMonths
+        );
+        compiledQuery.ofAlter(setTtl.build());
+    }
+
+    protected void alterTableSetExpire(SqlExecutionContext executionContext, TableToken tableToken, int tableNamePosition, TableRecordMetadata tableMetadata) throws SqlException {
+        // EXPIRE has already been consumed; parse "ROWS WHEN <predicate> [CLEANUP EVERY <dur>]"
+        // using the shared CREATE-path parser (inCreateTable=false: ';'/EOF are the only boundaries).
+        final SqlParser.ExpireRowsClause clause = parser.parseExpireRowsClause(lexer, false, tableToken);
+        if (clause.nextTok != null && !isSemicolon(clause.nextTok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(clause.nextTok).put("] while trying to set row-expiry policy");
+        }
+        // EXPIRE ROWS is a materialized-view feature (a plain table uses TTL; ALTER ... SET EXPIRE on a base
+        // table is rejected earlier in the grammar). On an AGGREGATING (non-passthrough) view it is ALLOWED but
+        // advisory: physical cleanup reclaims rows a later incremental/full refresh can regenerate from the
+        // base, so reclamation only "sticks" when base-table retention is aligned with the expiry horizon.
+        // Reads stay correct regardless (the read filter is authoritative); warn rather than reject.
+        final MatViewDefinition def = tableToken.isMatView() ? engine.getDependentViewGraph().getViewDefinition(tableToken) : null;
+        if (def == null) {
+            throw SqlException.$(tableNamePosition, "EXPIRE ROWS is only supported on materialized views");
+        }
+        if (!def.isPassthrough()) {
+            LOG.advisory().$("EXPIRE ROWS set on an aggregating (non-passthrough) materialized view; a later refresh may regenerate expired rows - align base-table retention (TTL) with the expiry horizon [view=")
+                    .$safe(tableToken.getTableName()).I$();
+        }
+        final ExpiryValidationResult validationResult;
+        if (RowExpiryUtil.isKeepLatest(clause.predicate) || RowExpiryUtil.isKeepBy(clause.predicate) || RowExpiryUtil.isWindow(clause.predicate)) {
+            validationResult = validateAlterRelativePolicy(executionContext, tableToken, tableMetadata, clause.predicate, clause.predicatePos);
+        } else {
+            validationResult = validateExpiryPredicate(executionContext, tableMetadata, clause.predicate, clause.predicatePos);
+            authorizeExpiryPredicateSelect(executionContext, tableToken, tableMetadata, validationResult);
+        }
+        warnIfExpiryKeepsDisk(validationResult, clause.predicate, tableToken.getTableName());
+        final AlterOperationBuilder setExpire = alterOperationBuilder.ofSetExpire(
+                tableNamePosition,
+                tableToken,
+                tableMetadata.getTableId(),
+                clause.predicate,
+                clause.cleanupIntervalMicros
+        );
+        compiledQuery.ofAlter(setExpire.build());
+    }
+
+    /**
+     * Parses, binds, and classifies an EXPIRE ROWS predicate against existing table metadata. A successful
+     * bind returns the reusable determinism/clock/monotonicity result; any SQL/Cairo error surfaces as a clear
+     * SqlException positioned at the predicate.
+     */
+    private ExpiryValidationResult validateExpiryPredicate(
+            SqlExecutionContext executionContext,
+            RecordMetadata metadata,
+            String predicate,
+            int predicatePos
+    ) throws SqlException {
+        try (SqlCompiler compiler = LegacyPlannerImpl.getSqlCompiler(engine)) {
+            return compiler.validateExpiryPredicateOnMetadata(executionContext, metadata, predicate, predicatePos);
+        }
+    }
+
+    /**
+     * Validates the EXPIRE ROWS predicate captured by a CREATE statement BEFORE the object is created,
+     * binding it against the columns the object will have. This is purely structural: it parses + binds
+     * the expression against {@code metadata} and checks the result is boolean. It touches no table, so
+     * it needs no SELECT permission (unlike ALTER ... SET EXPIRE, see {@link #authorizeExpiryPredicateSelect})
+     * and, running before {@code createMatView}, cannot leave a half-created object behind on failure.
+     * Only a CREATE MATERIALIZED VIEW scalar WHEN policy reaches this (EXPIRE ROWS is rejected on plain
+     * CREATE TABLE / CTAS / LIKE at parse time), so {@code selectMetadata} is always the view's defining-
+     * SELECT output metadata.
+     */
+    private ExpiryValidationResult validateCreateExpiryPredicate(
+            SqlExecutionContext executionContext,
+            CreateTableOperation createTableOp,
+            RecordMetadata selectMetadata
+    ) throws SqlException {
+        final String predicate = createTableOp.getExpiryPredicate();
+        if (predicate == null) {
+            return ExpiryValidationResult.MONOTONIC;
+        }
+        // Only reachable for a CREATE MATERIALIZED VIEW scalar WHEN policy (EXPIRE ROWS is rejected on plain
+        // CREATE TABLE / CTAS / LIKE), so selectMetadata is always the view's defining-SELECT metadata.
+        // Borrow a separate compiler so we don't disturb this one's in-flight CREATE (lexer/parser state).
+        // The error caret points at the table name rather than the predicate: the predicate's source
+        // position is not threaded through CreateTableOperation, and the message already names the cause.
+        try (SqlCompiler validationCompiler = LegacyPlannerImpl.getSqlCompiler(engine)) {
+            return validationCompiler.validateExpiryPredicateOnMetadata(
+                    executionContext, selectMetadata, predicate, createTableOp.getTableNamePosition());
+        }
+    }
+
+    /**
+     * Validates a CREATE MATERIALIZED VIEW EXPIRE ROWS policy before the view exists. EXPIRE ROWS is allowed
+     * on an aggregating (non-passthrough) view too — advisory only, so it logs a warning rather than
+     * rejecting (a later refresh may regenerate reclaimed rows; reads stay correct via the authoritative
+     * read filter). The relative KEEP LATEST / window modes additionally require their key/value columns to
+     * resolve against the view's columns (with a designated timestamp present); a scalar WHEN predicate is
+     * then validated structurally. Only a plain CREATE TABLE / CTAS / LIKE EXPIRE ROWS is rejected outright.
+     */
+    private void validateCreateMatViewExpiryPolicy(
+            SqlExecutionContext executionContext,
+            CreateMatViewOperation createMatViewOp,
+            CreateTableOperation createTableOp,
+            RecordMetadata selectMetadata
+    ) throws SqlException {
+        final String predicate = createTableOp.getExpiryPredicate();
+        if (predicate == null) {
+            return;
+        }
+        final int pos = createTableOp.getTableNamePosition();
+        // EXPIRE ROWS on an AGGREGATING (non-passthrough) view is ALLOWED but advisory. The cleanup job
+        // physically reclaims rows; a passthrough view mirrors base rows 1:1 so reclamation is permanent, but
+        // an aggregating view's rows are DERIVED - a later incremental/full refresh can regenerate a reclaimed
+        // row from base rows that still exist. Reads stay correct (the read filter is authoritative); physical
+        // reclamation only "sticks" when base-table retention is aligned with the expiry horizon. Warn so the
+        // operator can tune retention rather than rejecting the policy outright.
+        if (!createMatViewOp.isPassthrough()) {
+            LOG.advisory().$("EXPIRE ROWS on an aggregating (non-passthrough) materialized view; a later refresh may regenerate expired rows - align base-table retention (TTL) with the expiry horizon [view=")
+                    .$safe(createTableOp.getTableName()).I$();
+        }
+        final ExpiryValidationResult validationResult;
+        if (RowExpiryUtil.isStructuralPolicy(predicate)) {
+            // The view does not exist yet, so the probe reads its defining SELECT and selects every column.
+            validationResult = validateStructuralExpiryPolicy(
+                    executionContext,
+                    "(" + createTableOp.getSelectText() + ")",
+                    selectMetadata,
+                    predicate,
+                    false,
+                    pos
+            );
+        } else {
+            validationResult = validateCreateExpiryPredicate(executionContext, createTableOp, selectMetadata);
+        }
+        warnIfExpiryKeepsDisk(validationResult, predicate, createTableOp.getTableName());
+    }
+
+    /**
+     * Logs an advisory when the background cleanup job will not free disk space for this EXPIRE ROWS policy:
+     * a structural KEEP/window mode, or a non-monotonic scalar predicate. Such a policy is query-correct (the
+     * read filter is authoritative) but its expired rows keep occupying disk, because cleanup skips a policy
+     * whose rows a later read may have to show again ({@link RowExpiryUtil#isReclaimingPolicy}). The caller
+     * reuses the classification returned by validation, so this advisory does not compile the expression
+     * again. {@code materialized_views().expire_enforcement} reports the same verdict per view.
+     */
+    private void warnIfExpiryKeepsDisk(
+            ExpiryValidationResult validationResult,
+            CharSequence predicate,
+            CharSequence objectName
+    ) {
+        if (!RowExpiryUtil.isReclaimingPolicy(predicate, validationResult.isMonotonic())) {
+            LOG.advisory().$("EXPIRE ROWS policy hides rows without reclaiming disk; reads stay correct but physical cleanup is skipped [view=")
+                    .$safe(objectName).I$();
+        }
+    }
+
+    /**
+     * Validates the body of an ALTER ... SET EXPIRE ROWS relative/window policy (KEEP LATEST / KEEP
+     * HIGHEST|LOWEST / window WHEN): the target must be a materialized view (aggregating views are allowed
+     * with an advisory warning, emitted by the caller {@code alterTableSetExpire}), and the policy must
+     * resolve against its columns. (ALTER ... SET EXPIRE on a base table is rejected earlier in the grammar,
+     * so this only runs for materialized-view targets.)
+     */
+    private ExpiryValidationResult validateAlterRelativePolicy(
+            SqlExecutionContext executionContext,
+            TableToken tableToken,
+            TableRecordMetadata tableMetadata,
+            String predicate,
+            int position
+    ) throws SqlException {
+        // The mat-view target check (and the aggregating-view advisory) is handled for ALL modes by the
+        // caller (alterTableSetExpire); this only resolves the relative policy against the view.
+        // The probe opens a reader on the view, so a schema change to the view that applies between the
+        // probe's code generation and its getCursor() (an index, SYMBOL CAPACITY, TTL, another SET EXPIRE)
+        // fails it with TableReferenceOutOfDateException. No such change alters the view's column names or
+        // types, so the probe runs again against the new metadata version. A view dropped and re-created
+        // under the same name has a new table id, and the WAL writer rejects the ALTER when it executes.
+        // The probe reads the view without its current policy, the way a read sees the view once the new
+        // policy replaces it, so it asks for SELECT on the new policy's columns and not on the columns of
+        // the policy it replaces. The probe reads no other table: the parser has already rejected a window
+        // predicate whose sub-query reads anything but the view.
+        final TableToken previousExpiryRawReadTable = executionContext.getExpiryRawReadTable();
+        executionContext.setExpiryRawReadTable(tableToken);
+        try {
+            for (int remainingRetries = maxRecompileAttempts; ; remainingRetries--) {
+                try {
+                    return validateStructuralExpiryPolicy(
+                            executionContext,
+                            RowExpiryUtil.quoteIdentifier(tableToken.getTableName()),
+                            tableMetadata,
+                            predicate,
+                            true,
+                            position
+                    );
+                } catch (TableReferenceOutOfDateException e) {
+                    if (remainingRetries == 0) {
+                        throw SqlException.$(position, "too many ").put(e.getFlyweightMessage());
+                    }
+                    LOG.info().$("retrying EXPIRE ROWS probe [view=").$safe(tableToken.getTableName())
+                            .$(", reason=").$(e.getFlyweightMessage()).I$();
+                }
+            }
+        } finally {
+            executionContext.setExpiryRawReadTable(previousExpiryRawReadTable);
+        }
+    }
+
+    /**
+     * Binds {@link RowExpiryUtil#buildStrictBindKeepFilter} and refuses the policy when that fails. The
+     * strict form's type rules refuse a cross-type equality such as {@code s = 12345} on a {@code STRING}
+     * column, which binds on its own but casts every value to {@code INT} once rows are evaluated: every
+     * read and every sweep of the view would fail on the first non-numeric value, with an error that names
+     * neither the view's policy nor EXPIRE ROWS. They also refuse cross-type equalities that only match
+     * nothing, such as {@code k = 12345} on a {@code SYMBOL} column, because telling the two apart would
+     * mean evaluating rows.
+     * <p>
+     * The sweep compiles {@link RowExpiryUtil#buildRowExpiryKeepFilter}, which binds whenever the strict
+     * form does, so every policy this method accepts also sweeps.
+     * <p>
+     * A predicate whose implicit cast only fails once a row is evaluated and that is not a bare
+     * {@code <column> = <constant>} - {@code v < 'abc'} on a {@code DOUBLE} column - still gets through,
+     * here and in the bare bind above. Catching it would mean evaluating a row at DDL time, which makes
+     * acceptance depend on whether the view happens to hold data. Such a predicate fails as a plain
+     * {@code WHERE} clause too, so it is wrong in a way the author sees immediately.
+     */
+    private void validateExpiryKeepFilterBinds(
+            SqlExecutionContext executionContext,
+            RecordMetadata metadata,
+            CharSequence predicate,
+            int position
+    ) throws SqlException {
+        Function f = null;
+        try {
+            clear();
+            lexer.of(RowExpiryUtil.buildStrictBindKeepFilter(Chars.toString(predicate)));
+            f = functionParser.parseFunction(parser.expr(lexer, (QueryModel) null, this), metadata, executionContext);
+        } catch (SqlException | CairoException | ImplicitCastException e) {
+            final String reason = reasonOf(e);
+            throw SqlException.$(position, "invalid EXPIRE ROWS predicate: ").put(reason);
+        } finally {
+            Misc.free(f);
+        }
+    }
+
+    /**
+     * Rejects a policy whose threshold is a compile-time constant NULL, such as
+     * {@code ts < cast(null as timestamp)}, or an arithmetic expression that overflows onto the NULL
+     * sentinel, {@code ts < 4611686018427387904 * 2}. Such a policy expires nothing, which is always a
+     * mistake, and it is one the author cannot see: the source text reads as an ordinary timestamp.
+     * <p>
+     * The threshold comes from {@link #expiryOrderingThresholdNode}, which spans all four ordering
+     * operators with the timestamp on either side. That is what makes this check the whole answer for
+     * {@code SqlParser.isOperandProvablyNonNull}: the parser flips {@code NOT(ts <op> T)} to the bare
+     * comparison on the strength of DDL having evaluated {@code T}, and it flips every one of those
+     * orientations. A check that saw only {@code ts < T} would leave {@code ts > T} storing a NULL
+     * threshold that reads as an empty view while every row stays on disk.
+     * <p>
+     * Binding the threshold answers this with the engine's own arithmetic. QuestDB types integer literals
+     * and promotes products by rules that are not evident from the source text - {@code 86400*1000000}
+     * comes out LONG and correct, {@code 1073741824*2} comes out INT and NULL - so a check that folded the
+     * expression itself would have to reproduce those rules to stay in step with what reads compute.
+     * <p>
+     * Only {@link Function#isConstant()} counts. A runtime constant such as {@code now() - c} evaluates
+     * against whatever clock this DDL happens to see, so a non-NULL answer now says nothing about a read
+     * a month later; {@code SqlParser.isOperandProvablyNonNull} covers that case by refusing to flip it.
+     * <p>
+     * {@link #expiryTimestampThreshold} evaluates a threshold too but cannot stand in for this: it
+     * returns {@code LONG_NULL} for a dozen unrelated reasons - no designated timestamp, the opposite
+     * comparison direction, a non-timestamp threshold type - so it cannot tell a NULL threshold from a
+     * shape it simply does not handle.
+     * <p>
+     * It also rejects a CHAR threshold that does not convert to a number ({@link #isInconvertibleCharConstant}),
+     * such as {@code ts < 'a'}. The bind accepts it, but every read of the view fails on the first row.
+     */
+    private void rejectUnusableConstantExpiryThreshold(
+            SqlExecutionContext executionContext,
+            RecordMetadata metadata,
+            CharSequence predicate,
+            CharSequence timestampColumn,
+            int position
+    ) throws SqlException {
+        final boolean isNullThreshold;
+        final boolean isInconvertibleCharThreshold;
+        Function t = null;
+        try {
+            clear();
+            lexer.of(predicate);
+            final ExpressionNode node = parser.expr(lexer, (QueryModel) null, this);
+            final ExpressionNode thresholdNode = expiryOrderingThresholdNode(node, metadata, timestampColumn);
+            if (thresholdNode == null) {
+                return;
+            }
+            t = functionParser.parseFunction(thresholdNode, metadata, executionContext);
+            if (t == null || !t.isConstant()) {
+                return;
+            }
+            t.init(null, executionContext);
+            isNullThreshold = isNullConstant(t);
+            isInconvertibleCharThreshold = isInconvertibleCharConstant(t);
+        } catch (SqlException | CairoException | ImplicitCastException e) {
+            // The whole-predicate bind above already reported anything that matters; a failure here only
+            // means the threshold could not be evaluated, which is not itself a reason to reject.
+            return;
+        } finally {
+            Misc.free(t);
+        }
+        // The caret carries the caller's position, as every other error here does: this lexes the predicate
+        // on its own, so a node position from it would be an offset into the predicate text rather than into
+        // the statement the user wrote.
+        if (isNullThreshold) {
+            throw SqlException.$(position, "invalid EXPIRE ROWS predicate: the threshold is NULL, so no row can ever expire");
+        }
+        if (isInconvertibleCharThreshold) {
+            throw SqlException.$(position, "invalid EXPIRE ROWS predicate: a CHAR threshold must be a digit, or every read of the view fails");
+        }
+    }
+
+    /**
+     * The window/keep-by read filter projects a synthetic boolean column named {@link RowExpiryUtil#KEEP_COLUMN}.
+     * If the view already has a column with that name, {@code SELECT *, CASE ... <KEEP_COLUMN>} would be
+     * ambiguous and every read of the view would fail, so reject the policy at definition time instead.
+     */
+    private void rejectKeepColumnCollision(RecordMetadata metadata, int position) throws SqlException {
+        if (metadata.getColumnIndexQuiet(RowExpiryUtil.KEEP_COLUMN) >= 0) {
+            throw SqlException.$(position, "EXPIRE ROWS KEEP / window retention cannot be used on a view with a column named '")
+                    .put(RowExpiryUtil.KEEP_COLUMN).put('\'');
+        }
+    }
+
+    /**
+     * Validates a structural EXPIRE ROWS policy - KEEP LATEST, KEEP [N] HIGHEST/LOWEST, or a window WHEN -
+     * against {@code metadata}, then compiles the query a read of the policied object runs.
+     * <p>
+     * Every mode ends at the same compile probe, which runs when the user submits the statement but not
+     * when WAL apply replays it. Resolving the policy's column names answers half the
+     * question: {@link SqlParser} splices the stored policy text into a generated query, and that query is
+     * stricter than name resolution. It refuses a KEEP LATEST key of a type LATEST ON has no support for, a
+     * key whose unquoted name is a SQL keyword, a keep column with no usable {@code max()}. A policy that
+     * passes DDL and then fails to compile leaves the view unreadable for every query, {@code count()}
+     * included, until {@code DROP EXPIRE}, and reports an error naming a clause its author never wrote.
+     *
+     * @param source             what the probe selects from: the view's defining SELECT, parenthesised, at
+     *                           CREATE (the view does not exist yet); the quoted view name at ALTER
+     * @param isNarrowProjection true when the probe selects only the policy's own output instead of every
+     *                           column, which ALTER needs; see {@link #probeExpiryPolicyRead}
+     */
+    private ExpiryValidationResult validateStructuralExpiryPolicy(
+            SqlExecutionContext executionContext,
+            String source,
+            RecordMetadata metadata,
+            String predicate,
+            boolean isNarrowProjection,
+            int position
+    ) throws SqlException {
+        if (RowExpiryUtil.isKeepLatest(predicate)) {
+            validateKeepLatestColumns(metadata, predicate, position);
+        } else {
+            rejectKeepColumnCollision(metadata, position);
+            if (RowExpiryUtil.isKeepBy(predicate)) {
+                validateKeepByColumn(metadata, predicate, position);
+            }
+        }
+        // The probe runs when the user submits the statement, and not when WAL apply replays the stored
+        // SET EXPIRE. By then the probe has already accepted the policy for this view, and a view's column
+        // names and types cannot change in between, so running it again checks nothing new. A second run
+        // can fail only for reasons unrelated to the policy: the probe borrows a compiler and a view reader
+        // and opens the view's files, and any of these can fail when the server is under load.
+        if (!executionContext.isWalApplication()) {
+            probeExpiryPolicyRead(executionContext, source, tsName(metadata), predicate, isNarrowProjection, position);
+        }
+        return RowExpiryUtil.isWindow(predicate)
+                ? ExpiryValidationResult.NON_MONOTONIC
+                : ExpiryValidationResult.MONOTONIC;
+    }
+
+    /**
+     * Compiles (and opens) the query a read of a policied object runs for a structural policy, spelled the
+     * way {@link SqlParser} rewrites a reference to the view: a {@code LATEST ON} sub-query for KEEP LATEST,
+     * a projection-CASE keep query for KEEP HIGHEST/LOWEST and window WHEN. Any compile or bind error - an
+     * unknown column, a key type or spelling the rewrite cannot use, window syntax - surfaces as a clear
+     * "invalid EXPIRE ROWS policy".
+     * <p>
+     * The probe compiles and opens, and stops there. {@code LIMIT 0} bounds it, but the bound alone does not
+     * make it free: {@code LimitRecordCursor.toTop()} passes the zero row count down as
+     * {@code skipRows(0, 0)}, and the latest-by cursors that back a multi-key or non-SYMBOL
+     * {@code KEEP LATEST} build their whole result there rather than treating a zero count as nothing to do.
+     * A DDL statement therefore reads no rows only while nothing advances the cursor.
+     * <p>
+     * No row is evaluated, so a per-row implicit cast cannot surface here - the keep column's type is
+     * checked up front instead, by {@link #validateKeepByColumn}.
+     * <p>
+     * The probe compiles under the caller's context, so it also asks for the caller's SELECT on every column
+     * it uses: {@code SqlOptimiser.authorizeColumnAccess} runs after the optimiser drops the columns a query
+     * does not use. A narrow projection selects only the policy's own output - the PARTITION BY keys for
+     * KEEP LATEST, the keep column for the other modes - so the optimiser keeps only the columns the policy
+     * reads, and the probe asks for SELECT on exactly those. A read through the policy asks for the same
+     * columns, so a caller who can read the view through a policy can also set it. At ALTER the probe reads
+     * the view without its current policy (see {@link #validateAlterRelativePolicy}), so replacing a policy
+     * asks for SELECT on the new policy's columns and not on the replaced policy's. ALTER needs the narrow
+     * projection, because it probes the existing view under the caller's column grants. CREATE selects every
+     * column: it probes the view's defining SELECT, whose columns CREATE requires anyway, and a narrow
+     * projection would let the optimiser drop columns inside that query too.
+     * <p>
+     * A narrow probe does not carry the view's other columns through {@code LATEST ON} or the keep
+     * projection. {@code RowExpiryPolicyAcceptanceTest} covers that: it sets each policy of its matrix
+     * through ALTER on a view with a column of each type, and reads the view back with {@code SELECT *}.
+     */
+    private void probeExpiryPolicyRead(
+            SqlExecutionContext executionContext,
+            String source,
+            CharSequence designatedTs,
+            String predicate,
+            boolean isNarrowProjection,
+            int position
+    ) throws SqlException {
+        final String sql;
+        if (RowExpiryUtil.isKeepLatest(predicate)) {
+            final CharSequence keys = RowExpiryUtil.keepLatestKeys(predicate);
+            sql = "SELECT " + (isNarrowProjection ? keys : "*") + " FROM (SELECT * FROM " + source + " LATEST ON "
+                    + RowExpiryUtil.quoteIdentifier(designatedTs) + " PARTITION BY " + keys + ") LIMIT 0";
+        } else {
+            final String windowPred = RowExpiryUtil.windowPredicate(predicate, designatedTs);
+            sql = "SELECT " + (isNarrowProjection ? RowExpiryUtil.KEEP_COLUMN : "*") + " FROM (SELECT *, CASE WHEN ("
+                    + windowPred + ") THEN false ELSE true END " + RowExpiryUtil.KEEP_COLUMN + " FROM " + source
+                    + ") WHERE " + RowExpiryUtil.KEEP_COLUMN + " LIMIT 0";
+        }
+        try (SqlCompiler compiler = LegacyPlannerImpl.getSqlCompiler(engine)) {
+            try (RecordCursorFactory factory = compiler.compile(sql, executionContext).getRecordCursorFactory()) {
+                // Opening the cursor resolves column references and types that compilation leaves until a
+                // reader is held. Nothing advances it: a latest-by cursor computes its result in the first
+                // hasNext(), and asking for one row of a policy probe is a full backward scan of the view.
+                // Nobody is handed a row, so the open is flagged like the probe in executeCreateView: an
+                // audited view the probe reads must not record a read.
+                final boolean wasMetadataProbe = executionContext.isMetadataProbe();
+                executionContext.setMetadataProbe(true);
+                final RecordCursor cursor;
+                try {
+                    cursor = factory.getCursor(executionContext);
+                } finally {
+                    executionContext.setMetadataProbe(wasMetadataProbe);
+                }
+                //noinspection EmptyTryBlock
+                try (cursor) {
+                    // empty
+                }
+            }
+        } catch (SqlException | CairoException | ImplicitCastException e) {
+            // A missing SELECT on a column the probe reads keeps its identity, so the caller reports it as
+            // forbidden, the same way the scalar policy's authorizeExpiryPredicateSelect does.
+            if (e instanceof CairoException ce && ce.isAuthorizationError()) {
+                throw ce;
+            }
+            // ImplicitCastException extends RuntimeException, not CairoException: a raw WHEN window
+            // predicate can still cast per row, and it must read as an invalid policy, not as an ICE.
+            final String reason = reasonOf(e);
+            throw SqlException.$(position, "invalid EXPIRE ROWS policy: ").put(reason);
+        }
+    }
+
+    private static CharSequence tsName(RecordMetadata metadata) {
+        final int i = metadata.getTimestampIndex();
+        return i >= 0 ? metadata.getColumnName(i) : null;
+    }
+
+    /**
+     * Validates a KEEP [N] HIGHEST/LOWEST policy against {@code metadata}. The keep column must resolve, and
+     * its type must support the comparison the policy desugars to. The bare form takes the group extreme
+     * ({@code <col> < max(<col>) OVER (...)}), which only the types of {@link RowExpiryUtil#isKeepExtremeType}
+     * support; the top-N form orders by the column instead, so it accepts any comparable type. Checking the
+     * type here is what keeps a text-ish keep column from defining a view whose every read throws an implicit
+     * cast error - the {@code LIMIT 0} probe in {@link #probeExpiryPolicyRead} evaluates no row and so cannot
+     * see it. It also catches LONG256, which the probe accepts because its cast to LONG succeeds, silently
+     * ranking rows by the low 64 bits. Every PARTITION BY key must resolve too: the parser captures that list
+     * as raw text and {@link RowExpiryUtil#buildKeepByPredicate} drops it into {@code OVER (PARTITION BY ...)}
+     * verbatim, so anything the key check lets through becomes part of the predicate. The optional list is
+     * what separates this from {@link #validateKeepLatestColumns}, which requires one. {@code stored} is the
+     * encoded policy.
+     */
+    private void validateKeepByColumn(RecordMetadata metadata, CharSequence stored, int position) throws SqlException {
+        final RowExpiryUtil.KeepBy keepBy = new RowExpiryUtil.KeepBy(stored);
+        final CharSequence col = keepBy.col;
+        final int index = metadata.getColumnIndexQuiet(col);
+        if (index < 0) {
+            throw SqlException.$(position, "invalid EXPIRE ROWS KEEP column: ").put(col);
+        }
+        final String mode = keepBy.isHighest ? "KEEP HIGHEST" : "KEEP LOWEST";
+        validateKeepPartitionByColumns(metadata, keepBy.keys, mode, position);
+        final int type = metadata.getColumnType(index);
+        if (keepBy.n > 0) {
+            if (!ColumnType.isComparable(type)) {
+                throw SqlException.$(position, "EXPIRE ROWS KEEP <N> HIGHEST/LOWEST requires an orderable column, but '")
+                        .put(col).put("' is ").put(ColumnType.nameOf(type));
+            }
+            return;
+        }
+        if (!RowExpiryUtil.isKeepExtremeType(type)) {
+            throw SqlException.$(position, "EXPIRE ROWS KEEP HIGHEST/LOWEST requires a BYTE, SHORT, INT, LONG, FLOAT, DOUBLE, DATE, TIMESTAMP or DECIMAL column, but '")
+                    .put(col).put("' is ").put(ColumnType.nameOf(type))
+                    .put("; use KEEP <N> HIGHEST/LOWEST ON <column> to rank an orderable column of any type");
+        }
+    }
+
+    /**
+     * Resolves every column of a KEEP policy's PARTITION BY list against {@code metadata}. {@code keysCsv} is
+     * the raw list text the parser captured, so this is where a name that is not a column - a window frame
+     * clause, an injected {@code ) AND (1=0} that closes the generated {@code OVER (} early - is caught. A
+     * comma always separates two keys, since {@link TableUtils#isValidColumnName} rejects one inside a name.
+     * {@code mode} names the policy in the error message ("KEEP LATEST", "KEEP HIGHEST", "KEEP LOWEST").
+     *
+     * @return true when the list held at least one column; the caller decides whether an empty list is legal
+     */
+    private boolean validateKeepPartitionByColumns(
+            RecordMetadata metadata,
+            CharSequence keysCsv,
+            String mode,
+            int position
+    ) throws SqlException {
+        final int n = keysCsv.length();
+        if (n == 0) {
+            return false;
+        }
+        int start = 0;
+        for (int i = 0; i <= n; i++) {
+            if (i == n || keysCsv.charAt(i) == ',') {
+                final CharSequence key = unquoteTrim(keysCsv, start, i);
+                if (key.length() == 0) {
+                    throw SqlException.$(position, "EXPIRE ROWS ").put(mode).put(" has an empty PARTITION BY column");
+                }
+                if (metadata.getColumnIndexQuiet(key) < 0) {
+                    throw SqlException.$(position, "invalid EXPIRE ROWS ").put(mode).put(" PARTITION BY column: ").put(key);
+                }
+                start = i + 1;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Validates a KEEP LATEST policy against {@code metadata}: a designated timestamp must exist (LATEST ON
+     * requires it); an explicit {@code ON <ts>} must name exactly that designated timestamp; and every
+     * PARTITION BY key column must resolve. {@code stored} is the encoded policy.
+     */
+    private void validateKeepLatestColumns(RecordMetadata metadata, CharSequence stored, int position) throws SqlException {
+        final int tsIndex = metadata.getTimestampIndex();
+        if (tsIndex < 0) {
+            throw SqlException.$(position, "EXPIRE ROWS KEEP LATEST requires a designated timestamp");
+        }
+        final CharSequence onTs = RowExpiryUtil.keepLatestTs(stored);
+        if (onTs.length() > 0 && !Chars.equalsIgnoreCase(onTs, metadata.getColumnName(tsIndex))) {
+            throw SqlException.$(position, "EXPIRE ROWS KEEP LATEST ON must name the designated timestamp '")
+                    .put(metadata.getColumnName(tsIndex)).put("', not '").put(onTs).put('\'');
+        }
+        if (!validateKeepPartitionByColumns(metadata, RowExpiryUtil.keepLatestKeys(stored), "KEEP LATEST", position)) {
+            throw SqlException.$(position, "EXPIRE ROWS KEEP LATEST requires a PARTITION BY column list");
+        }
+    }
+
+    /**
+     * Trims surrounding whitespace and one optional layer of double quotes from {@code s[lo, hi)}.
+     */
+    private static CharSequence unquoteTrim(CharSequence s, int lo, int hi) {
+        while (lo < hi && s.charAt(lo) <= ' ') {
+            lo++;
+        }
+        while (hi > lo && s.charAt(hi - 1) <= ' ') {
+            hi--;
+        }
+        if (hi - lo >= 2 && s.charAt(lo) == '"' && s.charAt(hi - 1) == '"') {
+            lo++;
+            hi--;
+        }
+        return s.subSequence(lo, hi);
+    }
+
+    private static void collectExpiryReferencedColumns(
+            ExpressionNode node,
+            RecordMetadata metadata,
+            IntList referencedColumnIndexes
+    ) {
+        if (node == null) {
+            return;
+        }
+        if (node.type == ExpressionNode.LITERAL) {
+            final int columnIndex = resolvePredicateColumnIndex(metadata, node.token);
+            if (columnIndex >= 0 && referencedColumnIndexes.indexOf(columnIndex, 0, referencedColumnIndexes.size()) < 0) {
+                referencedColumnIndexes.add(columnIndex);
+            }
+        }
+        collectExpiryReferencedColumns(node.lhs, metadata, referencedColumnIndexes);
+        collectExpiryReferencedColumns(node.rhs, metadata, referencedColumnIndexes);
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            collectExpiryReferencedColumns(node.args.getQuick(i), metadata, referencedColumnIndexes);
+        }
+    }
+
+    // True if the sub-tree contains a bind variable ($1 / :name). A stored predicate has no statement
+    // to supply bind values, so one would fail on every read.
+    private static boolean expiryExpressionHasBindVariable(ExpressionNode node) {
+        if (node == null) {
+            return false;
+        }
+        if (node.type == ExpressionNode.BIND_VARIABLE) {
+            return true;
+        }
+        if (expiryExpressionHasBindVariable(node.lhs) || expiryExpressionHasBindVariable(node.rhs)) {
+            return true;
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (expiryExpressionHasBindVariable(node.args.getQuick(i))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean expiryExpressionHasClock(ExpressionNode node) {
+        if (node == null) {
+            return false;
+        }
+        if (node.type == ExpressionNode.FUNCTION && SqlKeywords.isClockFunctionKeyword(node.token)) {
+            return true;
+        }
+        if (expiryExpressionHasClock(node.lhs) || expiryExpressionHasClock(node.rhs)) {
+            return true;
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (expiryExpressionHasClock(node.args.getQuick(i))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // True if a string constant in the sub-tree contains a date variable. The function that
+    // evaluates such a string reads the clock in init() but reports neither isNonDeterministic()
+    // nor isRuntimeConstant(), so only the AST shows the clock read.
+    private static boolean expiryExpressionHasDateVariable(ExpressionNode node) {
+        if (node == null) {
+            return false;
+        }
+        if (node.type == ExpressionNode.CONSTANT && DateExpressionEvaluator.hasDateVariable(node.token)) {
+            return true;
+        }
+        if (expiryExpressionHasDateVariable(node.lhs) || expiryExpressionHasDateVariable(node.rhs)) {
+            return true;
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (expiryExpressionHasDateVariable(node.args.getQuick(i))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // True if the sub-tree contains a subquery (QUERY node). A subquery's result depends on another
+    // table's current contents, so a predicate containing one is not stable across evaluations.
+    private static boolean expiryExpressionHasQuery(ExpressionNode node) {
+        if (node == null) {
+            return false;
+        }
+        if (node.type == ExpressionNode.QUERY) {
+            return true;
+        }
+        if (expiryExpressionHasQuery(node.lhs) || expiryExpressionHasQuery(node.rhs)) {
+            return true;
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (expiryExpressionHasQuery(node.args.getQuick(i))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // True if the sub-tree references any column (LITERAL) or bind variable, i.e. it cannot be evaluated to
+    // a single constant threshold independent of the row.
+    private static boolean exprReferencesColumn(ExpressionNode node) {
+        if (node == null) {
+            return false;
+        }
+        if (node.type == ExpressionNode.LITERAL || node.type == ExpressionNode.BIND_VARIABLE) {
+            return true;
+        }
+        if (exprReferencesColumn(node.lhs) || exprReferencesColumn(node.rhs)) {
+            return true;
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (exprReferencesColumn(node.args.getQuick(i))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * The threshold operand of a designated-timestamp ordering comparison, in either direction and with the
+     * timestamp on either side, or null when the predicate is not that shape or the other operand references
+     * a column.
+     * <p>
+     * {@link #expiryTimestampThresholdNode} recognises only the expire-old direction, because that is the one
+     * whose threshold drives the partition-bounds fast path. A NULL check has to span every shape
+     * {@code SqlParser.isNullSafeOrderingFlip} will flip, which is all four ordering operators with the
+     * timestamp on either side: a NULL threshold makes the comparison false for every row whichever way it
+     * points, and the flip then turns the keep-filter into a predicate that hides every row.
+     */
+    private static ExpressionNode expiryOrderingThresholdNode(
+            ExpressionNode node,
+            RecordMetadata metadata,
+            CharSequence timestampColumn
+    ) {
+        if (node == null || timestampColumn == null || node.type != ExpressionNode.OPERATION || node.paramCount != 2
+                || node.lhs == null || node.rhs == null) {
+            return null;
+        }
+        if (!Chars.equals(node.token, "<") && !Chars.equals(node.token, "<=")
+                && !Chars.equals(node.token, ">") && !Chars.equals(node.token, ">=")) {
+            return null;
+        }
+        final int timestampIndex = metadata.getColumnIndexQuiet(timestampColumn);
+        if (node.lhs.type == ExpressionNode.LITERAL
+                && resolvePredicateColumnIndex(metadata, node.lhs.token) == timestampIndex) {
+            return exprReferencesColumn(node.rhs) ? null : node.rhs;
+        }
+        if (node.rhs.type == ExpressionNode.LITERAL
+                && resolvePredicateColumnIndex(metadata, node.rhs.token) == timestampIndex) {
+            return exprReferencesColumn(node.lhs) ? null : node.lhs;
+        }
+        return null;
+    }
+
+    private static ExpressionNode expiryTimestampThresholdNode(
+            ExpressionNode node,
+            RecordMetadata metadata,
+            CharSequence timestampColumn
+    ) {
+        if (node == null || timestampColumn == null || node.type != ExpressionNode.OPERATION || node.paramCount != 2
+                || node.lhs == null || node.rhs == null) {
+            return null;
+        }
+        final int timestampIndex = metadata.getColumnIndexQuiet(timestampColumn);
+        final boolean isTimestampOnLeft = node.lhs.type == ExpressionNode.LITERAL
+                && resolvePredicateColumnIndex(metadata, node.lhs.token) == timestampIndex;
+        final boolean isTimestampOnRight = node.rhs.type == ExpressionNode.LITERAL
+                && resolvePredicateColumnIndex(metadata, node.rhs.token) == timestampIndex;
+        if (isTimestampOnLeft && (Chars.equals(node.token, "<") || Chars.equals(node.token, "<="))) {
+            return exprReferencesColumn(node.rhs) ? null : node.rhs;
+        }
+        if (isTimestampOnRight && (Chars.equals(node.token, ">") || Chars.equals(node.token, ">="))) {
+            return exprReferencesColumn(node.lhs) ? null : node.lhs;
+        }
+        return null;
+    }
+
+    // True when the sub-tree proves that it gives each row the same value in every execution and session:
+    // every node is a column of the table, a constant, or an operator or function on the
+    // EXPIRY_ROW_ONLY_FUNCTIONS list. An unknown column name counts as not proven too, because the
+    // function parser could resolve it to something other than a column. Date variables inside string
+    // constants are the caller's separate check.
+    private static boolean isExpiryRowOnlyExpression(ExpressionNode node, RecordMetadata metadata) {
+        if (node == null) {
+            return true;
+        }
+        final boolean isNodeRowOnly = switch (node.type) {
+            case ExpressionNode.CONSTANT -> true;
+            case ExpressionNode.LITERAL -> resolvePredicateColumnIndex(metadata, node.token) >= 0;
+            case ExpressionNode.OPERATION, ExpressionNode.SET_OPERATION, ExpressionNode.FUNCTION ->
+                    EXPIRY_ROW_ONLY_FUNCTIONS.contains(node.token);
+            default -> false;
+        };
+        if (isNodeRowOnly
+                && (node.type == ExpressionNode.FUNCTION || node.type == ExpressionNode.SET_OPERATION)
+                && SqlKeywords.isInKeyword(node.token)) {
+            return isExpiryRowOnlyInExpression(node, metadata);
+        }
+        if (!isNodeRowOnly
+                || !isExpiryRowOnlyExpression(node.lhs, metadata)
+                || !isExpiryRowOnlyExpression(node.rhs, metadata)) {
+            return false;
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (!isExpiryRowOnlyExpression(node.args.getQuick(i), metadata)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // An IN over the designated timestamp parses a string value as an interval at runtime, and that parse
+    // expands date variables such as $today. A date variable can reach it through concat() or from a column,
+    // where the scan of string constants does not see it, so an IN counts as proven only when each of its
+    // values is a constant. Its left operand follows the general rule.
+    private static boolean isExpiryRowOnlyInExpression(ExpressionNode node, RecordMetadata metadata) {
+        final ObjList<ExpressionNode> args = node.args;
+        final int argCount = args.size();
+        if (argCount == 0) {
+            return node.rhs != null
+                    && node.rhs.type == ExpressionNode.CONSTANT
+                    && isExpiryRowOnlyExpression(node.lhs, metadata);
+        }
+        // Function args are stored reversed: the left operand comes last.
+        for (int i = 0; i < argCount - 1; i++) {
+            if (args.getQuick(i).type != ExpressionNode.CONSTANT) {
+                return false;
+            }
+        }
+        return isExpiryRowOnlyExpression(args.getQuick(argCount - 1), metadata);
+    }
+
+    /**
+     * Whether this constant is a CHAR that a comparison with the timestamp cannot read as a number. The
+     * comparison reads a CHAR threshold with {@code getLong()} on every row, and that converts only the
+     * digits {@code '0'} to {@code '9'}; any other character throws
+     * <p>
+     * {@code inconvertible value: a [CHAR -> LONG]}
+     * <p>
+     * on the first row every read evaluates. Calling the same getter here gives the same answer without a
+     * row. A STRING threshold needs no such check: the bind converts it to a timestamp once, and reports a
+     * value that is not a date there.
+     */
+    private static boolean isInconvertibleCharConstant(Function t) {
+        if (ColumnType.tagOf(t.getType()) != ColumnType.CHAR) {
+            return false;
+        }
+        try {
+            t.getLong(null);
+            return false;
+        } catch (ImplicitCastException e) {
+            return true;
+        }
+    }
+
+    /**
+     * Whether this constant evaluates to NULL, across every type a {@code ts < T} threshold can bind to.
+     * The timestamp family, DATE, LONG and INT each carry an in-band sentinel; DOUBLE and FLOAT spell
+     * NULL as NaN (the way {@code 0.0/0.0} folds); a bare NULL literal binds to {@link ColumnType#NULL};
+     * a string threshold is NULL by reference.
+     * <p>
+     * NaN is the whole of the DOUBLE/FLOAT case. {@code TIMESTAMP < DOUBLE} resolves to the {@code <(DD)}
+     * overload, which widens the timestamp instead of casting the threshold, so a double outside long
+     * range compares as the extreme bound it is and never lands on the sentinel: {@code ts < -9.3e18} is
+     * an always-false bound in double space, the same kind of legal-but-inert policy as a threshold set
+     * before the epoch, not a NULL. A double literal that would need converting does not get this far -
+     * the constant fold reports "Invalid date" during the whole-predicate bind.
+     * <p>
+     * SHORT, BYTE, CHAR and BOOLEAN have no arm because none of them has a null sentinel to test:
+     * {@code cast(null as short)} is the value 0, which is an ordinary threshold.
+     */
+    private static boolean isNullConstant(Function t) {
+        final int type = t.getType();
+        if (ColumnType.isTimestamp(type)) {
+            return t.getTimestamp(null) == Numbers.LONG_NULL;
+        }
+        return switch (ColumnType.tagOf(type)) {
+            case ColumnType.NULL -> true;
+            case ColumnType.DATE -> t.getDate(null) == Numbers.LONG_NULL;
+            case ColumnType.LONG -> t.getLong(null) == Numbers.LONG_NULL;
+            case ColumnType.INT -> t.getInt(null) == Numbers.INT_NULL;
+            case ColumnType.DOUBLE -> Numbers.isNull(t.getDouble(null));
+            case ColumnType.FLOAT -> Numbers.isNull(t.getFloat(null));
+            case ColumnType.STRING -> t.getStrA(null) == null;
+            case ColumnType.VARCHAR -> t.getVarcharA(null) == null;
+            default -> false;
+        };
+    }
+
+    // True for a bare zero-arg wall-time clock: now(), now_ns(), sysdate(), systimestamp(), systimestamp_ns().
+    private static boolean isBareClockFunction(ExpressionNode node) {
+        return node != null
+                && node.type == ExpressionNode.FUNCTION
+                && node.paramCount == 0
+                && SqlKeywords.isClockFunctionKeyword(node.token);
+    }
+
+    /**
+     * True when {@code node} is structurally proven to be a non-decreasing function of wall-clock
+     * time, so a {@code ts < node} threshold only ever moves forward and physical cleanup under it is
+     * safe. Three shapes carry a proof:
+     * <ul>
+     *     <li>a bare clock ({@code now()} / {@code now_ns()} / {@code sysdate()} / {@code systimestamp()} /
+     *         {@code systimestamp_ns()});</li>
+     *     <li>{@code <clock> - c} for a constant {@code c >= 0}: with {@code t >= 0} and
+     *         {@code c in [0, Long.MAX_VALUE]}, {@code t - c} can neither overflow nor underflow and
+     *         advances exactly as {@code t} does;</li>
+     *     <li>{@code dateadd('<fixed unit>', k, <clock>)} for a constant {@code k <= 0} and a
+     *         fixed-duration unit (n/u/T/s/m/h/d/w), which is {@code <clock> - c} with
+     *         {@code c = -k * unit}; the amount is bounded so the scaled offset cannot overflow even
+     *         on a nanosecond timeline.</li>
+     * </ul>
+     * Everything else stays a conservative false — calendar units (M/y) shift by a variable amount,
+     * a look-forward offset expires rows the passage of time un-expires, and arbitrary clock
+     * arithmetic (e.g. {@code now() - now()::long * 2}) can decrease. Skipping reclamation is safe;
+     * accepting one decreasing transform is not.
+     */
+    private static boolean isProvenAdvancingClockExpression(ExpressionNode node) {
+        if (isBareClockFunction(node)) {
+            return true;
+        }
+        if (node == null) {
+            return false;
+        }
+        if (node.type == ExpressionNode.OPERATION
+                && node.paramCount == 2
+                && Chars.equals(node.token, "-")
+                && isBareClockFunction(node.lhs)) {
+            try {
+                return parseExpiryConstantLong(node.rhs) >= 0;
+            } catch (NumericException e) {
+                return false;
+            }
+        }
+        if (node.type == ExpressionNode.FUNCTION
+                && node.paramCount == 3
+                && SqlKeywords.isDateaddKeyword(node.token)) {
+            // function args are stored reversed: [timestamp, amount, unit]
+            final ExpressionNode clockArg = node.args.getQuick(0);
+            final ExpressionNode amountArg = node.args.getQuick(1);
+            final ExpressionNode unitArg = node.args.getQuick(2);
+            if (!isBareClockFunction(clockArg)) {
+                return false;
+            }
+            final long unitNanos = fixedDateaddUnitNanos(unitArg.token);
+            if (unitNanos <= 0) {
+                return false;
+            }
+            try {
+                final long amount = parseExpiryConstantLong(amountArg);
+                // look-back only, with the offset provably in range on a nanosecond timeline
+                return amount <= 0 && amount != Long.MIN_VALUE && -amount <= Long.MAX_VALUE / unitNanos;
+            } catch (NumericException e) {
+                return false;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * The duration of a {@code dateadd} unit in nanoseconds (the finest timestamp resolution, so the
+     * overflow bound derived from it holds for micro timelines too), or 0 for a calendar unit (M/y)
+     * or an unrecognized token. Accepts the quoted ({@code 'd'}) and bare ({@code d}) forms.
+     */
+    private static long fixedDateaddUnitNanos(CharSequence unitToken) {
+        if (unitToken == null) {
+            return 0;
+        }
+        final int len = unitToken.length();
+        final char unit;
+        if (len == 3 && unitToken.charAt(0) == '\'' && unitToken.charAt(2) == '\'') {
+            unit = unitToken.charAt(1);
+        } else if (len == 1) {
+            unit = unitToken.charAt(0);
+        } else {
+            return 0;
+        }
+        return switch (unit) {
+            case 'n' -> 1L;
+            case 'u' -> 1_000L;
+            case 'T' -> 1_000_000L;
+            case 's' -> 1_000_000_000L;
+            case 'm' -> 60_000_000_000L;
+            case 'h' -> 3_600_000_000_000L;
+            case 'd' -> 86_400_000_000_000L;
+            case 'w' -> 604_800_000_000_000L;
+            default -> 0;
+        };
+    }
+
+    // Long value of a constant expression node: a plain CONSTANT (with an optional L suffix) or a
+    // unary-minus over one. Throws NumericException for any other shape.
+    private static long parseExpiryConstantLong(ExpressionNode node) throws NumericException {
+        if (node == null) {
+            throw NumericException.INSTANCE;
+        }
+        if (node.type == ExpressionNode.CONSTANT) {
+            final CharSequence token = node.token;
+            final int len = token.length();
+            final int hi = len > 1 && (token.charAt(len - 1) == 'L' || token.charAt(len - 1) == 'l') ? len - 1 : len;
+            return Numbers.parseLong(token, 0, hi);
+        }
+        if (node.type == ExpressionNode.OPERATION && node.paramCount == 1 && Chars.equals(node.token, "-")) {
+            final long value = parseExpiryConstantLong(node.rhs);
+            if (value == Long.MIN_VALUE) {
+                throw NumericException.INSTANCE;
+            }
+            return -value;
+        }
+        throw NumericException.INSTANCE;
+    }
+
+    // Resolves a predicate LITERAL token to a column index in metadata. Handles a plain (possibly quoted)
+    // column name AND a table/alias-qualified reference such as t.v or "t"."v": EXPIRE predicates are
+    // single-table, so a qualifier is the table name — the column is the segment after the last unquoted
+    // dot. Returns -1 when the token names no column. Without the qualified-name handling a predicate like
+    // `t.v < 2` would be seen as referencing no column, and dropping v would silently brick every read.
+    private static int resolvePredicateColumnIndex(RecordMetadata metadata, CharSequence token) {
+        int idx = metadata.getColumnIndexQuiet(unquote(token));
+        if (idx >= 0) {
+            return idx;
+        }
+        final int dot = Chars.indexOfLastUnquoted(token, '.');
+        if (dot >= 0 && dot + 1 < token.length()) {
+            return metadata.getColumnIndexQuiet(unquote(token.subSequence(dot + 1, token.length())));
+        }
+        return -1;
+    }
+
+    // Converts an expiry threshold from the unit of the expression that produced it into the unit of the
+    // designated timestamp column, so the caller can compare it against a partition floor. Rounds DOWN, so
+    // the result is never above the exact threshold. A smaller threshold can only make the set of fully
+    // expired partitions smaller, so the job never drops a partition that holds a live row. The remainder
+    // that the rounding discards is smaller than one unit of the column, so at most one partition takes the
+    // survivor scan, or waits for a later sweep. Math.multiplyExact throws on overflow, and the caller reads
+    // that as "no fast path".
+    private static long toTimestampUnit(long timestamp, int fromType, int toType) {
+        if (fromType == toType) {
+            return timestamp;
+        }
+        return ColumnType.isTimestampNano(toType)
+                ? Math.multiplyExact(timestamp, Micros.MICRO_NANOS)
+                : Math.floorDiv(timestamp, Micros.MICRO_NANOS);
+    }
+
+    protected void compileAlterExt(SqlExecutionContext executionContext, CharSequence tok) throws SqlException {
+        if (tok == null) {
+            throw SqlException.position(lexer.getPosition()).put("'table' or 'materialized' or 'live' or 'view' expected");
+        }
+        throw SqlException.position(lexer.lastTokenPosition()).put("'table' or 'materialized' or 'live' or 'view' expected");
+    }
+
+    protected void compileAlterMatViewDropExt(SqlExecutionContext executionContext, CharSequence tok, TableToken matViewToken, int matViewNamePosition) throws SqlException {
+        LOG.debug().$("'expire' expected [matViewToken=").$(matViewToken)
+                .$(", matViewNamePosition=").$(matViewNamePosition)
+                .$(']').$();
+        if (tok == null) {
+            throw SqlException.$(lexer.getPosition(), "'expire' expected");
+        }
+        throw SqlException.$(lexer.lastTokenPosition(), "'expire' expected");
+    }
+
+    protected void compileAlterMatViewExt(SqlExecutionContext executionContext, CharSequence tok, TableToken matViewToken, int matViewNamePosition) throws SqlException {
+        LOG.debug().$("'alter' or 'resume' or 'suspend' or 'set' or 'drop' expected [matViewToken=").$(matViewToken)
+                .$(", matViewNamePosition=").$(matViewNamePosition)
+                .$(']').$();
+        if (tok == null) {
+            throw SqlException.$(lexer.getPosition(), "'alter' or 'resume' or 'suspend' or 'set' or 'drop' expected");
+        }
+        throw SqlException.$(lexer.lastTokenPosition(), "'alter' or 'resume' or 'suspend' or 'set' or 'drop' expected");
+    }
+
+    protected void compileAlterMatViewSetExt(SqlExecutionContext executionContext, CharSequence tok, TableToken matViewToken, int matViewNamePosition) throws SqlException {
+        LOG.debug().$("'ttl', 'expire' or 'refresh' expected [matViewToken=").$(matViewToken)
+                .$(", matViewNamePosition=").$(matViewNamePosition)
+                .$(']').$();
+        if (tok == null) {
+            throw SqlException.$(lexer.getPosition(), "'ttl', 'expire' or 'refresh' expected");
+        }
+        throw SqlException.$(lexer.lastTokenPosition(), "'ttl', 'expire' or 'refresh' expected");
+    }
+
+    protected void compileAlterTableDisableExt(SqlExecutionContext executionContext, CharSequence tok, TableToken tableToken, int tableNamePosition) throws SqlException {
+        LOG.debug().$(ALTER_TABLE_EXPECTED_TOKEN_DESCR).$(" expected [tableToken=").$(tableToken)
+                .$(", tableNamePosition=").$(tableNamePosition)
+                .$(']').$();
+        if (tok == null) {
+            throw SqlException.$(lexer.getPosition(), ALTER_TABLE_EXPECTED_TOKEN_DESCR).put(" expected");
+        }
+        throw SqlException.$(lexer.lastTokenPosition(), ALTER_TABLE_EXPECTED_TOKEN_DESCR).put(" expected");
+    }
+
+    protected void compileAlterTableDropExt(SqlExecutionContext executionContext, CharSequence tok, TableToken tableToken, int tableNamePosition) throws SqlException {
+        LOG.debug().$("'column' or 'partition' expected [tableToken=").$(tableToken)
+                .$(", tableNamePosition=").$(tableNamePosition)
+                .$(']').$();
+        if (tok == null) {
+            throw SqlException.$(lexer.getPosition(), "'column' or 'partition' expected");
+        }
+        throw SqlException.$(lexer.lastTokenPosition(), "'column' or 'partition' expected");
+    }
+
+    protected void compileAlterTableEnableExt(SqlExecutionContext executionContext, CharSequence tok, TableToken tableToken, int tableNamePosition) throws SqlException {
+        LOG.debug().$(ALTER_TABLE_EXPECTED_TOKEN_DESCR).$(" expected [tableToken=").$(tableToken)
+                .$(", tableNamePosition=").$(tableNamePosition)
+                .$(']').$();
+        if (tok == null) {
+            throw SqlException.$(lexer.getPosition(), ALTER_TABLE_EXPECTED_TOKEN_DESCR).put(" expected");
+        }
+        throw SqlException.$(lexer.lastTokenPosition(), ALTER_TABLE_EXPECTED_TOKEN_DESCR).put(" expected");
+    }
+
+    protected void compileAlterTableExt(SqlExecutionContext executionContext, CharSequence tok, TableToken tableToken, int tableNamePosition) throws SqlException {
+        throw SqlException.$(lexer.lastTokenPosition(), ALTER_TABLE_EXPECTED_TOKEN_DESCR).put(" expected");
+    }
+
+    protected void compileAlterTableSetExt(SqlExecutionContext executionContext, CharSequence tok, TableToken tableToken, int tableNamePosition) throws SqlException {
+        LOG.debug().$("'param', 'ttl' or 'type' expected [tableToken=").$(tableToken)
+                .$(", tableNamePosition=").$(tableNamePosition)
+                .$(']').$();
+        if (tok == null) {
+            throw SqlException.$(lexer.getPosition(), "'param', 'ttl', 'format' or 'type' expected");
+        }
+        throw SqlException.$(lexer.lastTokenPosition(), "'param', 'ttl', 'format' or 'type' expected");
+    }
+
+    protected void compileBackup(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
+        throw SqlException.$(lexer.lastTokenPosition(),
+                "incremental backup is supported in QuestDB enterprise version only, please use SNAPSHOT backup"
+        );
+    }
+
+    protected void compileCreate(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
+        int rollbackPosition = lexer.lastTokenPosition();
+        CharSequence tok = expectToken(lexer, "'atomic' or 'table' or 'batch' or 'materialized' or 'view' or 'or replace'");
+        if (!isOrKeyword(tok)) {
+            // not CREATE OR REPLACE VIEW
+            // just bail out and let parseCreate() handle it
+            lexerToFirstToken(lexer, rollbackPosition);
+            return;
+        }
+        tok = expectToken(lexer, "'replace'");
+        if (!isReplaceKeyword(tok)) {
+            throw SqlException.position(lexer.lastTokenPosition()).put("'replace' expected");
+        }
+        tok = expectToken(lexer, "'view'");
+        if (!isViewKeyword(tok)) {
+            throw SqlException.position(lexer.lastTokenPosition()).put("'view' expected");
+        }
+
+        final int viewNamePosition = lexer.getPosition();
+        tok = expectToken(lexer, "view name");
+        assertNameIsQuotedOrNotAKeyword(tok, viewNamePosition);
+        final CharSequence viewName = unquote(tok);
+
+        // a view the principal may not see is left to CREATE VIEW like a missing one, where its name
+        // collides the way any taken name does
+        final TableToken viewToken = executionContext.getVisibleTableTokenIfExists(viewName);
+        if (viewToken == null) {
+            // view does not exist yet
+            // just bail out and let CREATE VIEW handle it
+            lexerToFirstToken(lexer, rollbackPosition);
+            return;
+        }
+        if (engine.getViewGraph().getViewDefinition(viewToken) == null) {
+            // view does not exist yet
+            // just bail out and let CREATE VIEW handle it
+            lexerToFirstToken(lexer, rollbackPosition);
+            return;
+        }
+        assert viewToken.isView();
+
+        tok = expectToken(lexer, "'as'");
+        if (!isAsKeyword(tok)) {
+            throw SqlException.position(lexer.lastTokenPosition()).put("'as' expected");
+        }
+
+        final int viewSqlPosition = lexer.getPosition();
+        final String viewSql = parser.parseViewSql(lexer, this, executionContext, viewToken);
+        if (isAuditedView(viewToken)) {
+            // The new body keeps the view's audited flag, so its AUDITED declarations are held to
+            // what a read of the view needs, here rather than on every read that follows.
+            validateAuditedViewBody(viewToken, parser.getViewSqlModel(), executionContext);
+        }
+
+        alterViewExecution(executionContext, viewToken, viewSql, viewSqlPosition);
+    }
+
+    protected void compileDropOther(
+            @NotNull SqlExecutionContext executionContext,
+            @NotNull CharSequence tok,
+            int position
+    ) throws SqlException {
+        throw SqlException.position(position).put("'table' or 'view' or 'materialized view' or 'all' expected");
+    }
+
+    protected void compileDropReportExpected(int position) throws SqlException {
+        throw SqlException.position(position).put("'table' or 'view' or 'materialized view' or 'all' expected");
+    }
+
+    protected AlterOperationBuilder createAlterOperationBuilder() {
+        return new AlterOperationBuilder();
+    }
+
+    protected void expectStatementEnd(CharSequence tok) throws SqlException {
+        if (tok != null) {
+            if (!isSemicolon(tok)) {
+                throw SqlException.unexpectedToken(lexer.lastTokenPosition(), tok);
+            }
+            if (isSingleQueryMode) {
+                // Skip repeated semicolons; anything else is trailing content.
+                while ((tok = SqlUtil.fetchNext(lexer)) != null) {
+                    if (!isSemicolon(tok)) {
+                        throw SqlException.unexpectedToken(lexer.lastTokenPosition(), tok);
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Exposed so that a subclass can compile expressions the base compiler captured but does not
+     * itself consume - the audited-view parameters, which Enterprise turns into functions.
+     */
+    protected FunctionParser getFunctionParser() {
+        return functionParser;
+    }
+
+    protected RecordCursorFactory generateSelectOneShot(
+            IQueryModel selectQueryModel,
+            SqlExecutionContext executionContext,
+            boolean generateProgressLogger
+    ) throws SqlException {
+        RecordCursorFactory factory = null;
+        try {
+            factory = codeGenerator.generate(selectQueryModel, executionContext);
+            // Generation has taken over the table functions of the models the plan reads. The
+            // optimiser also opened the table function of every model it optimised and the plan
+            // does not read, and nothing else closes those.
+            CairoException.rethrowCleanupFailure(optimiser.freeUnclaimedTableFactories(null));
+        } catch (Throwable th) {
+            // The generator's cleanup of a failed attempt closes only the table functions it can
+            // walk to from the model it was given.
+            optimiser.freeUnclaimedTableFactories(th);
+            Misc.free(factory, th);
+            throw th;
+        }
+        ObjList<ViewDefinition> views = selectQueryModel.getReferencedViews();
+        if (views.size() > 0) {
+            factory = new StaleViewCheckFactory(factory, views, engine);
+        }
+        if (generateProgressLogger) {
+            return new QueryProgress(queryRegistry, sqlText, factory);
+        } else {
+            return factory;
+        }
+    }
+
+    protected void lexerToFirstToken(GenericLexer lexer, int rollbackPosition) throws SqlException {
+        lexer.goToPosition(rollbackPosition);
+        SqlUtil.fetchNext(lexer);
+    }
+
+    protected boolean matchesPartition(Function filter, long timestamp) {
+        partitionFunctionRec.setTimestamp(timestamp);
+        return filter.getBool(partitionFunctionRec);
+    }
+
+    @NotNull
+    protected SqlOptimiser newSqlOptimiser(
+            CairoConfiguration configuration,
+            CharacterStore characterStore,
+            ObjectPool<ExpressionNode> sqlNodePool,
+            ObjectPool<WindowExpression> windowExpressionPool,
+            ObjectPool<QueryColumn> queryColumnPool,
+            ObjectPool<QueryModel> queryModelPool,
+            ObjectPool<QueryModelWrapper> queryModelWrapperPool,
+            PostOrderTreeTraversalAlgo postOrderTreeTraversalAlgo,
+            FunctionParser functionParser,
+            Path path
+    ) {
+        return new SqlOptimiser(
+                configuration,
+                characterStore,
+                sqlNodePool,
+                windowExpressionPool,
+                queryColumnPool,
+                queryModelPool,
+                queryModelWrapperPool,
+                postOrderTreeTraversalAlgo,
+                functionParser,
+                path
+        );
+    }
+
+    /**
+     * Parses a partition predicate against the designated timestamp column. The caller closes the function.
+     */
+    protected Function parsePartitionFilter(TableRecordMetadata tableMetadata, SqlExecutionContext executionContext) throws SqlException {
+        ExpressionNode expr = parser.expr(lexer, (IQueryModel) null, this);
+        int timestampIndex = tableMetadata.getTimestampIndex();
+        if (timestampIndex < 0) {
+            throw SqlException.$(lexer.lastTokenPosition(), "this table does not have a designated timestamp column");
+        }
+        GenericRecordMetadata metadata = new GenericRecordMetadata();
+        metadata.add(new TableColumnMetadata(tableMetadata.getColumnName(timestampIndex), tableMetadata.getTimestampType(), null));
+        Function function = functionParser.parseFunction(expr, metadata, executionContext);
+        try {
+            if (function == null || !ColumnType.isBoolean(function.getType())) {
+                throw SqlException.$(lexer.lastTokenPosition(), "boolean expression expected");
+            }
+            function.init(null, executionContext);
+            return function;
+        } catch (Throwable th) {
+            Misc.free(function);
+            throw th;
+        }
+    }
+
+    protected void registerKeywordBasedExecutors() {
+        // For each 'this::method' reference java compiles a class
+        // We need to minimize repetition of this syntax as each site generates garbage
+        final KeywordBasedExecutor compileNoOp = this::compileNoOp;
+
+        keywordBasedExecutors.put("truncate", this::compileTruncate);
+        keywordBasedExecutors.put("alter", this::compileAlter);
+        keywordBasedExecutors.put("create", this::compileCreate);
+        keywordBasedExecutors.put("reindex", this::compileReindex);
+        keywordBasedExecutors.put("set", this::compileSet);
+        keywordBasedExecutors.put("begin", this::compileBegin);
+        keywordBasedExecutors.put("commit", this::compileCommit);
+        keywordBasedExecutors.put("rollback", this::compileRollback);
+        keywordBasedExecutors.put("discard", compileNoOp);
+        keywordBasedExecutors.put("close", compileNoOp);
+        keywordBasedExecutors.put("unlisten", compileNoOp);
+        keywordBasedExecutors.put("reset", compileNoOp);
+        keywordBasedExecutors.put("drop", this::compileDrop);
+        keywordBasedExecutors.put("vacuum", this::compileVacuum);
+        keywordBasedExecutors.put("checkpoint", this::compileCheckpoint);
+        keywordBasedExecutors.put("snapshot", this::compileLegacyCheckpoint);
+        keywordBasedExecutors.put("deallocate", this::compileDeallocate);
+        keywordBasedExecutors.put("cancel", this::compileCancel);
+        keywordBasedExecutors.put("refresh", this::compileRefresh);
+        keywordBasedExecutors.put("backup", this::compileBackup);
+    }
+
+    /**
+     * Refuses {@code ALTER TABLE ... ATTACH PARTITION} or {@code DETACH PARTITION} on the issuing
+     * node; the WAL apply skips it. A no-op here: Enterprise overrides it to refuse a table whose
+     * partitions have external state.
+     */
+    protected void validateAlterTableAttachOrDetach(int pos, TableToken tableToken, boolean isAttach) throws SqlException {
+    }
+
+    /**
+     * Refuses {@code ALTER TABLE ... SET TYPE} before it writes the conversion marker. A no-op here:
+     * Enterprise overrides it to refuse a table with external state keyed by seqTxn, which the
+     * conversion restarts from 0.
+     */
+    protected void validateAlterTableSetType(int pos, TableToken tableToken) throws SqlException {
+    }
+
+    /**
+     * Checks the body {@code ALTER VIEW} or {@code CREATE OR REPLACE VIEW} gives an audited view,
+     * before it replaces the current one. The model is the body as parsed from the statement, so
+     * positions in it are the statement's. A no-op here: Enterprise, which consumes the AUDITED
+     * declarations, overrides it to refuse the ones no read of the view could audit.
+     */
+    protected void validateAuditedViewBody(
+            TableToken viewToken,
+            IQueryModel viewModel,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+    }
+
+    /**
+     * Refuses {@code ALTER TABLE ... REBASE WAL} before it clones the table. A no-op here:
+     * Enterprise overrides it to refuse a table with external state keyed by seqTxn, which the
+     * rebase restarts from 0.
+     */
+    protected void validateRebaseWal(int pos, TableToken tableToken) throws SqlException {
+    }
+
+    @FunctionalInterface
+    public interface KeywordBasedExecutor {
+        void execute(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException;
+    }
+
+    public final static class PartitionAction {
+        public static final int ATTACH = 2;
+        public static final int CONVERT_TO_NATIVE = 5;
+        public static final int CONVERT_TO_PARQUET = 4;
+        public static final int DETACH = 3;
+        public static final int DROP = 1;
+        public static final int FORCE_DROP = 6;
+        public static final int FORCE_REINDEX = 7;
+    }
+
+    private static class TimestampValueRecord implements Record {
+        private long value;
+
+        @Override
+        public long getTimestamp(int col) {
+            return value;
+        }
+
+        public void setTimestamp(long value) {
+            this.value = value;
+        }
+    }
+
+    static {
+        sqlControlSymbols.add("(");
+        sqlControlSymbols.add(";");
+        sqlControlSymbols.add(")");
+        sqlControlSymbols.add(",");
+        sqlControlSymbols.add("/*");
+        sqlControlSymbols.add("/*+");
+        sqlControlSymbols.add("*/");
+        sqlControlSymbols.add("--");
+        sqlControlSymbols.add("[");
+        sqlControlSymbols.add("]");
+
+        // operators
+        addExpiryRowOnlyFunctions(
+                "=", "!=", "<>", "<", "<=", ">", ">=", "+", "-", "*", "/", "%", "&", "|", "^", "::",
+                "and", "or", "not", "in", "between", "like", "ilike", "~", "!~"
+        );
+        // functions
+        addExpiryRowOnlyFunctions(
+                "abs", "case", "cast", "ceil", "ceiling", "coalesce", "concat", "dateadd", "datediff", "day",
+                "day_of_week", "floor", "hour", "left", "length", "lower", "minute", "month", "right", "round",
+                "second", "starts_with", "substring", "timestamp_ceil", "timestamp_floor", "to_lowercase",
+                "to_uppercase", "trim", "upper", "year"
+        );
+
+        short[] numericTypes = {ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG, ColumnType.FLOAT, ColumnType.DOUBLE, ColumnType.TIMESTAMP, ColumnType.BOOLEAN, ColumnType.DATE, ColumnType.STRING, ColumnType.VARCHAR, ColumnType.SYMBOL};
+        addSupportedConversion(ColumnType.BYTE, numericTypes);
+        addSupportedConversion(ColumnType.SHORT, numericTypes);
+        addSupportedConversion(ColumnType.INT, numericTypes);
+        addSupportedConversion(ColumnType.LONG, numericTypes);
+        addSupportedConversion(ColumnType.FLOAT, numericTypes);
+        addSupportedConversion(ColumnType.DOUBLE, numericTypes);
+        addSupportedConversion(ColumnType.TIMESTAMP, numericTypes);
+        addSupportedConversion(ColumnType.BOOLEAN, numericTypes);
+        addSupportedConversion(ColumnType.DATE, numericTypes);
+
+        //region Decimals
+        for (short i = ColumnType.DECIMAL8; i <= ColumnType.DECIMAL256; i++) {
+            for (short j = ColumnType.DECIMAL8; j <= ColumnType.DECIMAL256; j++) {
+                addSupportedConversion(i, j);
+            }
+            // Integer -> DECIMAL is supported on both the native and parquet paths; the reverse
+            // direction (DECIMAL -> {BYTE, SHORT, INT, LONG}) is not implemented in either the
+            // C++ converter kernel or the Rust parquet decoder, so register it one-way only.
+            // DOUBLE and FLOAT go both ways, but only on the native path: ConvertOperatorImpl
+            // rewrites a parquet partition to native before converting it.
+            columnConversionSupport[ColumnType.BYTE][i] = true;
+            columnConversionSupport[ColumnType.SHORT][i] = true;
+            columnConversionSupport[ColumnType.INT][i] = true;
+            columnConversionSupport[ColumnType.LONG][i] = true;
+            addSupportedConversion(i, ColumnType.DOUBLE, ColumnType.FLOAT);
+            addSupportedConversion(i, ColumnType.STRING, ColumnType.VARCHAR);
+            addSupportedConversion(ColumnType.STRING, i);
+            addSupportedConversion(ColumnType.VARCHAR, i);
+        }
+        //endregion
+
+        // Other exotics <-> strings
+        addSupportedConversion(ColumnType.IPv4, ColumnType.STRING, ColumnType.VARCHAR, ColumnType.SYMBOL);
+        addSupportedConversion(ColumnType.UUID, ColumnType.STRING, ColumnType.VARCHAR, ColumnType.SYMBOL);
+        addSupportedConversion(ColumnType.CHAR, ColumnType.STRING, ColumnType.VARCHAR, ColumnType.SYMBOL);
+
+        // Strings <-> Strings
+        addSupportedConversion(ColumnType.SYMBOL, ColumnType.STRING, ColumnType.VARCHAR, ColumnType.SYMBOL);
+        addSupportedConversion(ColumnType.STRING, ColumnType.STRING, ColumnType.VARCHAR, ColumnType.SYMBOL);
+        addSupportedConversion(ColumnType.VARCHAR, ColumnType.STRING, ColumnType.VARCHAR, ColumnType.SYMBOL);
+    }
+}

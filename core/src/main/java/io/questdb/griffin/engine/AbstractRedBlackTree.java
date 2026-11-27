@@ -170,6 +170,10 @@ public abstract class AbstractRedBlackTree implements Mutable, Reopenable {
     }
 
     public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+        if (tracker != memoryTracker) {
+            final long heldBytes = (keyHeapStart != 0 ? keyHeapSize : 0) + (valueHeapStart != 0 ? valueHeapSize : 0);
+            Unsafe.chargeHeldMemory(heldBytes, MemoryTag.NATIVE_TREE_CHAIN, tracker);
+        }
         this.memoryTracker = tracker;
     }
 

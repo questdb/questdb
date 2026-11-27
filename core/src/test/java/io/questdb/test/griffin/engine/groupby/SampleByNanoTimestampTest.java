@@ -148,8 +148,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
 
     @Test
     public void testFillNullBucketRenameKeepsConcatKeyNano() throws Exception {
-        // Nanosecond variant of the chained alias rename: avg(val) claims avg, the bucket
-        // is renamed avg1 and the concat key avg1 is renamed avg11. The fill must key on
+        // Nanosecond variant of the bucket aliased like an aggregate. The fill must key on
         // the bucket and print the TIMESTAMP_NS grid with nine fractional digits.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tn (k SYMBOL, val DOUBLE, ets TIMESTAMP_NS, ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY");
@@ -162,7 +161,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
             assertQuery("SELECT avg(val) * 2 AS v, ts AS avg, concat(k, 'x') AS avg1 FROM tn SAMPLE BY 1h FILL(NULL) ORDER BY v")
                     .noLeakCheck()
                     .returns("""
-                            v\tavg1\tavg11
+                            v\tavg\tavg1
                             2.0\t2024-01-01T00:00:00.000000000Z\tax
                             4.0\t2024-01-01T01:00:00.000000000Z\tbx
                             6.0\t2024-01-01T03:00:00.000000000Z\tax
@@ -401,6 +400,95 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                             2024-06-01T00:30:00.000000000Z\tnull
                             2024-06-01T01:30:00.000000000Z\t42.0
                             2024-06-01T02:30:00.000000000Z\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillNullDstDayStrideWithOffsetNano() throws Exception {
+        // Nanosecond parity for a day stride whose OFFSET puts the local grid line in
+        // Berlin's DST gap and overlap. The fill grid matches timestamp_floor_utc:
+        // 2021-03-28 starts at 01:00Z (03:00 CEST), and 2021-10-31 starts at its first
+        // 02:00 (00:00Z, CEST) and lasts 25 hours.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (1.0, '2021-03-26T12:00:00.000000000Z'),
+                    (2.0, '2021-03-28T12:00:00.000000000Z'),
+                    (3.0, '2021-03-30T12:00:00.000000000Z'),
+                    (4.0, '2021-10-29T12:00:00.000000000Z'),
+                    (5.0, '2021-10-31T12:00:00.000000000Z'),
+                    (6.0, '2021-11-02T12:00:00.000000000Z')
+                    """);
+            assertQuery("""
+                    SELECT sum(val) s, ts FROM x WHERE ts < '2021-06-01'
+                    SAMPLE BY 1d FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin' WITH OFFSET '02:00'""")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            s\tts
+                            1.0\t2021-03-26T01:00:00.000000000Z
+                            null\t2021-03-27T01:00:00.000000000Z
+                            2.0\t2021-03-28T01:00:00.000000000Z
+                            null\t2021-03-29T00:00:00.000000000Z
+                            3.0\t2021-03-30T00:00:00.000000000Z
+                            """);
+            assertQuery("""
+                    SELECT sum(val) s, ts FROM x WHERE ts > '2021-06-01'
+                    SAMPLE BY 1d FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin' WITH OFFSET '02:00'""")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            s\tts
+                            4.0\t2021-10-29T00:00:00.000000000Z
+                            null\t2021-10-30T00:00:00.000000000Z
+                            5.0\t2021-10-31T00:00:00.000000000Z
+                            null\t2021-11-01T01:00:00.000000000Z
+                            6.0\t2021-11-02T01:00:00.000000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillNullNegativeOffsetMonthNano() throws Exception {
+        // A negative OFFSET starts each month at 23:00 local on the previous day.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (1.0, '2021-01-15T12:00:00.000000000Z'),
+                    (2.0, '2021-03-15T12:00:00.000000000Z')
+                    """);
+            assertQuery("SELECT sum(val) s, ts FROM x SAMPLE BY 1M FILL(NULL) ALIGN TO CALENDAR WITH OFFSET '-01:00'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            s\tts
+                            1.0\t2020-12-31T23:00:00.000000000Z
+                            null\t2021-01-31T23:00:00.000000000Z
+                            2.0\t2021-02-28T23:00:00.000000000Z
+                            """);
+            assertQuery("SELECT sum(val) s, ts FROM x SAMPLE BY 1M FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin' WITH OFFSET '-01:00'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            s\tts
+                            1.0\t2020-12-31T22:00:00.000000000Z
+                            null\t2021-01-31T22:00:00.000000000Z
+                            2.0\t2021-02-28T22:00:00.000000000Z
+                            """);
+            assertQuery("SELECT sum(val) s, ts FROM x SAMPLE BY 1y FILL(NULL) ALIGN TO CALENDAR WITH OFFSET '-01:00'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            s\tts
+                            3.0\t2020-12-31T23:00:00.000000000Z
                             """);
         });
     }
@@ -890,8 +978,8 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                 "from x " +
                 "where k > '1970-01-04' and s in ('a') " +
                 "sample by 1h")
+                .noRandomAccess()
                 .timestamp("k")
-                .expectSize()
                 .returns("""
                         k\ts\tlat\tlon
                         1970-01-04T00:00:00.000000000Z\ta\t70.00560222114518\t168.04971262491318
@@ -902,8 +990,8 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                 "from x " +
                 "where k > '1970-01-04' and s in ('a') " +
                 "sample by 1h align to calendar")
+                .noRandomAccess()
                 .timestamp("k")
-                .expectSize()
                 .returns("""
                         k\ts\tlat\tlon
                         1970-01-04T00:00:00.000000000Z\ta\t70.00560222114518\t168.04971262491318
@@ -929,8 +1017,8 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                 "from xx " +
                 "where k in '1970-01-01T00:00:00.000000000Z;30m;5h;10' and s in ('a')" +
                 "sample by 2h align to calendar")
+                .noRandomAccess()
                 .timestamp("k")
-                .expectSize()
                 .returns("k\ts\tlat\tlon\n");
     }
 
@@ -1046,9 +1134,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         timestamp_sequence(0, 10 * 60 * 1000000L) k
                         from
                         long_sequence(150)
-                        """,
-                true,
-                true
+                        """
         );
     }
 
@@ -1140,10 +1226,10 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                 "from xx " +
                 "where k in '1970-01-01T00:00:00.000000000Z;30m;5h;10' and s in ('a')" +
                 "sample by 2h align to calendar")
+                .noRandomAccess()
                 .ddl("create table xx (lat double, lon double, s symbol, k timestamp_ns)" +
                         ", index(s capacity 256) timestamp(k) partition by DAY")
                 .timestamp("k")
-                .expectSize()
                 .returns("k\ts\tlat\tlon\n");
 
         assertSampleByIndexQuery(
@@ -1187,9 +1273,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         timestamp_sequence(0, 10 * 60 * 1000000L) k
                         from
                         long_sequence(150)
-                        """,
-                true,
-                true
+                        """
         );
 
         assertWithSymbolColumnTop(
@@ -1213,9 +1297,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         select k, s, first(lat) lat, last(lon) lon\s
                         from xx\s
                         where k > '1970-01-01' and s = null\s
-                        sample by 2h align to calendar""",
-                true,
-                true
+                        sample by 2h align to calendar"""
         );
     }
 
@@ -1236,8 +1318,8 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                 "from xx " +
                 "where k in '1970-01-01T00:00:00.000000000Z;30m;5h;10' and s in ('a')" +
                 "sample by 2h align to calendar")
+                .noRandomAccess()
                 .timestamp("k")
-                .expectSize()
                 .returns("k\ts\tlat\tlon\n");
     }
 
@@ -1313,9 +1395,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         timestamp_sequence(0, 10 * 60 * 1000000L) k
                         from
                         long_sequence(180)
-                        """,
-                true,
-                true
+                        """
         );
     }
 
@@ -1380,10 +1460,10 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                 "from xx " +
                 "where k in '1970-01-01T00:00:00.000000000Z;30m;5h;10' and s in ('a')" +
                 "sample by 2h align to calendar")
+                .noRandomAccess()
                 .ddl("create table xx (lat double, lon double, s symbol, k timestamp_ns)" +
                         ", index(s capacity 256) timestamp(k) partition by DAY")
                 .timestamp("k")
-                .expectSize()
                 .returns("k\ts\tlat\tlon\n");
 
         assertSampleByIndexQuery(
@@ -1407,9 +1487,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         timestamp_sequence(0, 10 * 60 * 1000000L) k
                         from
                         long_sequence(180)
-                        """,
-                true,
-                true
+                        """
         );
 
         assertWithSymbolColumnTop(
@@ -1422,9 +1500,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                 "select k, s, first(lat) lat, first(lon) lon " +
                         "from xx " +
                         "where k > '1970-01-01T21:00' and s = null " +
-                        "sample by 2h align to calendar",
-                true,
-                true
+                        "sample by 2h align to calendar"
         );
     }
 
@@ -1447,6 +1523,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                 """;
 
         assertQuery(forceNoIndexQuery)
+                .noRandomAccess()
                 .ddl("create table x as " +
                         "(" +
                         "select" +
@@ -1458,12 +1535,11 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "   long_sequence(100)" +
                         "),index(s) timestamp(k) partition by DAY")
                 .timestamp("k")
-                .expectSize()
                 .returns(expected);
 
         assertQuery(query)
+                .noRandomAccess()
                 .timestamp("k")
-                .expectSize()
                 .returns(expected);
     }
 
@@ -1962,9 +2038,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "   timestamp_sequence_ns('2021-03-26T20:30:00.000000000Z', 13 * 60 * 1000000000L) k" +
                         "   from" +
                         "   long_sequence(1000)" +
-                        "),index(s) timestamp(k)",
-                true,
-                true
+                        "),index(s) timestamp(k)"
         );
     }
 
@@ -2027,9 +2101,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "   timestamp_sequence_ns('2020-10-23 20:30:00.000000000Z', 259 * 1000000000L) k" +
                         "   from" +
                         "   long_sequence(1000)" +
-                        "),index(s) timestamp(k)",
-                true,
-                true
+                        "),index(s) timestamp(k)"
         );
     }
 
@@ -2824,8 +2896,8 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     from xx
                     where s = null
                     sample by 1h""")
+                    .noRandomAccess()
                     .noLeakCheck()
-                    .expectSize()
                     .timestamp("k")
                     .returns(expected);
         });
@@ -3125,7 +3197,8 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         " timestamp_sequence_ns(172800000000000, 3600000000000) ts" +
                         " from long_sequence(20)" +
                         ") timestamp(ts) partition by day")
-                .fails(0, "FROM-TO intervals are not supported for keyed SAMPLE BY queries");
+                .noRandomAccess()
+                .returns("day\tsym2\tc\n");
     }
 
     @Test
@@ -4453,11 +4526,12 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
             assertQuery("select * from (select ts, s, first(v) from tab sample by 30m fill(prev) align to first observation) where s = 'B'")
                     .noLeakCheck()
                     .assertsPlan("""
-                            SelectedRecord
-                                Filter filter: s='B'
+                            Filter filter: s='B'
+                                Sample By Fill
+                                  stride: '30m'
+                                  fill: prev
                                     Sample By
-                                      fill: prev
-                                      keys: [s,ts]
+                                      keys: [ts,s]
                                       values: [first(v)]
                                         PageFrame
                                             Row forward scan
@@ -4488,12 +4562,15 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             Filter filter: 2022-12-01T01:10:00.000000000Z<ts
-                                Sample By
+                                Sample By Fill
+                                  stride: '30m'
                                   fill: prev
-                                  values: [first(v)]
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: tab
+                                    Sample By
+                                      fill: none
+                                      values: [first(v)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
                             """);
 
             assertQuery("select * from (select ts, first(v) from tab sample by 30m fill(prev) align to first observation) where ts > '2022-12-01T01:10:00.000000000Z' ")
@@ -4610,10 +4687,9 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByDstFallBackFirstRowAfterClockMovesBack() throws Exception {
-        // The Europe/Berlin clock moves back at 2021-10-31T01:00Z, where 03:00 CEST becomes 02:00 CET. On
-        // the SAMPLE BY cursors the first row after that, S3 at 01:14Z (02:14 CET), joins the bucket in
-        // progress at 00:00Z, and so does S4 at 01:51Z. Key A has S1 at 00:00Z before S3; key B has S2 at
-        // 00:37Z before S4, and S0 at 02:28Z in the next bucket. See SampleByTest.DST_FALL_BACK_ROWS.
+        // The Europe/Berlin fall-back at 2021-10-31T01:00Z: the repeated hour splits into the UTC buckets at 00:00Z
+        // and 01:00Z, as on the table, so S3 at 01:14Z and S4 at 01:51Z share the bucket at 01:00Z. See
+        // SampleByTest.DST_FALL_BACK_ROWS.
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE trades AS (
@@ -4641,8 +4717,10 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                             2021-10-30T22:00:00.000000000Z\tA\t1\t101.0\t101.0
                             2021-10-30T22:00:00.000000000Z\tB\t1\t102.0\t102.0
                             2021-10-30T23:00:00.000000000Z\tB\t1\t103.0\t103.0
-                            2021-10-31T00:00:00.000000000Z\tA\t2\t104.0\t106.0
-                            2021-10-31T00:00:00.000000000Z\tB\t2\t105.0\t100.0
+                            2021-10-31T00:00:00.000000000Z\tA\t1\t104.0\t104.0
+                            2021-10-31T00:00:00.000000000Z\tB\t1\t105.0\t105.0
+                            2021-10-31T01:00:00.000000000Z\tA\t1\t106.0\t106.0
+                            2021-10-31T01:00:00.000000000Z\tB\t1\t100.0\t100.0
                             2021-10-31T02:00:00.000000000Z\tB\t1\t101.0\t101.0
                             2021-10-31T03:00:00.000000000Z\tA\t1\t102.0\t102.0
                             """);
@@ -4650,16 +4728,18 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .timestamp("ts")
                     .noRandomAccess()
-                    .withPlanContaining("Sample By\n  fill: prev\n  keys: [ts,k]\n")
+                    .withPlanContaining("Sample By Fill\n", "fill: prev\n", "Sample By\n", "keys: [ts,k]\n")
                     .returns("""
                             ts\tk\tc\tf\tl
                             2021-10-30T22:00:00.000000000Z\tA\t1\t101.0\t101.0
                             2021-10-30T22:00:00.000000000Z\tB\t1\t102.0\t102.0
                             2021-10-30T23:00:00.000000000Z\tA\t1\t101.0\t101.0
                             2021-10-30T23:00:00.000000000Z\tB\t1\t103.0\t103.0
-                            2021-10-31T00:00:00.000000000Z\tA\t2\t104.0\t106.0
-                            2021-10-31T00:00:00.000000000Z\tB\t2\t105.0\t100.0
-                            2021-10-31T02:00:00.000000000Z\tA\t2\t104.0\t106.0
+                            2021-10-31T00:00:00.000000000Z\tA\t1\t104.0\t104.0
+                            2021-10-31T00:00:00.000000000Z\tB\t1\t105.0\t105.0
+                            2021-10-31T01:00:00.000000000Z\tA\t1\t106.0\t106.0
+                            2021-10-31T01:00:00.000000000Z\tB\t1\t100.0\t100.0
+                            2021-10-31T02:00:00.000000000Z\tA\t1\t106.0\t106.0
                             2021-10-31T02:00:00.000000000Z\tB\t1\t101.0\t101.0
                             2021-10-31T03:00:00.000000000Z\tA\t1\t102.0\t102.0
                             2021-10-31T03:00:00.000000000Z\tB\t1\t101.0\t101.0
@@ -4668,15 +4748,17 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .timestamp("ts")
                     .noRandomAccess()
-                    .withPlanContaining("Sample By\n  fill: null\n  keys: [ts,k]\n")
+                    .withPlanContaining("Sample By Fill\n", "fill: null\n", "Sample By\n", "keys: [ts,k]\n")
                     .returns("""
                             ts\tk\tc\tf\tl
                             2021-10-30T22:00:00.000000000Z\tA\t1\t101.0\t101.0
                             2021-10-30T22:00:00.000000000Z\tB\t1\t102.0\t102.0
                             2021-10-30T23:00:00.000000000Z\tA\tnull\tnull\tnull
                             2021-10-30T23:00:00.000000000Z\tB\t1\t103.0\t103.0
-                            2021-10-31T00:00:00.000000000Z\tA\t2\t104.0\t106.0
-                            2021-10-31T00:00:00.000000000Z\tB\t2\t105.0\t100.0
+                            2021-10-31T00:00:00.000000000Z\tA\t1\t104.0\t104.0
+                            2021-10-31T00:00:00.000000000Z\tB\t1\t105.0\t105.0
+                            2021-10-31T01:00:00.000000000Z\tA\t1\t106.0\t106.0
+                            2021-10-31T01:00:00.000000000Z\tB\t1\t100.0\t100.0
                             2021-10-31T02:00:00.000000000Z\tA\tnull\tnull\tnull
                             2021-10-31T02:00:00.000000000Z\tB\t1\t101.0\t101.0
                             2021-10-31T03:00:00.000000000Z\tA\t1\t102.0\t102.0
@@ -4691,7 +4773,8 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                             ts\tc\tf\tl
                             2021-10-30T22:00:00.000000000Z\t2\t101.0\t102.0
                             2021-10-30T23:00:00.000000000Z\t1\t103.0\t103.0
-                            2021-10-31T00:00:00.000000000Z\t4\t104.0\t100.0
+                            2021-10-31T00:00:00.000000000Z\t2\t104.0\t105.0
+                            2021-10-31T01:00:00.000000000Z\t2\t106.0\t100.0
                             2021-10-31T02:00:00.000000000Z\t1\t101.0\t101.0
                             2021-10-31T03:00:00.000000000Z\t1\t102.0\t102.0
                             """);
@@ -4759,7 +4842,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                 "WHERE ts BETWEEN '2023-05-16T00:00:00.00Z' AND '2023-05-16T00:10:00.00Z' " +
                 "AND s2 = ('foo') " +
                 "SAMPLE BY 5m ALIGN TO CALENDAR;")
-                .expectSize()
+                .noRandomAccess()
                 .returns("""
                         time\ts1\tdd
                         2023-05-16T00:04:00.000000000Z\ta\tnull
@@ -4787,15 +4870,14 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     " where id = 'A' sample by 15m ALIGN to CALENDAR")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort light
+                            Stream Group By
                               keys: [time]
-                                GroupBy vectorized: false
-                                  keys: [time]
-                                  values: [last(lat),last(lon)]
-                                    DeferredSingleSymbolFilterPageFrame
-                                        Index forward scan on: id deferred: true
-                                          filter: id='A'
-                                        Frame forward scan on: pos
+                              keyFunctions: [timestamp_floor_utc('15m',time)]
+                              values: [last(lat),last(lon)]
+                                DeferredSingleSymbolFilterPageFrame
+                                    Index forward scan on: id deferred: true
+                                      filter: id='A'
+                                    Frame forward scan on: pos
                             """);
         });
     }
@@ -4817,15 +4899,15 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     " where id = 'A' sample by 15m ALIGN to CALENDAR")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort light
-                              keys: [time]
-                                GroupBy vectorized: false
-                                  keys: [id,time,ts]
-                                  values: [last(lat),last(lon)]
-                                    DeferredSingleSymbolFilterPageFrame
-                                        Index forward scan on: id deferred: true
-                                          filter: id='A'
-                                        Frame forward scan on: pos
+                            Stream Group By
+                              segmentKey: timestamp_floor_utc('15m',time)
+                              keys: [id,time,ts]
+                              keyFunctions: [timestamp_floor_utc('15m',time)]
+                              values: [last(lat),last(lon)]
+                                DeferredSingleSymbolFilterPageFrame
+                                    Index forward scan on: id deferred: true
+                                      filter: id='A'
+                                    Frame forward scan on: pos
                             """);
         });
     }
@@ -4847,15 +4929,15 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     " where id = 'A' sample by 15m ALIGN to CALENDAR")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort light
-                              keys: [time]
-                                GroupBy vectorized: false
-                                  keys: [time,type]
-                                  values: [last(lat),last(lon)]
-                                    DeferredSingleSymbolFilterPageFrame
-                                        Index forward scan on: id deferred: true
-                                          filter: id='A'
-                                        Frame forward scan on: pos
+                            Stream Group By
+                              segmentKey: timestamp_floor_utc('15m',time)
+                              keys: [time,type]
+                              keyFunctions: [timestamp_floor_utc('15m',time)]
+                              values: [last(lat),last(lon)]
+                                DeferredSingleSymbolFilterPageFrame
+                                    Index forward scan on: id deferred: true
+                                      filter: id='A'
+                                    Frame forward scan on: pos
                             """);
 
             assertQuery("select   id, time, type, last(lat) lat, last(lon) lon " +
@@ -4863,15 +4945,15 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     " where id = 'A' sample by 15m ALIGN to CALENDAR")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort light
-                              keys: [time]
-                                GroupBy vectorized: false
-                                  keys: [id,time,type]
-                                  values: [last(lat),last(lon)]
-                                    DeferredSingleSymbolFilterPageFrame
-                                        Index forward scan on: id deferred: true
-                                          filter: id='A'
-                                        Frame forward scan on: pos
+                            Stream Group By
+                              segmentKey: timestamp_floor_utc('15m',time)
+                              keys: [id,time,type]
+                              keyFunctions: [timestamp_floor_utc('15m',time)]
+                              values: [last(lat),last(lon)]
+                                DeferredSingleSymbolFilterPageFrame
+                                    Index forward scan on: id deferred: true
+                                      filter: id='A'
+                                    Frame forward scan on: pos
                             """);
         });
     }
@@ -4892,15 +4974,15 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     " where id = 'A' sample by 15m ALIGN to CALENDAR")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort light
-                              keys: [time]
-                                GroupBy vectorized: false
-                                  keys: [id,time,geo6]
-                                  values: [last(lat),last(lon)]
-                                    DeferredSingleSymbolFilterPageFrame
-                                        Index forward scan on: id deferred: true
-                                          filter: id='A'
-                                        Frame forward scan on: pos
+                            Stream Group By
+                              segmentKey: timestamp_floor_utc('15m',time)
+                              keys: [id,time,geo6]
+                              keyFunctions: [timestamp_floor_utc('15m',time)]
+                              values: [last(lat),last(lon)]
+                                DeferredSingleSymbolFilterPageFrame
+                                    Index forward scan on: id deferred: true
+                                      filter: id='A'
+                                    Frame forward scan on: pos
                             """);
 
             assertQuery("select   id, time, lat, last(lat) lastlat, last(lon) lon " +
@@ -4908,15 +4990,15 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     " where id = 'A' sample by 15m ALIGN to CALENDAR")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort light
-                              keys: [time]
-                                GroupBy vectorized: false
-                                  keys: [id,time,lat]
-                                  values: [last(lat),last(lon)]
-                                    DeferredSingleSymbolFilterPageFrame
-                                        Index forward scan on: id deferred: true
-                                          filter: id='A'
-                                        Frame forward scan on: pos
+                            Stream Group By
+                              segmentKey: timestamp_floor_utc('15m',time)
+                              keys: [id,time,lat]
+                              keyFunctions: [timestamp_floor_utc('15m',time)]
+                              values: [last(lat),last(lon)]
+                                DeferredSingleSymbolFilterPageFrame
+                                    Index forward scan on: id deferred: true
+                                      filter: id='A'
+                                    Frame forward scan on: pos
                             """);
         });
     }
@@ -4964,7 +5046,6 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "union all " +
                         "select '1970-01-01T01:01:00.000000000Z'::timestamp, 'A', 101, 101, #zzzzzz from long_sequence(1)")
                 .timestamp("time")
-                .expectSize()
                 .returns("id\ttime\tgeo6\tlat\tlon\n", """
                         id\ttime\tgeo6\tlat\tlon
                         A\t1970-01-01T00:00:00.000000000Z\tzzzzzz\t13.0\t13.0
@@ -5289,6 +5370,33 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                             2021-10-30T09:00:00.000000000Z\t8
                             2021-10-30T14:00:00.000000000Z\t8
                             2021-10-30T19:00:00.000000000Z\t5
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByFromToSubDayTimeZoneMatchesGroupBy() throws Exception {
+        // see SampleByTest.testSampleByFromToSubDayTimeZoneMatchesGroupBy()
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t AS (
+                        SELECT (100 + (x % 7))::DOUBLE v, timestamp_sequence('2021-10-29T20:15:00', 37 * 60_000_000L)::TIMESTAMP_NS ts
+                        FROM long_sequence(240)
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            assertSampleByCursorMatchesGroupBy(
+                    "t",
+                    " SAMPLE BY 5h FROM '2021-10-29' TO '2021-10-31' ALIGN TO CALENDAR TIME ZONE '+02:00'",
+                    null,
+                    """
+                            ts\tc\ts
+                            2021-10-29T18:00:00.000000000Z\t5\t515.0
+                            2021-10-29T23:00:00.000000000Z\t8\t827.0
+                            2021-10-30T04:00:00.000000000Z\t8\t821.0
+                            2021-10-30T09:00:00.000000000Z\t8\t822.0
+                            2021-10-30T14:00:00.000000000Z\t8\t823.0
+                            2021-10-30T19:00:00.000000000Z\t5\t518.0
                             """
             );
         });
@@ -6842,14 +6950,18 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
             formatter.setTimeZone(TimeZone.getTimeZone("UTC"));
             assertQuery(query)
                     .noLeakCheck()
-                    .assertsPlan("Sample By\n" +
-                            "  fill: null\n" +
+                    .assertsPlan("Sample By Fill\n" +
                             "  range: (timestamp_floor('day',now()),null)\n" +
-                            "  values: [count(*)]\n" +
-                            "    PageFrame\n" +
-                            "        Row forward scan\n" +
-                            "        Interval forward scan on: trades\n" +
-                            "          intervals: [(\"" + formatter.format(Os.currentTimeMicros() / 1000) + "T00:00:00.000000000Z\",\"MAX\")]\n");
+                            "  stride: '1m'\n" +
+                            "  fill: null\n" +
+                            "    Sample By\n" +
+                            "      fill: none\n" +
+                            "      range: (timestamp_floor('day',now()),null)\n" +
+                            "      values: [count(*)]\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Interval forward scan on: trades\n" +
+                            "              intervals: [(\"" + formatter.format(Os.currentTimeMicros() / 1000) + "T00:00:00.000000000Z\",\"MAX\")]\n");
 
             assertQuery(query)
                     .noLeakCheck()
@@ -6861,9 +6973,8 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
 
     @Test
     public void testSampleBySubDayDstBucketStartInSkippedHour() throws Exception {
-        // Europe/Berlin moves the clock forward at 2021-03-28T01:00Z and skips the 40m grid points 02:00 and
-        // 02:40 local. The bucket from 02:40 to 03:20 local, 01:00Z to 01:20Z, used to come out at 01:40Z, after
-        // the next bucket at 01:20Z. See SampleByTest.testSampleBySubDayDstBucketStartInSkippedHour().
+        // A 40m stride at the Europe/Berlin spring-forward steps on one grid in the standard offset of the zone, so
+        // the buckets stay 40m apart in UTC. See SampleByTest.testSampleBySubDayDstBucketStartInSkippedHour().
         assertMemoryLeak(() -> {
             execute("CREATE TABLE berlin (ts TIMESTAMP_NS, sym SYMBOL, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
@@ -6884,10 +6995,10 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     """
                             ts\tc\ts
                             2021-03-28T00:20:00.000000000Z\t2\t3.0
-                            2021-03-28T01:00:00.000000000Z\t1\t3.0
-                            2021-03-28T01:20:00.000000000Z\t1\t4.0
-                            2021-03-28T02:00:00.000000000Z\t2\t11.0
-                            2021-03-28T04:00:00.000000000Z\t1\t7.0
+                            2021-03-28T01:00:00.000000000Z\t2\t7.0
+                            2021-03-28T01:40:00.000000000Z\t1\t5.0
+                            2021-03-28T02:20:00.000000000Z\t1\t6.0
+                            2021-03-28T03:40:00.000000000Z\t1\t7.0
                             """
             );
             assertSampleByCursorDst(
@@ -6896,12 +7007,11 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     """
                             ts\tc\ts
                             2021-03-28T00:20:00.000000000Z\t2\t3.0
-                            2021-03-28T01:00:00.000000000Z\t1\t3.0
-                            2021-03-28T01:20:00.000000000Z\t1\t4.0
-                            2021-03-28T02:00:00.000000000Z\t2\t11.0
-                            2021-03-28T02:40:00.000000000Z\tnull\tnull
-                            2021-03-28T03:20:00.000000000Z\tnull\tnull
-                            2021-03-28T04:00:00.000000000Z\t1\t7.0
+                            2021-03-28T01:00:00.000000000Z\t2\t7.0
+                            2021-03-28T01:40:00.000000000Z\t1\t5.0
+                            2021-03-28T02:20:00.000000000Z\t1\t6.0
+                            2021-03-28T03:00:00.000000000Z\tnull\tnull
+                            2021-03-28T03:40:00.000000000Z\t1\t7.0
                             """
             );
             assertSampleByCursorDst(
@@ -6912,17 +7022,15 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                             2021-03-28T00:20:00.000000000Z\ta\t1\t1.0
                             2021-03-28T00:20:00.000000000Z\tb\t1\t2.0
                             2021-03-28T01:00:00.000000000Z\ta\t1\t3.0
-                            2021-03-28T01:00:00.000000000Z\tb\tnull\tnull
-                            2021-03-28T01:20:00.000000000Z\ta\tnull\tnull
-                            2021-03-28T01:20:00.000000000Z\tb\t1\t4.0
-                            2021-03-28T02:00:00.000000000Z\ta\t1\t5.0
-                            2021-03-28T02:00:00.000000000Z\tb\t1\t6.0
-                            2021-03-28T02:40:00.000000000Z\ta\tnull\tnull
-                            2021-03-28T02:40:00.000000000Z\tb\tnull\tnull
-                            2021-03-28T03:20:00.000000000Z\ta\tnull\tnull
-                            2021-03-28T03:20:00.000000000Z\tb\tnull\tnull
-                            2021-03-28T04:00:00.000000000Z\ta\t1\t7.0
-                            2021-03-28T04:00:00.000000000Z\tb\tnull\tnull
+                            2021-03-28T01:00:00.000000000Z\tb\t1\t4.0
+                            2021-03-28T01:40:00.000000000Z\ta\t1\t5.0
+                            2021-03-28T01:40:00.000000000Z\tb\tnull\tnull
+                            2021-03-28T02:20:00.000000000Z\ta\tnull\tnull
+                            2021-03-28T02:20:00.000000000Z\tb\t1\t6.0
+                            2021-03-28T03:00:00.000000000Z\ta\tnull\tnull
+                            2021-03-28T03:00:00.000000000Z\tb\tnull\tnull
+                            2021-03-28T03:40:00.000000000Z\ta\t1\t7.0
+                            2021-03-28T03:40:00.000000000Z\tb\tnull\tnull
                             """
             );
         });
@@ -6930,11 +7038,8 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
 
     @Test
     public void testSampleBySubDayDstGapBeforeFallBackMultiHour() throws Exception {
-        // GitHub issue #7753 at a fall-back, with a stride that the change of the offset moves off the grid.
-        // America/New_York moves the clock back at 2021-11-07T06:00Z. The 6h bucket at 04:00Z follows a
-        // gap and holds rows on both sides of the change, so crossing the change moves the gap chain back by
-        // an hour, off the 6h grid. The bucket of the row at 20:00Z starts at 17:00Z. Labelled from the
-        // chain, it would come 5h late, at 22:00Z. See SampleByTest.testSampleBySubDayDstGapBeforeFallBackMultiHour().
+        // A 6h stride across the America/New_York fall-back steps in the standard offset of the zone, 6h apart in
+        // UTC, so every fill mode fills on that grid. See SampleByTest.testSampleBySubDayDstGapBeforeFallBackMultiHour().
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (ts TIMESTAMP_NS, id LONG, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
@@ -6948,37 +7053,32 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
             // the sub-queries keep the statements on the SAMPLE BY cursor
             final String notKeyed = "SELECT ts, count() c, min(id) mn FROM (SELECT ts, id, sym FROM t WHERE id > 0) SAMPLE BY 6h";
             final String timeZone = " ALIGN TO CALENDAR TIME ZONE 'America/New_York'";
-            // The fills at 10:00Z and 16:00Z are off the local 6h grid, which has a single fill at 11:00Z.
-            // They are the cursor path's existing off-grid fills: kludge() moves the gap chain by the offset
-            // delta at the change, in every fill mode. See GitHub issue #7439 for the same defect with a
-            // stride of a day.
             assertSampleByCursorDst(
                     notKeyed + " FILL(NULL)" + timeZone,
                     "fill: null\n",
                     """
                             ts\tc\tmn
-                            2021-11-06T16:00:00.000000000Z\t1\t1
-                            2021-11-06T22:00:00.000000000Z\tnull\tnull
-                            2021-11-07T04:00:00.000000000Z\t2\t2
-                            2021-11-07T10:00:00.000000000Z\tnull\tnull
-                            2021-11-07T16:00:00.000000000Z\tnull\tnull
+                            2021-11-06T11:00:00.000000000Z\t1\t1
+                            2021-11-06T17:00:00.000000000Z\tnull\tnull
+                            2021-11-06T23:00:00.000000000Z\t1\t2
+                            2021-11-07T05:00:00.000000000Z\t1\t3
+                            2021-11-07T11:00:00.000000000Z\tnull\tnull
                             2021-11-07T17:00:00.000000000Z\t1\t4
                             2021-11-07T23:00:00.000000000Z\tnull\tnull
                             2021-11-08T05:00:00.000000000Z\tnull\tnull
                             2021-11-08T11:00:00.000000000Z\t1\t5
                             """
             );
-            // the same off-grid fills at 10:00Z and 16:00Z, GitHub issue #7439
             assertSampleByCursorDst(
                     notKeyed + " FILL(0, 0)" + timeZone,
                     "fill: value\n",
                     """
                             ts\tc\tmn
-                            2021-11-06T16:00:00.000000000Z\t1\t1
-                            2021-11-06T22:00:00.000000000Z\t0\t0
-                            2021-11-07T04:00:00.000000000Z\t2\t2
-                            2021-11-07T10:00:00.000000000Z\t0\t0
-                            2021-11-07T16:00:00.000000000Z\t0\t0
+                            2021-11-06T11:00:00.000000000Z\t1\t1
+                            2021-11-06T17:00:00.000000000Z\t0\t0
+                            2021-11-06T23:00:00.000000000Z\t1\t2
+                            2021-11-07T05:00:00.000000000Z\t1\t3
+                            2021-11-07T11:00:00.000000000Z\t0\t0
                             2021-11-07T17:00:00.000000000Z\t1\t4
                             2021-11-07T23:00:00.000000000Z\t0\t0
                             2021-11-08T05:00:00.000000000Z\t0\t0
@@ -6990,8 +7090,9 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     null,
                     """
                             ts\tc\tmn
-                            2021-11-06T16:00:00.000000000Z\t1\t1
-                            2021-11-07T04:00:00.000000000Z\t2\t2
+                            2021-11-06T11:00:00.000000000Z\t1\t1
+                            2021-11-06T23:00:00.000000000Z\t1\t2
+                            2021-11-07T05:00:00.000000000Z\t1\t3
                             2021-11-07T17:00:00.000000000Z\t1\t4
                             2021-11-08T11:00:00.000000000Z\t1\t5
                             """
@@ -8346,11 +8447,9 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByToNullNoEndFill() throws Exception {
-        // A TO that reads NULL sets no upper bound, so the not-keyed FILL(NULL) and FILL(value) cursor fills no
-        // bucket after the last bucket with rows, see SampleByTest.testSampleByToNullNoEndFill(). The optimiser
-        // adds a filter on the NULL TO, which keeps no rows, to the first branch of the UNION ALL only. That branch
-        // selects no rows here anyway, so the rows of the second branch reach the cursor. LIMIT bounds each
-        // statement. Table t has a gap before its last bucket of 30 minutes, and table u has none.
+        // A TO that reads NULL keeps no rows on every SAMPLE BY path, as the NULL bound of
+        // testSampleByFromToScalarSubQuery() does: TO NULL, a NULL DECLARE variable and a NULL of the
+        // other timestamp type.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (ts TIMESTAMP_NS, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
@@ -8377,11 +8476,6 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     "fill: null\n",
                     """
                             ts\tc\ts
-                            2021-01-10T00:00:00.000000000Z\tnull\tnull
-                            2021-01-11T00:00:00.000000000Z\tnull\tnull
-                            2021-01-12T00:00:00.000000000Z\tnull\tnull
-                            2021-01-13T00:00:00.000000000Z\tnull\tnull
-                            2021-01-14T00:00:00.000000000Z\t3\t11.0
                             """
             );
             assertSampleByCursorFrom(
@@ -8389,11 +8483,6 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     "fill: value\n",
                     """
                             ts\tc\ts
-                            2021-01-10T00:00:00.000000000Z\t0\t0.0
-                            2021-01-11T00:00:00.000000000Z\t0\t0.0
-                            2021-01-12T00:00:00.000000000Z\t0\t0.0
-                            2021-01-13T00:00:00.000000000Z\t0\t0.0
-                            2021-01-14T00:00:00.000000000Z\t3\t11.0
                             """
             );
             // no gap precedes the only bucket of a day with rows
@@ -8402,18 +8491,12 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     "fill: null\n",
                     """
                             ts\tc\ts
-                            2021-01-14T00:00:00.000000000Z\t3\t11.0
                             """
             );
 
             // a gap precedes the last bucket of 30 minutes with rows of t
             final String subDayNull = """
                     ts\tc\ts
-                    2021-01-14T07:00:00.000000000Z\t1\t1.0
-                    2021-01-14T07:30:00.000000000Z\t1\t2.0
-                    2021-01-14T08:00:00.000000000Z\tnull\tnull
-                    2021-01-14T08:30:00.000000000Z\tnull\tnull
-                    2021-01-14T09:00:00.000000000Z\t1\t8.0
                     """;
             assertSampleByCursorFrom(
                     selectT + " SAMPLE BY 30m TO NULL FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'UTC' LIMIT 100",
@@ -8425,11 +8508,6 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     "fill: value\n",
                     """
                             ts\tc\ts
-                            2021-01-14T07:00:00.000000000Z\t1\t1.0
-                            2021-01-14T07:30:00.000000000Z\t1\t2.0
-                            2021-01-14T08:00:00.000000000Z\t0\t4.0
-                            2021-01-14T08:30:00.000000000Z\t0\t6.0
-                            2021-01-14T09:00:00.000000000Z\t1\t8.0
                             """
             );
             // LIMIT -3 rewinds the cursor
@@ -8437,15 +8515,9 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     selectT + " SAMPLE BY 30m TO NULL FILL(NULL) ALIGN TO CALENDAR",
                     """
                             ts\tc\ts
-                            2021-01-14T07:00:00.000000000Z\t1\t1.0
-                            2021-01-14T07:30:00.000000000Z\t1\t2.0
-                            2021-01-14T08:00:00.000000000Z\tnull\tnull
                             """,
                     """
                             ts\tc\ts
-                            2021-01-14T08:00:00.000000000Z\tnull\tnull
-                            2021-01-14T08:30:00.000000000Z\tnull\tnull
-                            2021-01-14T09:00:00.000000000Z\t1\t8.0
                             """
             );
             // no gap precedes the last bucket of 30 minutes with rows of u, and TO is a NULL of the other
@@ -8455,9 +8527,6 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     "fill: null\n",
                     """
                             ts\tc\ts
-                            2021-01-14T07:00:00.000000000Z\t1\t1.0
-                            2021-01-14T07:30:00.000000000Z\t1\t2.0
-                            2021-01-14T08:00:00.000000000Z\t1\t8.0
                             """
             );
         });
@@ -8812,16 +8881,18 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Sample By
+                            Sample By Fill
+                              stride: '30m'
                               fill: prev
-                              keys: [ts,s]
-                              values: [first(v)]
-                                Async Filter workers: 1
-                                  filter: s='B'
-                                    PageFrame
-                                        Row forward scan
-                                        Interval forward scan on: tab
-                                          intervals: [("2022-12-01T00:00:00.000000001Z","MAX")]
+                                Sample By
+                                  keys: [ts,s]
+                                  values: [first(v)]
+                                    Async Filter workers: 1
+                                      filter: s='B'
+                                        PageFrame
+                                            Row forward scan
+                                            Interval forward scan on: tab
+                                              intervals: [("2022-12-01T00:00:00.000000001Z","MAX")]
                             """);
 
             assertQuery(query)
@@ -9539,98 +9610,104 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                 .expectSize()
                 .returns("""
                         b\tcount\tk
-                        \t9\t1970-01-03T00:45:00.000000000Z
-                        VTJW\t2\t1970-01-03T00:45:00.000000000Z
-                        RXGZ\t1\t1970-01-03T00:45:00.000000000Z
-                        PEHN\t4\t1970-01-03T00:45:00.000000000Z
-                        HYRX\t2\t1970-01-03T00:45:00.000000000Z
-                        CPSW\t5\t1970-01-03T00:45:00.000000000Z
-                        \t15\t1970-01-03T03:45:00.000000000Z
-                        VTJW\t5\t1970-01-03T03:45:00.000000000Z
-                        RXGZ\t2\t1970-01-03T03:45:00.000000000Z
-                        PEHN\t1\t1970-01-03T03:45:00.000000000Z
-                        HYRX\t3\t1970-01-03T03:45:00.000000000Z
-                        CPSW\t4\t1970-01-03T03:45:00.000000000Z
-                        \t15\t1970-01-03T06:45:00.000000000Z
-                        VTJW\t3\t1970-01-03T06:45:00.000000000Z
-                        RXGZ\t3\t1970-01-03T06:45:00.000000000Z
-                        PEHN\t2\t1970-01-03T06:45:00.000000000Z
-                        HYRX\t4\t1970-01-03T06:45:00.000000000Z
-                        CPSW\t3\t1970-01-03T06:45:00.000000000Z
-                        \t11\t1970-01-03T09:45:00.000000000Z
-                        VTJW\t4\t1970-01-03T09:45:00.000000000Z
-                        RXGZ\t5\t1970-01-03T09:45:00.000000000Z
-                        PEHN\t1\t1970-01-03T09:45:00.000000000Z
-                        HYRX\t1\t1970-01-03T09:45:00.000000000Z
-                        CPSW\t2\t1970-01-03T09:45:00.000000000Z
+                        \t3\t1970-01-02T23:45:00.000000000Z
+                        VTJW\t1\t1970-01-02T23:45:00.000000000Z
+                        RXGZ\t1\t1970-01-02T23:45:00.000000000Z
+                        PEHN\t2\t1970-01-02T23:45:00.000000000Z
+                        HYRX\t1\t1970-01-02T23:45:00.000000000Z
+                        CPSW\t2\t1970-01-02T23:45:00.000000000Z
+                        \t14\t1970-01-03T02:45:00.000000000Z
+                        VTJW\t5\t1970-01-03T02:45:00.000000000Z
+                        RXGZ\t2\t1970-01-03T02:45:00.000000000Z
+                        PEHN\t3\t1970-01-03T02:45:00.000000000Z
+                        HYRX\t3\t1970-01-03T02:45:00.000000000Z
+                        CPSW\t3\t1970-01-03T02:45:00.000000000Z
+                        \t17\t1970-01-03T05:45:00.000000000Z
+                        VTJW\t2\t1970-01-03T05:45:00.000000000Z
+                        RXGZ\t2\t1970-01-03T05:45:00.000000000Z
+                        PEHN\t1\t1970-01-03T05:45:00.000000000Z
+                        HYRX\t4\t1970-01-03T05:45:00.000000000Z
+                        CPSW\t4\t1970-01-03T05:45:00.000000000Z
+                        \t15\t1970-01-03T08:45:00.000000000Z
+                        VTJW\t6\t1970-01-03T08:45:00.000000000Z
+                        RXGZ\t5\t1970-01-03T08:45:00.000000000Z
+                        PEHN\t2\t1970-01-03T08:45:00.000000000Z
+                        HYRX\t2\t1970-01-03T08:45:00.000000000Z
+                        CPSW\t5\t1970-01-03T08:45:00.000000000Z
+                        \t1\t1970-01-03T11:45:00.000000000Z
+                        VTJW\t10\t1970-01-03T11:45:00.000000000Z
+                        RXGZ\t1\t1970-01-03T11:45:00.000000000Z
+                        PEHN\t3\t1970-01-03T11:45:00.000000000Z
+                        HYRX\t0\t1970-01-03T11:45:00.000000000Z
+                        CPSW\t6\t1970-01-03T11:45:00.000000000Z
                         """, """
                         b\tcount\tk
-                        \t9\t1970-01-03T00:45:00.000000000Z
-                        VTJW\t2\t1970-01-03T00:45:00.000000000Z
-                        RXGZ\t1\t1970-01-03T00:45:00.000000000Z
-                        PEHN\t4\t1970-01-03T00:45:00.000000000Z
-                        HYRX\t2\t1970-01-03T00:45:00.000000000Z
-                        CPSW\t5\t1970-01-03T00:45:00.000000000Z
-                        CGFN\tnull\t1970-01-03T00:45:00.000000000Z
-                        NPIW\tnull\t1970-01-03T00:45:00.000000000Z
-                        PEVM\t6\t1970-01-03T00:45:00.000000000Z
-                        WGRM\tnull\t1970-01-03T00:45:00.000000000Z
-                        ZNFK\t6\t1970-01-03T00:45:00.000000000Z
-                        \t15\t1970-01-03T03:45:00.000000000Z
-                        VTJW\t5\t1970-01-03T03:45:00.000000000Z
-                        RXGZ\t2\t1970-01-03T03:45:00.000000000Z
-                        PEHN\t1\t1970-01-03T03:45:00.000000000Z
-                        HYRX\t3\t1970-01-03T03:45:00.000000000Z
-                        CPSW\t4\t1970-01-03T03:45:00.000000000Z
-                        CGFN\tnull\t1970-01-03T03:45:00.000000000Z
-                        NPIW\tnull\t1970-01-03T03:45:00.000000000Z
-                        PEVM\t5\t1970-01-03T03:45:00.000000000Z
-                        WGRM\tnull\t1970-01-03T03:45:00.000000000Z
-                        ZNFK\t5\t1970-01-03T03:45:00.000000000Z
-                        \t15\t1970-01-03T06:45:00.000000000Z
-                        VTJW\t3\t1970-01-03T06:45:00.000000000Z
-                        RXGZ\t3\t1970-01-03T06:45:00.000000000Z
-                        PEHN\t2\t1970-01-03T06:45:00.000000000Z
-                        HYRX\t4\t1970-01-03T06:45:00.000000000Z
-                        CPSW\t3\t1970-01-03T06:45:00.000000000Z
-                        CGFN\tnull\t1970-01-03T06:45:00.000000000Z
-                        NPIW\tnull\t1970-01-03T06:45:00.000000000Z
-                        PEVM\t4\t1970-01-03T06:45:00.000000000Z
-                        WGRM\tnull\t1970-01-03T06:45:00.000000000Z
-                        ZNFK\t4\t1970-01-03T06:45:00.000000000Z
-                        \t11\t1970-01-03T09:45:00.000000000Z
-                        VTJW\t4\t1970-01-03T09:45:00.000000000Z
-                        RXGZ\t5\t1970-01-03T09:45:00.000000000Z
-                        PEHN\t1\t1970-01-03T09:45:00.000000000Z
-                        HYRX\t1\t1970-01-03T09:45:00.000000000Z
-                        CPSW\t2\t1970-01-03T09:45:00.000000000Z
-                        CGFN\tnull\t1970-01-03T09:45:00.000000000Z
-                        NPIW\tnull\t1970-01-03T09:45:00.000000000Z
-                        PEVM\t3\t1970-01-03T09:45:00.000000000Z
-                        WGRM\tnull\t1970-01-03T09:45:00.000000000Z
-                        ZNFK\t3\t1970-01-03T09:45:00.000000000Z
-                        \t14\t1970-01-03T12:45:00.000000000Z
-                        VTJW\t5\t1970-01-03T12:45:00.000000000Z
-                        RXGZ\t7\t1970-01-03T12:45:00.000000000Z
-                        PEHN\t0\t1970-01-03T12:45:00.000000000Z
-                        HYRX\t-2\t1970-01-03T12:45:00.000000000Z
-                        CPSW\t1\t1970-01-03T12:45:00.000000000Z
-                        CGFN\t3\t1970-01-03T12:45:00.000000000Z
-                        NPIW\t2\t1970-01-03T12:45:00.000000000Z
-                        PEVM\t2\t1970-01-03T12:45:00.000000000Z
-                        WGRM\t3\t1970-01-03T12:45:00.000000000Z
-                        ZNFK\t2\t1970-01-03T12:45:00.000000000Z
-                        \t7\t1970-01-03T15:45:00.000000000Z
-                        VTJW\t6\t1970-01-03T15:45:00.000000000Z
-                        RXGZ\t9\t1970-01-03T15:45:00.000000000Z
-                        PEHN\t-1\t1970-01-03T15:45:00.000000000Z
-                        HYRX\t-5\t1970-01-03T15:45:00.000000000Z
-                        CPSW\t0\t1970-01-03T15:45:00.000000000Z
-                        CGFN\tnull\t1970-01-03T15:45:00.000000000Z
-                        NPIW\tnull\t1970-01-03T15:45:00.000000000Z
-                        PEVM\t1\t1970-01-03T15:45:00.000000000Z
-                        WGRM\tnull\t1970-01-03T15:45:00.000000000Z
-                        ZNFK\t1\t1970-01-03T15:45:00.000000000Z
+                        \t3\t1970-01-02T23:45:00.000000000Z
+                        VTJW\t1\t1970-01-02T23:45:00.000000000Z
+                        RXGZ\t1\t1970-01-02T23:45:00.000000000Z
+                        PEHN\t2\t1970-01-02T23:45:00.000000000Z
+                        HYRX\t1\t1970-01-02T23:45:00.000000000Z
+                        CPSW\t2\t1970-01-02T23:45:00.000000000Z
+                        CGFN\t6\t1970-01-02T23:45:00.000000000Z
+                        NPIW\t1\t1970-01-02T23:45:00.000000000Z
+                        PEVM\t6\t1970-01-02T23:45:00.000000000Z
+                        WGRM\t6\t1970-01-02T23:45:00.000000000Z
+                        ZNFK\tnull\t1970-01-02T23:45:00.000000000Z
+                        \t14\t1970-01-03T02:45:00.000000000Z
+                        VTJW\t5\t1970-01-03T02:45:00.000000000Z
+                        RXGZ\t2\t1970-01-03T02:45:00.000000000Z
+                        PEHN\t3\t1970-01-03T02:45:00.000000000Z
+                        HYRX\t3\t1970-01-03T02:45:00.000000000Z
+                        CPSW\t3\t1970-01-03T02:45:00.000000000Z
+                        CGFN\t5\t1970-01-03T02:45:00.000000000Z
+                        NPIW\t1\t1970-01-03T02:45:00.000000000Z
+                        PEVM\t5\t1970-01-03T02:45:00.000000000Z
+                        WGRM\t5\t1970-01-03T02:45:00.000000000Z
+                        ZNFK\tnull\t1970-01-03T02:45:00.000000000Z
+                        \t17\t1970-01-03T05:45:00.000000000Z
+                        VTJW\t2\t1970-01-03T05:45:00.000000000Z
+                        RXGZ\t2\t1970-01-03T05:45:00.000000000Z
+                        PEHN\t1\t1970-01-03T05:45:00.000000000Z
+                        HYRX\t4\t1970-01-03T05:45:00.000000000Z
+                        CPSW\t4\t1970-01-03T05:45:00.000000000Z
+                        CGFN\t4\t1970-01-03T05:45:00.000000000Z
+                        NPIW\t1\t1970-01-03T05:45:00.000000000Z
+                        PEVM\t4\t1970-01-03T05:45:00.000000000Z
+                        WGRM\t4\t1970-01-03T05:45:00.000000000Z
+                        ZNFK\tnull\t1970-01-03T05:45:00.000000000Z
+                        \t15\t1970-01-03T08:45:00.000000000Z
+                        VTJW\t6\t1970-01-03T08:45:00.000000000Z
+                        RXGZ\t5\t1970-01-03T08:45:00.000000000Z
+                        PEHN\t2\t1970-01-03T08:45:00.000000000Z
+                        HYRX\t2\t1970-01-03T08:45:00.000000000Z
+                        CPSW\t5\t1970-01-03T08:45:00.000000000Z
+                        CGFN\t3\t1970-01-03T08:45:00.000000000Z
+                        NPIW\t1\t1970-01-03T08:45:00.000000000Z
+                        PEVM\t3\t1970-01-03T08:45:00.000000000Z
+                        WGRM\t3\t1970-01-03T08:45:00.000000000Z
+                        ZNFK\tnull\t1970-01-03T08:45:00.000000000Z
+                        \t10\t1970-01-03T11:45:00.000000000Z
+                        VTJW\t10\t1970-01-03T11:45:00.000000000Z
+                        RXGZ\t1\t1970-01-03T11:45:00.000000000Z
+                        PEHN\t3\t1970-01-03T11:45:00.000000000Z
+                        HYRX\t0\t1970-01-03T11:45:00.000000000Z
+                        CPSW\t6\t1970-01-03T11:45:00.000000000Z
+                        CGFN\t2\t1970-01-03T11:45:00.000000000Z
+                        NPIW\t1\t1970-01-03T11:45:00.000000000Z
+                        PEVM\t2\t1970-01-03T11:45:00.000000000Z
+                        WGRM\t2\t1970-01-03T11:45:00.000000000Z
+                        ZNFK\tnull\t1970-01-03T11:45:00.000000000Z
+                        \t12\t1970-01-03T14:45:00.000000000Z
+                        VTJW\t14\t1970-01-03T14:45:00.000000000Z
+                        RXGZ\t-3\t1970-01-03T14:45:00.000000000Z
+                        PEHN\t4\t1970-01-03T14:45:00.000000000Z
+                        HYRX\t-2\t1970-01-03T14:45:00.000000000Z
+                        CPSW\t7\t1970-01-03T14:45:00.000000000Z
+                        CGFN\t1\t1970-01-03T14:45:00.000000000Z
+                        NPIW\t1\t1970-01-03T14:45:00.000000000Z
+                        PEVM\t1\t1970-01-03T14:45:00.000000000Z
+                        WGRM\t1\t1970-01-03T14:45:00.000000000Z
+                        ZNFK\t3\t1970-01-03T14:45:00.000000000Z
                         """);
     }
 
@@ -10042,6 +10119,87 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     Assert.assertEquals(0, engine.getBusyWriterCount());
                 }
             }
+        });
+    }
+
+    @Test
+    public void testSampleFillLinearNullNeighbour() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (sym SYMBOL, x INT, d DOUBLE, c CHAR, ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('B', 1, 1.0, 'b', '2024-01-01'), ('A', 10, 10.0, 'a', '2024-01-01'), ('C', NULL, NULL, NULL, '2024-01-01'),
+                        ('B', 1, 1.0, 'b', '2024-01-02'), ('D', NULL, NULL, NULL, '2024-01-02'),
+                        ('B', 1, 1.0, 'b', '2024-01-03'), ('A', NULL, NULL, NULL, '2024-01-03'), ('C', NULL, NULL, NULL, '2024-01-03'),
+                        ('D', 20, 20.0, 'd', '2024-01-03'),
+                        ('B', 1, 1.0, 'b', '2024-01-04'),
+                        ('B', 1, 1.0, 'b', '2024-01-05'), ('A', 30, 30.0, 'f', '2024-01-05'), ('D', 40, 40.0, 'h', '2024-01-05'),
+                        ('B', 1, 1.0, 'b', '2024-01-06')
+                    """);
+            assertQuery("SELECT ts, sym, min(x) i, sum(x) s, min(d) d FROM t SAMPLE BY 1d FILL(LINEAR) ORDER BY ts, sym")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .withPlanContaining("fill: linear")
+                    .returns("""
+                            ts\tsym\ti\ts\td
+                            2024-01-01T00:00:00.000000000Z\tA\t10\t10\t10.0
+                            2024-01-01T00:00:00.000000000Z\tB\t1\t1\t1.0
+                            2024-01-01T00:00:00.000000000Z\tC\tnull\tnull\tnull
+                            2024-01-01T00:00:00.000000000Z\tD\tnull\tnull\tnull
+                            2024-01-02T00:00:00.000000000Z\tA\tnull\tnull\tnull
+                            2024-01-02T00:00:00.000000000Z\tB\t1\t1\t1.0
+                            2024-01-02T00:00:00.000000000Z\tC\tnull\tnull\tnull
+                            2024-01-02T00:00:00.000000000Z\tD\tnull\tnull\tnull
+                            2024-01-03T00:00:00.000000000Z\tA\tnull\tnull\tnull
+                            2024-01-03T00:00:00.000000000Z\tB\t1\t1\t1.0
+                            2024-01-03T00:00:00.000000000Z\tC\tnull\tnull\tnull
+                            2024-01-03T00:00:00.000000000Z\tD\t20\t20\t20.0
+                            2024-01-04T00:00:00.000000000Z\tA\tnull\tnull\tnull
+                            2024-01-04T00:00:00.000000000Z\tB\t1\t1\t1.0
+                            2024-01-04T00:00:00.000000000Z\tC\tnull\tnull\tnull
+                            2024-01-04T00:00:00.000000000Z\tD\t30\t30\t30.0
+                            2024-01-05T00:00:00.000000000Z\tA\t30\t30\t30.0
+                            2024-01-05T00:00:00.000000000Z\tB\t1\t1\t1.0
+                            2024-01-05T00:00:00.000000000Z\tC\tnull\tnull\tnull
+                            2024-01-05T00:00:00.000000000Z\tD\t40\t40\t40.0
+                            2024-01-06T00:00:00.000000000Z\tA\tnull\tnull\tnull
+                            2024-01-06T00:00:00.000000000Z\tB\t1\t1\t1.0
+                            2024-01-06T00:00:00.000000000Z\tC\tnull\tnull\tnull
+                            2024-01-06T00:00:00.000000000Z\tD\t50\t50\t50.0
+                            """);
+            assertQuery("SELECT ts, min(x) i, sum(x) s, min(d) d FROM t WHERE sym = 'A' SAMPLE BY 1d FROM '2024-01-01' TO '2024-01-06' FILL(LINEAR)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .withPlanContaining("fill: linear")
+                    .returns("""
+                            ts\ti\ts\td
+                            2024-01-01T00:00:00.000000000Z\t10\t10\t10.0
+                            2024-01-02T00:00:00.000000000Z\tnull\tnull\tnull
+                            2024-01-03T00:00:00.000000000Z\tnull\tnull\tnull
+                            2024-01-04T00:00:00.000000000Z\tnull\tnull\tnull
+                            2024-01-05T00:00:00.000000000Z\t30\t30\t30.0
+                            """);
+            assertQuery("""
+                    SELECT ts, min(x) i, sum(x) s, min(d) d, first(c) c, count() n FROM t WHERE sym = 'A'
+                    SAMPLE BY 1d FROM '2023-12-31' TO '2024-01-08' FILL(LINEAR, LINEAR, LINEAR, LINEAR, NULL)
+                    """)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("fill: value")
+                    .returns("""
+                            ts\ti\ts\td\tc\tn
+                            2023-12-31T00:00:00.000000000Z\tnull\tnull\tnull\t\tnull
+                            2024-01-01T00:00:00.000000000Z\t10\t10\t10.0\ta\t1
+                            2024-01-02T00:00:00.000000000Z\tnull\tnull\tnull\t\tnull
+                            2024-01-03T00:00:00.000000000Z\tnull\tnull\tnull\t\t1
+                            2024-01-04T00:00:00.000000000Z\tnull\tnull\tnull\t\tnull
+                            2024-01-05T00:00:00.000000000Z\t30\t30\t30.0\tf\t1
+                            2024-01-06T00:00:00.000000000Z\t30\t30\t30.0\tf\tnull
+                            2024-01-07T00:00:00.000000000Z\t30\t30\t30.0\tf\tnull
+                            """);
         });
     }
 
@@ -14318,7 +14476,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                 )
                 .timestamp("ts")
                 .noRandomAccess()
-                .withPlanContaining("Sample By\n  fill: prev\n")
+                .withPlanContaining("Sample By Fill\n", "fill: prev\n", "Sample By\n")
                 .returns("""
                         ts\tc\tsp\tfq\tll\tcd
                         2021-10-30T19:45:00.000000000Z\tnull\tnull\tnull\tnull\tnull
@@ -14430,7 +14588,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                 )
                 .timestamp("ts")
                 .noRandomAccess()
-                .withPlanContaining("Sample By\n  fill: prev\n")
+                .withPlanContaining("Sample By Fill\n", "fill: prev\n", "Sample By\n")
                 .returns("""
                         ts\ts
                         2024-01-01T05:00:00.000000000Z\t1.0
@@ -15636,17 +15794,14 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFillValueNegativeInvalid() throws Exception {
-        // The SAMPLE BY cursor accepts a minus sign only over a literal and parses the signed literal, so
-        // a value that the column type's parser rejects, such as a fraction or a value outside the int
-        // range for an INT column, or a minus sign over anything else, keeps failing at the minus sign.
-        // SHORT and BYTE get only the int range check: createPlaceHolderFunction() narrows their fill
-        // value with a plain cast, so FILL(-129) for an aggregate of type BYTE, such as first() over a
-        // BYTE column, fills 127 instead of failing.
+        // A minus sign over a numeric literal reads as one signed literal, so a value that the column type cannot
+        // hold, such as a fraction or a value outside the int range for an INT column, fails at the minus sign and
+        // names the signed value. A minus sign over anything else binds as an expression.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (ts TIMESTAMP_NS, i INT) TIMESTAMP(ts) PARTITION BY DAY");
             assertQuery("SELECT ts, sum(i) s FROM (SELECT * FROM t WHERE i > 0) SAMPLE BY 1h FILL(-abc)")
                     .noLeakCheck()
-                    .fails(73, "invalid fill value: -");
+                    .fails(74, "Invalid column: abc");
             assertQuery("SELECT ts, first(i) i FROM (SELECT * FROM t WHERE i > 0) SAMPLE BY 1h FILL(-1.5)")
                     .noLeakCheck()
                     .fails(75, "invalid fill value: -1.5");
@@ -15655,7 +15810,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     .fails(75, "invalid fill value: -2_147_483_649");
             assertQuery("SELECT ts, first(ts) fts FROM (SELECT * FROM t WHERE i > 0) SAMPLE BY 1h FILL(-'2019-01-01')")
                     .noLeakCheck()
-                    .fails(78, "Invalid fill value: '-'. Timestamp fill value must be in quotes.");
+                    .failsWith("inconvertible value: `2019-01-01` [STRING -> DOUBLE]");
         });
     }
 
@@ -16287,7 +16442,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
             assertQuery("SELECT * FROM long_sequence(2) CROSS JOIN (" + cursorSql + ")")
                     .noLeakCheck()
                     .noRandomAccess()
-                    .withPlanContaining("Sample By\n", "fill: value\n")
+                    .withPlanContaining("Sample By Fill\n", "Sample By\n")
                     .returns("""
                             x\tts\tsv\tlv\tml\tls\tlvc\tpv\tmnl\tc
                             1\t2020-12-31T22:00:00.000000000Z\tnull\tnull\tnull\t\t\tnull\t7\tnull
@@ -16409,7 +16564,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         " from" +
                         " long_sequence(40)" +
                         ") timestamp(k) partition by NONE")
-                .fails(43, "Invalid column: zz");
+                .fails(43, "invalid fill value: zz");
     }
 
     @Test
@@ -16424,7 +16579,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         " from" +
                         " long_sequence(40)" +
                         ") timestamp(k) partition by NONE")
-                .fails(43, "Invalid column: zz");
+                .fails(43, "invalid fill value: zz");
     }
 
     @Test
@@ -16475,6 +16630,45 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSamplePeriodBucketBeyondLong() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (v DOUBLE, ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES (1.0, '2024-03-15T00:00:00.000000000Z'), (2.0, '2024-12-15T00:00:00.000000000Z')");
+            final String[][] strides = {
+                    {"(106_752 + 0::LONG) d", "+", "invalid sample value [value=106752]"},
+                    {"(106_752 + 0::LONG) d FILL(NULL)", "+", "invalid sample value [value=106752]"},
+                    {"(10_000_000_000 + 0L) s", "+", "invalid sample value [value=10000000000]"},
+                    {"(9_300_000_000_000_000 + 0L) U FILL(PREV)", "+", "invalid sample value [value=9300000000000000]"},
+                    {"106752d", "d", "invalid sample value [value=106752]"},
+                    {"106752d FILL(NULL)", "d", "invalid sample value [value=106752]"},
+                    {"106752d ALIGN TO FIRST OBSERVATION", "d", "invalid sample value [value=106752]"},
+                    {"2562048h FILL(0)", "h", "invalid sample value [value=2562048]"},
+                    {"15251w", "w", "invalid sample value [value=15251]"}
+            };
+            for (String[] stride : strides) {
+                final String query = "SELECT ts, sum(v) FROM x SAMPLE BY " + stride[0];
+                assertException(query, query.indexOf(stride[1], query.indexOf("SAMPLE BY")), stride[2]);
+            }
+            assertQuery("SELECT ts, sum(v) FROM x SAMPLE BY (106_751 + 0::LONG) d FILL(NULL)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tsum
+                            1970-01-01T00:00:00.000000000Z\t3.0
+                            """);
+            assertQuery("SELECT ts, sum(v) FROM x SAMPLE BY 15250w")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tsum
+                            1969-12-29T00:00:00.000000000Z\t3.0
+                            """);
+        });
+    }
+
+    @Test
     public void testSamplePeriodInvalidWithNoUnits() throws Exception {
         testSampleByPeriodFails(
                 "select sum(a), k from x sample by 300/10 align to calendar",
@@ -16508,6 +16702,40 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                 "select sum(a), k from x sample by 300/10 L".length() - 1,
                 "one letter sample by period unit expected"
         );
+    }
+
+    @Test
+    public void testSamplePeriodLongStrideFill() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (v DOUBLE, ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (1.0, '2024-01-01T10:00:00.000000000Z'),
+                    (2.0, '2024-01-01T10:00:01.000000000Z'),
+                    (3.0, '2024-01-01T10:00:12.000000000Z')
+                    """);
+            for (String stride : new String[]{"(5 * 1_000_000_000L) n", "5s"}) {
+                assertQuery("SELECT ts, sum(v) FROM x SAMPLE BY " + stride + " FILL(NULL)")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .noRandomAccess()
+                        .returns("""
+                                ts\tsum
+                                2024-01-01T10:00:00.000000000Z\t3.0
+                                2024-01-01T10:00:05.000000000Z\tnull
+                                2024-01-01T10:00:10.000000000Z\t3.0
+                                """);
+            }
+            assertQuery("SELECT ts, sum(v) FROM x SAMPLE BY (5 * 1_000_000_000L) n")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tsum
+                            2024-01-01T10:00:00.000000000Z\t3.0
+                            2024-01-01T10:00:10.000000000Z\t3.0
+                            """);
+        });
     }
 
     @Test
@@ -18321,8 +18549,14 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                 .noLeakCheck()
                 .timestamp("ts")
                 .noRandomAccess()
-                .withPlanContaining("Sample By\n", planFill)
+                .withPlanContaining(isSampleByNodeOnly(planFill) ? new String[]{"Sample By\n"} : new String[]{"Sample By\n", planFill})
                 .returns(expected);
+    }
+
+    // The fill label of the legacy Sample By node: this planner puts a fill in a Sample By Fill node over Sample By,
+    // except LINEAR, and labels a fill list by its kinds, so only the Sample By node is checked
+    private static boolean isSampleByNodeOnly(String planFill) {
+        return planFill == null || (planFill.startsWith("fill: ") && !"fill: none\n".equals(planFill));
     }
 
     // Asserts the first three and the last three rows of a statement on the SAMPLE BY cursor path, through
@@ -18589,8 +18823,8 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
     }
 
     private static String sampleByPushdownPlan(String fill, String align, boolean hasDesignatedTimestamp) {
-        boolean isFastPath = (fill.equals("null") || fill.equals("prev"))
-                && !"align to first observation".equals(align);
+        final boolean isFilled = fill.equals("null") || fill.equals("prev");
+        boolean isFastPath = isFilled && !"align to first observation".equals(align);
         boolean isNoneFill = fill.isEmpty() || "none".equals(fill);
         if (isFastPath) {
             return "Filter filter: (tstmp>=2022-12-01T00:00:00.000000000Z and 0<length(sym)*tstmp::long)\n" +
@@ -18625,24 +18859,34 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     "      fill: linear\n" +
                     "      keys: [tstmp,sym]\n" +
                     "        Async Stream Group By workers: 1\n" +
-                    "          segmentKey: timestamp_floor('minute',tstmp)\n" +
+                    "          segmentKey: timestamp_floor('minute',ts)\n" +
                     "          keys: [sym,__sample_by_bucket]\n" +
-                    "          keyFunctions: [timestamp_floor('minute',tstmp)]\n" +
+                    "          keyFunctions: [timestamp_floor('minute',ts)]\n" +
                     "          values: [first(val),avg(val),last(val),max(val)]\n" +
-                    "            SelectedRecord\n" +
-                    "                PageFrame\n" +
-                    "                    Row forward scan\n" +
-                    "                    Frame forward scan on: #TABLE#\n";
+                    "            PageFrame\n" +
+                    "                Row forward scan\n" +
+                    "                Frame forward scan on: #TABLE#\n";
+        }
+        if (isFilled) {
+            return "Filter filter: (tstmp>=2022-12-01T00:00:00.000000000Z and sym='B' and 0<length(sym)*tstmp::long)\n" +
+                    "    Sample By Fill\n" +
+                    "      stride: '1m'\n" +
+                    "      fill: " + fill + "\n" +
+                    "        Sample By\n" +
+                    "          keys: [tstmp,sym]\n" +
+                    "          values: [first(val),avg(val),last(val),max(val)]\n" +
+                    "            PageFrame\n" +
+                    "                Row forward scan\n" +
+                    "                Frame forward scan on: #TABLE#\n";
         }
         return "Filter filter: (tstmp>=2022-12-01T00:00:00.000000000Z and sym='B' and 0<length(sym)*tstmp::long)\n" +
                 "    Sample By\n" +
                 (isNoneFill ? "" : "      fill: " + fill + "\n") +
                 "      keys: [tstmp,sym]\n" +
                 "      values: [first(val),avg(val),last(val),max(val)]\n" +
-                "        SelectedRecord\n" +
-                "            PageFrame\n" +
-                "                Row forward scan\n" +
-                "                Frame forward scan on: #TABLE#\n";
+                "        PageFrame\n" +
+                "            Row forward scan\n" +
+                "            Frame forward scan on: #TABLE#\n";
     }
 
     private void testSampleByFirstLastIndexedConcurrent(String query) throws Exception {

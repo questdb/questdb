@@ -39,6 +39,11 @@ import io.questdb.std.ObjList;
 
 public class CursorDereferenceFunctionFactory implements FunctionFactory {
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.INT;
+    }
+
+    @Override
     public String getSignature() {
         return ".(Rs)";
     }

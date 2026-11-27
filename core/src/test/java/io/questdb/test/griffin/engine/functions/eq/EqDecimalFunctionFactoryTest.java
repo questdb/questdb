@@ -1014,7 +1014,7 @@ public class EqDecimalFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testEqScaleAlignmentNulls() throws Exception {
-        assertQuery("select a = b eq, a != b ne from eq_nulls order by id")
+        assertQuery("select a = b eq, a != b ne, NOT (a = b) n_eq, NOT (a != b) n_ne from eq_nulls order by id")
                 .ddl(
                         "create table eq_nulls (id int, a decimal(18,0), b decimal(18,1))",
                         "insert into eq_nulls values " +
@@ -1023,10 +1023,12 @@ public class EqDecimalFunctionFactoryTest extends AbstractCairoTest {
                                 "(3, null, null)"
                 )
                 .expectSize()
-                .returns("eq\tne\n" +
-                        "false\ttrue\n" +
-                        "false\ttrue\n" +
-                        "true\tfalse\n");
+                .returns("""
+                        eq	ne	n_eq	n_ne
+                        false	true	true	false
+                        false	true	true	false
+                        true	false	false	true
+                        """);
     }
 
     @Test
@@ -1058,13 +1060,14 @@ public class EqDecimalFunctionFactoryTest extends AbstractCairoTest {
                 {new BigDecimal(maxA).negate(), new BigDecimal(maxB)},
                 {BigDecimal.ONE, BigDecimal.ONE}
         };
-        final StringBuilder expected = new StringBuilder("eq\tne\tqe\tqn\n");
+        final StringBuilder expected = new StringBuilder("eq\tne\tqe\tqn\tn_eq\tn_ne\n");
         for (BigDecimal[] row : rows) {
             final boolean eq = row[0].compareTo(row[1]) == 0;
             expected.append(eq).append('\t').append(!eq).append('\t')
-                    .append(eq).append('\t').append(!eq).append('\n');
+                    .append(eq).append('\t').append(!eq).append('\t')
+                    .append(!eq).append('\t').append(eq).append('\n');
         }
-        assertQuery("select a = b eq, a != b ne, b = a qe, b != a qn from " + table + " order by id")
+        assertQuery("select a = b eq, a != b ne, b = a qe, b != a qn, NOT (a = b) n_eq, NOT (a != b) n_ne from " + table + " order by id")
                 .ddl(
                         "create table " + table + " (id int, a decimal(" + leftPrecision + ",0), b decimal(" + rightPrecision + ",1))",
                         "insert into " + table + " values " +

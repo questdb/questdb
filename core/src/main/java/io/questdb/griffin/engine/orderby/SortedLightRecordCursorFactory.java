@@ -77,9 +77,9 @@ public class SortedLightRecordCursorFactory extends AbstractRecordCursorFactory 
             rankMaps = SortKeyEncoder.createRankMaps(metadata, sortColumnFilter);
             this.cursor = new SortedLightRecordCursor(chain, comparator, rankMaps);
         } catch (Throwable th) {
-            Misc.free(chain);
-            Misc.freeObjList(rankMaps);
-            close();
+            Misc.free(chain, th);
+            Misc.freeObjList(rankMaps, th);
+            Misc.free(this, th);
             throw th;
         }
     }
@@ -102,8 +102,8 @@ public class SortedLightRecordCursorFactory extends AbstractRecordCursorFactory 
     }
 
     @Override
-    public boolean isStableWithinExecution() {
-        return base.isStableWithinExecution();
+    public boolean isLegacyStableWithinExecution() {
+        return base.isLegacyStableWithinExecution();
     }
 
     @Override

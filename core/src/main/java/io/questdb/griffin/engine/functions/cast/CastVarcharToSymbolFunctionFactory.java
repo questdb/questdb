@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.cast;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTable;
@@ -50,6 +51,11 @@ import org.jetbrains.annotations.Nullable;
 public class CastVarcharToSymbolFunctionFactory implements FunctionFactory {
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.SYMBOL;
+    }
+
+    @Override
     public String getSignature() {
         return "cast(Øk)";
     }
@@ -69,7 +75,7 @@ public class CastVarcharToSymbolFunctionFactory implements FunctionFactory {
                 return SymbolConstant.NULL;
             }
             final String symbol = utf8ToString(value);
-            return symbol != null ? SymbolConstant.newInstance(symbol) : SymbolConstant.NULL;
+            return SymbolConstant.fromValue(symbol);
         }
         return new Func(arg);
     }
@@ -78,7 +84,7 @@ public class CastVarcharToSymbolFunctionFactory implements FunctionFactory {
         return Chars.toString(Utf8s.utf8ToUtf16OrView(value, Misc.getThreadLocalSink()));
     }
 
-    private static class Func extends SymbolFunction implements UnaryFunction {
+    public static class Func extends SymbolFunction implements UnaryFunction {
         private final Function arg;
         private final StringSink decodeSink = new StringSink();
         private final CastToSymbolDictionary dictionary = new CastToSymbolDictionary(true);

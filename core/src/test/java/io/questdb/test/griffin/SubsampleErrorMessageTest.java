@@ -93,6 +93,17 @@ public class SubsampleErrorMessageTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFailedValueColumnReportsItsOwnError() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            assertError("SELECT ts, ^no_such_function(v) AS value FROM t SUBSAMPLE minmax(value, 2)",
+                    "unknown function name: no_such_function(DOUBLE)");
+            assertError("SELECT ts, ^no_such_function(v) AS value FROM t SUBSAMPLE sdt(value, '1h')",
+                    "unknown function name: no_such_function(DOUBLE)");
+        });
+    }
+
+    @Test
     public void testGapThreshold() throws Exception {
         assertMemoryLeak(() -> {
             createTables();

@@ -39,6 +39,7 @@ import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.*;
+import io.questdb.std.IntList;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
 

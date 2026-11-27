@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -39,6 +40,7 @@ import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 
 public class SampleByFillNoneNotKeyedRecordCursorFactory extends AbstractSampleByNotKeyedRecordCursorFactory {
+    private final Function nullTimestamp;
     private SampleByFillNoneNotKeyedRecordCursor cursor;
     private SimpleMapValue value;
 
@@ -61,10 +63,10 @@ public class SampleByFillNoneNotKeyedRecordCursorFactory extends AbstractSampleB
             int sampleFromFuncPos,
             Function sampleToFunc,
             int sampleToFuncPos,
-            boolean isFromToUtc,
-            boolean isRuntimeBoundUtc
+            char samplingIntervalUnit
     ) {
         super(base, groupByMetadata, recordFunctions, timezoneNameFunc, offsetFunc, sampleFromFunc, sampleToFunc);
+        this.nullTimestamp = ColumnType.getTimestampDriver(timestampType).getTimestampConstantNull();
         try {
             final GroupByFunctionsUpdater updater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
             this.value = new SimpleMapValue(valueCount);
@@ -85,9 +87,8 @@ public class SampleByFillNoneNotKeyedRecordCursorFactory extends AbstractSampleB
                     sampleFromFuncPos,
                     sampleToFunc,
                     sampleToFuncPos,
-                    isFromToUtc
+                    samplingIntervalUnit
             );
-            cursor.setRuntimeBoundUtc(isRuntimeBoundUtc);
         } catch (Throwable th) {
             Misc.free(this, th);
             throw th;
@@ -98,7 +99,7 @@ public class SampleByFillNoneNotKeyedRecordCursorFactory extends AbstractSampleB
     public void toPlan(PlanSink sink) {
         sink.type("Sample By");
         sink.attr("fill").val("none");
-        if (cursor.sampleFromFunc != TimestampConstant.TIMESTAMP_MICRO_NULL || cursor.sampleToFunc != TimestampConstant.TIMESTAMP_MICRO_NULL) {
+        if (cursor.sampleFromFunc != nullTimestamp || cursor.sampleToFunc != nullTimestamp) {
             sink.attr("range").val('(').val(cursor.sampleFromFunc).val(',').val(cursor.sampleToFunc).val(')');
         }
         sink.optAttr("values", cursor.groupByFunctions, true);
@@ -110,9 +111,9 @@ public class SampleByFillNoneNotKeyedRecordCursorFactory extends AbstractSampleB
         final AbstractNoRecordSampleByCursor cursor = detachRawCursor();
         final SimpleMapValue value = this.value;
         this.value = null;
-        Throwable failure = closeSampleByOwnersBestEffort(null);
+        Throwable failure = Misc.freeBestEffort(null, cursor);
+        failure = closeSampleByOwnersBestEffort(failure);
         failure = Misc.freeBestEffort(failure, value);
-        failure = Misc.freeBestEffort(failure, cursor);
         CairoException.rethrowCleanupFailure(failure);
     }
 

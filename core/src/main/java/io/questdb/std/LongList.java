@@ -236,6 +236,18 @@ public class LongList implements Mutable, LongVec, Sinkable {
     }
 
     /**
+     * Empties the list, and gives it back its initial capacity when it has room for more than
+     * {@code maxRetainedCapacity} values, so that a list one large use grew does not keep that memory.
+     */
+    public void clearAndTrim(int maxRetainedCapacity) {
+        if (data.length > maxRetainedCapacity) {
+            restoreInitialCapacity();
+        } else {
+            pos = 0;
+        }
+    }
+
+    /**
      * {@inheritDoc}
      */
     @Override

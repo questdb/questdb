@@ -2021,11 +2021,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public boolean isSqlDistinctGroupByRewriteEnabled() {
-        return true;
-    }
-
-    @Override
     public boolean isSqlJitDebugEnabled() {
         return false;
     }
@@ -2033,6 +2028,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public boolean isSqlLatestByJitEnabled() {
         return true;
+    }
+
+    @Override
+    public boolean isSqlLegacyPlannerEnabled() {
+        return false;
     }
 
     @Override

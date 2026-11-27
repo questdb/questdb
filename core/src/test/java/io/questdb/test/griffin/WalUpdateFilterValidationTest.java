@@ -24,10 +24,17 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.cairo.EntryUnavailableException;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.wal.WalWriter;
+import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.engine.ops.UpdateOperation;
+import io.questdb.mp.SCSequence;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
@@ -151,6 +158,205 @@ public class WalUpdateFilterValidationTest extends AbstractCairoTest {
                     .expectSize()
                     .timestamp("ts")
                     .returns("ts\tv\n" + ALL_ROWS_UPDATED);
+        });
+    }
+
+    @Test
+    public void testInvalidDesignatedTimestampRangeBoundFailsBeforeSequencing() throws Exception {
+        assertMemoryLeak(() -> {
+            createTargetTable();
+            bindVariableService.clear();
+            bindVariableService.setShort(0, (short) 3);
+            bindVariableService.setDouble(1, 3.5);
+            assertQuery("UPDATE t SET v = 0 WHERE ts > $1")
+                    .noLeakCheck()
+                    .fails(30, "Invalid date");
+            assertQuery("UPDATE t SET v = 0 WHERE v > 0 AND ts < $2")
+                    .noLeakCheck()
+                    .fails(40, "Invalid date");
+            if (walEnabled) {
+                drainWalQueue();
+                final TableToken token = engine.verifyTableName("t");
+                Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
+                Assert.assertEquals(1, engine.getTableSequencerAPI().lastTxn(token));
+            }
+            assertQuery("SELECT ts, v FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("ts\tv\n" + FOUR_ROWS_UNCHANGED);
+        });
+    }
+
+    @Test
+    public void testFullReaderPoolDoesNotBlockSequencing() throws Exception {
+        Assume.assumeTrue(walEnabled);
+        assertMemoryLeak(() -> {
+            createTargetTable();
+            final ObjList<TableReader> readers = new ObjList<>();
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                final CompiledQuery cq = compiler.compile("UPDATE t SET v = v + 100 WHERE v < (SELECT max(v) FROM t)", sqlExecutionContext);
+                try {
+                    while (true) {
+                        readers.add(getReader("t"));
+                    }
+                } catch (EntryUnavailableException ignore) {
+                }
+                try (OperationFuture future = cq.execute(new SCSequence())) {
+                    future.await();
+                }
+            } finally {
+                Misc.freeObjList(readers);
+            }
+            drainWalQueue();
+            final TableToken token = engine.verifyTableName("t");
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
+            Assert.assertEquals(2, engine.getTableSequencerAPI().lastTxn(token));
+            assertQuery("SELECT ts, v FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tv
+                            2024-07-06T00:00:00.000000Z\t101
+                            2024-07-07T00:00:00.000000Z\t102
+                            2024-07-08T00:00:00.000000Z\t103
+                            2024-07-09T00:00:00.000000Z\t4
+                            """);
+        });
+    }
+
+    @Test
+    public void testInvalidTextBindFailsBeforeSequencing() throws Exception {
+        assertMemoryLeak(() -> {
+            createSecondTimestampTable();
+            assertInvalidTextBind("ts = $1::varchar", 32, "VARCHAR");
+            assertInvalidTextBind("other::timestamp = $1::varchar", 46, "VARCHAR");
+            assertInvalidTextBind("other = $1::string", 35, "STRING");
+            assertInvalidTextBind("ts > $1::varchar", 32, "VARCHAR");
+            assertInvalidTextBind("ts BETWEEN $1::varchar AND '2030'", 38, "VARCHAR");
+            assertInvalidTextBind("other < $1::varchar", 35, "VARCHAR");
+            assertInvalidTextBind("ts = $1::string", 32, "STRING");
+            assertInvalidTextBind("other = $1", 33, "STRING");
+            assertInvalidTextBind("ts < now() AND other = $1", 48, "STRING");
+            assertInvalidTextBind("other = $1 AND v = (SELECT max(v) FROM u)", 33, "STRING");
+            assertInvalidTextBind("ts = $1::string AND v = (SELECT max(v) FROM u)", 32, "STRING");
+            assertInvalidTextBind("v = (SELECT max(v) FROM u) AND other < $1::varchar", 66, "VARCHAR");
+            if (walEnabled) {
+                drainWalQueue();
+                final TableToken token = engine.verifyTableName("u");
+                Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
+                Assert.assertEquals(1, engine.getTableSequencerAPI().lastTxn(token));
+            }
+            assertQuery("SELECT ts, v FROM u")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("ts\tv\n" + FOUR_ROWS_UNCHANGED);
+
+            bindVariableService.clear();
+            bindVariableService.setStr(0, "2024-07-09T00:00:00.000000Z");
+            update("UPDATE u SET v = 999 WHERE other = $1::varchar");
+            if (walEnabled) {
+                drainWalQueue();
+            }
+            assertQuery("SELECT ts, v FROM u")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("ts\tv\n" + LAST_ROW_UPDATED);
+        });
+    }
+
+    @Test
+    public void testOutOfRangeNanoTextBoundFailsBeforeSequencing() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE n (ts TIMESTAMP_NS, other TIMESTAMP_NS, v INT) TIMESTAMP(ts) PARTITION BY DAY"
+                    + (walEnabled ? " WAL" : ""));
+            execute("INSERT INTO n VALUES ('2024-07-06', '2024-07-06', 1)");
+            if (walEnabled) {
+                drainWalQueue();
+            }
+            assertQuery("UPDATE n SET v = 0 WHERE ts > '1600-01-01'")
+                    .noLeakCheck()
+                    .fails(30, "inconvertible value: -11676096000000000 [TIMESTAMP -> TIMESTAMP_NS]");
+            assertQuery("UPDATE n SET v = 0 WHERE other < '2300-01-01'")
+                    .noLeakCheck()
+                    .fails(33, "inconvertible value: 10413792000000000 [TIMESTAMP -> TIMESTAMP_NS]");
+            if (walEnabled) {
+                drainWalQueue();
+                final TableToken token = engine.verifyTableName("n");
+                Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
+                Assert.assertEquals(1, engine.getTableSequencerAPI().lastTxn(token));
+            }
+            assertQuery("SELECT ts, v FROM n")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tv
+                            2024-07-06T00:00:00.000000000Z\t1
+                            """);
+        });
+    }
+
+    @Test
+    public void testShortAndByteBindsOnDesignatedTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE s (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY"
+                    + (walEnabled ? " WAL" : ""));
+            execute("INSERT INTO s VALUES (3, 1), (3, 2), (5, 3), (7, 4)");
+            if (walEnabled) {
+                drainWalQueue();
+            }
+
+            bindVariableService.clear();
+            bindVariableService.setShort(0, (short) 3);
+            assertQuery("SELECT ts, v FROM s WHERE ts = $1")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tv
+                            1970-01-01T00:00:00.000003Z\t1
+                            1970-01-01T00:00:00.000003Z\t2
+                            """);
+            assertShortOrByteBindUpdate("UPDATE s SET v = 100 WHERE ts = $1", """
+                    ts\tv
+                    1970-01-01T00:00:00.000003Z\t100
+                    1970-01-01T00:00:00.000003Z\t100
+                    1970-01-01T00:00:00.000005Z\t3
+                    1970-01-01T00:00:00.000007Z\t4
+                    """);
+
+            bindVariableService.clear();
+            bindVariableService.setByte(0, (byte) 3);
+            assertShortOrByteBindUpdate("UPDATE s SET v = 200 WHERE ts != $1", """
+                    ts\tv
+                    1970-01-01T00:00:00.000003Z\t100
+                    1970-01-01T00:00:00.000003Z\t100
+                    1970-01-01T00:00:00.000005Z\t200
+                    1970-01-01T00:00:00.000007Z\t200
+                    """);
+
+            bindVariableService.clear();
+            bindVariableService.setShort(0, (short) 3);
+            bindVariableService.setByte(1, (byte) 7);
+            assertQuery("SELECT ts, v FROM s WHERE ts = $1 OR ts = $2")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tv
+                            1970-01-01T00:00:00.000003Z\t100
+                            1970-01-01T00:00:00.000003Z\t100
+                            1970-01-01T00:00:00.000007Z\t200
+                            """);
+            assertShortOrByteBindUpdate("UPDATE s SET v = 300 WHERE ts = $1 OR ts = $2", """
+                    ts\tv
+                    1970-01-01T00:00:00.000003Z\t300
+                    1970-01-01T00:00:00.000003Z\t300
+                    1970-01-01T00:00:00.000005Z\t200
+                    1970-01-01T00:00:00.000007Z\t300
+                    """);
         });
     }
 
@@ -323,6 +529,27 @@ public class WalUpdateFilterValidationTest extends AbstractCairoTest {
                 .expectSize()
                 .timestamp("ts")
                 .returns("ts\tv\n" + ALL_ROWS_UPDATED);
+    }
+
+    private void assertInvalidTextBind(String predicate, int position, String textType) throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr(0, "garbage");
+        assertQuery("UPDATE u SET v = 0 WHERE " + predicate)
+                .noLeakCheck()
+                .fails(position, "inconvertible value: `garbage` [" + textType + " -> TIMESTAMP]");
+    }
+
+    private void assertShortOrByteBindUpdate(String updateSql, String expectedRows) throws Exception {
+        update(updateSql);
+        if (walEnabled) {
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("s")));
+        }
+        assertQuery("SELECT ts, v FROM s")
+                .noLeakCheck()
+                .expectSize()
+                .timestamp("ts")
+                .returns(expectedRows);
     }
 
     /**

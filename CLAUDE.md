@@ -584,6 +584,33 @@ cmake --build build/release --config Release
 4. **Column-oriented storage**: Data stored by column for compression and
    vectorized operations.
 
+### Query planners
+
+QuestDB runs SQL through one of two planners. All planner work targets the new
+one.
+
+- **New planner: the default path.** `SqlBinder` (`griffin/bind`) binds a
+  query into a typed logical plan (`griffin/plan/logical`), `SqlOptimiser`
+  (`griffin/optimiser`) rewrites it and plans its physical operators, and the
+  generators in `griffin/codegen` build its cursor factories.
+- **Legacy planner: a fallback only.** `io.questdb.legacy` (and
+  `com.questdb.legacy` in Enterprise) holds the query-model optimiser and code
+  generator as of the commit that `legacy/package-info.java` records. It lets
+  an operator route queries back to it when the new planner misbehaves, and it
+  goes away once the new planner has run stably for several releases.
+- **New features and fixes go into the new planner only.** Do not port them to
+  the legacy planner, and do not make shared or new code depend on legacy
+  classes. A bug that only the legacy planner has stays unfixed.
+- **Edit legacy code only to keep it building.** When a change to shared code
+  (functions, cursor factories, runtime, storage) breaks the legacy planner,
+  adapt it with the smallest mechanical edit.
+- **The switch.** `cairo.sql.legacy.planner.enabled` (default `false`) is the
+  only way to choose the planner, for the whole server. It is reloadable:
+  statements compile with the planner the server names at the time, and the
+  select and insert caches key their plans by planner, so a reload never
+  reuses a plan the other planner compiled. Tests run on the new planner
+  unless they set the property.
+
 ### Entry Points
 
 - `ServerMain.java` - Main server entry point

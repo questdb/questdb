@@ -44,21 +44,57 @@ public class ObjectPool<T extends Mutable> implements Mutable {
     private static final Log LOG = LogFactory.getLog(ObjectPool.class);
     private final ObjectFactory<T> factory;
     private final int initialSize;
+    // null when the pool keeps every object it creates
+    private final RetainedCapacity retainedCapacity;
     private ObjList<T> list;
+    private int peakPos;
     private int pos = 0;
     private int size;
 
     public ObjectPool(@NotNull ObjectFactory<T> factory, int size) {
+        this(factory, size, null);
+    }
+
+    /**
+     * Creates a pool whose retained footprint follows its recent use rather than its peak use: {@link #clear()},
+     * {@link #rewind(int)} and {@link #release(Mutable)} clear the objects they release, so a kept object holds no
+     * reference into the work that released it and {@link #next()} hands it out without clearing it again, and
+     * {@link #clear()} keeps as many objects as {@link RetainedCapacity} decides from the objects its recent uses
+     * took.
+     *
+     * @param minRetainedSize the fewest objects {@link #clear()} trims the pool to, never fewer than {@code size}
+     */
+    public ObjectPool(@NotNull ObjectFactory<T> factory, int size, int minRetainedSize) {
+        this(factory, size, new RetainedCapacity(Math.max(size, minRetainedSize)));
+    }
+
+    private ObjectPool(@NotNull ObjectFactory<T> factory, int size, RetainedCapacity retainedCapacity) {
         this.list = new ObjList<>(size);
         this.factory = factory;
         this.size = size;
         this.initialSize = size;
+        this.retainedCapacity = retainedCapacity;
         fill();
     }
 
     @Override
     public void clear() {
-        pos = 0;
+        rewind(0);
+        if (retainedCapacity != null) {
+            final int retainedSize = retainedCapacity.endUse(peakPos);
+            if (size > retainedSize) {
+                list.remove(retainedSize, size - 1);
+                size = retainedSize;
+            }
+        }
+        peakPos = 0;
+    }
+
+    /**
+     * Returns how many objects the pool holds, handed out or not; {@link #peekQuick(int)} reaches each of them.
+     */
+    public int getCapacity() {
+        return size;
     }
 
     public int getPos() {
@@ -71,7 +107,9 @@ public class ObjectPool<T extends Mutable> implements Mutable {
         }
 
         T o = list.getQuick(pos++);
-        o.clear();
+        if (retainedCapacity == null) {
+            o.clear();
+        }
         return o;
     }
 
@@ -98,6 +136,7 @@ public class ObjectPool<T extends Mutable> implements Mutable {
      */
     public void release(T o) {
         assert pos > 0 : "returnObject called more times than next()";
+        peakPos = Math.max(peakPos, pos);
         pos--;
 
         int objectPos = pos;
@@ -110,6 +149,9 @@ public class ObjectPool<T extends Mutable> implements Mutable {
         T objectToSwap = list.getQuick(pos);
         list.setQuick(pos, o);
         list.setQuick(objectPos, objectToSwap);
+        if (retainedCapacity != null) {
+            o.clear();
+        }
     }
 
     public void resetCapacity() {
@@ -117,6 +159,23 @@ public class ObjectPool<T extends Mutable> implements Mutable {
         this.size = initialSize;
         fill();
         pos = 0;
+    }
+
+    /**
+     * Returns every object handed out since {@link #getPos()} returned {@code mark}, so a nested user of the pool
+     * frees only what it took.
+     *
+     * @param mark a position {@link #getPos()} returned, not above the current position
+     */
+    public void rewind(int mark) {
+        assert mark >= 0 && mark <= pos : "rewind past the current position";
+        if (retainedCapacity != null) {
+            for (int i = mark; i < pos; i++) {
+                list.getQuick(i).clear();
+            }
+        }
+        peakPos = Math.max(peakPos, pos);
+        pos = mark;
     }
 
     private void expand() {
@@ -127,7 +186,11 @@ public class ObjectPool<T extends Mutable> implements Mutable {
 
     private void fill() {
         for (int i = 0; i < size; i++) {
-            list.add(factory.newInstance());
+            final T o = factory.newInstance();
+            if (retainedCapacity != null) {
+                o.clear();
+            }
+            list.add(o);
         }
     }
 }

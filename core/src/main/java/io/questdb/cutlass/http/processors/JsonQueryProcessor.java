@@ -27,7 +27,6 @@ package io.questdb.cutlass.http.processors;
 import io.questdb.Metrics;
 import io.questdb.TelemetryOrigin;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.ImplicitCastException;
@@ -196,7 +195,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
                 return;
             }
 
-            final RecordCursorFactory factory = context.getSelectCache().poll(state.getSelectCacheKey(sqlExecutionContext.getSecurityContext()));
+            final RecordCursorFactory factory = context.getSelectCache().poll(state.getSelectCacheKey(sqlExecutionContext));
             if (factory != null) {
                 // queries with sensitive info are not cached, doLog = true
                 if (!state.isSqlExecutionOwnerStarted()) {
@@ -239,9 +238,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             throw RetryOperationException.INSTANCE;
         } catch (CairoException e) {
             internalError(
-                    context.getChunkedResponse(),
-                    context.getLastRequestBytesSent(),
-                    e.getFlyweightMessage(),
                     getStatusCode(e),
                     e,
                     state,
@@ -253,9 +249,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             throw e;
         } catch (Throwable e) {
             internalError(
-                    context.getChunkedResponse(),
-                    context.getLastRequestBytesSent(),
-                    e.getMessage(),
                     HTTP_INTERNAL_ERROR,
                     e,
                     state,
@@ -358,22 +351,18 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             try {
                 state.resumeSqlExecutionOwner();
                 doResumeSend(state, context);
-            } catch (CairoError e) {
+            } catch (CairoException e) {
                 internalError(
-                        context.getChunkedResponse(),
-                        context.getLastRequestBytesSent(),
-                        e.getFlyweightMessage(),
-                        HTTP_INTERNAL_ERROR,
+                        getStatusCode(e),
                         e,
                         state,
                         context.getMetrics()
                 );
-            } catch (CairoException e) {
+            } catch (PeerIsSlowToReadException | PeerDisconnectedException e) {
+                throw e;
+            } catch (Throwable e) {
                 internalError(
-                        context.getChunkedResponse(),
-                        context.getLastRequestBytesSent(),
-                        e.getFlyweightMessage(),
-                        HTTP_BAD_REQUEST,
+                        HTTP_INTERNAL_ERROR,
                         e,
                         state,
                         context.getMetrics()
@@ -511,6 +500,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             for (int retries = 0; ; retries++) {
                 final long compilationStart = nanosecondClock.getTicks();
                 final CompiledQuery cc = compiler.compile(state.getQuery(), sqlExecutionContext);
+                state.setSelectCacheCompiledBy(compiler);
                 state.setQueryType(cc.getType());
                 if (!state.isSqlExecutionOwnerStarted()) {
                     try {
@@ -842,33 +832,16 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
     }
 
     private void internalError(
-            HttpChunkedResponse response,
-            long bytesSent,
-            CharSequence message,
             int code,
             Throwable e,
             JsonQueryProcessorState state,
             Metrics metrics
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         logInternalError(e, state, metrics);
-        final int errorMessagePosition;
-        final CharSequence errorMessage;
         if (e instanceof FlyweightMessageContainer ex) {
-            errorMessagePosition = ex.getPosition();
-            errorMessage = ex.getFlyweightMessage();
+            sendException(state, ex.getPosition(), ex.getFlyweightMessage(), code);
         } else {
-            errorMessagePosition = 0;
-            errorMessage = e.getMessage();
-        }
-        if (bytesSent > 0) {
-            state.querySuffixWithError(response, code, message, errorMessagePosition);
-        } else {
-            sendException(
-                    state,
-                    errorMessagePosition,
-                    errorMessage,
-                    code
-            );
+            sendException(state, 0, Misc.getMessageOrClassName(e), code);
         }
     }
 
@@ -1010,7 +983,11 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         final HttpConnectionContext context = state.getHttpConnectionContext();
         final HttpChunkedResponse response = context.getChunkedResponse();
-
+        if (context.getLastRequestBytesSent() > 0) {
+            state.storeQuerySuffixError(position, message);
+            doResumeSend(state, context);
+            return;
+        }
         state.storeError(position, message);
         header(response, context, configuration.getKeepAliveHeader(), code);
         state.onResumeError(response);

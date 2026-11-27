@@ -30,7 +30,6 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.DecimalFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
@@ -44,7 +43,12 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 
-public class MinDecimalGroupByFunctionFactory implements FunctionFactory {
+public class MinDecimalGroupByFunctionFactory implements MinAggregate {
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return argTypes.getQuick(0);
+    }
 
     @Override
     public String getSignature() {

@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions.window;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
@@ -70,6 +71,11 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
     static final ArrayColumnTypes STDDEV_COLUMN_TYPES_LV;
     private static final ArrayColumnTypes STDDEV_OVER_PARTITION_RANGE_COLUMN_TYPES;
     private static final ArrayColumnTypes STDDEV_OVER_PARTITION_ROWS_COLUMN_TYPES;
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.DOUBLE;
+    }
 
     // Naive sum-of-squares formula, used by sliding-window (removable) frames.
     static double computeResult(double sum, double sumSq, long count, boolean isSample, boolean isSqrt) {
@@ -242,6 +248,7 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
                     );
                 } // between current row and current row
                 else if (rowsLo == 0 && rowsHi == 0) {
+                    CairoException.rethrowCleanupFailure(Misc.freeObjListBestEffort(null, partitionByRecord.getFunctions()));
                     return new StdDevOverCurrentRowFunction(args.get(0), isSample, name);
                 } // whole partition
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {

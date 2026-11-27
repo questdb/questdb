@@ -25,6 +25,7 @@
 package io.questdb.test.cairo;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.TableColumnMetadata;
 import org.junit.Assert;
@@ -47,4 +48,54 @@ public class TableColumnMetadataTest {
         Assert.assertFalse(metadata.isSymbolTableStatic());
     }
 
+    @Test
+    public void testPassThroughOfDropsTheStorageIdentity() {
+        final TableColumnMetadata source = tableColumn();
+        assertStorageIdentityDropped(TableColumnMetadata.passThroughOf(source, "renamed"));
+        assertStorageIdentityDropped(TableColumnMetadata.passThroughOf(source, "retyped", ColumnType.STRING, false));
+    }
+
+    @Test
+    public void testPassThroughOfKeepsWhatAReaderSees() {
+        final TableColumnMetadata source = tableColumn();
+        final TableColumnMetadata renamed = TableColumnMetadata.passThroughOf(source, "renamed");
+        Assert.assertEquals("renamed", renamed.getColumnName());
+        Assert.assertEquals(ColumnType.SYMBOL, renamed.getColumnType());
+        Assert.assertEquals(IndexType.BITMAP, renamed.getIndexType());
+        Assert.assertEquals(512, renamed.getIndexValueBlockCapacity());
+        Assert.assertTrue(renamed.isSymbolTableStatic());
+        Assert.assertEquals(0x0103, renamed.getParquetEncodingConfig());
+        Assert.assertNotNull(renamed.getMetadata());
+        Assert.assertEquals(1, renamed.getMetadata().getColumnCount());
+        Assert.assertEquals("n", renamed.getMetadata().getColumnName(0));
+        Assert.assertEquals(ColumnType.INT, renamed.getMetadata().getColumnType(0));
+
+        final TableColumnMetadata retyped = TableColumnMetadata.passThroughOf(source, "retyped", ColumnType.STRING, false);
+        Assert.assertEquals("retyped", retyped.getColumnName());
+        Assert.assertEquals(ColumnType.STRING, retyped.getColumnType());
+        Assert.assertEquals(IndexType.BITMAP, retyped.getIndexType());
+        Assert.assertEquals(512, retyped.getIndexValueBlockCapacity());
+        Assert.assertFalse(retyped.isSymbolTableStatic());
+        Assert.assertEquals(0x0103, retyped.getParquetEncodingConfig());
+        Assert.assertEquals("n", retyped.getMetadata().getColumnName(0));
+    }
+
+    private static void assertStorageIdentityDropped(TableColumnMetadata copy) {
+        Assert.assertEquals(-1, copy.getWriterIndex());
+        Assert.assertEquals(-1, copy.getOriginalWriterIndex());
+        Assert.assertFalse(copy.isDedupKeyFlag());
+        Assert.assertEquals(0, copy.getReplacingIndex());
+        Assert.assertTrue(copy.isSymbolCacheFlag());
+        Assert.assertEquals(0, copy.getSymbolCapacity());
+    }
+
+    private static TableColumnMetadata tableColumn() {
+        final GenericRecordMetadata nested = new GenericRecordMetadata();
+        nested.add(new TableColumnMetadata("n", ColumnType.INT));
+        final TableColumnMetadata column = new TableColumnMetadata(
+                "s", ColumnType.SYMBOL, IndexType.BITMAP, 512, true, nested, 7, true, 3, false, 2048, 5
+        );
+        column.setParquetEncodingConfig(0x0103);
+        return column;
+    }
 }

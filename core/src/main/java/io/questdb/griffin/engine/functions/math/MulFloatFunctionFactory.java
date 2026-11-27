@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.math;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -38,8 +39,18 @@ import io.questdb.std.ObjList;
 
 public class MulFloatFunctionFactory implements FunctionFactory {
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.FLOAT;
+    }
+
+    @Override
     public String getSignature() {
         return "*(FF)";
+    }
+
+    @Override
+    public boolean isConstructionDeferrable(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration) {
+        return !args.getQuick(0).isNullConstant() && !args.getQuick(1).isNullConstant();
     }
 
     @Override

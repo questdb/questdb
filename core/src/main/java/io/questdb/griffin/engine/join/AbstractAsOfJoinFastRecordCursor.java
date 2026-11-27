@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.join;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
@@ -112,6 +113,15 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
     }
 
     /**
+     * The error of a slave whose first row has a NULL designated timestamp, which only a sub-query that declares its
+     * designated timestamp can produce. NULL sorts first, so the first row is the only one of an ordered slave that
+     * can hold it.
+     */
+    public static CairoException nullSlaveTimestamp() {
+        return CairoException.nonCritical().put("designated timestamp column cannot be NULL");
+    }
+
+    /**
      * Scales a timestamp by the given scale factor.
      *
      * @param timestamp the timestamp to scale
@@ -141,6 +151,11 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
     public void close() {
         masterCursor = Misc.free(masterCursor);
         slaveTimeFrameCursor = Misc.free(slaveTimeFrameCursor);
+    }
+
+    @Override
+    public void expectLimitedIteration() {
+        masterCursor.expectLimitedIteration();
     }
 
     @Override

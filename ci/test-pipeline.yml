@@ -353,7 +353,10 @@ stages:
                 echo "Neither a PR nor a merge-queue build ($BUILD_SOURCEBRANCH); skipping the diff coverage report"
                 exit 0
               fi
-              git diff "$DIFF_BASE"..HEAD > pr.diff
+              # Copy detection reports a file forked from an unchanged one, such as the legacy
+              # planner, by the lines that differ from its source only. 90% similarity keeps a
+              # genuinely new file from passing as a copy of a look-alike.
+              git diff --find-copies-harder -C90% -l 20000 "$DIFF_BASE"..HEAD > pr.diff
 
               $JAVA_HOME_25_X64/bin/java -jar \
                 $(Build.SourcesDirectory)/ci/cover-checker-1.5.0-all.jar \

@@ -25,13 +25,18 @@
 package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
-import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
-public class MaxFloatGroupByFunctionFactory implements FunctionFactory {
+public class MaxFloatGroupByFunctionFactory implements MaxAggregate {
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.FLOAT;
+    }
+
     @Override
     public String getSignature() {
         return "max(F)";

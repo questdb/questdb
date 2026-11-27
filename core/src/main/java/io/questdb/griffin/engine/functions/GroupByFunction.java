@@ -267,7 +267,9 @@ public interface GroupByFunction extends Function, Mutable {
      * A WINDOW JOIN with a constant-false join filter reads that value once at compile time,
      * without aggregating any row, and reports it for every master row. A function whose empty
      * group reports a non-NULL value must override this method, e.g. count() reports 0 and
-     * isOrdered() reports true. Functions that store a pointer but report NULL over an empty
+     * isOrdered() reports true, and its factory must declare the value through
+     * {@link io.questdb.griffin.FunctionFactory#getEmptyGroupValue()}, which the planner reads
+     * before any function exists. Functions that store a pointer but report NULL over an empty
      * group, such as percentile_disc, must not.
      *
      * @return true if the empty group reports a non-NULL BOOLEAN, DOUBLE or LONG readable from the
@@ -329,6 +331,13 @@ public interface GroupByFunction extends Function, Mutable {
     }
 
     /**
+     * Returns true when the function requires its input in ascending designated timestamp order.
+     */
+    default boolean isAscendingTimestampRequired() {
+        return false;
+    }
+
+    /**
      * Returns true if {@link #earlyExit(MapValue)} method can be used.
      * Only makes sense for non-keyed, single-threaded group by.
      *
@@ -355,6 +364,13 @@ public interface GroupByFunction extends Function, Mutable {
     }
 
     /**
+     * Returns true when the function requires the designated timestamp of its input as its second argument.
+     */
+    default boolean isTimestampArgumentRequired() {
+        return false;
+    }
+
+    /**
      * Used in parallel GROUP BY to merge partial results. Both values are guaranteed to be not new
      * when this method is called, i.e. {@code !destValue.isNew() && !srcValue.isNew()} is true.
      *
@@ -363,6 +379,21 @@ public interface GroupByFunction extends Function, Mutable {
      */
     default void merge(MapValue destValue, MapValue srcValue) {
         throw new UnsupportedOperationException();
+    }
+
+    /**
+     * Performs the first aggregation of a new group in a map value that holds an earlier group's state, set by
+     * {@link #setNull(MapValue)} or computed since the last {@link #toTop()}. A keyed SAMPLE BY that fills keys from
+     * their previous buckets keeps one value per key across its buckets, without {@link #toTop()} between them, and
+     * recomputes the value for each bucket with rows of the key. A function that keeps a group's state in storage the
+     * map value refers to reuses the storage the value holds, so that no other group takes it.
+     *
+     * @param mapValue map value holding the earlier group
+     * @param record   record holding the aggregated row
+     * @param rowId    row id; the value may be different from record.getRowId()
+     */
+    default void recomputeFirst(MapValue mapValue, Record record, long rowId) {
+        computeFirst(mapValue, record, rowId);
     }
 
     /**
@@ -472,5 +503,14 @@ public interface GroupByFunction extends Function, Mutable {
     @Override
     default boolean supportsParallelism() {
         return false;
+    }
+
+    /**
+     * Rewinds the function as {@link #toTop()} does, and keeps the state of the next group in {@code slot} of the pool
+     * of group states that the function reads its value from, for a consumer that still reads the group before it. A
+     * function that reads its value from its map value keeps no such pool.
+     */
+    default void toTopAtPoolSlot(int slot) {
+        toTop();
     }
 }

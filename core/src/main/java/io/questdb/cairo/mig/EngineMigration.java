@@ -46,7 +46,7 @@ import static io.questdb.cairo.TableUtils.openFileRWOrFail;
 
 public class EngineMigration {
 
-    private static final Log LOG = LogFactory.getLog(EngineMigration.class);
+    private static Log LOG = LogFactory.getLog(EngineMigration.class);
     private static final IntObjHashMap<MigrationAction> MIGRATIONS = new IntObjHashMap<>();
 
     /**
@@ -181,20 +181,19 @@ public class EngineMigration {
                     if (ff.exists(path.concat(TableUtils.META_FILE_NAME).$())) {
                         final long fdMeta = openFileRWOrFail(ff, path.$(), context.getConfiguration().getWriterFileOpenOpts());
                         try {
+                            final long metaSize = ff.length(fdMeta);
+                            if (metaSize < TableUtils.META_OFFSET_COLUMN_TYPES) {
+                                LOG.error().$("skipping table, _meta is shorter than its header [path=").$(path)
+                                        .$(", size=").$(metaSize)
+                                        .I$();
+                                return;
+                            }
                             final int storedTableVersion = TableUtils.readIntOrFail(ff, fdMeta, META_OFFSET_VERSION, mem, path);
-                            // A version above latestTableVersion that is a storage marker (a table that currently
-                            // holds composite or Delta partitions, or is downgrade-locked, carries one of
-                            // ColumnType.storageVersion()) is not a migration-version number: the table is at
-                            // latestTableVersion for the migrations' purposes, and every writer marks the table
-                            // it writes (unless cairo.commit.mode.adaptive.downgrade is set), so skipping the
-                            // marked tables would skip them all. The marker stays: a migration up to
-                            // latestTableVersion is never written over it (ver <= latestTableVersion is false
-                            // from firstVersion on); the writer folds the composite marker back and a downgrade
-                            // start the lock. Any other version above latestTableVersion comes from a newer
-                            // binary and is left alone.
-                            final boolean isMarked = ColumnType.isCompositeStorageVersion(storedTableVersion)
-                                    || ColumnType.isDeltaStorageVersion(storedTableVersion)
-                                    || ColumnType.isDowngradeLockedStorageVersion(storedTableVersion);
+                            final boolean hasCompositeOrDeltaPartitions = ColumnType.isCompositeStorageVersion(storedTableVersion)
+                                    || ColumnType.isDeltaStorageVersion(storedTableVersion);
+                            // Known storage markers keep their _meta version and receive migrations recorded in _upgrade.d.
+                            // Leave unknown versions above latestTableVersion alone.
+                            final boolean isMarked = hasCompositeOrDeltaPartitions || ColumnType.isDowngradeLockedStorageVersion(storedTableVersion);
                             final int currentTableVersion = isMarked ? latestTableVersion : storedTableVersion;
                             // _upgrade.d records the compatible migrations every table at the table version has received
                             final int firstVersion = currentTableVersion < latestTableVersion
@@ -222,7 +221,11 @@ public class EngineMigration {
 
                                 for (int ver = firstVersion; ver <= latestMigrationVersion; ver++) {
                                     final MigrationAction migration = getMigrationToVersion(ver);
-                                    if (migration != null) {
+                                    if (migration != null && hasCompositeOrDeltaPartitions && !(migration instanceof MigrationAction.StorageVersionAgnostic)) {
+                                        LOG.info().$("skipping storage version dependent migration on table with composite or Delta partitions [path=").$(path)
+                                                .$(", toVersion=").$(ver)
+                                                .I$();
+                                    } else if (migration != null) {
                                         try {
                                             LOG.info().$("upgrading table [path=").$(path)
                                                     .$(", toVersion=").$(ver)
@@ -294,6 +297,7 @@ public class EngineMigration {
         MIGRATIONS.put(425, Mig614::migrate);
         MIGRATIONS.put(426, Mig620::migrate);
         MIGRATIONS.put(429, Mig941::migrate);
-        MIGRATIONS.put(430, Mig1002::migrate);
+        MIGRATIONS.put(430, (MigrationAction.StorageVersionAgnostic) Mig1002::migrate);
+        MIGRATIONS.put(431, (MigrationAction.StorageVersionAgnostic) Mig1011::migrate);
     }
 }

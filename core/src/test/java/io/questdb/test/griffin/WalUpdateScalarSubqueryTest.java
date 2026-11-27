@@ -20,7 +20,6 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
-import java.lang.reflect.Method;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -296,6 +295,23 @@ public class WalUpdateScalarSubqueryTest extends AbstractCairoTest {
         });
     }
 
+    // A PIVOT IN sub-query names the pivot columns, so the client runs it while binding the statement and reads the
+    // target's rows for it even on a WAL table, whose statement scans read none.
+    @Test
+    public void testUpdateWithPivotInSubqueryPredicate() throws Exception {
+        assertMemoryLeak(() -> {
+            createTargetTable(5);
+            update("UPDATE t SET v = 99 WHERE v >= (SELECT count() + 3 FROM (t PIVOT (sum(v) FOR ts IN (SELECT ts FROM t WHERE v >= 4))))");
+            assertTable("""
+                    2020-06-01T00:00:00.000000Z\t1
+                    2020-06-02T00:00:00.000000Z\t2
+                    2020-06-03T00:00:00.000000Z\t3
+                    2020-06-04T00:00:00.000000Z\t99
+                    2020-06-05T00:00:00.000000Z\t99
+                    """);
+        });
+    }
+
     // A cursor function is the other way node-local state gets into an UPDATE, and it is invisible
     // to the model walk: parseSelectFrom's FUNCTION branch stores the call itself in tableNameExpr,
     // so there is no LITERAL to compare against the target. table_partitions resolves its argument
@@ -326,8 +342,7 @@ public class WalUpdateScalarSubqueryTest extends AbstractCairoTest {
 
     // The same function one position over, and the position that defeated a guard keyed on where the
     // function stands: a cursor function may also be written as a projected *column*, and
-    // SqlOptimiser then rewrites it into a cross join against the model that carries it
-    // (rewriteSelect0 -> isCursor(qc.getAst().token) -> addCursorFunctionAsCrossJoin). At the top
+    // SqlBinder then binds it as a cross join against the source that carries it. At the top
     // level that synthesised join is caught by generateUpdate's containsJoin() backstop, but nested
     // one sub-query down it lands inside the sub-query's own model, which containsJoin() does not
     // walk. Keying on the instantiated function's type instead makes the position irrelevant: the
@@ -354,9 +369,8 @@ public class WalUpdateScalarSubqueryTest extends AbstractCairoTest {
     }
 
     // The same position reached without a call syntax: a bare literal whose name happens to be a
-    // cursor function is turned into that function by the optimiser all the same, because
-    // replaceIfCursor and rewriteSelect0 both test isCursor(token) and neither looks at the node
-    // type. pg_class enumerates the tables this process knows about - node-local state, not
+    // cursor function is turned into that function by SqlBinder all the same, because it
+    // tests the token and does not look at the node type. pg_class enumerates the tables this process knows about - node-local state, not
     // something sequencing keeps aligned - so it is the same divergence with a different spelling.
     // WAL-only: the non-WAL answer is a count of whatever tables the fixture happens to hold, which
     // pins nothing.
@@ -423,7 +437,7 @@ public class WalUpdateScalarSubqueryTest extends AbstractCairoTest {
     }
 
     // The second way the compiler materialises a cursor: SHOW builds its factory inline in
-    // SqlOptimiser#parseFunctionAndEnumerateColumns and hands it to the model, so it never reaches a
+    // TableFunctionSources#bindShow and hands it to the plan, so it never reaches a
     // function factory and the type check has to be told about it there. SHOW TABLES is backed by
     // the very AllTablesCursorFactory that all_tables() returns, reached by other syntax, so this is
     // the same node-local listing as testUpdateWithCatalogueCursorFunctionSourcesAreRejected with a
@@ -624,7 +638,7 @@ public class WalUpdateScalarSubqueryTest extends AbstractCairoTest {
 
     // The SET clause would be a second way into the model, and it writes the foreign value straight
     // into the target, so it would be the more dangerous half -- except that it is not a way in at
-    // all. SqlParser#parseUpdateClause parses a SET value with expr(lexer, (IQueryModel) null, ...),
+    // all. SqlParser#parseUpdateClause parses a SET value with expr(lexer, (QueryModel) null, ...),
     // and a null model makes ExpressionTreeBuilder#onNode reject any sub-query outright, whether or
     // not the target is a WAL table. Pinned here so that the guard's silence about SET clauses reads
     // as "nothing can get through" rather than "nobody checked": lift this parser restriction and
@@ -678,6 +692,148 @@ public class WalUpdateScalarSubqueryTest extends AbstractCairoTest {
                     2020-06-04T00:00:00.000000Z\t4
                     2020-06-05T00:00:00.000000Z\t99
                     """);
+        });
+    }
+
+    @Test
+    public void testUpdateWithSubqueryOverTargetReadsPendingUpdate() throws Exception {
+        assertMemoryLeak(() -> {
+            assertUpdateAfterPendingUpdate("UPDATE w SET v = 7 WHERE v = (SELECT v FROM w WHERE k = 1)", """
+                    k\tv
+                    1\t7
+                    2\t20
+                    """);
+            assertUpdateAfterPendingUpdate("UPDATE w SET v = 7 WHERE ts >= (SELECT ts FROM w WHERE k = 1)", """
+                    k\tv
+                    1\t7
+                    2\t7
+                    """);
+            assertUpdateAfterPendingUpdate("UPDATE w SET v = 7 WHERE (SELECT v FROM w WHERE k = 1) = 10", """
+                    k\tv
+                    1\t7
+                    2\t7
+                    """);
+        });
+    }
+
+    @Test
+    public void testUpdateWithNowAndSubqueryOverTargetReadsPendingUpdate() throws Exception {
+        assertMemoryLeak(() -> assertUpdateAfterPendingUpdate(
+                "UPDATE w SET v = 7 WHERE ts < now() AND v = (SELECT v FROM w WHERE k = 1 AND ts < now())",
+                """
+                        k\tv
+                        1\t7
+                        2\t20
+                        """
+        ));
+    }
+
+    @Test
+    public void testUpdateWithTextBindAndSubqueryOverTargetValidatesBindAndReadsPendingUpdate() throws Exception {
+        assertMemoryLeak(() -> {
+            createKeyedTable();
+            bindVariableService.clear();
+            bindVariableService.setStr(0, "garbage");
+            assertQuery("UPDATE w SET v = 7 WHERE ts >= $1 AND v = (SELECT v FROM w WHERE k = 1)")
+                    .noLeakCheck()
+                    .fails(31, "inconvertible value: `garbage` [STRING -> TIMESTAMP]");
+            if (walEnabled) {
+                drainWalQueue();
+                final TableToken token = engine.verifyTableName("w");
+                Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
+                Assert.assertEquals(1, engine.getTableSequencerAPI().lastTxn(token));
+            }
+            execute("DROP TABLE w");
+
+            bindVariableService.setStr(0, "2024-01-01");
+            assertUpdateAfterPendingUpdate("UPDATE w SET v = 7 WHERE ts >= $1 AND v = (SELECT v FROM w WHERE k = 1)", """
+                    k\tv
+                    1\t7
+                    2\t20
+                    """);
+            bindVariableService.setStr(0, "2025-01-01");
+            assertUpdateAfterPendingUpdate("UPDATE w SET v = 7 WHERE ts >= (SELECT ts FROM w WHERE k = 1) AND ts < $1", """
+                    k\tv
+                    1\t7
+                    2\t7
+                    """);
+        });
+    }
+
+    @Test
+    public void testUpdateWithTextBindInsideSubqueryOverTargetValidatesBindAndReadsPendingUpdate() throws Exception {
+        assertMemoryLeak(() -> {
+            createKeyedTable();
+            bindVariableService.clear();
+            bindVariableService.setStr(0, "garbage");
+            assertQuery("UPDATE w SET v = 7 WHERE v = (SELECT v FROM w WHERE k = 1 AND ts >= $1)")
+                    .noLeakCheck()
+                    .fails(68, "inconvertible value: `garbage` [STRING -> TIMESTAMP]");
+            assertQuery("UPDATE w SET v = 7 WHERE v = (SELECT max(v) FROM w WHERE k = (SELECT min(k) FROM w WHERE ts >= $1::varchar))")
+                    .noLeakCheck()
+                    .fails(97, "inconvertible value: `garbage` [VARCHAR -> TIMESTAMP]");
+            if (walEnabled) {
+                drainWalQueue();
+                final TableToken token = engine.verifyTableName("w");
+                Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
+                Assert.assertEquals(1, engine.getTableSequencerAPI().lastTxn(token));
+            }
+            execute("DROP TABLE w");
+
+            bindVariableService.setStr(0, "2024-01-01");
+            assertUpdateAfterPendingUpdate("UPDATE w SET v = 7 WHERE v = (SELECT v FROM w WHERE k = 1 AND ts >= $1)", """
+                    k\tv
+                    1\t7
+                    2\t20
+                    """);
+            assertUpdateAfterPendingUpdate("UPDATE w SET v = 7 WHERE v = (SELECT max(v) FROM w WHERE k = (SELECT min(k) FROM w WHERE ts >= $1::varchar))", """
+                    k\tv
+                    1\t7
+                    2\t20
+                    """);
+
+            execute("CREATE TABLE ws (k SYMBOL, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY" + (walEnabled ? " WAL" : ""));
+            execute("INSERT INTO ws VALUES ('a', 10, '2024-01-01'), ('a', 20, '2024-01-02')");
+            if (walEnabled) {
+                drainWalQueue();
+            }
+            bindVariableService.setStr(0, "a");
+            bindVariableService.setStr(1, "garbage");
+            assertQuery("UPDATE ws SET v = 7 WHERE v = (SELECT v FROM ws WHERE k = $1 AND ts >= $2)")
+                    .noLeakCheck()
+                    .fails(71, "inconvertible value: `garbage` [STRING -> TIMESTAMP]");
+            assertQuery("UPDATE ws SET v = 7 WHERE k IN (SELECT k FROM ws WHERE k = $1 AND ts >= $2)")
+                    .noLeakCheck()
+                    .fails(72, "inconvertible value: `garbage` [STRING -> TIMESTAMP]");
+            update("UPDATE ws SET k = 'b' WHERE v = 20");
+            bindVariableService.setStr(0, "b");
+            bindVariableService.setStr(1, "2024-01-01");
+            update("UPDATE ws SET v = 8 WHERE v = (SELECT v FROM ws WHERE k = $1 AND ts >= $2)");
+            update("UPDATE ws SET v = v + 1 WHERE k IN (SELECT k FROM ws WHERE k = $1 AND ts >= $2)");
+            assertQuery("SELECT k, v FROM ws")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            k\tv
+                            a\t10
+                            b\t9
+                            """);
+            if (walEnabled) {
+                final TableToken token = engine.verifyTableName("ws");
+                Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
+                Assert.assertEquals(4, engine.getTableSequencerAPI().lastTxn(token));
+            }
+        });
+    }
+
+    @Test
+    public void testUpdateWithMultiRowSubqueryOverTargetSuspendsWalTable() throws Exception {
+        Assume.assumeTrue(walEnabled);
+        assertMemoryLeak(() -> {
+            createKeyedTable();
+            update("UPDATE w SET v = 7 WHERE v = (SELECT v FROM w WHERE k = 1)");
+            drainWalQueue();
+            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("w")));
         });
     }
 
@@ -1041,8 +1197,7 @@ public class WalUpdateScalarSubqueryTest extends AbstractCairoTest {
 
     // The same invariant where it is load-bearing: in a shipped server assertions are off, so
     // position() hands back the carrier's one reused instance and every throw on that carrier shares
-    // the tableName sink. Nothing in a -ea test run can observe that, which is why this loads its own
-    // copy of SqlException with assertions disabled for it and drives the real flyweight.
+    // the tableName sink. A -ea test run allocates per throw, so this forces the production reuse.
     //
     // Two constructions are pinned, and each one is what the corresponding assertion fails without.
     // tableDoesNotExist clears the sink immediately before writing it, so a second throw cannot
@@ -1051,22 +1206,22 @@ public class WalUpdateScalarSubqueryTest extends AbstractCairoTest {
     // exception that names no table cannot hand back the name the previous one left behind - which
     // matters because that name is the sole input to ApplyWal2TableJob's suspend-or-retry decision.
     @Test
-    public void testTableNameCannotOutliveTheExceptionWithAssertionsDisabled() throws Exception {
-        final Class<?> sqlException = TestUtils.loadSqlExceptionWithAssertionsDisabled();
-        final Method tableDoesNotExist = sqlException.getMethod("tableDoesNotExist", int.class, CharSequence.class);
-        final Method walRecoverable = sqlException.getMethod("walRecoverable", int.class);
-        final Method getTableName = sqlException.getMethod("getTableName");
+    public void testTableNameCannotOutliveTheReusedFlyweight() {
+        SqlException.setFlyweightReusedForTesting(true);
+        try {
+            final SqlException first = SqlException.tableDoesNotExist(0, "bounds");
+            TestUtils.assertEquals("bounds", first.getTableName());
 
-        final Object first = tableDoesNotExist.invoke(null, 0, "bounds");
-        TestUtils.assertEquals("bounds", (CharSequence) getTableName.invoke(first));
+            final SqlException second = SqlException.tableDoesNotExist(0, "t");
+            Assert.assertSame("the carrier must reuse one flyweight, or this proves nothing", first, second);
+            TestUtils.assertEquals("t", second.getTableName());
 
-        final Object second = tableDoesNotExist.invoke(null, 0, "t");
-        Assert.assertSame("the copy must reuse one flyweight per carrier, or this proves nothing", first, second);
-        TestUtils.assertEquals("t", (CharSequence) getTableName.invoke(second));
-
-        final Object third = walRecoverable.invoke(null, 0);
-        Assert.assertSame("the copy must reuse one flyweight per carrier, or this proves nothing", first, third);
-        Assert.assertEquals(0, ((CharSequence) getTableName.invoke(third)).length());
+            final SqlException third = SqlException.walRecoverable(0);
+            Assert.assertSame("the carrier must reuse one flyweight, or this proves nothing", first, third);
+            Assert.assertEquals(0, third.getTableName().length());
+        } finally {
+            SqlException.setFlyweightReusedForTesting(false);
+        }
     }
 
     // Guard for the recovery the fix must not break: when the target is renamed after the apply job
@@ -1103,6 +1258,46 @@ public class WalUpdateScalarSubqueryTest extends AbstractCairoTest {
                     2020-06-02T00:00:00.000000Z\t99
                     2020-06-03T00:00:00.000000Z\t99
                     """);
+        });
+    }
+
+    @Test
+    public void testUpdateRecoversWhenTargetNameReusedDuringApply() throws Exception {
+        Assume.assumeTrue(walEnabled);
+        final AtomicBoolean isSwapPending = new AtomicBoolean();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                if (Utf8s.endsWithAscii(name, WalUtils.EVENT_FILE_NAME) && isSwapPending.compareAndSet(true, false)) {
+                    TestUtils.unchecked(WalUpdateScalarSubqueryTest.this::swapInFreshTableUnderOldName);
+                }
+                return super.openRO(name);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            createTargetTable(3);
+            update("UPDATE t SET v = 99 WHERE v >= 2");
+            isSwapPending.set(true);
+            drainWalQueue();
+            Assert.assertFalse("the swap must have fired during apply", isSwapPending.get());
+            final TableToken original = engine.verifyTableName("t_old");
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(original));
+            assertNamed("t_old", """
+                    2020-06-01T00:00:00.000000Z\t1
+                    2020-06-02T00:00:00.000000Z\t99
+                    2020-06-03T00:00:00.000000Z\t99
+                    """);
+            assertNamed("t", "2020-07-01T00:00:00.000000Z\t7\n");
+
+            update("UPDATE t_old SET v = v + 1 WHERE v >= 99");
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(original));
+            assertNamed("t_old", """
+                    2020-06-01T00:00:00.000000Z\t1
+                    2020-06-02T00:00:00.000000Z\t100
+                    2020-06-03T00:00:00.000000Z\t100
+                    """);
+            assertNamed("t", "2020-07-01T00:00:00.000000Z\t7\n");
         });
     }
 
@@ -1301,6 +1496,24 @@ public class WalUpdateScalarSubqueryTest extends AbstractCairoTest {
     }
 
     /**
+     * Runs {@code updateSql} while the UPDATE before it is still pending in the WAL, and asserts the table the two
+     * leave behind.
+     */
+    private void assertUpdateAfterPendingUpdate(String updateSql, String expectedRows) throws Exception {
+        createKeyedTable();
+        update("UPDATE w SET k = 2 WHERE v = 20");
+        update(updateSql);
+        assertQuery("SELECT k, v FROM w")
+                .noLeakCheck()
+                .expectSize()
+                .returns(expectedRows);
+        if (walEnabled) {
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("w")));
+        }
+        execute("DROP TABLE w");
+    }
+
+    /**
      * Sequences a WAL UPDATE whose SQL names a table other than its target, without going through
      * the client compiler - which now refuses to compile one. The only way such a statement can
      * still reach WAL apply is as a segment written by a build from before that rejection existed
@@ -1359,6 +1572,14 @@ public class WalUpdateScalarSubqueryTest extends AbstractCairoTest {
             values.append("('2020-01-0").append(i).append("T00:00:00.000000Z')");
         }
         execute("INSERT INTO bounds VALUES " + values);
+    }
+
+    private void createKeyedTable() throws Exception {
+        execute("CREATE TABLE w (k INT, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY" + (walEnabled ? " WAL" : ""));
+        execute("INSERT INTO w VALUES (1, 10, '2024-01-01'), (1, 20, '2024-01-02')");
+        if (walEnabled) {
+            drainWalQueue();
+        }
     }
 
     private void createTargetTable(int rows) throws Exception {

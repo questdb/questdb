@@ -15,10 +15,13 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
+import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.plan.logical.LogicalPlanPrinter;
 import io.questdb.jit.JitUtil;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -200,6 +203,25 @@ public class QueryAssertion {
         } else {
             runDdl();
             assertExactPlan(expectedPlan);
+        }
+    }
+
+    /**
+     * Terminal: assert ONLY the query's bound, optimised logical plan, rendered by
+     * {@link LogicalPlanPrinter}, matches {@code expectedPlan} exactly. Supports only {@link #ddl},
+     * {@link #noLeakCheck}, {@link #withContext} and {@link #withEngine}.
+     */
+    public void assertsLogicalPlan(CharSequence expectedPlan) throws Exception {
+        requirePlanOnlyCompatible();
+        runPrepareHook();
+        if (leakCheck) {
+            assertMemoryLeak(() -> {
+                runDdl();
+                assertLogicalPlan(expectedPlan);
+            });
+        } else {
+            runDdl();
+            assertLogicalPlan(expectedPlan);
         }
     }
 
@@ -700,32 +722,36 @@ public class QueryAssertion {
     }
 
     /**
-     * Also assert the query's execution plan (EXPLAIN output) contains every one of {@code fragments}.
+     * Also assert the query's execution plan (EXPLAIN output) contains every one of {@code fragments}, on top of the
+     * fragments of earlier calls.
      * Honors {@link #noLeakCheck()}; cannot be combined with {@link #fullFatJoins()} or
      * {@link #withCompiler}.
      */
     public QueryAssertion withPlanContaining(CharSequence... fragments) {
-        final ObjList<CharSequence> list = new ObjList<>(fragments.length);
+        if (planFragments == null) {
+            planFragments = new ObjList<>(fragments.length);
+        }
         for (CharSequence fragment : fragments) {
             if (fragment != null) {
-                list.add(fragment);
+                planFragments.add(fragment);
             }
         }
-        this.planFragments = list;
         return this;
     }
 
     /**
-     * Also assert the query's execution plan (EXPLAIN output) contains NONE of {@code fragments}.
+     * Also assert the query's execution plan (EXPLAIN output) contains NONE of {@code fragments}, on top of the
+     * fragments of earlier calls.
      * The negative counterpart of {@link #withPlanContaining}. Honors {@link #noLeakCheck()}; cannot
      * be combined with {@link #fullFatJoins()} or {@link #withCompiler}.
      */
     public QueryAssertion withPlanNotContaining(CharSequence... fragments) {
-        final ObjList<CharSequence> list = new ObjList<>(fragments.length);
-        for (CharSequence fragment : fragments) {
-            list.add(fragment);
+        if (planFragmentsAbsent == null) {
+            planFragmentsAbsent = new ObjList<>(fragments.length);
         }
-        this.planFragmentsAbsent = list;
+        for (CharSequence fragment : fragments) {
+            planFragmentsAbsent.add(fragment);
+        }
         return this;
     }
 
@@ -1418,6 +1444,17 @@ public class QueryAssertion {
             Assert.assertTrue(rowsCount == -1 || expectedRow == rowsCount);
         }
         assertFactoryMemoryUsage();
+    }
+
+    private void assertLogicalPlan(CharSequence expectedPlan) throws SqlException {
+        try (SqlCompilerImpl planCompiler = new SqlCompilerImpl(engine)) {
+            final CompiledQuery cq = planCompiler.compile(query, context);
+            try (RecordCursorFactory ignore = cq.getRecordCursorFactory()) {
+                TestUtils.assertEquals(expectedPlan, new LogicalPlanPrinter().print(planCompiler.getPlanForTesting()));
+            } finally {
+                cq.closeAllButSelect();
+            }
+        }
     }
 
     private void assertExactPlan(CharSequence expectedPlan) throws SqlException {

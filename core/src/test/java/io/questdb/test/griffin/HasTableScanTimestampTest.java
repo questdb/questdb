@@ -151,11 +151,11 @@ public class HasTableScanTimestampTest extends AbstractCairoTest {
             assertTrue("SELECT s, x, ts FROM rc WHERE s LIKE 'a%'", 5, FORWARD, "AdaptiveSymbolPattern", "CoveringIndex on: s");
             assertTrue("SELECT * FROM mv", 6, FORWARD, "PageFrame", "Frame forward scan on: mv");
 
-            // Under ORDER BY ts DESC the index scan of several keys reads the frames backward key by key, so it
-            // promises no order, and the sort above it orders the rows by the designated timestamp.
-            assertTrue("SELECT * FROM t WHERE s IN ('a', 'b') ORDER BY ts DESC", 10, BACKWARD, "Encode sort light", "keys: [ts desc]", "FilterOnValues", "Cursor-order scan", "Frame backward scan on: t");
+            // Under ORDER BY ts DESC the index scan of several keys reads the frames backward and the rows of each frame
+            // forward, so it promises no order, and the sort above it orders the rows by the designated timestamp.
+            assertTrue("SELECT * FROM t WHERE s IN ('a', 'b') ORDER BY ts DESC", 10, BACKWARD, "Encode sort light", "keys: [ts desc]", "FilterOnValues", "Table-order scan", "Index forward scan on: s", "Frame backward scan on: t");
             assertLeaf("SELECT * FROM t WHERE s IN ('a', 'b') ORDER BY ts DESC", "FilterOnValuesRecordCursorFactory", true, OTHER);
-            assertTrue("SELECT * FROM t WHERE s != 'a' ORDER BY ts DESC", 5, BACKWARD, "Encode sort light", "keys: [ts desc]", "FilterOnExcludedValues", "Cursor-order scan", "Frame backward scan on: t");
+            assertTrue("SELECT * FROM t WHERE s != 'a' ORDER BY ts DESC", 5, BACKWARD, "Encode sort light", "keys: [ts desc]", "FilterOnExcludedValues", "Table-order scan", "Index forward scan on: s", "Frame backward scan on: t");
             assertLeaf("SELECT * FROM t WHERE s != 'a' ORDER BY ts DESC", "FilterOnExcludedValuesRecordCursorFactory", true, OTHER);
 
             // Filters, a runtime constant gate and LIMIT hand out the rows of their base in its order.
@@ -205,7 +205,7 @@ public class HasTableScanTimestampTest extends AbstractCairoTest {
             assertTrue("SELECT * FROM t ORDER BY ts, x", 10, FORWARD, "Encode sort light", "keys: [ts, x]", "Frame forward scan on: t");
             assertTrue("SELECT * FROM t ORDER BY ts, x LIMIT 3", 3, FORWARD, "Encode sort light lo: 3", "keys: [ts, x]", "Frame forward scan on: t");
             assertTrue("SELECT ts, x, rnd_int() r FROM t ORDER BY ts, r", 10, FORWARD, "Encode sort", "keys: [ts, r]", "VirtualRecord");
-            assertTrue("SELECT * FROM t WHERE x > 1 ORDER BY ts DESC, x LIMIT 3", 3, BACKWARD, "Top K lo: 3", "keys: [ts desc, x]", "Frame forward scan on: t");
+            assertTrue("SELECT * FROM t WHERE x > 1 ORDER BY ts DESC, x LIMIT 3", 3, BACKWARD, "Encode sort light lo: 3 partiallySorted: true", "keys: [ts desc, x]", "Frame backward scan on: t");
             assertTrue("SELECT * FROM t WHERE s IN ('a', 'b') ORDER BY ts DESC LIMIT 3", 3, BACKWARD, "Encode sort light lo: 3", "keys: [ts desc]", "FilterOnValues");
             node1.setProperty(PropertyKey.CAIRO_SQL_ORDER_BY_SORT_ENABLED, false);
             try {
@@ -223,8 +223,8 @@ public class HasTableScanTimestampTest extends AbstractCairoTest {
             // The planner builds the single-threaded top K only over a GROUP BY, whose rows carry no table's
             // designated timestamp.
             assertFalse("SELECT ts, count() c FROM t GROUP BY ts ORDER BY ts DESC LIMIT 3", BACKWARD, "Limit value: 3", "Async Stream Group By", "Row backward scan");
-            // A TIMESTAMP(col) claim on the GROUP BY gives the top K a base with the same timestamp, still not a table's.
-            assertFalse("SELECT * FROM (SELECT ts, count() c FROM t GROUP BY ts) timestamp(ts) ORDER BY ts DESC LIMIT 3", BACKWARD, "Encode sort lo: 3", "keys: [ts desc]", "SelectedRecord", "Async Stream Group By");
+            // A TIMESTAMP(col) claim on the GROUP BY changes neither: the stream still reads backward, its rows no table's.
+            assertFalse("SELECT * FROM (SELECT ts, count() c FROM t GROUP BY ts) timestamp(ts) ORDER BY ts DESC LIMIT 3", BACKWARD, "Limit value: 3", "Async Stream Group By", "Row backward scan");
 
             // The timestamp is not a table's designated timestamp, or the rows do not follow the reported direction.
             assertFalse("SELECT * FROM t timestamp(other_ts)", FORWARD, "PageFrame", "Frame forward scan on: t");
@@ -239,16 +239,15 @@ public class HasTableScanTimestampTest extends AbstractCairoTest {
             assertFalse("SELECT * FROM t ORDER BY other_ts", FORWARD, "Encode sort light", "keys: [other_ts]");
             assertFalse("SELECT * FROM t WHERE s IN (SELECT s FROM k) ORDER BY ts DESC", BACKWARD, "Encode sort light", "keys: [ts desc]", "FilterOnSubQuery", "Frame backward scan on: t");
             assertLeaf("SELECT * FROM t WHERE s IN (SELECT s FROM k) ORDER BY ts DESC", "FilterOnSubQueryRecordCursorFactory", false, FORWARD);
-            // The multi-key ORDER BY with a negative LIMIT forces a backward frame scan, while the index keeps
-            // walking each frame forward.
-            assertFalse("SELECT * FROM t WHERE s = 'a' ORDER BY ts, x LIMIT -3", ANY_DIRECTION, "Index forward scan on: s", "Frame backward scan on: t");
-            assertLeaf("SELECT * FROM t WHERE s = 'a' ORDER BY ts, x LIMIT -3", "DeferredSingleSymbolFilterPageFrameRecordCursorFactory", false, BACKWARD);
-            // The same plan is the backup of a covering scan whose key is known only once it is bound: an open that
-            // selects the backup would hand out its rows, so the covering scan answers false as well.
+            // The multi-key ORDER BY with a negative LIMIT forces a backward frame scan, and the index walks each frame
+            // backward with it, so the rows arrive in descending timestamp order and the sorts above order them back.
+            assertTrue("SELECT * FROM t WHERE s = 'a' ORDER BY ts, x LIMIT -3", 3, FORWARD, "Encode sort light", "keys: [ts, x]", "Index backward scan on: s", "Frame backward scan on: t");
+            // The same plan is the backup of a covering scan whose key is known only once it is bound: the covering
+            // scan reads the timestamp from the table but promises no order, and the sorts above order the rows.
             bindVariableService.clear();
             bindVariableService.setStr(0, "b");
-            assertFalse("SELECT s, x, ts FROM rc WHERE s = $1 ORDER BY ts, x LIMIT -3", FORWARD, "Encode sort light", "keys: [ts, x]", "CoveringIndex backup: true on: s");
-            assertLeaf("SELECT s, x, ts FROM rc WHERE s = $1 ORDER BY ts, x LIMIT -3", "CoveringIndexRecordCursorFactory", false, OTHER);
+            assertTrue("SELECT s, x, ts FROM rc WHERE s = $1 ORDER BY ts, x LIMIT -3", 3, FORWARD, "Encode sort light", "keys: [ts, x]", "CoveringIndex backup: true on: s");
+            assertLeaf("SELECT s, x, ts FROM rc WHERE s = $1 ORDER BY ts, x LIMIT -3", "CoveringIndexRecordCursorFactory", true, OTHER);
             bindVariableService.clear();
             assertFalse("SELECT * FROM t WHERE s = 'a' LATEST ON ts PARTITION BY s", FORWARD, "PageFrame", "Index backward scan on: s");
             assertFalse("SELECT * FROM t LATEST ON ts PARTITION BY s", ANY_DIRECTION, "LatestByAllIndexed");
@@ -260,7 +259,8 @@ public class HasTableScanTimestampTest extends AbstractCairoTest {
             assertFalse("SELECT x, ts, row_number() OVER () rn FROM t", ANY_DIRECTION, "Window");
             assertFalse("SELECT s, x, ts, avg(x) OVER (PARTITION BY s) a FROM t WHERE s IN ('a', 'b')", ANY_DIRECTION, "CachedWindow");
             assertFalse("SELECT a.ts, a.s, first(b.y) fy FROM t a WINDOW JOIN d b RANGE BETWEEN 1 hour PRECEDING AND 1 hour FOLLOWING", ANY_DIRECTION, "Window Join");
-            assertFalse("SELECT t.ts, t.x, d.y FROM t JOIN d ON (s)", ANY_DIRECTION, "Hash Join");
+            // A hash join keeps the designated timestamp of its master only when its consumer requires it.
+            assertFalse("SELECT t.ts, t.x, d.y FROM t JOIN d ON (s) ORDER BY t.ts", FORWARD, "Hash Join");
             assertFalse("SELECT * FROM generate_series('2024-01-01'::timestamp, '2024-01-03'::timestamp, '1d')", ANY_DIRECTION, "generate_series");
             assertFalse("SELECT * FROM read_parquet('ht.parquet')", ANY_DIRECTION, "parquet");
 
@@ -271,6 +271,7 @@ public class HasTableScanTimestampTest extends AbstractCairoTest {
             assertNoTimestamp("SELECT x FROM t ORDER BY other_ts", "keys: [other_ts]");
             assertNoTimestamp("SELECT count() c FROM t SAMPLE BY 1d", "Group");
             assertNoTimestamp("SELECT h.offset, count() c FROM t a HORIZON JOIN d b LIST (0s, 1s) AS h", "Horizon Join");
+            assertNoTimestamp("SELECT t.ts, t.x, d.y FROM t JOIN d ON (s)", "Hash Join");
             assertNoTimestamp("SELECT x, s FROM t", "PageFrame", "Frame forward scan on: t");
             assertNoTimestamp("SELECT s, x FROM rc WHERE s = 'a'", "CoveringIndex on: s");
             assertNoTimestamp("SELECT x + 1 y FROM t", "VirtualRecord");

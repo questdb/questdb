@@ -410,6 +410,62 @@ public class PercentileDiscDoubleGroupByFunctionFactoryTest extends AbstractCair
     }
 
     @Test
+    public void testParallelGroupByPercentileFromSubquery() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 100);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
+                engine.execute("CREATE TABLE t AS (SELECT x lx, x::DOUBLE dx, (x % 4)::INT s FROM long_sequence(4_000))", sqlExecutionContext);
+                engine.execute("CREATE TABLE t2 (k INT, y INT)", sqlExecutionContext);
+                engine.execute("INSERT INTO t2 VALUES (1, 300), (2, 100)", sqlExecutionContext);
+                assertQuery("SELECT s, percentile_disc(dx, CASE WHEN (SELECT max(y) > 200 FROM t2 WHERE k = 1) THEN 0.9 ELSE 0.1 END) p FROM t GROUP BY s ORDER BY s")
+                        .withEngine(engine)
+                        .withContext(sqlExecutionContext)
+                        .noLeakCheck()
+                        .expectSize()
+                        .withPlanContaining("Async Group By workers: 4", "Frame forward scan on: t2 [state-shared],0.9,0.1")
+                        .returns("""
+                                s\tp
+                                0\t3600.0
+                                1\t3597.0
+                                2\t3598.0
+                                3\t3599.0
+                                """);
+            }, configuration, LOG);
+        });
+    }
+
+    @Test
+    public void testParallelWindowJoinPercentileFromSubquery() throws Exception {
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
+                engine.execute("CREATE TABLE m AS (SELECT (x * 1_000_000)::TIMESTAMP ts FROM long_sequence(3)) TIMESTAMP(ts) PARTITION BY DAY", sqlExecutionContext);
+                engine.execute("CREATE TABLE w AS (SELECT (x * 500_000)::TIMESTAMP ts, x::DOUBLE v FROM long_sequence(8)) TIMESTAMP(ts) PARTITION BY DAY", sqlExecutionContext);
+                engine.execute("CREATE TABLE t2 (k INT, y INT)", sqlExecutionContext);
+                engine.execute("INSERT INTO t2 VALUES (1, 300), (2, 100)", sqlExecutionContext);
+                assertQuery("""
+                        SELECT m.ts, percentile_disc(w.v, CASE WHEN (SELECT max(y) > 200 FROM t2 WHERE k = 1) THEN 0.9 ELSE 0.1 END) p
+                        FROM m
+                        WINDOW JOIN w RANGE BETWEEN 1 SECOND PRECEDING AND 1 SECOND FOLLOWING
+                        """)
+                        .withEngine(engine)
+                        .withContext(sqlExecutionContext)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .timestamp("ts")
+                        .withPlanContaining("Async Window Join workers: 4")
+                        .returns("""
+                                ts\tp
+                                1970-01-01T00:00:01.000000Z\t4.0
+                                1970-01-01T00:00:02.000000Z\t6.0
+                                1970-01-01T00:00:03.000000Z\t8.0
+                                """);
+            }, configuration, LOG);
+        });
+    }
+
+    @Test
     public void testPercentileEmptyTable() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE test (x DOUBLE)");

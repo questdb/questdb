@@ -48,7 +48,7 @@ import io.questdb.std.Os;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-class AsyncFilteredRecordCursor implements AsyncFilteredRecordCursorFactory.RecordFreer, RecordCursor {
+class AsyncFilteredRecordCursor implements AbstractAsyncFilteredRecordCursorFactory.RecordFreer, RecordCursor {
     private static final Log LOG = LogFactory.getLog(AsyncFilteredRecordCursor.class);
     private final int defaultDispatchLimit;
     private final Function filter;

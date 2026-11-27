@@ -41,6 +41,7 @@ import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.O3PartitionJob;
 import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableStructure;
@@ -60,6 +61,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.StatefulAtom;
+import io.questdb.cairo.sql.TableDescriptor;
 import io.questdb.cairo.view.ViewState;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
@@ -2172,6 +2174,7 @@ public final class TestUtils {
         return loader.loadClass(className);
     }
 
+
     public static int maxDayOfMonth(int month) {
         return switch (month) {
             case 1, 3, 5, 7, 8, 10, 12 -> 31;
@@ -2505,6 +2508,25 @@ public final class TestUtils {
      * counting failures instead reports them as "expected:&lt;0&gt; but was:&lt;3&gt;" -- no message, no stack
      * trace, no failing value.
      */
+    /**
+     * Rewrites the {@code created_by} QuestDB's parquet writer stamps on every footer of a file into one of the same
+     * length, so the file reads as another writer's.
+     */
+    public static void rewriteParquetCreatedBy(String path) throws IOException {
+        final java.nio.file.Path file = Paths.get(path);
+        final byte[] bytes = java.nio.file.Files.readAllBytes(file);
+        final byte[] createdBy = "QuestDB version 9.0".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+        boolean isFound = false;
+        for (int i = 0, n = bytes.length - createdBy.length; i <= n; i++) {
+            if (Arrays.equals(bytes, i, i + createdBy.length, createdBy, 0, createdBy.length)) {
+                bytes[i] = 'X';
+                isFound = true;
+            }
+        }
+        Assert.assertTrue("created_by not found", isFound);
+        java.nio.file.Files.write(file, bytes);
+    }
+
     public static void runConcurrently(int threadCount, IntConsumer worker) throws Exception {
         final CyclicBarrier barrier = new CyclicBarrier(threadCount);
         final AtomicReference<Throwable> firstError = new AtomicReference<>();
@@ -2604,6 +2626,20 @@ public final class TestUtils {
     public static void setupWorkerPool(WorkerPool workerPool, CairoEngine cairoEngine) throws SqlException {
         WorkerPoolUtils.setupQueryJobs(workerPool, cairoEngine, true);
         WorkerPoolUtils.setupWriterJobs(workerPool, cairoEngine);
+    }
+
+    /**
+     * The descriptor a partition frame factory keeps for the table whose columns {@code metadata} lists.
+     */
+    public static TableDescriptor tableDescriptor(RecordMetadata metadata) {
+        final ObjList<String> columnNames = new ObjList<>(metadata.getColumnCount());
+        boolean hasConvertedColumns = false;
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            final TableColumnMetadata column = metadata.getColumnMetadata(i);
+            columnNames.add(column.getColumnName());
+            hasConvertedColumns |= column.isTypeConverted();
+        }
+        return new TableDescriptor(columnNames, metadata.getTimestampIndex(), metadata.getTimestampType(), hasConvertedColumns);
     }
 
     /**

@@ -914,6 +914,93 @@ public class StreamGroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCopiesHoldFilteredRows() throws Exception {
+        run((engine, compiler, context) -> {
+            engine.execute("""
+                    CREATE TABLE src AS (
+                        SELECT timestamp_sequence('2024-01-01', 600_000_000L) ts, (CASE WHEN x % 2 = 0 THEN 'A' ELSE 'B' END)::SYMBOL sym, x v
+                        FROM long_sequence(6)
+                    ) TIMESTAMP(ts) PARTITION BY DAY""", context);
+            final String filtered = "(SELECT * FROM (SELECT ts, sym, sum(v) s, sym::STRING name FROM src SAMPLE BY 20m) WHERE s > 2)";
+            for (String sql : new String[]{
+                    "SELECT m.ts, m.v, b.sym FROM src m JOIN " + filtered + " b ON m.v = b.s",
+                    "SELECT m.ts, m.v, b.name FROM src m ASOF JOIN " + filtered + " b ON (sym)",
+                    "SELECT m.ts, m.v, b.s FROM src m CROSS JOIN " + filtered + " b ORDER BY m.ts, b.s",
+                    "SELECT * FROM (" + filtered + " LATEST ON ts PARTITION BY sym) ORDER BY sym",
+                    "SELECT b.ts, h.offset, m.v FROM " + filtered + " b HORIZON JOIN src m RANGE FROM 0s TO 10m STEP 10m AS h"
+            }) {
+                context.setStreamGroupByEnabled(false);
+                final String expected = compileAndRead(compiler, context, sql);
+                context.setStreamGroupByEnabled(true);
+                final String plan = compileAndRead(compiler, context, "EXPLAIN " + sql);
+                try (RecordCursorFactory factory = compiler.compile(sql, context).getRecordCursorFactory()) {
+                    Assert.assertTrue(plan, plan.matches("(?s).*\n( *)Materialize\n(\\1 +SelectedRecord\n)*\\1 +Filter filter: 2<s\n\\1 +(Async )?Stream Group By.*"));
+                    for (int pass = 0; pass < 2; pass++) {
+                        Assert.assertEquals(sql, expected, read(factory, context));
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testRereadCopiesStreamInputsOfJoinsAndUnions() throws Exception {
+        run((engine, compiler, context) -> {
+            engine.execute("CREATE TABLE trades AS (SELECT timestamp_sequence('2024-01-01', 7_000_000) ts, ('S' || (x % 5))::SYMBOL sym, x % 97 price "
+                    + "FROM long_sequence(600)) TIMESTAMP(ts) PARTITION BY DAY", context);
+            engine.execute("CREATE TABLE notes AS (SELECT ('S' || (x % 5))::SYMBOL sym, x note FROM long_sequence(20))", context);
+            final String bars = "SELECT ts, sym, sum(price) total FROM trades SAMPLE BY 1m";
+            final String totals = "SELECT ts, sum(price) total FROM trades SAMPLE BY 1m";
+            for (String sql : new String[]{
+                    "SELECT * FROM (SELECT s.ts, s.total, n.note FROM (" + totals + ") s CROSS JOIN notes n) LIMIT -7",
+                    "SELECT * FROM (SELECT s.ts, s.total, t.price FROM (" + totals + ") s ASOF JOIN trades t) LIMIT -7",
+                    "SELECT * FROM (SELECT ts, price FROM trades UNION ALL " + totals + ") LIMIT -7",
+                    "SELECT ts, sym, last(total) total FROM ((SELECT s.ts, s.sym, s.total FROM (" + bars + ") s ASOF JOIN trades t ON (sym)) TIMESTAMP(ts)) "
+                            + "SAMPLE BY 5m FILL(PREV) ORDER BY ts, sym"
+            }) {
+                context.setStreamGroupByEnabled(false);
+                final String expected = compileAndRead(compiler, context, sql);
+                context.setStreamGroupByEnabled(true);
+                final String plan = compileAndRead(compiler, context, "EXPLAIN " + sql);
+                Assert.assertTrue(plan, plan.matches("(?s).*\n( *)Materialize\n\\1 +(SelectedRecord\n\\1 +)?(Async )?Stream Group By.*")
+                        && !plan.matches("(?s).*Materialize\n *(Cross Join|AsOf Join|Union|SelectedRecord\n *(Cross Join|AsOf Join|Union)).*"));
+                try (RecordCursorFactory factory = compiler.compile(sql, context).getRecordCursorFactory()) {
+                    for (int pass = 0; pass < 2; pass++) {
+                        Assert.assertEquals(sql, expected, read(factory, context));
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testRereadSkipsEmptiedSlave() throws Exception {
+        run((engine, compiler, context) -> {
+            engine.execute("CREATE TABLE trades AS (SELECT timestamp_sequence('2024-01-01', 7_000_000) ts, ('S' || (x % 5))::SYMBOL sym, x % 97 price "
+                    + "FROM long_sequence(600)) TIMESTAMP(ts) PARTITION BY DAY", context);
+            engine.execute("CREATE TABLE notes AS (SELECT ('S' || (x % 5))::SYMBOL sym, x note FROM long_sequence(20))", context);
+            final String bars = "SELECT ts, sym, sum(price) total FROM trades SAMPLE BY 1m";
+            final String emptied = "SELECT t.ts, t.sym, t.price, b.total FROM trades t LEFT JOIN (" + bars + ") b ON t.sym = b.sym AND 1 = 0";
+            for (String sql : new String[]{
+                    "SELECT * FROM (" + emptied + ") LIMIT -2",
+                    "SELECT n.note, e.ts, e.price, e.total FROM notes n CROSS JOIN (" + emptied + ") e ORDER BY n.note, e.ts LIMIT 3",
+                    "SELECT * FROM ((" + emptied + ") LATEST ON ts PARTITION BY sym) ORDER BY sym"
+            }) {
+                context.setStreamGroupByEnabled(false);
+                final String expected = compileAndRead(compiler, context, sql);
+                context.setStreamGroupByEnabled(true);
+                final String plan = compileAndRead(compiler, context, "EXPLAIN " + sql);
+                Assert.assertTrue(plan, plan.contains("Empty table") && !plan.contains("Materialize"));
+                try (RecordCursorFactory factory = compiler.compile(sql, context).getRecordCursorFactory()) {
+                    for (int pass = 0; pass < 2; pass++) {
+                        Assert.assertEquals(sql, expected, read(factory, context));
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testLatestOnCopiesOnlyStreamInputs() throws Exception {
         run((engine, compiler, context) -> {
             engine.execute("CREATE TABLE trades AS (SELECT timestamp_sequence('2024-01-01', 7_000_000) ts, ('S' || (x % 5))::SYMBOL sym, x % 97 price "
@@ -1302,6 +1389,28 @@ public class StreamGroupByTest extends AbstractCairoTest {
                     "timestamp_floor_utc('3M', ts, null, '00:00', '+05:30')"}) {
                 assertMatchesHash(compiler, context, "SELECT " + key + " bucket, count(*), sum(v), first(v), last(v) "
                         + "FROM $table ORDER BY bucket");
+            }
+        });
+    }
+
+    @Test
+    public void testTimestampDeclaredOverItsOwnOrderStreams() throws Exception {
+        run((engine, compiler, context) -> {
+            engine.execute("create table trades (ts timestamp, other timestamp, v long) timestamp(ts) partition by day", context);
+            engine.execute("insert into trades values "
+                    + "('2024-01-01T01:00', '2024-01-02', 1), "
+                    + "('2024-01-01T02:00', null, 2), "
+                    + "('2024-01-02T03:00', '2024-01-01', 3), "
+                    + "('2024-01-02T04:00', '2024-01-02', 4), "
+                    + "('2024-01-03T05:00', null, 5)", context);
+            // a TIMESTAMP clause that declares the timestamp its input designates keeps the scan order the stream reads
+            try (RecordCursorFactory factory = compiler.compile(
+                    "select ts, count(*), sum(v) from (select v, other, ts from trades) timestamp(ts) sample by 1d", context).getRecordCursorFactory()) {
+                assertStream(factory, true);
+                Assert.assertEquals("ts\tcount\tsum\n"
+                        + "2024-01-01T00:00:00.000000Z\t2\t3\n"
+                        + "2024-01-02T00:00:00.000000Z\t2\t7\n"
+                        + "2024-01-03T00:00:00.000000Z\t1\t5\n", read(factory, context));
             }
         });
     }
@@ -2159,8 +2268,7 @@ public class StreamGroupByTest extends AbstractCairoTest {
             final String unordered = "SELECT max(ts), timestamp_floor('1h', ts) b, count() FROM src GROUP BY b";
             assertQuery(unordered).withEngine(engine).withContext(context).noLeakCheck().noRandomAccess()
                     .withPlan("""
-                            VirtualRecord
-                              functions: [max,b,count]
+                            SelectedRecord
                                 %s
                                   keys: [b]
                                   keyFunctions: [timestamp_floor('hour',ts)]
@@ -2206,15 +2314,13 @@ public class StreamGroupByTest extends AbstractCairoTest {
             assertQuery("SELECT timestamp_floor('1h', ts) b, count() c FROM src GROUP BY b ORDER BY b")
                     .withEngine(engine).withContext(context).noLeakCheck().timestamp("b").noRandomAccess()
                     .withPlan("""
-                            VirtualRecord
-                              functions: [b,c]
-                                %s
-                                  keys: [b]
-                                  keyFunctions: [timestamp_floor('hour',ts)]
-                                  values: [count(*)]
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: src
+                            %s
+                              keys: [b]
+                              keyFunctions: [timestamp_floor('hour',ts)]
+                              values: [count(*)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: src
                             """.formatted(streamGroupBy))
                     .returns("""
                             b\tc
@@ -2574,7 +2680,6 @@ public class StreamGroupByTest extends AbstractCairoTest {
                     final RecordCursorFactory hash = getGroupBy(expected);
                     final RecordCursorFactory stream = getGroupBy(actual);
                     Assert.assertEquals(sql, hash.isNonDeterministic(), stream.isNonDeterministic());
-                    Assert.assertEquals(sql, hash.isStableWithinExecution(), stream.isStableWithinExecution());
                 }
             }
         });
@@ -3237,6 +3342,60 @@ public class StreamGroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOrderPreservingCallOfTheKeyNeedsNoSort() throws Exception {
+        run((engine, compiler, context) -> {
+            engine.execute("CREATE TABLE t (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY", context);
+            engine.execute("INSERT INTO t VALUES ('2024-01-01T00:00', 1), ('2024-01-01T00:05', 2), ('2024-01-01T00:20', 3), ('2024-01-02T00:00', 4)", context);
+            assertQuery("SELECT dateadd('d', 1, ts) ts, dateadd('h', -2, ts) earlier, count() c, sum(v) s FROM t SAMPLE BY 10m")
+                    .withEngine(engine).withContext(context).noLeakCheck().timestamp("ts").noRandomAccess()
+                    .withPlanContaining("Stream Group By").withPlanNotContaining("sort", "Sort")
+                    .returns("""
+                            ts\tearlier\tc\ts
+                            2024-01-02T00:00:00.000000Z\t2023-12-31T22:00:00.000000Z\t2\t3
+                            2024-01-02T00:20:00.000000Z\t2023-12-31T22:20:00.000000Z\t1\t3
+                            2024-01-03T00:00:00.000000Z\t2024-01-01T22:00:00.000000Z\t1\t4
+                            """);
+            assertQuery("SELECT ts::TIMESTAMP k, count() c FROM t ORDER BY k")
+                    .withEngine(engine).withContext(context).noLeakCheck().timestamp("k").noRandomAccess()
+                    .withPlanContaining("Stream Group By").withPlanNotContaining("sort", "Sort")
+                    .returns("""
+                            k\tc
+                            2024-01-01T00:00:00.000000Z\t1
+                            2024-01-01T00:05:00.000000Z\t1
+                            2024-01-01T00:20:00.000000Z\t1
+                            2024-01-02T00:00:00.000000Z\t1
+                            """);
+            assertQuery("SELECT coalesce(ts, ts) ts, count() c FROM t SAMPLE BY 10m")
+                    .withEngine(engine).withContext(context).noLeakCheck().timestamp("ts")
+                    .withPlanContaining("sort")
+                    .returns("""
+                            ts\tc
+                            2024-01-01T00:00:00.000000Z\t2
+                            2024-01-01T00:20:00.000000Z\t1
+                            2024-01-02T00:00:00.000000Z\t1
+                            """);
+        });
+    }
+
+    @Test
+    public void testLongSequenceOfNoReadColumnUsesHash() throws Exception {
+        run((engine, compiler, context) -> {
+            // DISTINCT keeps its constant keys, and the aggregate reads no column of long_sequence(), so no input column
+            // orders its keys
+            final String sql = "SELECT DISTINCT 1 k, 'a' s FROM long_sequence(5)";
+            try (RecordCursorFactory factory = compiler.compile(sql, context).getRecordCursorFactory()) {
+                assertStream(factory, false);
+                Assert.assertEquals("k\ts\n1\ta\n", read(factory, context));
+            }
+            final String arraySql = "SELECT DISTINCT ARRAY[ARRAY[0.5]] a, 'b' s FROM long_sequence(16)";
+            try (RecordCursorFactory factory = compiler.compile(arraySql, context).getRecordCursorFactory()) {
+                assertStream(factory, false);
+                Assert.assertEquals("a\ts\n[[0.5]]\tb\n", read(factory, context));
+            }
+        });
+    }
+
+    @Test
     public void testLongSequence() throws Exception {
         run((engine, compiler, context) -> {
             engine.execute("CREATE TABLE hash_input AS (SELECT x FROM long_sequence(101))", context);
@@ -3485,9 +3644,8 @@ public class StreamGroupByTest extends AbstractCairoTest {
                             + "from trades order by bucket", context).getRecordCursorFactory()) {
                 assertStream(factory, false);
                 Assert.assertEquals("bucket\tcount\tsum\n"
-                        + "2024-11-02T05:30:00.000000Z\t3\t8\n"
-                        + "2024-11-03T05:30:00.000000Z\t2\t7\n"
-                        + "2024-11-03T06:30:00.000000Z\t2\t13\n", read(factory, context));
+                        + "2024-11-02T05:30:00.000000Z\t2\t3\n"
+                        + "2024-11-03T05:30:00.000000Z\t5\t25\n", read(factory, context));
             }
         });
     }

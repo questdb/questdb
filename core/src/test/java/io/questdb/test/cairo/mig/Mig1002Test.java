@@ -56,6 +56,7 @@ import org.junit.Test;
 
 public class Mig1002Test extends AbstractCairoTest {
     private static final int LARGE_SYMBOL_COUNT = 10_000;
+    private static final int MIG1002_VERSION = 430;
 
     @Test
     public void testEngineMigrationRepairsNullFlagOfConvertedColumn() throws Exception {
@@ -100,7 +101,7 @@ public class Mig1002Test extends AbstractCairoTest {
             Assert.assertEquals(nextMigrationVersion, readMigrationVersion());
             Assert.assertFalse(containsSymbolNullValue("t", "s"));
 
-            writeMigrationVersion(ColumnType.MIGRATION_VERSION - 1);
+            writeMigrationVersion(MIG1002_VERSION - 1);
             engine.clear();
             EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, nextMigrationVersion, false);
             Assert.assertEquals(nextMigrationVersion, readMigrationVersion());
@@ -142,7 +143,7 @@ public class Mig1002Test extends AbstractCairoTest {
         final NullFlagWriteFailingFilesFacade ff = new NullFlagWriteFailingFilesFacade();
         assertMemoryLeak(ff, () -> {
             createTableWithStaleNullFlag();
-            final int previousMigrationVersion = ColumnType.MIGRATION_VERSION - 1;
+            final int previousMigrationVersion = MIG1002_VERSION - 1;
             writeMigrationVersion(previousMigrationVersion);
 
             engine.clear();
@@ -675,9 +676,7 @@ public class Mig1002Test extends AbstractCairoTest {
     }
 
     /**
-     * A table at {@link ColumnType#VERSION} carries one of four storage versions in {@code _meta}: plain,
-     * composite, downgrade-locked or both. The migration must run on each and leave the marker as it is, and
-     * must leave a table of a newer release alone.
+     * The migration repairs plain partitions of tables with supported storage markers and preserves the markers.
      */
     private void assertEngineMigrationOnStorageVersion(int storageVersion, boolean isMigrated) throws Exception {
         assertMemoryLeak(() -> {
@@ -685,7 +684,7 @@ public class Mig1002Test extends AbstractCairoTest {
             engine.clear();
             Assert.assertEquals("every writer locks its table", ColumnType.DOWNGRADE_LOCKED_STORAGE_VERSION, readStorageVersion());
             writeStorageVersion(storageVersion);
-            writeMigrationVersion(ColumnType.MIGRATION_VERSION - 1);
+            writeMigrationVersion(MIG1002_VERSION - 1);
 
             EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, false);
             Assert.assertEquals(ColumnType.MIGRATION_VERSION, readMigrationVersion());

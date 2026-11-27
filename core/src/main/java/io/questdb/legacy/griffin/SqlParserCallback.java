@@ -1,0 +1,257 @@
+/*+*****************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2026 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.legacy.griffin;
+
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.table.ShowCreateDatabaseRecordCursorFactory;
+import io.questdb.griffin.engine.table.ShowCreateLiveViewRecordCursorFactory;
+import io.questdb.griffin.engine.table.ShowCreateMatViewRecordCursorFactory;
+import io.questdb.griffin.engine.table.ShowCreateTableRecordCursorFactory;
+import io.questdb.griffin.engine.table.ShowCreateViewRecordCursorFactory;
+import io.questdb.legacy.griffin.engine.ops.CreateLiveViewOperationBuilder;
+import io.questdb.legacy.griffin.engine.ops.CreateLiveViewOperationBuilderImpl;
+import io.questdb.legacy.griffin.engine.ops.CreateMatViewOperationBuilder;
+import io.questdb.legacy.griffin.engine.ops.CreateTableOperationBuilder;
+import io.questdb.legacy.griffin.engine.ops.CreateTableOperationBuilderImpl;
+import io.questdb.legacy.griffin.engine.ops.CreateViewOperationBuilder;
+import io.questdb.legacy.griffin.model.ExpressionNode;
+import io.questdb.legacy.griffin.model.IQueryModel;
+import io.questdb.std.GenericLexer;
+import io.questdb.std.ObjectPool;
+import io.questdb.std.str.Path;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+
+import static io.questdb.legacy.griffin.SqlKeywords.isTtlKeyword;
+
+public interface SqlParserCallback {
+
+    static @NotNull TableToken getLiveViewToken(ExpressionNode tableNameExpr, SqlExecutionContext executionContext, Path path) throws SqlException {
+        final TableToken viewToken = getTableToken(tableNameExpr, executionContext, path,
+                SqlException.$(tableNameExpr.position, "live view does not exist [view=").put(tableNameExpr.token).put(']')
+        );
+        if (!viewToken.isLiveView()) {
+            throw SqlException.$(tableNameExpr.position, "live view name expected, got table name");
+        }
+        return viewToken;
+    }
+
+    static @NotNull TableToken getMatViewToken(ExpressionNode tableNameExpr, SqlExecutionContext executionContext, Path path) throws SqlException {
+        final TableToken viewToken = getTableToken(tableNameExpr, executionContext, path,
+                SqlException.matViewDoesNotExist(tableNameExpr.position, tableNameExpr.token)
+        );
+        if (!viewToken.isMatView()) {
+            throw SqlException.$(tableNameExpr.position, viewToken.isView()
+                    ? "materialized view name expected, got view name"
+                    : "materialized view name expected, got table name");
+        }
+        return viewToken;
+    }
+
+    static @NotNull TableToken getTableToken(ExpressionNode tableNameExpr, SqlExecutionContext executionContext, Path path) throws SqlException {
+        final TableToken tableToken = getTableToken(tableNameExpr, executionContext, path,
+                SqlException.tableDoesNotExist(tableNameExpr.position, tableNameExpr.token)
+        );
+        if (tableToken.isMatView() || tableToken.isView() || tableToken.isLiveView()) {
+            throw SqlException.$(tableNameExpr.position, tableToken.isLiveView()
+                    ? "table name expected, got live view name"
+                    : "table name expected, got view or materialized view name");
+        }
+        return tableToken;
+    }
+
+    static @NotNull TableToken getViewToken(ExpressionNode tableNameExpr, SqlExecutionContext executionContext, Path path) throws SqlException {
+        final TableToken viewToken = getTableToken(tableNameExpr, executionContext, path,
+                SqlException.viewDoesNotExist(tableNameExpr.position, tableNameExpr.token)
+        );
+        if (!viewToken.isView()) {
+            throw SqlException.$(tableNameExpr.position, viewToken.isMatView()
+                    ? "view name expected, got materialized view name"
+                    : "view name expected, got table name");
+        }
+        return viewToken;
+    }
+
+    default RecordCursorFactory generateShowCreateDatabaseFactory(IQueryModel model, SqlExecutionContext executionContext, Path path) throws SqlException {
+        return new ShowCreateDatabaseRecordCursorFactory(model.getShowCreateDatabaseInclude());
+    }
+
+    default RecordCursorFactory generateShowCreateLiveViewFactory(IQueryModel model, SqlExecutionContext executionContext, Path path) throws SqlException {
+        final TableToken viewToken = getLiveViewToken(model.getTableNameExpr(), executionContext, path);
+        return new ShowCreateLiveViewRecordCursorFactory(viewToken, model.getTableNameExpr().position, executionContext.getTableFunctionView());
+    }
+
+    default RecordCursorFactory generateShowCreateMatViewFactory(IQueryModel model, SqlExecutionContext executionContext, Path path) throws SqlException {
+        final TableToken viewToken = getMatViewToken(model.getTableNameExpr(), executionContext, path);
+        return new ShowCreateMatViewRecordCursorFactory(viewToken, model.getTableNameExpr().position, executionContext.getTableFunctionView());
+    }
+
+    default RecordCursorFactory generateShowCreateTableFactory(IQueryModel model, SqlExecutionContext executionContext, Path path) throws SqlException {
+        final TableToken tableToken = getTableToken(model.getTableNameExpr(), executionContext, path);
+        return new ShowCreateTableRecordCursorFactory(tableToken, model.getTableNameExpr().position, executionContext.getTableFunctionView());
+    }
+
+    default RecordCursorFactory generateShowCreateViewFactory(IQueryModel model, SqlExecutionContext executionContext, Path path) throws SqlException {
+        final TableToken viewToken = getViewToken(model.getTableNameExpr(), executionContext, path);
+        return new ShowCreateViewRecordCursorFactory(viewToken, model.getTableNameExpr().position, executionContext.getTableFunctionView());
+    }
+
+    /**
+     * Returns whether {@code tok} starts an edition-specific clause following an {@code EXPIRE ROWS}
+     * body. Implementations that use lookahead must restore every token they read so the trailing-clause
+     * parser can consume it normally.
+     */
+    default boolean isExpireRowsClauseBoundary(GenericLexer lexer, CharSequence tok) throws SqlException {
+        return false;
+    }
+
+    default RecordCursorFactory generateShowSqlFactory(IQueryModel model) {
+        assert false;
+        return null;
+    }
+
+    /**
+     * Returns the {@link SqlExecutionRequirements} that the factory this callback generates for a
+     * SHOW statement that lists objects or reads their metadata has on top of
+     * {@link SqlExecutionRequirements#DISCLOSES_OBJECTS}, e.g. a factory that authorizes the caller
+     * needs the security context of the caller, which the refresh of a materialized or live view does
+     * not have.
+     */
+    default int getShowExecutionRequirements(IQueryModel model) {
+        return SqlExecutionRequirements.NONE;
+    }
+
+    default CreateLiveViewOperationBuilder parseCreateLiveViewExt(
+            GenericLexer lexer,
+            SqlExecutionContext executionContext,
+            CreateLiveViewOperationBuilderImpl builder,
+            @Nullable CharSequence tok
+    ) throws SqlException {
+        if (tok != null) {
+            throw SqlException.unexpectedToken(lexer.lastTokenPosition(), tok);
+        }
+        return builder;
+    }
+
+    default CreateMatViewOperationBuilder parseCreateMatViewExt(
+            GenericLexer lexer,
+            SqlExecutionContext executionContext,
+            CreateMatViewOperationBuilder builder,
+            @Nullable CharSequence tok
+    ) throws SqlException {
+        if (tok != null) {
+            throw SqlException.unexpectedToken(lexer.lastTokenPosition(), tok);
+        }
+        return builder;
+    }
+
+    default CreateTableOperationBuilder parseCreateTableExt(
+            GenericLexer lexer,
+            SqlExecutionContext executionContext,
+            CreateTableOperationBuilder builder,
+            @Nullable CharSequence tok
+    ) throws SqlException {
+        if (tok != null) {
+            throw SqlException.unexpectedToken(lexer.lastTokenPosition(), tok);
+        }
+        return builder;
+    }
+
+    default CreateViewOperationBuilder parseCreateViewExt(
+            GenericLexer lexer,
+            SqlExecutionContext executionContext,
+            CreateViewOperationBuilder builder,
+            @Nullable CharSequence tok
+    ) throws SqlException {
+        if (tok != null) {
+            throw SqlException.unexpectedToken(lexer.lastTokenPosition(), tok);
+        }
+        return builder;
+    }
+
+    /**
+     * Takes the clauses after the bracketed body of a {@code CREATE OR REPLACE VIEW} that replaces
+     * an existing view, the ones {@link #parseCreateViewExt} takes when the statement creates it.
+     * The base grammar has none, so any token is unexpected.
+     *
+     * @param tok the first token after the body, null at the end of the statement
+     */
+    default void parseReplaceViewExt(
+            GenericLexer lexer,
+            SqlExecutionContext executionContext,
+            TableToken viewToken,
+            @Nullable CharSequence tok
+    ) throws SqlException {
+        if (tok != null) {
+            throw SqlException.unexpectedToken(lexer.lastTokenPosition(), tok);
+        }
+    }
+
+    default int parseShowSql(
+            GenericLexer lexer,
+            IQueryModel model,
+            CharSequence tok,
+            ObjectPool<ExpressionNode> expressionNodePool
+    ) throws SqlException {
+        return -1;
+    }
+
+    default CharSequence parseTtlSettings(
+            GenericLexer lexer,
+            CharSequence tok,
+            int partitionBy,
+            CreateTableOperationBuilderImpl builder,
+            boolean isMatView
+    ) throws SqlException {
+        if (tok != null && isTtlKeyword(tok)) {
+            final int ttlValuePos = lexer.getPosition();
+            final int ttlHoursOrMonths = SqlParser.parseTtlHoursOrMonths(lexer);
+            if (partitionBy != -1) {
+                PartitionBy.validateTtlGranularity(partitionBy, ttlHoursOrMonths, ttlValuePos);
+            }
+            builder.setTtlHoursOrMonths(ttlHoursOrMonths);
+            builder.setTtlPosition(ttlValuePos);
+            tok = SqlUtil.fetchNext(lexer);
+        }
+        return tok;
+    }
+
+    // An object the principal may not see resolves exactly like a missing one, and before the
+    // callers' object kind checks, whose "got view name" style errors would disclose it too. A SHOW
+    // written in a view reads the object through that view, see SqlExecutionContext.isTableFunctionVisible().
+    private static TableToken getTableToken(ExpressionNode tableNameExpr, SqlExecutionContext executionContext, Path path, SqlException notExistsError) throws SqlException {
+        final TableToken tableToken = executionContext.getTableTokenIfExists(tableNameExpr.token);
+        if (executionContext.getTableStatus(path, tableToken) != TableUtils.TABLE_EXISTS
+                || !executionContext.isTableFunctionVisibleAtCompile(tableToken, executionContext.getTableFunctionView())) {
+            throw notExistsError;
+        }
+        return tableToken;
+    }
+}

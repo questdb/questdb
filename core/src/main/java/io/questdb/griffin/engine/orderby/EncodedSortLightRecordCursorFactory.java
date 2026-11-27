@@ -58,12 +58,17 @@ public class EncodedSortLightRecordCursorFactory extends AbstractRecordCursorFac
         // The light cursor re-fetches rows with baseCursor.recordAt during emit.
         assert base.recordCursorSupportsRandomAccess();
         this.base = base;
-        this.cursor = new EncodedSortLightRecordCursor(
-                configuration,
-                metadata,
-                sortColumnFilter
-        );
         this.sortColumnFilter = sortColumnFilter;
+        try {
+            this.cursor = new EncodedSortLightRecordCursor(
+                    configuration,
+                    metadata,
+                    sortColumnFilter
+            );
+        } catch (Throwable th) {
+            Misc.free(this, th);
+            throw th;
+        }
     }
 
     @Override

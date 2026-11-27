@@ -676,7 +676,6 @@ public class ParquetReplaceCommitTest extends AbstractCairoTest {
             assertQuery("SELECT min(ts) FROM pq")
                     .noLeakCheck()
                     .expectSize()
-                    .timestamp("min")
                     .returns("""
                             min
                             2024-01-01T04:00:00.000000Z
@@ -739,7 +738,6 @@ public class ParquetReplaceCommitTest extends AbstractCairoTest {
             assertQuery("SELECT max(ts) FROM pq")
                     .noLeakCheck()
                     .expectSize()
-                    .timestampDesc("max")
                     .returns("""
                             max
                             2024-01-03T18:00:00.000000Z
@@ -1154,7 +1152,6 @@ public class ParquetReplaceCommitTest extends AbstractCairoTest {
             assertQuery("SELECT min(ts) FROM pq")
                     .noLeakCheck()
                     .expectSize()
-                    .timestamp("min")
                     .returns("""
                             min
                             2024-01-02T00:00:00.000000Z

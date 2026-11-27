@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions.date;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
@@ -31,36 +32,45 @@ import io.questdb.griffin.engine.functions.MonotonicTimestampFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Interval;
+import io.questdb.std.Numbers;
 
 class OffsetTimestampFunction extends TimestampFunction implements UnaryFunction, MonotonicTimestampFunction {
     private final long offset;
-    private final Function timestamp;
+    private final Function timestampFunc;
 
     public OffsetTimestampFunction(Function timestamp, long offset, int timestampType) {
         super(timestampType);
-        this.timestamp = timestamp;
+        this.timestampFunc = timestamp;
         this.offset = offset;
+    }
+
+    /**
+     * The {@code preservesTimestampOrder()} of the function over an argument of {@code argumentType}, returning
+     * {@code type}.
+     */
+    static boolean preservesOrder(int argumentType, int type, long offset) {
+        return argumentType == type && offset <= Long.MAX_VALUE - ColumnType.getTimestampDriver(type).getMaxDesignatedTimestamp();
     }
 
     @Override
     public Function getArg() {
-        return timestamp;
+        return timestampFunc;
     }
 
     @Override
     public long getTimestamp(Record rec) {
-        return timestamp.getTimestamp(rec) + offset;
+        final long timestamp = timestampFunc.getTimestamp(rec);
+        return timestamp != Numbers.LONG_NULL ? timestamp + offset : Numbers.LONG_NULL;
     }
 
     @Override
     public Function getTimestampArg() {
-        return timestamp;
+        return timestampFunc;
     }
 
     @Override
     public boolean preservesTimestampOrder() {
-        return timestamp.getType() == getType()
-                && offset <= Long.MAX_VALUE - timestampDriver.getMaxDesignatedTimestamp();
+        return preservesOrder(timestampFunc.getType(), getType(), offset);
     }
 
     @Override
@@ -70,6 +80,6 @@ class OffsetTimestampFunction extends TimestampFunction implements UnaryFunction
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.val(timestamp).val('+').val(offset);
+        sink.val(timestampFunc).val('+').val(offset);
     }
 }

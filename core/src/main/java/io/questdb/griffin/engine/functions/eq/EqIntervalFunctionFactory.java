@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.eq;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -37,6 +38,7 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.Interval;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
@@ -62,7 +64,14 @@ public class EqIntervalFunctionFactory implements FunctionFactory {
     ) {
         final Function a = args.getQuick(0);
         final Function b = args.getQuick(1);
+        // An untyped NULL is a NULL interval of the other argument's type: iv = NULL holds exactly when iv is NULL, as
+        // iv IS NULL does. Overload resolution binds NULL = iv to EqStrFunctionFactory.
+        assert !ColumnType.isNull(a.getType()) : "NULL = INTERVAL binds EqStrFunctionFactory";
+        if (ColumnType.isNull(b.getType())) {
+            return new NullCheckFunc(a);
+        }
         if (a.getType() != b.getType()) {
+            Misc.freeObjList(args);
             return BooleanConstant.FALSE;
         }
 

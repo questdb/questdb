@@ -26,10 +26,7 @@ package io.questdb.test.griffin.fuzz;
 
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.model.ExecutionModel;
-import io.questdb.griffin.model.IQueryModel;
 import io.questdb.std.Chars;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
@@ -74,22 +71,20 @@ public class RowIdJoinShapeCoverageTest extends AbstractCairoTest {
             final ObjList<String> corpus = generateCorpus();
             int checked = 0;
             int compiled = 0;
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                for (int i = 0, n = corpus.size(); i < n; i++) {
-                    final String sql = corpus.getQuick(i);
-                    if (!WINDOW_JOIN_SIDE.matcher(sql).find() || !isWindowJoinOrderByKept(compiler, sql)) {
-                        continue;
-                    }
-                    checked++;
-                    try (RecordCursorFactory ignore = select(sql)) {
-                        compiled++;
-                    } catch (ImplicitCastException ignore) {
-                        // a constant cast the generator draws out of range fails as it folds, as QueryRunner accepts
-                    } catch (SqlException e) {
-                        final CharSequence message = e.getFlyweightMessage();
-                        Assert.assertFalse(sql + "\n" + message, Chars.contains(message, "side of splice join doesn't support random access"));
-                        Assert.assertFalse(sql + "\n" + message, Chars.contains(message, "of HORIZON JOIN can only be a table"));
-                    }
+            for (int i = 0, n = corpus.size(); i < n; i++) {
+                final String sql = corpus.getQuick(i);
+                if (!WINDOW_JOIN_SIDE.matcher(sql).find()) {
+                    continue;
+                }
+                checked++;
+                try (RecordCursorFactory ignore = select(sql)) {
+                    compiled++;
+                } catch (ImplicitCastException ignore) {
+                    // a constant cast the generator draws out of range fails as it folds, as QueryRunner accepts
+                } catch (SqlException e) {
+                    final CharSequence message = e.getFlyweightMessage();
+                    Assert.assertFalse(sql + "\n" + message, Chars.contains(message, "side of splice join doesn't support random access"));
+                    Assert.assertFalse(sql + "\n" + message, Chars.contains(message, "of HORIZON JOIN can only be a table"));
                 }
             }
             Assert.assertTrue(
@@ -113,32 +108,6 @@ public class RowIdJoinShapeCoverageTest extends AbstractCairoTest {
         );
     }
 
-    // Whether a WINDOW JOIN of the optimised query lost its ORDER BY.
-    private static boolean hasWindowJoinWithoutOrderBy(IQueryModel model) {
-        if (model.getSelectModelType() == IQueryModel.SELECT_MODEL_WINDOW_JOIN && model.getOrderHash().size() == 0) {
-            return true;
-        }
-        final ObjList<IQueryModel> joinModels = model.getJoinModels();
-        for (int i = 1, n = joinModels.size(); i < n; i++) {
-            if (hasWindowJoinWithoutOrderBy(joinModels.getQuick(i))) {
-                return true;
-            }
-        }
-        return (model.getNestedModel() != null && hasWindowJoinWithoutOrderBy(model.getNestedModel()))
-                || (model.getUnionModel() != null && hasWindowJoinWithoutOrderBy(model.getUnionModel()));
-    }
-
-    // Whether every WINDOW JOIN of the optimised query still carries its ORDER BY. A query the optimiser rejects never
-    // reaches the joins.
-    private static boolean isWindowJoinOrderByKept(SqlCompiler compiler, String sql) {
-        final ExecutionModel executionModel;
-        try {
-            executionModel = compiler.generateExecutionModel(sql, sqlExecutionContext);
-        } catch (SqlException e) {
-            return false;
-        }
-        return executionModel instanceof IQueryModel model && !hasWindowJoinWithoutOrderBy(model);
-    }
 
     // The corpus over the tables of a fixed-seed fuzz run.
     private ObjList<String> generateCorpus() throws SqlException {
@@ -151,7 +120,7 @@ public class RowIdJoinShapeCoverageTest extends AbstractCairoTest {
         }
         final ObjList<String> corpus = new ObjList<>();
         for (int i = 0; i < CORPUS_SIZE; i++) {
-            corpus.add(QueryGenerator.generate(rnd, tables, null, false, true, true, true, true, true, true, config).sql());
+            corpus.add(QueryGenerator.generate(rnd, tables, null, false, true, true, true, true, true, false, true, config).sql());
         }
         return corpus;
     }

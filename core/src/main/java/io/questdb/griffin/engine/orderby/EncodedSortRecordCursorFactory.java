@@ -52,14 +52,19 @@ public class EncodedSortRecordCursorFactory extends AbstractRecordCursorFactory 
     ) {
         super(metadata);
         this.base = base;
-        this.cursor = new EncodedSortRecordCursor(
-                configuration,
-                metadata,
-                sortColumnFilter,
-                recordSink,
-                valueMaxBytes
-        );
         this.sortColumnFilter = sortColumnFilter;
+        try {
+            this.cursor = new EncodedSortRecordCursor(
+                    configuration,
+                    metadata,
+                    sortColumnFilter,
+                    recordSink,
+                    valueMaxBytes
+            );
+        } catch (Throwable th) {
+            Misc.free(this, th);
+            throw th;
+        }
     }
 
     @Override

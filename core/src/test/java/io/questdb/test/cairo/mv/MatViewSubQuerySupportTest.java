@@ -169,6 +169,26 @@ public class MatViewSubQuerySupportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSelfJoinRefreshWithoutSlaveTimestamp() throws Exception {
+        assertSelfJoinRefreshWithoutSlaveTimestamp("TIMESTAMP", false);
+    }
+
+    @Test
+    public void testSelfJoinRefreshWithoutSlaveTimestampNanos() throws Exception {
+        assertSelfJoinRefreshWithoutSlaveTimestamp("TIMESTAMP_NS", false);
+    }
+
+    @Test
+    public void testSelfJoinRefreshWithoutSlaveTimestampParquet() throws Exception {
+        assertSelfJoinRefreshWithoutSlaveTimestamp("TIMESTAMP", true);
+    }
+
+    @Test
+    public void testSelfJoinRefreshWithoutSlaveTimestampParquetNanos() throws Exception {
+        assertSelfJoinRefreshWithoutSlaveTimestamp("TIMESTAMP_NS", true);
+    }
+
+    @Test
     public void testSubQueriesInInPredicate() throws Exception {
         assertAccepted(
                 "k IN (SELECT k FROM cfg)",
@@ -203,6 +223,62 @@ public class MatViewSubQuerySupportTest extends AbstractCairoTest {
                                     + "\n  error: " + e.getMessage(), e);
                 }
             }
+        });
+    }
+
+    private void assertSelfJoinRefreshWithoutSlaveTimestamp(String timestampType, boolean isParquet) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (k INT, v LONG, ts " + timestampType + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                    (1, 10, '2024-01-01T00:00:00Z'),
+                    (1, 20, '2024-01-01T00:10:00Z'),
+                    (2, 30, '2024-01-01T01:00:00Z'),
+                    (2, -5, '2024-01-01T01:15:00Z'),
+                    (3, 40, '2024-01-02T00:00:00Z')
+                    """);
+            drainWalQueue();
+            if (isParquet) {
+                execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+                drainWalQueue();
+            }
+            final String query = """
+                    SELECT b.ts, b.k, sum(s.v) AS total
+                    FROM t b JOIN (SELECT k, v FROM t WHERE v > 0) s ON b.k = s.k
+                    SAMPLE BY 1h
+                    """;
+            String expected = """
+                    ts\tk\ttotal
+                    2024-01-01T00:00:00.000000Z\t1\t60
+                    2024-01-01T01:00:00.000000Z\t2\t60
+                    2024-01-02T00:00:00.000000Z\t3\t40
+                    """;
+            if (timestampType.equals("TIMESTAMP_NS")) {
+                expected = expected.replace(".000000Z", ".000000000Z");
+            }
+            assertQuery(query).noLeakCheck().timestamp("ts").expectSize().returns(expected);
+            engine.releaseAllReaders();
+            execute("CREATE MATERIALIZED VIEW mv WITH BASE t AS (" + query + ") PARTITION BY DAY");
+            drainWalAndMatViewQueues();
+            assertQuery("SELECT * FROM mv").noLeakCheck().timestamp("ts").expectSize().returns(expected);
+
+            engine.releaseAllReaders();
+            execute("REFRESH MATERIALIZED VIEW mv FULL");
+            drainWalAndMatViewQueues();
+            assertQuery("SELECT * FROM mv").noLeakCheck().timestamp("ts").expectSize().returns(expected);
+
+            execute("INSERT INTO t VALUES (1, 5, '2024-01-01T00:20:00Z')");
+            drainWalAndMatViewQueues();
+            expected = expected.replace("\t1\t60", "\t1\t105");
+            assertQuery(query).noLeakCheck().timestamp("ts").expectSize().returns(expected);
+            assertQuery("SELECT * FROM mv").noLeakCheck().timestamp("ts").expectSize().returns(expected);
+
+            engine.releaseAllReaders();
+            execute("REFRESH MATERIALIZED VIEW mv FULL");
+            drainWalAndMatViewQueues();
+            assertQuery("SELECT * FROM mv").noLeakCheck().timestamp("ts").expectSize().returns(expected);
+            assertQuery("SELECT view_status, invalidation_reason FROM materialized_views() WHERE view_name = 'mv'")
+                    .noLeakCheck().noRandomAccess().sizeMayVary().returns("view_status\tinvalidation_reason\nvalid\t\n");
         });
     }
 }

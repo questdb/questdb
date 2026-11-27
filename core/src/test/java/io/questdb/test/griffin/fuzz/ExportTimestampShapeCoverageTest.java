@@ -196,7 +196,7 @@ public class ExportTimestampShapeCoverageTest extends AbstractCairoTest {
             int tempTableCount = 0;
             int checkedCount = 0;
             for (int i = 0; i < CORPUS_SIZE; i++) {
-                final String sql = QueryGenerator.generate(rnd, tables, null, false, true, true, true, true, true, true, config).sql();
+                final String sql = QueryGenerator.generate(rnd, tables, null, false, true, true, true, true, true, false, true, config).sql();
                 try (RecordCursorFactory factory = select(sql)) {
                     final int timestampIndex = factory.getMetadata().getTimestampIndex();
                     // QueryRunner asks a plan for its direction only once the plan answered, as an export does.

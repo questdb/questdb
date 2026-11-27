@@ -112,7 +112,7 @@ public class ExportSymbolShapeCoverageTest extends AbstractCairoTest {
             int keptThroughMapSymbolColumn = 0;
             int writtenAsStringThroughAggregate = 0;
             for (int i = 0; i < CORPUS_SIZE; i++) {
-                final String sql = QueryGenerator.generate(rnd, tables, null, false, true, true, true, true, true, true, config).sql();
+                final String sql = QueryGenerator.generate(rnd, tables, null, false, true, true, true, true, true, false, true, config).sql();
                 try (
                         RecordCursorFactory factory = select(sql);
                         RecordCursor cursor = factory.getCursor(sqlExecutionContext);
