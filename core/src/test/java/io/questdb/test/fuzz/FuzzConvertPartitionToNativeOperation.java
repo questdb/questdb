@@ -42,9 +42,14 @@ import io.questdb.test.tools.TestUtils;
 public class FuzzConvertPartitionToNativeOperation implements FuzzTransactionOperation {
 
     private final long cutoffTimestamp;
+    private final long partitionDuration;
 
-    public FuzzConvertPartitionToNativeOperation(long cutoffTimestamp) {
+    /**
+     * Applies to the partitions starting in (cutoffTimestamp - partitionDuration, cutoffTimestamp).
+     */
+    public FuzzConvertPartitionToNativeOperation(long cutoffTimestamp, long partitionDuration) {
         this.cutoffTimestamp = cutoffTimestamp;
+        this.partitionDuration = partitionDuration;
     }
 
     @Override
@@ -58,7 +63,7 @@ public class FuzzConvertPartitionToNativeOperation implements FuzzTransactionOpe
             context.with(AllowAllSecurityContext.INSTANCE);
             TableRecordMetadata metadata = wApi.getMetadata();
             String sql = "ALTER TABLE " + TestUtils.randomiseCase(tempRnd, wApi.getTableToken().getTableName())
-                    + " CONVERT PARTITION TO NATIVE WHERE " + FuzzTransactionOperation.partitionDayBeforeFilter(metadata, cutoffTimestamp);
+                    + " CONVERT PARTITION TO NATIVE WHERE " + FuzzTransactionOperation.partitionBeforeFilter(metadata, cutoffTimestamp, partitionDuration);
 
             try {
                 CompiledQuery query = sqlCompiler.compile(sql, context);
