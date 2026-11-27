@@ -69,6 +69,43 @@ public class QwpEgressServerInfoTest extends AbstractQwpBootstrapTest {
     }
 
     @Test
+    public void testOssServerAdvertisesQueryDetailsCapability() throws Exception {
+        // The pinned client takes SERVER_INFO with the bit set without a hitch,
+        // as it ignores the capability bits it does not know.
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestServerMain ignored = startFragmented()) {
+                try (QwpQueryClient client = QwpQueryClient.newPlainText("127.0.0.1", HTTP_PORT)) {
+                    client.connect();
+                    QwpServerInfo info = client.getServerInfo();
+                    Assert.assertNotNull(info);
+                    Assert.assertEquals(
+                            "OSS server must advertise CAP_QUERY_DETAILS",
+                            io.questdb.cutlass.qwp.codec.QwpEgressMsgKind.CAP_QUERY_DETAILS,
+                            info.getCapabilities() & io.questdb.cutlass.qwp.codec.QwpEgressMsgKind.CAP_QUERY_DETAILS
+                    );
+                    final long[] total = {-1};
+                    client.execute("SELECT x FROM long_sequence(3)", new io.questdb.client.cutlass.qwp.client.QwpColumnBatchHandler() {
+                        @Override
+                        public void onBatch(io.questdb.client.cutlass.qwp.client.QwpColumnBatch batch) {
+                        }
+
+                        @Override
+                        public void onEnd(long totalRows) {
+                            total[0] = totalRows;
+                        }
+
+                        @Override
+                        public void onError(byte status, String message) {
+                            Assert.fail(message);
+                        }
+                    });
+                    Assert.assertEquals(3, total[0]);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testOssServerAdvertisesQueryFlagsCapability() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (TestServerMain ignored = startFragmented()) {
