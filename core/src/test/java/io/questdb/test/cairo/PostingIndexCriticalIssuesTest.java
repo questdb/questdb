@@ -1072,6 +1072,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
 
     @Test
     public void testCloseNoTruncateSkipsSealOnPoisonedWriter() throws Exception {
+        pinSealFlushingCommitMode();
         // SymbolMapWriter's emergency closeNoTruncate() runs a best-effort seal().
         // On a poisoned writer that seal() would throw via checkNotPoisoned() out
         // of cleanup, masking the original rebuild failure. The fix skips the seal
@@ -5704,6 +5705,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
 
     @Test
     public void testOrphanPurgeKeepsReusedGenerationOfOpenReader() throws Exception {
+        pinSealFlushingCommitMode();
         // A failed reseal queues the purge of the generation it staged at sealTxn S, with a reader window that ends
         // there. Before the purge job runs, the next writer reseals at S again, the generation counter of the chain
         // having not moved, and an out-of-order append supersedes that reused generation while a reader of it is
@@ -5747,6 +5749,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
 
     @Test
     public void testOrphanPurgeOfUnreadableChainRemovesStagedGeneration() throws Exception {
+        pinSealFlushingCommitMode();
         // When the purge cannot read the chain of the .pk, nothing proves that a reader above the window of an orphan
         // purge can see its generation, as nothing proves the head of the chain live: the purge goes on, and the
         // staged generation goes.
@@ -6502,6 +6505,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
      */
     @Test
     public void testPurgeKeepsGenerationVisibleAboveWindow() throws Exception {
+        pinSealFlushingCommitMode();
         // A purge deletes a generation only when no reader at or above the end of the window its scoreboard check
         // covers can see it. The reused generation of a failed reseal, superseded since, is visible from its
         // txnAtSeal up to the txnAtSeal of the generation that superseded it: a purge whose window ends below that
@@ -7047,6 +7051,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
      */
     @Test
     public void testRebuildSidecarsByCopyPostSwitchSidecarSyncFailurePoisonsWriter() throws Exception {
+        pinSealFlushingCommitMode();
         final PcSyncFailingFacade pcSync = new PcSyncFailingFacade();
         ff = pcSync;
         assertMemoryLeak(ff, () -> {
@@ -7167,6 +7172,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
      */
     @Test
     public void testRebuildSidecarsPostPublishKeySyncFailureKeepsLiveFilesAndWriterUsable() throws Exception {
+        pinSealFlushingCommitMode();
         final PkSyncFailingFacade pkSync = new PkSyncFailingFacade();
         ff = pkSync;
         assertMemoryLeak(ff, () -> {
@@ -9657,6 +9663,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
      */
     @Test
     public void testRollbackConditionallyToZeroSyncsKeyFileBeforePurgeUnlink() throws Exception {
+        pinSealFlushingCommitMode();
         final PkSyncCountingFacade pkSync = new PkSyncCountingFacade();
         ff = pkSync;
         assertMemoryLeak(ff, () -> {
@@ -9858,6 +9865,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
      */
     @Test
     public void testRollbackPreSwitchValueSyncFailureCleansUpAndKeepsWriterUsable() throws Exception {
+        pinSealFlushingCommitMode();
         final PvSyncFailingFacade pvSync = new PvSyncFailingFacade();
         ff = pvSync;
         assertMemoryLeak(ff, () -> {
@@ -9929,6 +9937,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
 
     @Test
     public void testRollbackRealDiscardSidecarSyncFailureSchedulesStagedSealFilePurge() throws Exception {
+        pinSealFlushingCommitMode();
         final PcSyncFailingFacade pcSync = new PcSyncFailingFacade();
         ff = pcSync;
         assertMemoryLeak(ff, () -> {
@@ -10038,6 +10047,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
      */
     @Test
     public void testRollbackRealDiscardSyncsKeyFileBeforePurgeUnlink() throws Exception {
+        pinSealFlushingCommitMode();
         final PkSyncCountingFacade pkSync = new PkSyncCountingFacade();
         ff = pkSync;
         assertMemoryLeak(ff, () -> {
@@ -10592,6 +10602,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
      */
     @Test
     public void testSealPostSwitchSidecarSyncFailurePoisonsWriterAndOrphanPurgesStagedFiles() throws Exception {
+        pinSealFlushingCommitMode();
         final PcSyncFailingFacade pcSync = new PcSyncFailingFacade();
         ff = pcSync;
         assertMemoryLeak(ff, () -> {
@@ -10675,6 +10686,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
      */
     @Test
     public void testSealPreSwitchValueSyncFailureUnlinksStagedFilesAndKeepsWriterUsable() throws Exception {
+        pinSealFlushingCommitMode();
         final PvSyncFailingFacade pvSync = new PvSyncFailingFacade();
         ff = pvSync;
         assertMemoryLeak(ff, () -> {
@@ -12341,6 +12353,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
 
     @Test
     public void testSwitchPartitionResealPostSwitchFailurePublishesStagedOrphanPurge() throws Exception {
+        pinSealFlushingCommitMode();
         // M1: switchPartition()'s native reseal (commit() + sealIfMultiGen()) on a
         // post-switch .pc sync failure poisons the writer and stages the failed
         // sealTxn's orphan purge. deferPendingPostingSealPurges must run in a
@@ -13123,6 +13136,12 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
 
     private static long newestSidecarSize(TableToken token) {
         return newestSidecarFile(token).length();
+    }
+
+    // A seal flushes its files only under SYNC and ADAPTIVE. A test of that flush, or of a failure that a flush
+    // injects, pins ADAPTIVE, the default, so that it runs the same under a NOSYNC sweep.
+    private static void pinSealFlushingCommitMode() {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
     }
 
     /**
