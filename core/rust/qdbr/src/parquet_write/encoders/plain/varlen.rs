@@ -12,6 +12,7 @@ use crate::parquet_write::util::{
     build_plain_page, encode_primitive_def_levels, transmute_slice, BinaryMaxMinStats,
     ExactSizedIter,
 };
+use crate::parquet_write::varchar::are_bytes_ascii;
 use parquet2::bloom_filter::hash_byte;
 use parquet2::encoding::{delta_bitpacked, Encoding};
 use parquet2::page::Page;
@@ -87,7 +88,8 @@ pub fn encode_binary(
     )
 }
 
-/// Encode a Varchar column as Plain pages.
+/// Encode a Varchar column as Plain pages. With `check_ascii`, also returns whether the bytes of
+/// every value are ASCII; without it, returns `false` and checks no value.
 pub fn encode_varchar(
     columns: &[Column],
     first_partition_start: usize,
@@ -95,7 +97,8 @@ pub fn encode_varchar(
     primitive_type: &PrimitiveType,
     options: WriteOptions,
     bloom_set: Option<Arc<Mutex<HashSet<u64>>>>,
-) -> ParquetResult<Vec<Page>> {
+    check_ascii: bool,
+) -> ParquetResult<(Vec<Page>, bool)> {
     let rows_per_page = rows_per_primitive_page(&options, primitive_type.physical_type);
     let segments = collect_varlen_segments(
         columns,
@@ -106,7 +109,8 @@ pub fn encode_varchar(
         |column| Ok(unsafe { transmute_slice(column.secondary_data) }),
         |column| column.primary_data,
     )?;
-    encode_column_chunk(
+    let mut is_ascii = check_ascii;
+    let pages = encode_column_chunk(
         columns,
         first_partition_start,
         last_partition_end,
@@ -114,9 +118,16 @@ pub fn encode_varchar(
         bloom_set,
         |window, bloom| {
             let page_segments = slice_varlen_segments(&segments, window);
-            varchar_segments_to_page(&page_segments, options, primitive_type.clone(), bloom)
+            varchar_segments_to_page(
+                &page_segments,
+                options,
+                primitive_type.clone(),
+                bloom,
+                &mut is_ascii,
+            )
         },
-    )
+    )?;
+    Ok((pages, is_ascii))
 }
 
 fn binary_segments_to_page(
@@ -245,6 +256,7 @@ fn varchar_segments_to_page(
     options: WriteOptions,
     primitive_type: PrimitiveType,
     mut bloom_hashes: Option<&mut HashSet<u64>>,
+    is_ascii: &mut bool,
 ) -> ParquetResult<Page> {
     let num_rows: usize = segments.iter().map(VarcharSegment::num_rows).sum();
     let mut buffer = vec![];
@@ -273,6 +285,7 @@ fn varchar_segments_to_page(
                 let len = value.len();
                 buffer.extend_from_slice(&(len as u32).to_le_bytes());
                 buffer.extend_from_slice(value);
+                *is_ascii = *is_ascii && value.is_ascii();
                 stats.update(value);
                 if let Some(ref mut h) = bloom_hashes {
                     h.insert(hash_byte(value));
@@ -749,6 +762,33 @@ pub fn varchar_to_page(
     encoding: Encoding,
     bloom_hashes: Option<&mut HashSet<u64>>,
 ) -> ParquetResult<Page> {
+    varchar_to_page_checking_ascii(
+        aux,
+        data,
+        column_top,
+        options,
+        primitive_type,
+        encoding,
+        bloom_hashes,
+        &mut false,
+    )
+}
+
+/// [`varchar_to_page`] that also clears `is_ascii` when the bytes of a value of the page are not
+/// ASCII; an `is_ascii` that is already `false` checks no value. The per-value ASCII bit of the
+/// aux plays no part: a SQL copy keeps the bit of the value it copies, which a scan of an earlier
+/// version could have set over non-ASCII bytes.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn varchar_to_page_checking_ascii(
+    aux: &[[u8; 16]],
+    data: &[u8],
+    column_top: usize,
+    options: WriteOptions,
+    primitive_type: PrimitiveType,
+    encoding: Encoding,
+    bloom_hashes: Option<&mut HashSet<u64>>,
+    is_ascii: &mut bool,
+) -> ParquetResult<Page> {
     let mut utf8_slices = Vec::with_capacity(column_top + aux.len());
     utf8_slices.resize(column_top, None);
     extend_varchar_slices(&mut utf8_slices, aux, data)?;
@@ -758,15 +798,17 @@ pub fn varchar_to_page(
         primitive_type,
         encoding,
         bloom_hashes,
+        is_ascii,
     )
 }
 
-pub fn varchar_slices_to_page(
+fn varchar_slices_to_page(
     utf8_slices: &[Option<&[u8]>],
     options: WriteOptions,
     primitive_type: PrimitiveType,
     encoding: Encoding,
     mut bloom_hashes: Option<&mut HashSet<u64>>,
+    is_ascii: &mut bool,
 ) -> ParquetResult<Page> {
     let num_rows = utf8_slices.len();
     let null_count = utf8_slices.iter().filter(|entry| entry.is_none()).count();
@@ -785,6 +827,7 @@ pub fn varchar_slices_to_page(
                 &mut buffer,
                 &mut stats,
                 bloom_hashes.as_deref_mut(),
+                is_ascii,
             );
         }
         Encoding::DeltaLengthByteArray => {
@@ -794,6 +837,7 @@ pub fn varchar_slices_to_page(
                 &mut buffer,
                 &mut stats,
                 bloom_hashes,
+                is_ascii,
             );
         }
         _ => {
@@ -886,11 +930,13 @@ fn encode_varchar_plain(
     buffer: &mut Vec<u8>,
     stats: &mut BinaryMaxMinStats,
     mut bloom_hashes: Option<&mut HashSet<u64>>,
+    is_ascii: &mut bool,
 ) {
     for utf8 in utf8_slices.iter().filter_map(|&option| option) {
         let len = (utf8.len() as u32).to_le_bytes();
         buffer.extend_from_slice(&len);
         buffer.extend_from_slice(utf8);
+        *is_ascii = *is_ascii && utf8.is_ascii();
         stats.update(utf8);
         if let Some(ref mut h) = bloom_hashes {
             h.insert(hash_byte(utf8));
@@ -904,6 +950,7 @@ fn encode_varchar_delta(
     buffer: &mut Vec<u8>,
     stats: &mut BinaryMaxMinStats,
     mut bloom_hashes: Option<&mut HashSet<u64>>,
+    is_ascii: &mut bool,
 ) {
     let lengths = utf8_slices
         .iter()
@@ -911,6 +958,7 @@ fn encode_varchar_delta(
         .map(|utf8| utf8.len() as i64);
     let lengths = ExactSizedIter::new(lengths, utf8_slices.len() - null_count);
     delta_bitpacked::encode(lengths, buffer);
+    let values_start = buffer.len();
     for utf8 in utf8_slices.iter().filter_map(|&option| option) {
         buffer.extend_from_slice(utf8);
         stats.update(utf8);
@@ -918,4 +966,6 @@ fn encode_varchar_delta(
             h.insert(hash_byte(utf8));
         }
     }
+    // the page keeps the bytes of its values together after their lengths
+    *is_ascii = *is_ascii && are_bytes_ascii(&buffer[values_start..]);
 }

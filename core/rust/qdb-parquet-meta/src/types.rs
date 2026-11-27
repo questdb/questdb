@@ -263,6 +263,20 @@ impl FooterFeatureFlags {
     /// identity map. A reader ignoring it would resolve index rows at the wrong row group.
     pub const INDEX_ROW_MAP_BIT: u64 = 1 << 32;
 
+    /// Readers trust the header's `IS_ASCII` column flags for every row group of this snapshot.
+    /// Only `_pm` files written by QuestDB 10.2.0 and older flag columns in the header. The header
+    /// is written once, so an update that appends a footer cannot clear a flag there. Its footer
+    /// carries this bit only when every chunk the update writes of a flagged column is ASCII and
+    /// the row groups it keeps are trusted: the snapshot before is the first of the chain or
+    /// carries the bit, or the update decoded their values and found them ASCII. The first
+    /// snapshot needs no bit: readers and writers trust its header flags without a check. They can
+    /// be wrong: QuestDB 9.4.0 to 10.2.0 built some first snapshots from a parquet footer whose
+    /// `ascii` 9.3.4 or 9.3.5 left true over non-ASCII values
+    /// (<https://github.com/questdb/questdb/issues/8570>), and an in-place update that writes
+    /// ASCII values into such a file sets this bit over the wrong flag. So the bit does not prove
+    /// that the values were checked. No section.
+    pub const HEADER_ASCII_VALID_BIT: u64 = 1 << 2;
+
     pub const KNOWN_REQUIRED: u64 = Self::INDEX_ROW_MAP_BIT;
 
     pub const fn new() -> Self {
@@ -291,6 +305,14 @@ impl FooterFeatureFlags {
 
     pub const fn with_scratchpad(self) -> Self {
         Self(self.0 | Self::SCRATCHPAD_BIT)
+    }
+
+    pub const fn has_header_ascii_valid(self) -> bool {
+        self.0 & Self::HEADER_ASCII_VALID_BIT != 0
+    }
+
+    pub const fn with_header_ascii_valid(self) -> Self {
+        Self(self.0 | Self::HEADER_ASCII_VALID_BIT)
     }
 
     pub const fn has_index_row_map(self) -> bool {
@@ -591,6 +613,37 @@ impl StatFlags {
     }
 }
 
+// ── ChunkFlags ─────────────────────────────────────────────────────────
+
+/// Bitfield stored in each column chunk's FLAGS field.
+///
+/// A row group block never changes once written, so a chunk flag describes its own values in
+/// every snapshot that refers to the block.
+///
+/// Layout:
+/// - bit 0: IS_ASCII (varchar columns): every value of the chunk is ASCII. Only a writer that
+///   checked the values of the chunk sets it, or one that copies the chunk together with it;
+///   never from a flag that describes the whole column.
+/// - bits 1-31: reserved
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
+pub struct ChunkFlags(pub u32);
+
+impl ChunkFlags {
+    const IS_ASCII_BIT: u32 = 1 << 0;
+
+    pub const fn new() -> Self {
+        Self(0)
+    }
+
+    pub const fn is_ascii(self) -> bool {
+        self.0 & Self::IS_ASCII_BIT != 0
+    }
+
+    pub const fn with_ascii(self) -> Self {
+        Self(self.0 | Self::IS_ASCII_BIT)
+    }
+}
+
 // ── FieldRepetition ────────────────────────────────────────────────────
 
 /// Field repetition level, stored in bits 2-3 of [`ColumnFlags`].
@@ -647,7 +700,10 @@ impl TryFrom<u8> for FieldRepetition {
 ///
 /// Layout:
 /// - bit 0: LOCAL_KEY_IS_GLOBAL (symbol columns)
-/// - bit 1: IS_ASCII (varchar columns)
+/// - bit 1: IS_ASCII (varchar columns): the writer said every value of the column was ASCII when
+///   it created the file. Written only by QuestDB 10.2.0 and older; later versions flag chunks
+///   instead ([`ChunkFlags`]). Readers trust it for the first snapshot, and for a later one only
+///   under [`FooterFeatureFlags::HEADER_ASCII_VALID_BIT`]; it can be wrong, see there.
 /// - bits 2-3: FIELD_REPETITION (2 bits)
 /// - bit 4: DESCENDING (for sorted columns)
 /// - bits 5-31: reserved
@@ -714,6 +770,27 @@ pub const fn decode_stat_sizes(stat_sizes: u8) -> (u8, u8) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn chunk_flags_ascii() {
+        assert!(!ChunkFlags::new().is_ascii());
+        assert!(ChunkFlags::new().with_ascii().is_ascii());
+        assert_eq!(ChunkFlags::new().with_ascii().0, 1);
+        // the other bits are reserved and do not read as ASCII
+        assert!(!ChunkFlags(!1).is_ascii());
+    }
+
+    #[test]
+    fn footer_flags_header_ascii_valid() {
+        let flags = FooterFeatureFlags::new();
+        assert!(!flags.has_header_ascii_valid());
+        let flags = flags.with_header_ascii_valid();
+        assert!(flags.has_header_ascii_valid());
+        assert_eq!(flags.0, 1 << 2);
+        // optional: a reader that does not know the bit accepts the footer
+        assert_eq!(flags.unknown_required(0), 0);
+        assert!(!FooterFeatureFlags(!(1 << 2)).has_header_ascii_valid());
+    }
 
     #[test]
     fn seq_txn_serde_round_trip() {
