@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.groupby;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
@@ -34,6 +35,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.constants.ByteConstant;
 import io.questdb.griffin.engine.functions.constants.DoubleConstant;
@@ -165,8 +167,12 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRe
                 case ColumnType.LONG -> LongConstant.newInstance(Numbers.parseLong(fillValue));
                 case ColumnType.FLOAT -> FloatConstant.newInstance(Numbers.parseFloat(fillValue));
                 case ColumnType.DOUBLE -> DoubleConstant.newInstance(Numbers.parseDouble(fillValue));
-                case ColumnType.SHORT -> ShortConstant.newInstance((short) Numbers.parseInt(fillValue));
-                case ColumnType.BYTE -> ByteConstant.newInstance((byte) Numbers.parseInt(fillValue));
+                // INSERT's range checks: a value outside the range fails, as on the GROUP BY path,
+                // instead of wrapping
+                case ColumnType.SHORT ->
+                        ShortConstant.newInstance(SqlUtil.implicitCastAsShort(Numbers.parseInt(fillValue), ColumnType.INT));
+                case ColumnType.BYTE ->
+                        ByteConstant.newInstance(SqlUtil.implicitCastAsByte(Numbers.parseInt(fillValue), ColumnType.INT));
                 // A negated literal is not a quoted timestamp, so this arm reads the raw token and
                 // rejects FILL(-1) at the minus sign, as the GROUP BY path does.
                 case ColumnType.TIMESTAMP -> {
@@ -181,6 +187,8 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRe
             };
         } catch (NumericException e) {
             throw SqlException.position(fillNode.position).put("invalid fill value: ").put(fillValue);
+        } catch (ImplicitCastException e) {
+            throw SqlException.$(fillNode.position, e.getFlyweightMessage());
         }
     }
 
@@ -232,11 +240,9 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRe
 
     // The parser turns FILL(-1) into a unary minus node over the unsigned constant "1", so its
     // token is "-". This returns the signed text "-1" for that shape, which the Numbers parsers
-    // read exactly as they read any negative literal. Numbers.parseInt() and Numbers.parseLong()
-    // reject a value outside the int or long range, but createPlaceHolderFunction() narrows a
-    // SHORT or BYTE fill value from parseInt() with a plain (short) or (byte) cast, so those two
-    // types get only the int range check: FILL(-129) on a BYTE column fills 127. Any other node
-    // keeps its own token, so FILL(-abc) still fails at the minus sign as before.
+    // read exactly as they read any negative literal, including the range checks of
+    // createPlaceHolderFunction(), so FILL(-129) on a BYTE column fails. Any other node keeps its
+    // own token, so FILL(-abc) still fails at the minus sign as before.
     private static CharSequence toFillValue(ExpressionNode fillNode) {
         if (fillNode.type == ExpressionNode.OPERATION
                 && fillNode.paramCount == 1

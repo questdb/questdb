@@ -15671,9 +15671,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
         // The SAMPLE BY cursor accepts a minus sign only over a literal and parses the signed literal, so
         // a value that the column type's parser rejects, such as a fraction or a value outside the int
         // range for an INT column, or a minus sign over anything else, keeps failing at the minus sign.
-        // SHORT and BYTE get only the int range check: createPlaceHolderFunction() narrows their fill
-        // value with a plain cast, so FILL(-129) for an aggregate of type BYTE, such as first() over a
-        // BYTE column, fills 127 instead of failing.
+        // SampleByTest.testSampleFillValueOutOfRangeByteShort covers the SHORT and BYTE ranges.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (ts TIMESTAMP_NS, i INT) TIMESTAMP(ts) PARTITION BY DAY");
             assertQuery("SELECT ts, sum(i) s FROM (SELECT * FROM t WHERE i > 0) SAMPLE BY 1h FILL(-abc)")

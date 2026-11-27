@@ -23925,9 +23925,7 @@ public class SampleByTest extends AbstractCairoTest {
         // The SAMPLE BY cursor accepts a minus sign only over a literal and parses the signed literal, so
         // a value that the column type's parser rejects, such as a fraction or a value outside the int
         // range for an INT column, or a minus sign over anything else, keeps failing at the minus sign.
-        // SHORT and BYTE get only the int range check: createPlaceHolderFunction() narrows their fill
-        // value with a plain cast, so FILL(-129) for an aggregate of type BYTE, such as first() over a
-        // BYTE column, fills 127 instead of failing.
+        // testSampleFillValueOutOfRangeByteShort covers the SHORT and BYTE ranges.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (ts TIMESTAMP, i INT) TIMESTAMP(ts) PARTITION BY DAY");
             assertQuery("SELECT ts, sum(i) s FROM (SELECT * FROM t WHERE i > 0) SAMPLE BY 1h FILL(-abc)")
@@ -24891,6 +24889,110 @@ public class SampleByTest extends AbstractCairoTest {
                         " long_sequence(40)" +
                         ") timestamp(k) partition by NONE")
                 .fails(43, "Invalid column: zz");
+    }
+
+    @Test
+    public void testSampleFillValueOutOfRangeByteShort() throws Exception {
+        // A fill value outside the SHORT or BYTE range fails at the literal with the message INSERT
+        // gives, on the GROUP BY path and on every shape that keeps the SAMPLE BY cursor: a filtered
+        // sub-query, ALIGN TO FIRST OBSERVATION (not keyed and keyed) and a LINEAR fill next to the
+        // values. The cursor used to narrow the value with a plain cast: FILL(300) filled 44 for BYTE.
+        // The ends of each range fill exactly.
+        // {head of the statement up to the fill values, tail after them, expected rows with {s} and {b}
+        // in the gap row}
+        final String[][] shapes = {
+                {
+                        "SELECT ts, first(s) s, first(b) b FROM t SAMPLE BY 1h FILL(",
+                        ")",
+                        """
+                        ts\ts\tb
+                        2024-01-01T00:00:00.000000Z\t3\t4
+                        2024-01-01T01:00:00.000000Z\t{s}\t{b}
+                        2024-01-01T02:00:00.000000Z\t7\t8
+                        """
+                },
+                {
+                        "SELECT ts, first(s) s, first(b) b FROM (SELECT * FROM t WHERE b > 0) SAMPLE BY 1h FILL(",
+                        ")",
+                        """
+                        ts\ts\tb
+                        2024-01-01T00:00:00.000000Z\t3\t4
+                        2024-01-01T01:00:00.000000Z\t{s}\t{b}
+                        2024-01-01T02:00:00.000000Z\t7\t8
+                        """
+                },
+                {
+                        "SELECT ts, first(s) s, first(b) b FROM t SAMPLE BY 1h FILL(",
+                        ") ALIGN TO FIRST OBSERVATION",
+                        """
+                        ts\ts\tb
+                        2024-01-01T00:00:00.000000Z\t3\t4
+                        2024-01-01T01:00:00.000000Z\t{s}\t{b}
+                        2024-01-01T02:00:00.000000Z\t7\t8
+                        """
+                },
+                {
+                        "SELECT ts, k, first(s) s, first(b) b FROM t SAMPLE BY 1h FILL(",
+                        ") ALIGN TO FIRST OBSERVATION",
+                        """
+                        ts\tk\ts\tb
+                        2024-01-01T00:00:00.000000Z\ta\t3\t4
+                        2024-01-01T01:00:00.000000Z\ta\t{s}\t{b}
+                        2024-01-01T02:00:00.000000Z\ta\t7\t8
+                        """
+                },
+                {
+                        "SELECT ts, avg(s) a, first(s) s, first(b) b FROM t SAMPLE BY 1h FILL(LINEAR, ",
+                        ")",
+                        """
+                        ts\ta\ts\tb
+                        2024-01-01T00:00:00.000000Z\t3.0\t3\t4
+                        2024-01-01T01:00:00.000000Z\t5.0\t{s}\t{b}
+                        2024-01-01T02:00:00.000000Z\t7.0\t7\t8
+                        """
+                }
+        };
+        // {fill values, offending literal, message}
+        final String[][] failures = {
+                {"32_768, 1", "32_768", "inconvertible value: 32768 [INT -> SHORT]"},
+                {"-32_769, 1", "-32_769", "inconvertible value: -32769 [INT -> SHORT]"},
+                {"1, 128", "128", "inconvertible value: 128 [INT -> BYTE]"},
+                {"1, -129", "-129", "inconvertible value: -129 [INT -> BYTE]"},
+                {"1, 300", "300", "inconvertible value: 300 [INT -> BYTE]"}
+        };
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, k SYMBOL, s SHORT, b BYTE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:00.000000Z', 'a', 3, 4),
+                    ('2024-01-01T02:00:00.000000Z', 'a', 7, 8)
+                    """);
+            for (String[] shape : shapes) {
+                for (String[] failure : failures) {
+                    final String sql = shape[0] + failure[0] + shape[1];
+                    assertQuery(sql)
+                            .noLeakCheck()
+                            .fails(sql.indexOf(failure[1], shape[0].length()), failure[2]);
+                }
+                assertQuery(shape[0] + "32_767, 127" + shape[1])
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .inferRandomAccess()
+                        .sizeMayVary()
+                        .returns(shape[2].replace("{s}", "32767").replace("{b}", "127"));
+                assertQuery(shape[0] + "-32_768, -128" + shape[1])
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .inferRandomAccess()
+                        .sizeMayVary()
+                        .returns(shape[2].replace("{s}", "-32768").replace("{b}", "-128"));
+            }
+            // the shapes reach the paths they are meant to
+            assertQuery(shapes[0][0] + "1, 1" + shapes[0][1]).noLeakCheck().assertsPlanContaining("Sample By Fill\n");
+            for (int i = 1; i < shapes.length; i++) {
+                assertQuery(shapes[i][0] + "1, 1" + shapes[i][1]).noLeakCheck().assertsPlanContaining("Sample By\n");
+            }
+        });
     }
 
     @Test
