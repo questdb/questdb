@@ -717,6 +717,15 @@ public final class FiberRuntime {
         return ownerContexts.getQuick(workerId);
     }
 
+    /**
+     * The number of Workers that own and run this runtime's fibers. A dispatch controller may read
+     * it from {@link FiberDispatchController#openSession(FiberRuntime)}, since the constructor sets
+     * it before opening the session.
+     */
+    public int getOwnerWorkerCount() {
+        return ownerWorkerCount;
+    }
+
     public int getParkedFiberCount() {
         return fiberPool.getParkedCount();
     }

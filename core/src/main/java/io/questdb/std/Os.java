@@ -35,8 +35,10 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.lang.foreign.Arena;
 import java.lang.foreign.FunctionDescriptor;
 import java.lang.foreign.Linker;
+import java.lang.foreign.MemorySegment;
 import java.lang.foreign.SymbolLookup;
 import java.lang.foreign.ValueLayout;
 import java.lang.invoke.MethodHandle;
@@ -59,6 +61,9 @@ public final class Os {
     public static final String archName;
     public static final String name;
     public static final int type;
+    // Read when this class loads, which happens before any thread can restrict itself through
+    // setCurrentThreadCpus() or setCurrentThreadAffinity().
+    private static final int PROCESS_CPU_COUNT = Runtime.getRuntime().availableProcessors();
     /**
      * Downcall to {@code qdb_sleep_millis} in libquestdbr, resolved eagerly in the
      * static initializer so a native library that lacks the symbol fails class load
@@ -195,6 +200,15 @@ public final class Os {
     public static native int getPid();
 
     /**
+     * The number of CPUs available to the process. {@link Runtime#availableProcessors()} reports
+     * the calling thread's CPU set on Linux, so a worker restricted to one socket's CPUs sees only
+     * those; this count is the one the JVM reported before any thread restricted itself.
+     */
+    public static int getProcessCpuCount() {
+        return PROCESS_CPU_COUNT;
+    }
+
+    /**
      * Returns physical memory used by this process (Resident Set Size/Working Set Size).
      *
      * @return used RSS memory in bytes
@@ -293,6 +307,43 @@ public final class Os {
     }
 
     /**
+     * Restricts the calling thread to the given CPUs, on Linux through libc's
+     * {@code sched_setaffinity()}. The call goes through the foreign function API, so it needs no
+     * symbol in the bundled native libraries. Elsewhere it does nothing.
+     *
+     * @param cpus CPU ids, none of them negative
+     * @return 0 on success or where it does nothing, and -1 if the kernel refused the set
+     */
+    public static int setCurrentThreadCpus(int[] cpus) {
+        if (type != LINUX) {
+            return 0;
+        }
+        int maxCpu = 0;
+        for (int cpu : cpus) {
+            if (cpu < 0) {
+                throw new IllegalArgumentException("negative CPU id: " + cpu);
+            }
+            maxCpu = Math.max(maxCpu, cpu);
+        }
+        // glibc's cpu_set_t holds 1024 CPUs; a larger mask is a multiple of its 8-byte words
+        final long maskBytes = Math.max(CpuSetAffinity.CPU_SET_BYTES, (maxCpu / Long.SIZE + 1) * (long) Long.BYTES);
+        try (Arena arena = Arena.ofConfined()) {
+            final MemorySegment mask = arena.allocate(maskBytes, Long.BYTES);
+            for (int cpu : cpus) {
+                final long offset = (long) (cpu / Long.SIZE) * Long.BYTES;
+                mask.set(ValueLayout.JAVA_LONG, offset, mask.get(ValueLayout.JAVA_LONG, offset) | 1L << (cpu % Long.SIZE));
+            }
+            // pid 0 is the calling thread
+            return (int) CpuSetAffinity.SCHED_SETAFFINITY.invokeExact(0, maskBytes, mask) == 0 ? 0 : -1;
+        } catch (RuntimeException | Error e) {
+            throw e;
+        } catch (Throwable t) {
+            // unreachable: everything an int(int, long, pointer) downcall can throw is a RuntimeException or Error
+            throw new AssertionError(t);
+        }
+    }
+
+    /**
      * Sleeps for at least {@code millis}, returning immediately when {@code millis}
      * is not positive. Interrupting the calling thread does not cut the sleep short,
      * and does not clear the thread's interrupt flag.
@@ -373,6 +424,17 @@ public final class Os {
             return false;
         }
         return true;
+    }
+
+    // Holds the sched_setaffinity() downcall, which the JVM resolves on the first call of
+    // setCurrentThreadCpus().
+    private static final class CpuSetAffinity {
+        private static final long CPU_SET_BYTES = 128;
+        private static final MethodHandle SCHED_SETAFFINITY = Linker.nativeLinker().downcallHandle(
+                Linker.nativeLinker().defaultLookup().find("sched_setaffinity").orElseThrow(
+                        () -> new FatalError("symbol sched_setaffinity not found in the C library")),
+                FunctionDescriptor.of(ValueLayout.JAVA_INT, ValueLayout.JAVA_INT, ValueLayout.JAVA_LONG, ValueLayout.ADDRESS)
+        );
     }
 
     static {
