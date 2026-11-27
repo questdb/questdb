@@ -2524,7 +2524,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return switch (node.type) {
             case ExpressionNode.CONSTANT, ExpressionNode.BIND_VARIABLE -> true;
             // -1, for a name that resolves to no column, compares above every column index
-            case ExpressionNode.LITERAL -> Integer.compareUnsigned(SqlUtil.getColumnIndexQuiet(metadata, node.token), columnCount) < 0;
+            case ExpressionNode.LITERAL ->
+                    Integer.compareUnsigned(SqlUtil.getColumnIndexQuiet(metadata, node.token), columnCount) < 0;
             // BETWEEN is a SET_OPERATION of three arguments
             case ExpressionNode.FUNCTION, ExpressionNode.OPERATION, ExpressionNode.SET_OPERATION -> {
                 if (node.paramCount < 3) {

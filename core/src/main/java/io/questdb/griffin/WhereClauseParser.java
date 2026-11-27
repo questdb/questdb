@@ -3697,31 +3697,32 @@ public final class WhereClauseParser implements Mutable {
                     analyzeEquals(timestampDriver, translator, model, node, m, functionParser, executionContext, isKeyColumnSuppressed, reader);
             case INTRINSIC_OP_NOT_EQ ->
                     analyzeNotEquals(timestampDriver, translator, model, node, m, functionParser, executionContext, isKeyColumnSuppressed, reader);
-            case INTRINSIC_OP_NOT -> node.rhs != null && node.rhs.token != null && node.rhs.type != ExpressionNode.LITERAL && ((
-                    isInKeyword(node.rhs.token) && analyzeNotIn(
-                            timestampDriver,
-                            translator,
-                            model,
-                            node,
-                            m,
-                            functionParser,
-                            metadata,
-                            executionContext,
-                            isKeyColumnSuppressed,
-                            reader
-                    ))
-                    || (
-                    isBetweenKeyword(node.rhs.token) && analyzeNotBetween(
-                            timestampDriver,
-                            translator,
-                            model,
-                            node,
-                            m,
-                            functionParser,
-                            metadata,
-                            executionContext
-                    )
-            ));
+            case INTRINSIC_OP_NOT ->
+                    node.rhs != null && node.rhs.token != null && node.rhs.type != ExpressionNode.LITERAL && ((
+                            isInKeyword(node.rhs.token) && analyzeNotIn(
+                                    timestampDriver,
+                                    translator,
+                                    model,
+                                    node,
+                                    m,
+                                    functionParser,
+                                    metadata,
+                                    executionContext,
+                                    isKeyColumnSuppressed,
+                                    reader
+                            ))
+                            || (
+                            isBetweenKeyword(node.rhs.token) && analyzeNotBetween(
+                                    timestampDriver,
+                                    translator,
+                                    model,
+                                    node,
+                                    m,
+                                    functionParser,
+                                    metadata,
+                                    executionContext
+                            )
+                    ));
             case INTRINSIC_OP_BETWEEN ->
                     analyzeBetween(timestampDriver, translator, model, node, m, functionParser, metadata, executionContext);
             case INTRINSIC_OP_AND_OFFSET ->
