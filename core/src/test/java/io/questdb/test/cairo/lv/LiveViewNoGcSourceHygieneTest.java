@@ -328,6 +328,15 @@ public class LiveViewNoGcSourceHygieneTest {
                     + "\\b(?:Callable|Consumer|Function|Runnable|Supplier)\\b",
             Pattern.DOTALL
     );
+    /**
+     * A test reaching a member by reflection: opening it up, looking it up by name, or loading
+     * a class by name. The plural lookups, which list members without opening any up, do not
+     * match.
+     */
+    private static final Pattern REFLECTIVE_REACH = Pattern.compile(
+            "\\b(?:setAccessible|getDeclaredConstructor|getDeclaredField|getDeclaredMethod)\\s*\\("
+                    + "|\\bClass\\s*\\.\\s*forName\\s*\\("
+    );
     // The tokens a specialized commit fence must show. Each names an API the fence cannot drop
     // without losing the property it exists for. Two of them pin a name instead of an API, and
     // deliberately: the fence clears two distinct dirty flags, and nothing but the object each
@@ -640,8 +649,10 @@ public class LiveViewNoGcSourceHygieneTest {
         // visibility is part of its contract. A borrowing or lending member - one that takes
         // or hands out a compiled array without copying it, or nulls what a public getter
         // returns - stays package-private. A class made public only so that tests can name it
-        // publishes no constructor and no method besides the clear() and close() it implements
-        // for Mutable and QuietCloseable.
+        // publishes no constructor, no field and no method besides the clear() and close() it
+        // implements for Mutable and QuietCloseable. A public field would hand every module a
+        // constant it inlines, or an array such as EMPTY_KEY_SCHEMA that every empty key
+        // schema shares.
         final Object[][] borrowingMembers = {
                 {LiveViewCheckpointFunctionRootBuilder.class, new String[]{"clearBorrowedCompiled", "ofBorrowedCompiled"}},
                 {LiveViewCheckpointWindowRootBuilder.class, new String[]{"clearBorrowedCompiled", "ofBorrowedCompiled"}},
@@ -683,6 +694,7 @@ public class LiveViewNoGcSourceHygieneTest {
         for (Class<?> type : testNamedTypes) {
             Assert.assertTrue(type.getSimpleName() + " must be public for the tests to name it", java.lang.reflect.Modifier.isPublic(type.getModifiers()));
             Assert.assertEquals(type.getSimpleName() + " must declare no public constructor", 0, type.getConstructors().length);
+            Assert.assertEquals(type.getSimpleName() + " must declare no public field", List.of(), List.of(type.getFields()));
             int testOnlyCount = 0;
             for (java.lang.reflect.Method method : type.getDeclaredMethods()) {
                 final String name = method.getName();
@@ -698,6 +710,56 @@ public class LiveViewNoGcSourceHygieneTest {
             }
             Assert.assertTrue(type.getSimpleName() + " must carry the test-only wrappers its tests call", testOnlyCount > 0);
         }
+    }
+
+    @Test
+    public void testTestsReachPackageInternalsWithoutReflection() throws IOException {
+        // CLAUDE.md forbids tests to reach private state by reflection: a test that names a member
+        // by string still compiles after a rename, then fails or silently stops injecting at run
+        // time. The live-view tests reach io.questdb.cairo.lv through @TestOnly seams instead, so
+        // no source under io/questdb/test/cairo/lv may open a member up, look one up by name or
+        // load a class by name. The scan strips comments and literals, which keeps the samples
+        // below out of it. Reading public shape, as getDeclaredMethods(), getConstructors() and
+        // getFields() do in testTestSeamsKeepPackageInternalsOffTheApi, stays allowed.
+        final String[] reaches = {
+                "field.setAccessible(true);",
+                "type.getDeclaredConstructor();",
+                "type.getDeclaredField(\"slots\");",
+                "type.getDeclaredMethod(\"next\", int.class);",
+                "Class.forName(\"io.questdb.cairo.lv.LiveViewCheckpointKeys\");"
+        };
+        for (String reach : reaches) {
+            Assert.assertTrue("the scan must see " + reach, REFLECTIVE_REACH.matcher(stripCommentsAndLiterals(reach)).find());
+        }
+        Assert.assertFalse(
+                "the scan must let public-shape reads through",
+                REFLECTIVE_REACH.matcher("type.getDeclaredMethods(); type.getConstructors(); type.getFields();").find()
+        );
+
+        final Path testSourceRoot = findSourceRoot().getParent().resolveSibling("test").resolve("java");
+        final Path testPackageRoot = testSourceRoot.resolve("io/questdb/test/cairo/lv");
+        final List<Path> files;
+        try (Stream<Path> tree = Files.walk(testPackageRoot)) {
+            files = tree.filter(file -> Files.isRegularFile(file) && file.toString().endsWith(".java"))
+                    .sorted()
+                    .toList();
+        }
+        Assert.assertTrue("the live-view tests must be scanned", files.size() > 100);
+        final List<String> violations = new ArrayList<>();
+        for (int i = 0, n = files.size(); i < n; i++) {
+            final Path file = files.get(i);
+            final String code = stripCommentsAndLiterals(Files.readString(file, StandardCharsets.UTF_8));
+            final Matcher matcher = REFLECTIVE_REACH.matcher(code);
+            while (matcher.find()) {
+                addViolation(testSourceRoot, file, code, matcher.start(), matcher.group(), violations);
+            }
+        }
+        Assert.assertTrue(
+                "live-view tests reach production members by reflection; reach them through a @TestOnly"
+                        + " ...ForTest seam on the owning class instead:" + System.lineSeparator()
+                        + String.join(System.lineSeparator(), violations),
+                violations.isEmpty()
+        );
     }
 
     @Test

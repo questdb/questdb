@@ -69,6 +69,9 @@ public class LiveViewCheckpointRootBuilderTest extends AbstractCairoTest {
     private static final long IDENTITY_POOL_RETAINED_BYTES_LIMIT = 1_048_576;
     private static final String LV_DIR = "lv_root_builder";
     private static final int[] OUTLIER_IDENTITY_WIDTHS = {300_000, 400_000, 500_000};
+    // The key schemas serveDefinition() builds each definition's function and window roots under.
+    private static final byte[] SERVED_FUNCTION_KEY_SCHEMA = {1, 2};
+    private static final byte[] SERVED_WINDOW_KEY_SCHEMA = {1, 0, 0, 0};
     private static final int SMALL_IDENTITY_WIDTH = 64;
     private static final byte[] SUM_ID = "sum(long):w1:1".getBytes(StandardCharsets.UTF_8);
 
@@ -273,6 +276,24 @@ public class LiveViewCheckpointRootBuilderTest extends AbstractCairoTest {
                             bytes <= IDENTITY_POOL_RETAINED_BYTES_LIMIT
                     );
                 }
+                // The third outlier took every pool past the limit, so each dropped its arrays at
+                // that detach and now holds the 64-byte definition's images alone: the identity in
+                // an identity pool; the identity and the key schema in a function root's decode
+                // pool; the identity, the key schema and the manifest in a window root's.
+                final long functionRootImageBytes = SMALL_IDENTITY_WIDTH + SERVED_FUNCTION_KEY_SCHEMA.length;
+                final long windowRootImageBytes = SMALL_IDENTITY_WIDTH + SERVED_WINDOW_KEY_SCHEMA.length + WINDOW_MANIFEST.length;
+                Assert.assertArrayEquals(
+                        "each identity pool must hold exactly the images of the definition served last" + retainedText,
+                        new long[]{
+                                SMALL_IDENTITY_WIDTH,
+                                functionRootImageBytes,
+                                windowRootImageBytes,
+                                SMALL_IDENTITY_WIDTH,
+                                functionRootImageBytes,
+                                windowRootImageBytes
+                        },
+                        retained
+                );
                 // A detached builder stages nothing, so no slot of its identity list may keep an
                 // image of a definition it built before.
                 final ObjList<byte[]> stagedIdentities = builder.getFunctionIdentitiesForTest();
@@ -530,7 +551,7 @@ public class LiveViewCheckpointRootBuilderTest extends AbstractCairoTest {
     ) {
         final LiveViewCheckpointPageRef functionRootRef = new LiveViewCheckpointPageRef();
         try (LiveViewCheckpointFunctionRootBuilder functionBuilder = new LiveViewCheckpointFunctionRootBuilder(configuration)) {
-            functionBuilder.of(checkpointsDir(dir), new LiveViewCheckpointPageRef(), identity, 1, new byte[]{1, 2});
+            functionBuilder.of(checkpointsDir(dir), new LiveViewCheckpointPageRef(), identity, 1, SERVED_FUNCTION_KEY_SCHEMA);
             LiveViewCheckpointTestKeys.putPartition(functionBuilder, key(1), new byte[]{1}, new LiveViewCheckpointStatePageRef[]{stateRef(1, 0)});
             functionBuilder.build(segmentId, functionRootRef);
         }
@@ -541,7 +562,7 @@ public class LiveViewCheckpointRootBuilderTest extends AbstractCairoTest {
                     new LiveViewCheckpointPageRef(),
                     identity,
                     ColumnType.TIMESTAMP_MICRO,
-                    new byte[]{1, 0, 0, 0},
+                    SERVED_WINDOW_KEY_SCHEMA,
                     WINDOW_MANIFEST,
                     Long.BYTES,
                     true,
