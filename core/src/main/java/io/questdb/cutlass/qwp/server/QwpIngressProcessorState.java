@@ -310,6 +310,11 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     // committed. Enforced in setHighestProcessedSequence as a last resort; the
     // upgrade processor's ack path must not attempt the advance to begin with.
     private boolean uncommittedDeferredRows;
+    // True once the force commit that split the open deferred-commit group was
+    // logged, so a group the cap splits many times logs once. Reset when the
+    // group ends: by the plain frame that closes it, whichever path commits that
+    // frame (prepareMessage), or when the group is rolled back or cleared.
+    private boolean isDeferredGroupSplitLogged;
     // Commit batch: consecutive plain frames of one receive pass, of any tables, whose
     // rows are appended to their tables' writers and committed together, one WAL txn
     // per table (commitBatchEntries). A commit is a sequencer txn, a txn-log record, an
@@ -463,7 +468,24 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         // the deferred group is gone, its frames were never acked, and the
         // client replays them from its acked watermark.
         uncommittedDeferredRows = false;
+        isDeferredGroupSplitLogged = false;
         resetCommitBatch();
+    }
+
+    /**
+     * Discards every row this connection holds uncommitted, for the client's
+     * rollback control frame: its open FLAG_DEFER_COMMIT group, rowless frames
+     * included. Resets the per-message state the way {@link #clear()} does, and
+     * leaves the connection's symbol dictionary alone, because the client keeps
+     * referencing the ids those frames registered. The caller commits a pending
+     * commit batch first: its frames are not part of the group.
+     */
+    public void rollbackUncommitted() {
+        assert !isCommitBatchPending();
+        clear();
+        // The group the withheld rowless frames belonged to is gone, so they no
+        // longer stop the ack that covers the rollback frame.
+        firstRowlessDeferredSequence = -1;
     }
 
     /**
@@ -858,7 +880,20 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
 
     public void commitIfMaxUncommittedRowsReached() {
         try {
+            final long capCommitsBefore = tudCache.getMaxUncommittedRowsCommitCount();
             uncommittedDeferredRows = tudCache.commitIfMaxUncommittedRowsReached(committedTxnConsumer);
+            // A commit at the cap lands the client's transaction in more than one WAL
+            // transaction per table. Say so once per group; the client cannot see it.
+            // The implicit ALTER of a column the frame adds commits no rows, so it
+            // does not count.
+            if (tudCache.getMaxUncommittedRowsCommitCount() != capCommitsBefore && !isDeferredGroupSplitLogged) {
+                isDeferredGroupSplitLogged = true;
+                LOG.advisory().$('[').$(fd)
+                        .$("] deferred-commit group committed in parts: a table reached qwp.max.uncommitted.rows")
+                        .$(" before the client committed, so its transaction is not atomic [maxUncommittedRows=")
+                        .$(tudCache.getMaxUncommittedRows())
+                        .$(']').$();
+            }
         } catch (Throwable th) {
             tudCache.setDistressed();
             LOG.error().$('[').$(fd).$("] deferred commit error: ").$(th).$();
@@ -1269,6 +1304,14 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
 
     public boolean isSending() {
         return sendState != SEND_STATE_READY;
+    }
+
+    /**
+     * True when the buffered message carries {@code FLAG_STRICT}: its rows belong to
+     * a strict transaction, which must commit as one or not at all.
+     */
+    public boolean isStrictMessage() {
+        return QwpMessageHeader.isStrict(bufferAddress, bufferPosition);
     }
 
     public boolean isWsHandshakeSent() {
@@ -1799,6 +1842,12 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     public void prepareMessage() {
         clearPreparedMessage();
         messageAppendedRows = false;
+        if (!isDeferCommit()) {
+            // A plain frame closes the open group, so the next group the cap splits logs
+            // again. Reset here, not in commit(): once the cap has committed every row of
+            // the group, the closing frame joins a commit batch instead.
+            isDeferredGroupSplitLogged = false;
+        }
         if (bufferPosition == 0 || !isOk()) {
             return;
         }
@@ -1856,6 +1905,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
             }
             QwpTableBlockCursor tableBlock = preparedTableBlock;
             preparedTableBlock = null;
+            final boolean isStrict = isStrictMessage();
             while (tableBlock != null) {
                 WalTableUpdateDetails tud = tudCache.getTableUpdateDetails(
                         securityContext,
@@ -1869,6 +1919,26 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
                     rejectMsg.put("failed to create table update details for: ").put(tableBlock.getTableName());
                     reject(Status.INTERNAL_ERROR, rejectMsg, fd);
                     return;
+                }
+                // A strict transaction commits as one or not at all, but the appender commits
+                // a table on its own once qwp.max.uncommitted.rows of its rows are uncommitted.
+                // Refuse the block that would get there instead: the error path rolls back
+                // every row the connection holds uncommitted, this frame's included. The writer
+                // counts the rows of every spelling of the table, as the appender's check does.
+                if (isStrict) {
+                    final long rows = tud.getWriter().getUncommittedRowCount() + tableBlock.getRowCount();
+                    final long maxRows = tud.getMetaMaxUncommittedRows();
+                    if (rows >= maxRows) {
+                        rejectMsg.clear();
+                        rejectMsg.put("strict transaction too large [table=").put(tableBlock.getTableName())
+                                .put(", rows=").put(rows)
+                                .put(", maxUncommittedRows=").put(maxRows)
+                                .put("]; the server commits a table on its own once qwp.max.uncommitted.rows of its "
+                                        + "rows are uncommitted, which would split the transaction, so it discarded the "
+                                        + "transaction's uncommitted rows instead. Raise qwp.max.uncommitted.rows on the server");
+                        reject(Status.TRANSACTION_TOO_LARGE, rejectMsg, fd);
+                        return;
+                    }
                 }
 
                 // Read BEFORE the append: the cursor is consumed by it, and a
@@ -2727,7 +2797,8 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         SECURITY_ERROR,
         INTERNAL_ERROR,
         NOT_ACCEPTING_WRITES,
-        DICTIONARY_GAP
+        DICTIONARY_GAP,
+        TRANSACTION_TOO_LARGE
     }
 
     /**

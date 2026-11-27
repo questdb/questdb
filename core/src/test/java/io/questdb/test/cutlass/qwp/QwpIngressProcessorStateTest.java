@@ -91,6 +91,7 @@ import org.junit.Test;
 import java.lang.ref.WeakReference;
 import java.lang.reflect.Field;
 import java.lang.reflect.Proxy;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -102,6 +103,8 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
     private static final byte[] DECIMAL_TYPE_CODES = {
             QwpConstants.TYPE_DECIMAL64, QwpConstants.TYPE_DECIMAL128, QwpConstants.TYPE_DECIMAL256
     };
+    // The flags of a frame a strict client sends before its commit frame.
+    private static final byte STRICT_DEFERRED = (byte) (QwpConstants.FLAG_DEFER_COMMIT | QwpConstants.FLAG_STRICT);
 
     @Test
     public void testArrayColumnFramesJoinCommitBatch() throws Exception {
@@ -198,6 +201,157 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
             }
             drainWalQueue();
             assertQuery("SELECT count() FROM capped").noLeakCheck().noRandomAccess().expectSize().returns("count\n2\n");
+        });
+    }
+
+    @Test
+    public void testNonStrictFramesStillCommitAtCap() throws Exception {
+        // Frames without FLAG_STRICT, as a transaction=on client sends, keep the cap's
+        // documented behaviour: the appender commits a table on its own at the cap.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try (QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfigWithCap(10))) {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+                for (int frame = 0; frame < 3; frame++) {
+                    Assert.assertTrue(processDeferredFrame(state, QwpConstants.FLAG_DEFER_COMMIT, 4, "t"));
+                }
+                // A single frame that reaches the cap on its own commits at the cap too.
+                addLongRows(state, (byte) 0, 10, "t");
+                state.prepareMessage();
+                Assert.assertFalse("10 rows reach the cap of 10", state.joinCommitBatch(3));
+                state.processPreparedMessage();
+                Assert.assertTrue(state.getErrorText(), state.isOk());
+                state.commit();
+                state.clear();
+            }
+            drainWalQueue();
+            // 12 rows went at the third frame, at 12 >= 10, and the last frame's 10 at the cap.
+            assertQuery("SELECT count() FROM t").noLeakCheck().noRandomAccess().expectSize().returns("count\n22\n");
+            Assert.assertEquals(2, engine.getTableSequencerAPI().lastTxn(engine.verifyTableName("t")));
+        });
+    }
+
+    @Test
+    public void testStrictCommitFrameRefusedAtCap() throws Exception {
+        // The frame that closes a strict transaction counts too: 5 deferred rows and a
+        // commit frame with 5 more reach the cap of 10, so the commit frame is refused.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try (QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfigWithCap(10))) {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+                // 9 rows, one below the cap, commit as one transaction.
+                Assert.assertTrue(processDeferredFrame(state, STRICT_DEFERRED, 5, "t"));
+                Assert.assertTrue(processCommitFrame(state, 1, 4, "t"));
+                Assert.assertTrue(processDeferredFrame(state, STRICT_DEFERRED, 5, "t"));
+                Assert.assertFalse(processCommitFrame(state, 3, 5, "t"));
+                Assert.assertEquals(QwpIngressProcessorState.Status.TRANSACTION_TOO_LARGE, state.getStatus());
+                TestUtils.assertEquals(strictCapError("t", 10, 10), state.getErrorText());
+                state.clear();
+            }
+            drainWalQueue();
+            assertQuery("SELECT count() FROM t").noLeakCheck().noRandomAccess().expectSize().returns("count\n9\n");
+            Assert.assertEquals(1, engine.getTableSequencerAPI().lastTxn(engine.verifyTableName("t")));
+        });
+    }
+
+    @Test
+    public void testStrictDeferredFrameRefusedAtCap() throws Exception {
+        // The appender commits a table on its own once qwp.max.uncommitted.rows of its
+        // rows are uncommitted. A strict frame that would get there is refused instead,
+        // and the error path's clear() discards the group, so nothing of it commits.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try (QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfigWithCap(10))) {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+                Assert.assertTrue(processDeferredFrame(state, STRICT_DEFERRED, 4, "t"));
+                Assert.assertTrue(processDeferredFrame(state, STRICT_DEFERRED, 4, "t"));
+                Assert.assertFalse("8 + 4 rows reach the cap", processDeferredFrame(state, STRICT_DEFERRED, 4, "t"));
+                Assert.assertEquals(QwpIngressProcessorState.Status.TRANSACTION_TOO_LARGE, state.getStatus());
+                TestUtils.assertEquals(strictCapError("t", 12, 10), state.getErrorText());
+                state.clear();
+                // The connection goes on: the next strict transaction commits.
+                Assert.assertTrue(processDeferredFrame(state, STRICT_DEFERRED, 9, "t"));
+                Assert.assertTrue(processCommitFrame(state, 4, 0, "t"));
+            }
+            drainWalQueue();
+            assertQuery("SELECT count() FROM t").noLeakCheck().noRandomAccess().expectSize().returns("count\n9\n");
+            Assert.assertEquals(1, engine.getTableSequencerAPI().lastTxn(engine.verifyTableName("t")));
+        });
+    }
+
+    @Test
+    public void testStrictRefusalDiscardsEveryTableOfTheGroup() throws Exception {
+        // The refused frame's earlier block of another table appended rows, and so did
+        // the group's earlier frames: the error path rolls back all of them.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE b (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try (QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfigWithCap(10))) {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+                Assert.assertTrue(processDeferredFrame(state, STRICT_DEFERRED, 3, "a", "b"));
+                // One frame: a's block takes a to 6, then b's block of 8 takes b to 11.
+                addLongRowsPerTable(state, STRICT_DEFERRED, new String[]{"a", "b"}, new int[]{3, 8});
+                state.processMessage();
+                Assert.assertEquals(QwpIngressProcessorState.Status.TRANSACTION_TOO_LARGE, state.getStatus());
+                TestUtils.assertEquals(strictCapError("b", 11, 10), state.getErrorText());
+                state.clear();
+                Assert.assertTrue(processCommitFrame(state, 2, 2, "a"));
+            }
+            drainWalQueue();
+            assertQuery("SELECT count() FROM a").noLeakCheck().noRandomAccess().expectSize().returns("count\n2\n");
+            assertQuery("SELECT count() FROM b").noLeakCheck().noRandomAccess().expectSize().returns("count\n0\n");
+        });
+    }
+
+    @Test
+    public void testStrictSingleFrameRefusedAtCap() throws Exception {
+        // A strict transaction of one frame takes the commit batch path. A frame below
+        // the cap joins the batch; one that reaches the cap cannot join, and the normal
+        // path refuses it instead of committing at the cap.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try (QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfigWithCap(10))) {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+                addLongRows(state, QwpConstants.FLAG_STRICT, 9, "t");
+                state.prepareMessage();
+                Assert.assertTrue("9 rows stay below the cap", state.joinCommitBatch(0));
+                state.clearMessageState();
+                Assert.assertTrue(state.commitBatch());
+                addLongRows(state, QwpConstants.FLAG_STRICT, 10, "t");
+                state.prepareMessage();
+                Assert.assertFalse("10 rows reach the cap", state.joinCommitBatch(1));
+                Assert.assertTrue(state.isOk());
+                state.processPreparedMessage();
+                Assert.assertEquals(QwpIngressProcessorState.Status.TRANSACTION_TOO_LARGE, state.getStatus());
+                TestUtils.assertEquals(strictCapError("t", 10, 10), state.getErrorText());
+                state.clear();
+            }
+            drainWalQueue();
+            assertQuery("SELECT count() FROM t").noLeakCheck().noRandomAccess().expectSize().returns("count\n9\n");
+        });
+    }
+
+    @Test
+    public void testStrictSpellingsOfOneTableCountTogether() throws Exception {
+        // The server writes names the engine resolves to one table, "t" and "T", or the
+        // non-ASCII "t\u00e4" and "t\u00c4", through one writer, so their rows count
+        // together toward the cap whichever spelling a client uses.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE 't\u00e4' (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try (QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfigWithCap(10))) {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+                for (String[] spellings : new String[][]{{"t", "T"}, {"t\u00e4", "t\u00c4"}}) {
+                    Assert.assertTrue(processDeferredFrame(state, STRICT_DEFERRED, 5, spellings[0]));
+                    Assert.assertFalse(processDeferredFrame(state, STRICT_DEFERRED, 5, spellings[1]));
+                    Assert.assertEquals(QwpIngressProcessorState.Status.TRANSACTION_TOO_LARGE, state.getStatus());
+                    TestUtils.assertEquals(strictCapError(spellings[1], 10, 10), state.getErrorText());
+                    state.clear();
+                }
+            }
+            drainWalQueue();
+            assertQuery("SELECT count() FROM t").noLeakCheck().noRandomAccess().expectSize().returns("count\n0\n");
+            assertQuery("SELECT count() FROM 't\u00e4'").noLeakCheck().noRandomAccess().expectSize().returns("count\n0\n");
         });
     }
 
@@ -620,6 +774,59 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
             for (String table : tables) {
                 assertQuery("SELECT count() FROM " + table).noLeakCheck().noRandomAccess().expectSize().returns("count\n11000\n");
             }
+        });
+    }
+
+    @Test
+    public void testInterleavedNonAsciiSpellingsAllocateNothingOnceWarm() throws Exception {
+        // A lookup that misses the entry found last folds a non-ASCII table name to its key,
+        // and interleaved spellings always miss it. The fold reuses its scratch.
+        assertMemoryLeak(() -> {
+            final String[] spellings = {"alloc_ä", "ALLOC_Ä", "alloc_ж", "ALLOC_Ж"};
+            final long[] messages = new long[spellings.length];
+            final int[] messageSizes = new int[spellings.length];
+            try {
+                execute("CREATE TABLE alloc_ä (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("CREATE TABLE alloc_ж (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                for (int t = 0; t < spellings.length; t++) {
+                    try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
+                         QwpTableBuffer table = new QwpTableBuffer(spellings[t])) {
+                        table.getOrCreateColumn("val", QwpConstants.TYPE_LONG, false).addLong(t);
+                        table.getOrCreateDesignatedTimestampColumn(QwpConstants.TYPE_TIMESTAMP).addLong(1_000_000L);
+                        table.nextRow();
+                        messageSizes[t] = encoder.encode(table);
+                        messages[t] = Unsafe.malloc(messageSizes[t], MemoryTag.NATIVE_DEFAULT);
+                        Unsafe.getUnsafe().copyMemory(encoder.getBuffer().getBufferPtr(), messages[t], messageSizes[t]);
+                    }
+                }
+                LineHttpProcessorConfiguration config = new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+                try (QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, config)) {
+                    state.of(1, AllowAllSecurityContext.INSTANCE);
+                    long seq = ingestInterleaved(state, messages, messageSizes, 0, 3_000);
+                    Assert.assertEquals("a writer per table, not per spelling", 2, state.getCachedTableCount());
+                    try (TestUtils.ThreadMetricsScope<com.sun.management.ThreadMXBean> scope = TestUtils.threadAllocationScope()) {
+                        final com.sun.management.ThreadMXBean threadMXBean = scope.getBean();
+                        final long threadId = Thread.currentThread().threadId();
+                        final long before = threadMXBean.getThreadAllocatedBytes(threadId);
+                        // The bound absorbs one-off JIT work, as in the test above.
+                        seq = ingestInterleaved(state, messages, messageSizes, seq, 30_000);
+                        final long allocated = threadMXBean.getThreadAllocatedBytes(threadId) - before;
+                        Assert.assertTrue("30,000 interleaved frames allocated " + allocated + " bytes", allocated < 64 * 1024);
+                    }
+                    Assert.assertEquals(seq - 1, state.getHighestProcessedSequence());
+                }
+            } finally {
+                for (int t = 0; t < spellings.length; t++) {
+                    if (messages[t] != 0) {
+                        Unsafe.free(messages[t], messageSizes[t], MemoryTag.NATIVE_DEFAULT);
+                    }
+                }
+            }
+            drainWalQueue();
+            assertQuery("SELECT count(), sum(val) FROM ALLOC_Ä").noLeakCheck().noRandomAccess().expectSize()
+                    .returns("count\tsum\n16500\t8250\n");
+            assertQuery("SELECT count(), sum(val) FROM ALLOC_Ж").noLeakCheck().noRandomAccess().expectSize()
+                    .returns("count\tsum\n16500\t41250\n");
         });
     }
 
@@ -2866,6 +3073,50 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                 state.onDisconnected();
                 state.close();
             }
+        });
+    }
+
+    @Test
+    public void testMalformedUtf8TableNameReturnsParseError() throws Exception {
+        // The table lookup decoded a malformed table name up to its first bad byte and
+        // wrote to the table those chars name: "t", 0xC3, "z" went to table t.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (val LONG, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY WAL");
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+                try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
+                     QwpTableBuffer table = new QwpTableBuffer("tzz")) {
+                    table.getOrCreateColumn("val", QwpConstants.TYPE_LONG, false).addLong(7);
+                    table.getOrCreateDesignatedTimestampColumn(QwpConstants.TYPE_TIMESTAMP).addLong(1_000_000L);
+                    table.nextRow();
+                    final int length = encoder.encode(table);
+                    final long address = encoder.getBuffer().getBufferPtr();
+                    // A correct client never sends this name, so the frame gets it by a patch.
+                    int nameOffset = -1;
+                    for (int i = 0; i + 3 <= length && nameOffset < 0; i++) {
+                        if (Unsafe.getByte(address + i) == 't'
+                                && Unsafe.getByte(address + i + 1) == 'z'
+                                && Unsafe.getByte(address + i + 2) == 'z') {
+                            nameOffset = i;
+                        }
+                    }
+                    Assert.assertTrue("the frame carries the table name", nameOffset > 0);
+                    Unsafe.putByte(address + nameOffset + 1, (byte) 0xC3);
+                    state.addData(address, address + length);
+                }
+                state.processMessage();
+                Assert.assertEquals(QwpIngressProcessorState.Status.PARSE_ERROR, state.getStatus());
+                Assert.assertEquals("table name is not valid UTF-8", state.getErrorText().toString());
+                Assert.assertEquals("no table took the frame", 0, state.getCachedTableCount());
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+            drainWalQueue();
+            assertQuery("SELECT count() FROM t").noLeakCheck().noRandomAccess().expectSize().returns("count\n0\n");
         });
     }
 
@@ -7770,6 +8021,90 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
         }
         state.prepareMessage();
         Assert.assertTrue(state.getErrorText(), state.isOk());
+    }
+
+    // Buffers one frame with a block of rows of each named table, whose flags byte also
+    // carries flags. Prepares nothing.
+    private static void addLongRows(QwpIngressProcessorState state, byte flags, int rows, String... names) {
+        final int[] rowsPerTable = new int[names.length];
+        Arrays.fill(rowsPerTable, rows);
+        addLongRowsPerTable(state, flags, names, rowsPerTable);
+    }
+
+    private static void addLongRowsPerTable(QwpIngressProcessorState state, byte flags, String[] names, int[] rowsPerTable) {
+        try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
+            encoder.beginMessage(names.length, new GlobalSymbolDictionary(), -1, -1);
+            for (int i = 0; i < names.length; i++) {
+                try (QwpTableBuffer table = new QwpTableBuffer(names[i])) {
+                    var value = table.getOrCreateColumn("val", QwpConstants.TYPE_LONG, false);
+                    var timestamp = table.getOrCreateDesignatedTimestampColumn(QwpConstants.TYPE_TIMESTAMP);
+                    for (int row = 0; row < rowsPerTable[i]; row++) {
+                        value.addLong(row);
+                        timestamp.addLong(1_000_000L + row);
+                        table.nextRow();
+                    }
+                    encoder.addTable(table);
+                }
+            }
+            final int length = encoder.finishMessage();
+            final long address = encoder.getBuffer().getBufferPtr();
+            final long flagsAddress = address + QwpConstants.HEADER_OFFSET_FLAGS;
+            Unsafe.putByte(flagsAddress, (byte) (Unsafe.getByte(flagsAddress) | flags));
+            state.addData(address, address + length);
+        }
+    }
+
+    // Drives a frame without FLAG_DEFER_COMMIT that carries FLAG_STRICT and rows rows of
+    // each named table, none when rows is 0, in the order handleBinaryMessage uses: the
+    // frame joins the commit batch if it can, which then commits, and otherwise goes the
+    // normal path. Returns whether the frame succeeded; leaves a failed one's state as is.
+    private static boolean processCommitFrame(QwpIngressProcessorState state, long seq, int rows, String... names) {
+        if (rows == 0) {
+            addLongRowsPerTable(state, QwpConstants.FLAG_STRICT, new String[0], new int[0]);
+        } else {
+            addLongRows(state, QwpConstants.FLAG_STRICT, rows, names);
+        }
+        state.prepareMessage();
+        if (state.joinCommitBatch(seq)) {
+            state.clearMessageState();
+            return state.commitBatch();
+        }
+        if (!state.isOk()) {
+            return false;
+        }
+        state.processPreparedMessage();
+        if (state.isOk()) {
+            state.commit();
+        }
+        if (!state.isOk()) {
+            return false;
+        }
+        state.clear();
+        return true;
+    }
+
+    // Drives a FLAG_DEFER_COMMIT frame of rows rows of each named table through the state
+    // as handleBinaryMessage does. Returns whether it succeeded; leaves a failed frame's
+    // state as is, for the caller to inspect and clear().
+    private static boolean processDeferredFrame(QwpIngressProcessorState state, byte flags, int rows, String... names) {
+        addLongRows(state, flags, rows, names);
+        Assert.assertTrue(state.isDeferCommit());
+        state.processMessage();
+        if (state.isOk()) {
+            state.commitIfMaxUncommittedRowsReached();
+        }
+        if (!state.isOk()) {
+            return false;
+        }
+        state.clearMessageState();
+        return true;
+    }
+
+    private static String strictCapError(String table, long rows, long maxRows) {
+        return "strict transaction too large [table=" + table + ", rows=" + rows + ", maxUncommittedRows=" + maxRows
+                + "]; the server commits a table on its own once qwp.max.uncommitted.rows of its rows are uncommitted, "
+                + "which would split the transaction, so it discarded the transaction's uncommitted rows instead. "
+                + "Raise qwp.max.uncommitted.rows on the server";
     }
 
     private static void prepareLongBlocks(QwpIngressProcessorState state, int rows, String... names) {

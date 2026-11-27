@@ -34,6 +34,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 
 public class QwpTableHeaderTest {
 
@@ -394,6 +395,19 @@ public class QwpTableHeaderTest {
     }
 
     @Test
+    public void testTableNameAsciiFlag() throws QwpParseException {
+        // The table cache folds only ASCII case of a name flagged ASCII, so a non-ASCII
+        // name must never carry the flag. An ASCII name carries it, which spares the
+        // cache a scan of the name per block.
+        assertAsciiFlag("weather", true);
+        assertAsciiFlag("a".repeat(QwpConstants.MAX_TABLE_NAME_LENGTH), true);
+        assertAsciiFlag("wetterÄ", false);
+        assertAsciiFlag("Äwetter", false);
+        assertAsciiFlag("a".repeat(20) + "ж" + "a".repeat(20), false);
+        assertAsciiFlag("😀", false);
+    }
+
+    @Test
     public void testTableNameEmpty() {
         // Empty table name should fail
         byte[] buf = new byte[10];
@@ -467,6 +481,84 @@ public class QwpTableHeaderTest {
     }
 
     @Test
+    public void testTableNameInvalidUtf8() {
+        // The table lookup decoded a malformed name up to its first bad byte and wrote to
+        // the table those chars name.
+        final byte[][] names = {
+                // a two-byte sequence cut short
+                {'t', (byte) 0xC3},
+                // a lead byte followed by ASCII
+                {'t', (byte) 0xC3, 'z'},
+                // a continuation byte without a lead
+                {'t', (byte) 0x80},
+                {(byte) 0xBF, 't'},
+                // overlong encodings of '/'
+                {'t', (byte) 0xC0, (byte) 0xAF},
+                {'t', (byte) 0xE0, (byte) 0x80, (byte) 0xAF},
+                {'t', (byte) 0xF0, (byte) 0x80, (byte) 0x80, (byte) 0xAF},
+                // a UTF-16 surrogate, U+D800
+                {'t', (byte) 0xED, (byte) 0xA0, (byte) 0x80},
+                // a four-byte sequence cut short, at the end and before ASCII
+                {'t', (byte) 0xF0, (byte) 0x9F, (byte) 0x98},
+                {'t', (byte) 0xF0, (byte) 0x9F, (byte) 0x98, 'z'},
+                // above U+10FFFF
+                {'t', (byte) 0xF4, (byte) 0x90, (byte) 0x80, (byte) 0x80},
+                // the five-byte form
+                {'t', (byte) 0xF8, (byte) 0x88, (byte) 0x80, (byte) 0x80, (byte) 0x80},
+                {'t', (byte) 0xFF},
+                // past the first eight bytes, which an ASCII check reads as one word
+                {'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', (byte) 0xC3},
+        };
+        final QwpTableHeader header = new QwpTableHeader();
+        for (byte[] name : names) {
+            final byte[] buf = encodeTableHeader(name, 1, 1);
+            final long address = copyToDirectMemory(buf);
+            try {
+                header.parse(address, buf.length);
+                Assert.fail("must refuse " + Arrays.toString(name));
+            } catch (QwpParseException e) {
+                Assert.assertEquals(Arrays.toString(name), QwpParseException.ErrorCode.INVALID_UTF8, e.getErrorCode());
+                Assert.assertEquals(Arrays.toString(name), "table name is not valid UTF-8", e.getMessage());
+                // The refused name is gone: getTableName() could not decode it.
+                Assert.assertEquals(0, header.getTableNameUtf8().size());
+                Assert.assertNull(header.getTableName());
+            } finally {
+                Unsafe.free(address, buf.length, MemoryTag.NATIVE_DEFAULT);
+            }
+        }
+    }
+
+    @Test
+    public void testTableNameValidUtf8Boundaries() throws QwpParseException {
+        // The first and last code point of each UTF-8 length, the last BMP char before
+        // the surrogates, the first after them, and a supplementary pair.
+        final String[] names = {
+                "t\u007F",
+                "t\u0080",
+                "t\u07FF",
+                "t\u0800",
+                "t\uD7FF",
+                "t\uE000",
+                "t\uFFFF",
+                "t" + new String(Character.toChars(0x10000)),
+                "t" + new String(Character.toChars(0x10FFFF)),
+                "t😀Ä",
+        };
+        for (String name : names) {
+            final byte[] buf = encodeTableHeader(name, 1, 1);
+            final long address = copyToDirectMemory(buf);
+            try {
+                final QwpTableHeader header = new QwpTableHeader();
+                header.parse(address, buf.length);
+                Assert.assertEquals(name, header.getTableName());
+                Assert.assertEquals(buf.length, header.getBytesConsumed());
+            } finally {
+                Unsafe.free(address, buf.length, MemoryTag.NATIVE_DEFAULT);
+            }
+        }
+    }
+
+    @Test
     public void testTableNameUtf8() throws QwpParseException {
         // UTF-8 table name with non-ASCII characters
         String tableName = "données_météo";
@@ -477,6 +569,19 @@ public class QwpTableHeaderTest {
             QwpTableHeader header = new QwpTableHeader();
             header.parse(address, buf.length);
 
+            Assert.assertEquals(tableName, header.getTableName());
+        } finally {
+            Unsafe.free(address, buf.length, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    private void assertAsciiFlag(String tableName, boolean isAscii) throws QwpParseException {
+        final byte[] buf = encodeTableHeader(tableName, 1, 1);
+        final long address = copyToDirectMemory(buf);
+        try {
+            final QwpTableHeader header = new QwpTableHeader();
+            header.parse(address, buf.length);
+            Assert.assertEquals(tableName, isAscii, header.getTableNameUtf8().isAscii());
             Assert.assertEquals(tableName, header.getTableName());
         } finally {
             Unsafe.free(address, buf.length, MemoryTag.NATIVE_DEFAULT);
@@ -496,7 +601,10 @@ public class QwpTableHeaderTest {
     }
 
     private byte[] encodeTableHeader(String tableName, long rowCount, long columnCount) {
-        byte[] nameBytes = tableName.getBytes(StandardCharsets.UTF_8);
+        return encodeTableHeader(tableName.getBytes(StandardCharsets.UTF_8), rowCount, columnCount);
+    }
+
+    private byte[] encodeTableHeader(byte[] nameBytes, long rowCount, long columnCount) {
         int size = QwpVarint.encodedLength(nameBytes.length) +
                 nameBytes.length +
                 QwpVarint.encodedLength(rowCount) +

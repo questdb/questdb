@@ -64,6 +64,7 @@ import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
+import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.tasks.TelemetryTask;
 import org.jetbrains.annotations.TestOnly;
@@ -94,7 +95,12 @@ public class QwpTudCache implements QwpSchemaCache, QuietCloseable {
     // longer counts, so a table evicted after a lookup took it back leaves an entry the
     // limit does not bound: one per such table name, until the connection ends.
     private final LowerCaseUtf8SequenceIntHashMap releasedTables = new LowerCaseUtf8SequenceIntHashMap();
+    // Scratch of tableKey(): the chars of a non-ASCII name, folded in place, and its key.
+    private final StringSink tableKeyUtf16 = new StringSink();
+    private final Utf8StringSink tableKeyUtf8 = new Utf8StringSink();
     private final StringSink tableNameUtf16 = new StringSink();
+    // Keyed by tableKey(), like releasedTables. An entry's own name is the spelling of the
+    // lookup that created it.
     private final LowerCaseUtf8SequenceObjHashMap<WalTableUpdateDetails> tableUpdateDetails = new LowerCaseUtf8SequenceObjHashMap<>();
     private final Telemetry<TelemetryTask> telemetry;
     private volatile int cachedTableCount;
@@ -114,6 +120,9 @@ public class QwpTudCache implements QwpSchemaCache, QuietCloseable {
     // lookup: null or an entry of the map. onEntryRemoved(), reset() and the
     // distressed clear() forget it.
     private WalTableUpdateDetails lastCachedTud;
+    // Commits at the max-uncommitted-rows cap that commitIfMaxUncommittedRowsReached()
+    // reported, whether that pass or the appender made them; never reset.
+    private long maxUncommittedRowsCommitCount;
     private Path path;
     // Number of releasedTables entries in state TABLE_RELEASED.
     private int releasedTableCount;
@@ -360,8 +369,9 @@ public class QwpTudCache implements QwpSchemaCache, QuietCloseable {
      */
     public WalTableUpdateDetails getCachedTableUpdateDetails(Utf8Sequence tableNameUtf8) {
         WalTableUpdateDetails tud = lastCachedTud;
+        // Names that differ in ASCII case alone share a key, so a match needs no key.
         if (tud == null || !Utf8s.equalsIgnoreCaseAscii(tud.getTableNameUtf8(), tableNameUtf8)) {
-            tud = tableUpdateDetails.get(tableNameUtf8);
+            tud = tableUpdateDetails.get(tableKey(tableNameUtf8));
             if (tud != null) {
                 lastCachedTud = tud;
             }
@@ -382,6 +392,22 @@ public class QwpTudCache implements QwpSchemaCache, QuietCloseable {
             }
         }
         return count;
+    }
+
+    /**
+     * The {@code qwp.max.uncommitted.rows} cap this cache force-commits a table at.
+     */
+    public long getMaxUncommittedRows() {
+        return maxUncommittedRows;
+    }
+
+    /**
+     * How many commits at the max-uncommitted-rows cap
+     * {@link #commitIfMaxUncommittedRowsReached} has reported, counting one per table and
+     * pass. Only data commits count: a txn that only changed a table's structure does not.
+     */
+    public long getMaxUncommittedRowsCommitCount() {
+        return maxUncommittedRowsCommitCount;
     }
 
     /**
@@ -425,6 +451,11 @@ public class QwpTudCache implements QwpSchemaCache, QuietCloseable {
                     if (hadBufferedRows) {
                         tud.commitIfMaxUncommittedRowsCountReached();
                         advanceStructureCheckGate(tud);
+                    }
+                    // Checked before the report marks it reported. The commit may be the
+                    // appender's, made while it wrote the frame, rather than this pass's.
+                    if (tud.hasUnreportedMaxUncommittedRowsCommit()) {
+                        maxUncommittedRowsCommitCount++;
                     }
                     reportCommittedTxn(tud, consumer);
                 }
@@ -630,7 +661,9 @@ public class QwpTudCache implements QwpSchemaCache, QuietCloseable {
             QwpTableBlockCursor cursor,
             int maxTables
     ) {
-        int key = tableUpdateDetails.keyIndex(tableNameUtf8);
+        // Nothing below calls tableKey() again, which would overwrite a non-ASCII name's key.
+        final Utf8Sequence tableKey = tableKey(tableNameUtf8);
+        int key = tableUpdateDetails.keyIndex(tableKey);
         if (key < 0) {
             WalTableUpdateDetails tud = tableUpdateDetails.valueAt(key);
             if (!isTableTokenStale(tud)) {
@@ -656,15 +689,15 @@ public class QwpTudCache implements QwpSchemaCache, QuietCloseable {
                 return tud;
             }
             evictStaleTud(key, tableNameUtf8, tud);
-            key = tableUpdateDetails.keyIndex(tableNameUtf8);
+            key = tableUpdateDetails.keyIndex(tableKey);
         }
 
-        final int releasedIndex = releasedTables.keyIndex(tableNameUtf8);
+        final int releasedIndex = releasedTables.keyIndex(tableKey);
         if (releasedIndex < 0 && releasedTables.valueAtQuick(releasedIndex) == TABLE_RELEASED) {
             // The table already counts against the limit and moves back into the
             // cache. Should the lookup fail, the table stops counting, as does a
             // stale entry evicted above.
-            releasedTables.putAt(releasedIndex, tableNameUtf8, TABLE_REACQUIRED);
+            releasedTables.putAt(releasedIndex, tableKey, TABLE_REACQUIRED);
             releasedTableCount--;
         } else if (tableUpdateDetails.size() + releasedTableCount >= maxTables) {
             throw CairoException.nonCritical()
@@ -687,6 +720,8 @@ public class QwpTudCache implements QwpSchemaCache, QuietCloseable {
 
         // Copy table name to heap - needed for WalTableUpdateDetails and cache key
         Utf8String tableNameCopy = Utf8String.newInstance(tableNameUtf8);
+        // An ASCII name is its own key, and the entry shares the copy with the map.
+        Utf8String tableKeyCopy = tableKey == tableNameUtf8 ? tableNameCopy : Utf8String.newInstance(tableKey);
 
         TableWriterAPI walWriter = engine.getWalWriter(tableToken);
         WalTableUpdateDetails tud = null;
@@ -702,7 +737,7 @@ public class QwpTudCache implements QwpSchemaCache, QuietCloseable {
                     false,
                     maxUncommittedRows
             );
-            tableUpdateDetails.putAt(key, tableNameCopy, tud);
+            tableUpdateDetails.putAt(key, tableKeyCopy, tud);
             cachedTableCount = tableUpdateDetails.size();
             return tud;
         } catch (Throwable th) {
@@ -731,12 +766,14 @@ public class QwpTudCache implements QwpSchemaCache, QuietCloseable {
             int keyIndex = tableUpdateDetails.keyIndex(tableName);
             WalTableUpdateDetails tud = tableUpdateDetails.valueAt(keyIndex);
             if (tud.isFirstRow()) {
-                // The entry takes over the cache's immutable key instance instead of
-                // copying it. A cached table is never TABLE_RELEASED.
                 final Utf8String releasedName = tud.getTableNameUtf8();
-                final int releasedIndex = releasedTables.keyIndex(releasedName);
+                // The entry takes over the cache's immutable key instance instead of
+                // copying it: getTableUpdateDetails() puts no key but a Utf8String. A
+                // cached table is never TABLE_RELEASED.
+                final Utf8String releasedKey = (Utf8String) tableName;
+                final int releasedIndex = releasedTables.keyIndex(releasedKey);
                 assert releasedIndex > -1 || releasedTables.valueAtQuick(releasedIndex) == TABLE_REACQUIRED;
-                releasedTables.putAt(releasedIndex, releasedName, TABLE_RELEASED);
+                releasedTables.putAt(releasedIndex, releasedKey, TABLE_RELEASED);
                 releasedTableCount++;
                 tableUpdateDetails.removeAtQuick(keyIndex, i);
                 onEntryRemoved(tud);
@@ -1251,6 +1288,32 @@ public class QwpTudCache implements QwpSchemaCache, QuietCloseable {
             return false;
         }
         return true;
+    }
+
+    /**
+     * The key of a table name in this cache's maps: two spellings share a key exactly
+     * when the engine resolves them to the same table. The engine compares names char by
+     * char with {@link Character#toLowerCase(char)} (see {@code Chars.equalsIgnoreCase()}),
+     * where the maps fold ASCII case alone. An ASCII name is its own key, as the maps fold
+     * its case the engine's way. Any other name is keyed by its chars folded the engine's
+     * way, in UTF-8: "tä" and "tÄ" share a key, and so do "ti" and "tİ", whose İ folds
+     * to an ASCII i. Folding the chars rather than code points keeps the case of a
+     * supplementary letter, as the engine does. The key of a non-ASCII name lives in
+     * scratch that the next call overwrites.
+     */
+    private Utf8Sequence tableKey(Utf8Sequence tableNameUtf8) {
+        if (Utf8s.isAscii(tableNameUtf8)) {
+            return tableNameUtf8;
+        }
+        tableKeyUtf16.clear();
+        final boolean isUtf8 = Utf8s.utf8ToUtf16(tableNameUtf8, tableKeyUtf16);
+        assert isUtf8 : "QwpTableHeader.parse() refuses a table name that is not valid UTF-8";
+        for (int i = 0, n = tableKeyUtf16.length(); i < n; i++) {
+            tableKeyUtf16.setCharAt(i, Character.toLowerCase(tableKeyUtf16.charAt(i)));
+        }
+        tableKeyUtf8.clear();
+        tableKeyUtf8.put(tableKeyUtf16);
+        return tableKeyUtf8;
     }
 
     /**

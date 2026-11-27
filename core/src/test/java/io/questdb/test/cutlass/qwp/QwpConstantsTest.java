@@ -49,6 +49,31 @@ public class QwpConstantsTest {
         // Verify flag bits are at correct positions
         Assert.assertEquals(0x04, FLAG_GORILLA);
         Assert.assertEquals(0x08, FLAG_DELTA_SYMBOL_DICT);
+        // Wire constants shared with the client's QwpConstants: the rollback bit
+        // must not collide with any bit a released client sets.
+        Assert.assertEquals(0x20, FLAG_ROLLBACK);
+        Assert.assertEquals(0x21, ROLLBACK_FRAME_FLAGS);
+        Assert.assertEquals(0, FLAG_ROLLBACK & (FLAG_DEFER_COMMIT | FLAG_DURABLE_ACK_POLL | FLAG_GORILLA
+                | FLAG_DELTA_SYMBOL_DICT | FLAG_ZSTD));
+        // The strict bit must not collide with any other, nor be part of the rollback
+        // frame's flags, which the server matches by equality.
+        Assert.assertEquals(0x40, FLAG_STRICT);
+        Assert.assertEquals(io.questdb.client.cutlass.qwp.protocol.QwpConstants.FLAG_STRICT, FLAG_STRICT);
+        Assert.assertEquals(0, FLAG_STRICT & (FLAG_DEFER_COMMIT | FLAG_DURABLE_ACK_POLL | FLAG_GORILLA
+                | FLAG_DELTA_SYMBOL_DICT | FLAG_ZSTD | FLAG_ROLLBACK));
+    }
+
+    @Test
+    public void testStatusCodes() {
+        // Wire constant shared with the client: it must not take a byte another status uses.
+        Assert.assertEquals(0x0F, STATUS_TRANSACTION_TOO_LARGE);
+        final byte[] others = {STATUS_OK, STATUS_SERVER_INFO, STATUS_DURABLE_ACK, STATUS_SCHEMA_MISMATCH,
+                STATUS_PARSE_ERROR, STATUS_INTERNAL_ERROR, STATUS_SECURITY_ERROR, STATUS_WRITE_ERROR,
+                STATUS_CANCELLED, STATUS_LIMIT_EXCEEDED, STATUS_NOT_WRITABLE, STATUS_DICTIONARY_GAP,
+                STATUS_LOCAL_DURABLE_ACK};
+        for (byte other : others) {
+            Assert.assertNotEquals(other, STATUS_TRANSACTION_TOO_LARGE);
+        }
     }
 
     @Test

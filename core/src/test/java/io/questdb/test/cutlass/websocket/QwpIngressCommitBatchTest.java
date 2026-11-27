@@ -112,7 +112,7 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
     private static final int FUZZ_BLOCK_V_VARCHAR = 1;
     private static final int FUZZ_DATA_KINDS = 9;
     private static final int FUZZ_DEFERRED = 9;
-    private static final int FUZZ_KINDS = 12;
+    private static final int FUZZ_KINDS = 13;
     private static final int FUZZ_MALFORMED = 5;
     private static final int FUZZ_NEW_COLUMN_SECOND_BLOCK = 8;
     // Seeds of testCommitBatchFuzzPinnedRewindSeed: four frames of fb, then a frame that
@@ -123,6 +123,7 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
     private static final int FUZZ_PLAIN = 0;
     // Iterations of testCommitBatchFuzzPrepareFaultsFire*, whose frames come from the FUZZ_SHAPES seeds.
     private static final int FUZZ_PREPARE_FAULT_ITERATIONS = 32;
+    private static final int FUZZ_ROLLBACK = 12;
     private static final int FUZZ_ROWLESS_DEFERRED = 10;
     private static final int FUZZ_SCHEMA_MISMATCH = 6;
     // Seeds of testCommitBatchFuzzGeneratesRewindShapes.
@@ -392,7 +393,10 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
      * client gets a NACK above A or a CLOSE, the first frame with rows above A is the
      * failed table's first frame, and no row of that table from that frame on is
      * committed; rows of tables that committed may be, and the replay sends them
-     * again.</li>
+     * again;</li>
+     * <li>I5: every committed row is one that its frame sent to commit: none of a frame
+     * refused for its own data, and none of a deferred group that a rollback frame
+     * discarded, although the rollback's ack covers the group's frames.</li>
      * </ul>
      * Iterations whose only faults are the frames' own data errors also check I3:
      * the frames before the first bad frame are committed and acked, and the bad
@@ -5433,6 +5437,9 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
 
         final int frameCount = 2 + rnd.nextInt(10);
         int seq = 0;
+        // First sequence of the deferred group the next rollback discards: every
+        // frame since the last frame that committed.
+        int openGroupStart = 0;
         for (int f = 0; f < frameCount; f++) {
             int kind = rnd.nextInt(it.isDataErrorsOnly ? FUZZ_DATA_KINDS : FUZZ_KINDS);
             if ((it.cap < 1_000_000 && (kind == FUZZ_TWO_BLOCKS || kind == FUZZ_BAD_SECOND_BLOCK || kind == FUZZ_NEW_COLUMN_SECOND_BLOCK))
@@ -5509,6 +5516,15 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
                     valueTables.add(tableIndex);
                 }
                 case FUZZ_ROWLESS_DEFERRED -> message = rowlessDeferredMessage();
+                case FUZZ_ROLLBACK -> {
+                    // Discards the open deferred group, so its frames' rows never
+                    // commit even though the rollback's ack covers them.
+                    message = rollbackMessage();
+                    for (int s = openGroupStart; s < seq; s++) {
+                        it.frameValues.getQuick(s).clear();
+                        it.frameValueTables.getQuick(s).clear();
+                    }
+                }
                 case FUZZ_PING -> {
                     // a control frame, no sequence
                     it.wireFrames.add(createMaskedFrame(WebSocketOpcode.PING, new byte[0]));
@@ -5527,6 +5543,10 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
             it.frameValueTables.add(valueTables);
             it.frameErrorStatus.add(errorStatus);
             seq++;
+            if (kind != FUZZ_DEFERRED && kind != FUZZ_ROWLESS_DEFERRED) {
+                // A commit, a rollback, or a frame the server refuses ends the group.
+                openGroupStart = seq;
+            }
         }
         return it;
     }
@@ -5755,6 +5775,10 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
             hasCommittedAboveAck |= value / 10 > acked;
             Assert.assertTrue("I2: a row of a frame above the ack is committed [" + context + ", value=" + value
                     + ", acked=" + acked + "]", value / 10 <= acked || isCommitFaulty);
+            // Frame s sends the values 10s and 10s + 1.
+            final int frame = (int) (value / 10);
+            Assert.assertTrue("I5: a committed row was not sent to commit [" + context + ", value=" + value + "]",
+                    frame <= lastSeq && frameValues.getQuick(frame).indexOf(value) > -1);
         }
         if (hasCommittedAboveAck) {
             // Only a commit of several tables that failed on one after others committed:

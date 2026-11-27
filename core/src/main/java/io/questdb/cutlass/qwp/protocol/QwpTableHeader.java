@@ -139,9 +139,19 @@ public class QwpTableHeader {
             throw QwpParseException.headerTooShort();
         }
 
-        // Set up flyweight pointing to table name bytes in wire memory (zero allocation)
-        this.tableNameUtf8.of(address + offset, address + offset + nameLenInt);
+        // Set up flyweight pointing to table name bytes in wire memory (zero allocation).
+        // The ASCII flag spares the table lookup a scan of the name.
+        final long nameLo = address + offset;
+        final boolean isAscii = Utf8s.isAscii(nameLo, nameLenInt);
+        this.tableNameUtf8.of(nameLo, nameLo + nameLenInt, isAscii);
         this.tableNameStr = null;  // Clear cached String, will be lazily allocated if needed
+        // A name that is not valid UTF-8 names no table: the table lookup decodes the
+        // name to fold its case as the engine does.
+        if (!isAscii && Utf8s.validateUtf8(tableNameUtf8) < 0) {
+            // Nor could getTableName() decode it.
+            tableNameUtf8.clear();
+            throw QwpParseException.create(QwpParseException.ErrorCode.INVALID_UTF8, "table name is not valid UTF-8");
+        }
         offset += nameLenInt;
 
         // Parse row count

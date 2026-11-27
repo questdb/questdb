@@ -99,6 +99,32 @@ public class QwpMessageHeader {
     }
 
     /**
+     * Returns true only for the exact v1 rollback control frame: a bare header
+     * with {@link QwpConstants#ROLLBACK_FRAME_FLAGS}, zero tables and zero
+     * payload. Matched by equality on every field, like
+     * {@link #isDurableAckPoll}: a data frame that merely carries
+     * {@link QwpConstants#FLAG_ROLLBACK} among other bits must not discard the
+     * client's open transaction.
+     */
+    public static boolean isRollback(long address, int length) {
+        return length == HEADER_SIZE
+                && Unsafe.getInt(address + HEADER_OFFSET_MAGIC) == MAGIC_MESSAGE
+                && Unsafe.getByte(address + HEADER_OFFSET_VERSION) == VERSION
+                && Unsafe.getByte(address + HEADER_OFFSET_FLAGS) == ROLLBACK_FRAME_FLAGS
+                && Unsafe.getShort(address + HEADER_OFFSET_TABLE_COUNT) == 0
+                && Unsafe.getInt(address + HEADER_OFFSET_PAYLOAD_LENGTH) == 0;
+    }
+
+    /**
+     * True when the message at {@code address} carries {@link QwpConstants#FLAG_STRICT}:
+     * its rows belong to a strict transaction, which the server must refuse rather
+     * than commit in parts.
+     */
+    public static boolean isStrict(long address, int length) {
+        return length >= HEADER_SIZE && (Unsafe.getByte(address + HEADER_OFFSET_FLAGS) & FLAG_STRICT) != 0;
+    }
+
+    /**
      * Reads the magic integer from direct memory.
      *
      * @param address memory address

@@ -62,6 +62,9 @@ public class AbstractQwpWebSocketTest extends AbstractCairoTest {
     // that without masking real bugs.
     private static final long CLOSE_FLUSH_TIMEOUT_MS = 300_000L;
     private static final Log LOG = LogFactory.getLog(AbstractQwpWebSocketTest.class);
+    // qwp.max.uncommitted.rows for the server runInContext starts; 0 keeps the
+    // configuration default.
+    protected long qwpMaxUncommittedRows;
     protected int recvChunk;
     protected int sendChunk;
     protected WorkerPoolMode workerPoolMode;
@@ -309,13 +312,19 @@ public class AbstractQwpWebSocketTest extends AbstractCairoTest {
 
             @Override
             public LineHttpProcessorConfiguration getLineHttpProcessorConfiguration() {
-                if (autoCreateNewColumns) {
+                if (autoCreateNewColumns && qwpMaxUncommittedRows <= 0) {
                     return super.getLineHttpProcessorConfiguration();
                 }
+                final LineHttpProcessorConfiguration defaults = super.getLineHttpProcessorConfiguration();
                 return new DefaultLineHttpProcessorConfiguration(configuration) {
                     @Override
                     public boolean autoCreateNewColumns() {
-                        return false;
+                        return autoCreateNewColumns;
+                    }
+
+                    @Override
+                    public long getQwpMaxUncommittedRows() {
+                        return qwpMaxUncommittedRows > 0 ? qwpMaxUncommittedRows : defaults.getQwpMaxUncommittedRows();
                     }
                 };
             }

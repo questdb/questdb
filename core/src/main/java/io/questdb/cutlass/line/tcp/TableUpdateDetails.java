@@ -94,6 +94,10 @@ public class TableUpdateDetails implements Closeable {
     private boolean isDropped;
     private long lastMeasurementMillis = Long.MAX_VALUE;
     private long latestKnownMetadataVersion;
+    // Sequencer txn of the last commit commitIfMaxUncommittedRowsCountReached() made at the
+    // cap, Long.MIN_VALUE before the first. Other advances of getLastSeqTxn(), such as the
+    // implicit ALTER that adds a column, leave it alone.
+    private long maxUncommittedRowsCommitSeqTxn = Long.MIN_VALUE;
     private MetadataService metadataService;
     private int networkIOOwnerCount = 0;
     private long nextCommitTime;
@@ -338,6 +342,15 @@ public class TableUpdateDetails implements Closeable {
         return writerAPI != null ? writerAPI.getLastSeqTxn() : -1L;
     }
 
+    /**
+     * Returns the sequencer txn of the last commit that
+     * {@link #commitIfMaxUncommittedRowsCountReached()} made at the cap, or
+     * {@link Long#MIN_VALUE} before the first.
+     */
+    public long getMaxUncommittedRowsCommitSeqTxn() {
+        return maxUncommittedRowsCommitSeqTxn;
+    }
+
     public int getSegmentId() {
         return writerAPI != null ? writerAPI.getSegmentId() : -1;
     }
@@ -539,6 +552,7 @@ public class TableUpdateDetails implements Closeable {
             writerAPI.rollback();
             throw CommitFailedException.instance(th, false);
         }
+        maxUncommittedRowsCommitSeqTxn = writerAPI.getLastSeqTxn();
 
         // Tick after commit.
         tick();
