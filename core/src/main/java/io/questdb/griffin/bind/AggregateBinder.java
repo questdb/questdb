@@ -1526,7 +1526,8 @@ final class AggregateBinder implements Mutable {
         }
         final ExpressionNode expression = scope.aggregateNodes.getQuick(0);
         if (!Chars.equalsIgnoreCase(expression.token, "count_distinct") || expression.paramCount != 1
-                || expression.rhs == null || expression.rhs.type == ExpressionNode.CONSTANT || ctx.isAggregate(expression.rhs)) {
+                || expression.rhs == null || expression.rhs.type == ExpressionNode.CONSTANT || expression.rhs.type == ExpressionNode.QUERY
+                || ctx.isAggregate(expression.rhs)) {
             return false;
         }
         final ExpressionNode argument = expression.rhs;

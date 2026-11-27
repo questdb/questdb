@@ -259,6 +259,25 @@ public class CountDistinctRewriteTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testScalarSubQueryArgumentIsRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE cd_scalar (i INT)");
+            execute("INSERT INTO cd_scalar VALUES (1), (2), (2)");
+            assertQuery("SELECT count_distinct((SELECT max(i) FROM cd_scalar)) c FROM cd_scalar")
+                    .noLeakCheck()
+                    .fails(7, "there is no matching function `count_distinct` with the argument types: (CURSOR)");
+            assertQuery("SELECT count_distinct(i) c FROM cd_scalar")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            c
+                            2
+                            """);
+        });
+    }
+
+    @Test
     public void testUntypedParameterTakesTheTypeOfAGroupingKey() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE cd_param (x INT)");
