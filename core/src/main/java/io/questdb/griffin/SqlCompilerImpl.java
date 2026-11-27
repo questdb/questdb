@@ -253,6 +253,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final Path renamePath;
     private final BindScopeStack scopes = new BindScopeStack();
     private final ObjectPool<ExpressionNode> sqlNodePool;
+    private final StatementExpressionStep<Boolean> statementExpressionNull = this::isNullBoundStatementExpression;
+    private final StatementExpressionStep<Integer> statementExpressionType = this::boundStatementExpressionType;
+    private final StatementExpressionStep<Function> statementFunction = this::instantiateStatementExpression;
     private final ObjList<Subquery> subqueries = new ObjList<>();
     private final ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
     private final ObjList<TableWriterAPI> tableWriters = new ObjList<>();
@@ -459,29 +462,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
      */
     public Function bindStatementExpression(ExpressionNode expression, RecordMetadata metadata, int preferredType, SqlExecutionContext executionContext)
             throws SqlException {
-        assert root == null;
-        if (expression == null) {
-            return null;
-        }
-        expressionScope.clear();
-        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-            expressionScope.addColumnFrom(metadata, i, i);
-        }
-        Function function = null;
-        try {
-            final BoundExpression bound = binder.bindExpression(expression, expressionScope, preferredType, executionContext);
-            optimiseSubqueries(executionContext);
-            function = functionInstantiator.instantiate(bound, expressionScope, metadata, executionContext);
-            clearExpressions();
-            return function;
-        } catch (Throwable th) {
-            Misc.free(function, th);
-            final Throwable failure = closePrepared(th);
-            assert failure == th;
-            throw th;
-        } finally {
-            expressionScope.clear();
-        }
+        return expression == null ? null : bindStatementExpression(expression, metadata, preferredType, statementFunction, executionContext);
     }
 
     /**
@@ -494,29 +475,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
      */
     public int bindStatementExpressionType(ExpressionNode expression, RecordMetadata metadata, SqlExecutionContext executionContext)
             throws SqlException {
-        assert root == null;
-        if (expression == null) {
-            return ColumnType.UNDEFINED;
-        }
-        expressionScope.clear();
-        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-            expressionScope.addColumnFrom(metadata, i, i);
-        }
-        try {
-            final BoundExpression bound = binder.bindExpressionClassifyingRoot(expression, expressionScope, executionContext);
-            if (bound instanceof FunctionExpression call && call.isAggregate()) {
-                throw SqlException.$(bound.getPosition(), "aggregate functions are not supported");
-            }
-            final int type = bound.getDataType();
-            clearExpressions();
-            return type;
-        } catch (Throwable th) {
-            final Throwable failure = closePrepared(th);
-            assert failure == th;
-            throw th;
-        } finally {
-            expressionScope.clear();
-        }
+        return expression == null ? ColumnType.UNDEFINED
+                : bindStatementExpression(expression, metadata, ColumnType.UNDEFINED, statementExpressionType, executionContext);
     }
 
     /**
@@ -920,23 +880,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
      */
     public boolean isNullStatementExpression(ExpressionNode expression, RecordMetadata metadata, SqlExecutionContext executionContext)
             throws SqlException {
-        assert root == null;
-        expressionScope.clear();
-        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-            expressionScope.addColumnFrom(metadata, i, i);
-        }
-        try {
-            final boolean isNull = binder.bindExpression(expression, expressionScope, ColumnType.UNDEFINED, executionContext) instanceof ConstantExpression constant
-                    && constant.isNull();
-            clearExpressions();
-            return isNull;
-        } catch (Throwable th) {
-            final Throwable failure = closePrepared(th);
-            assert failure == th;
-            throw th;
-        } finally {
-            expressionScope.clear();
-        }
+        return bindStatementExpression(expression, metadata, ColumnType.UNDEFINED, statementExpressionNull, executionContext);
     }
 
     @TestOnly
@@ -3390,6 +3334,48 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         planTables.clear();
         failure = Misc.clearBestEffort(failure, preparedFunctions);
         return Misc.clearBestEffort(failure, functionSources);
+    }
+
+    /**
+     * The type of a stand-alone expression of a statement, whose root binds as the overload it selects, see
+     * {@link #bindStatementExpressionType}.
+     */
+    private Integer boundStatementExpressionType(ExpressionNode expression, RecordMetadata metadata, int preferredType,
+                                                 SqlExecutionContext executionContext) throws SqlException {
+        final BoundExpression bound = binder.bindExpressionClassifyingRoot(expression, expressionScope, executionContext);
+        if (bound instanceof FunctionExpression call && call.isAggregate()) {
+            throw SqlException.$(bound.getPosition(), "aggregate functions are not supported");
+        }
+        return bound.getDataType();
+    }
+
+    /**
+     * Binds a stand-alone expression of a statement over a schema built from {@code metadata} and returns what
+     * {@code step} makes of it. What the binding prepared and the result did not adopt closes before this returns;
+     * a failure also frees the result.
+     */
+    private <T> T bindStatementExpression(ExpressionNode expression, RecordMetadata metadata, int preferredType, StatementExpressionStep<T> step,
+                                          SqlExecutionContext executionContext) throws SqlException {
+        assert root == null;
+        expressionScope.clear();
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            expressionScope.addColumnFrom(metadata, i, i);
+        }
+        T result = null;
+        try {
+            result = step.apply(expression, metadata, preferredType, executionContext);
+            clearExpressions();
+            return result;
+        } catch (Throwable th) {
+            if (result instanceof Closeable closeable) {
+                Misc.free(closeable, th);
+            }
+            final Throwable failure = closePrepared(th);
+            assert failure == th;
+            throw th;
+        } finally {
+            expressionScope.clear();
+        }
     }
 
     private Throwable closePrepared(Throwable primary) {
@@ -7221,6 +7207,17 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         throw exception;
     }
 
+    /**
+     * The function a stand-alone expression of a statement instantiates once its sub-queries optimise, see
+     * {@link #bindStatementExpression(ExpressionNode, RecordMetadata, int, SqlExecutionContext)}.
+     */
+    private Function instantiateStatementExpression(ExpressionNode expression, RecordMetadata metadata, int preferredType,
+                                                    SqlExecutionContext executionContext) throws SqlException {
+        final BoundExpression bound = binder.bindExpression(expression, expressionScope, preferredType, executionContext);
+        optimiseSubqueries(executionContext);
+        return functionInstantiator.instantiate(bound, expressionScope, metadata, executionContext);
+    }
+
     private boolean isAuditedView(TableToken tableToken) {
         if (!tableToken.isView()) {
             return false;
@@ -7231,6 +7228,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     private boolean isCompatibleColumnTypeChange(int from, int to) {
         return columnConversionSupport[ColumnType.tagOf(from)][ColumnType.tagOf(to)];
+    }
+
+    /**
+     * Whether a stand-alone expression of a statement binds to a constant NULL, see {@link #isNullStatementExpression}.
+     */
+    private Boolean isNullBoundStatementExpression(ExpressionNode expression, RecordMetadata metadata, int preferredType,
+                                                   SqlExecutionContext executionContext) throws SqlException {
+        return binder.bindExpression(expression, expressionScope, preferredType, executionContext) instanceof ConstantExpression constant
+                && constant.isNull();
     }
 
     private LegacySqlCompiler legacyCompiler() {
@@ -8649,6 +8655,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     @FunctionalInterface
     public interface KeywordBasedExecutor {
         void execute(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException;
+    }
+
+    /**
+     * What a statement makes of a stand-alone expression it binds, see {@link #bindStatementExpression}.
+     */
+    @FunctionalInterface
+    private interface StatementExpressionStep<T> {
+        T apply(ExpressionNode expression, RecordMetadata metadata, int preferredType, SqlExecutionContext executionContext) throws SqlException;
     }
 
     public final static class PartitionAction {

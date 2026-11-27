@@ -3987,6 +3987,165 @@ public class PivotTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testPivotInSubqueryFloatingValuesMatchAsEquals() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (d DOUBLE, f FLOAT, v LONG)");
+            execute("INSERT INTO t VALUES (0.0, 0.0, 1), (-0.0, -0.0, 2), (0.1, 0.5, 4), (0.1 + 1e-12, 0.5, 8), (0.3, 0.25, 16)");
+            execute("CREATE TABLE vals (d DOUBLE, f FLOAT)");
+            execute("INSERT INTO vals VALUES (0.0, 0.0), (-0.0, -0.0), (0.1, 0.5), (0.1 + 1e-12, 0.5), (0.3, 0.25)");
+            assertQuery("SELECT * FROM t PIVOT (sum(v) FOR d IN (SELECT d FROM vals))")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            0.0\t0.1\t0.3
+                            3\t12\t16
+                            """);
+            assertQuery("SELECT * FROM t PIVOT (sum(v) FOR f IN (SELECT f FROM vals))")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            0.0\t0.5\t0.25
+                            3\t12\t16
+                            """);
+            assertQuery("SELECT * FROM t PIVOT (sum(v) FOR d IN (0.0, 0.1, 0.3))")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            0.0\t0.1\t0.3
+                            3\t12\t16
+                            """);
+            assertQuery("SELECT * FROM t PIVOT (sum(v) FOR d IN (0.1, 0.1 + 1e-12, -0.0))")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            0.1\t0.1 + 1e-12\t-(0.0)
+                            12\t12\t3
+                            """);
+            assertQuery("SELECT * FROM t PIVOT (sum(v) FOR d IN (SELECT d FROM vals WHERE d > 0.2 OR d < 0.05))")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            0.0\t0.3
+                            3\t16
+                            """);
+        });
+    }
+
+    @Test
+    public void testPivotInSubqueryValuesCompareAtTheirOwnType() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, ns TIMESTAMP_NS, d DATE, sym SYMBOL, i INT, l LONG, v LONG)");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2024-01-01T00:00:00.000000Z', '2024-01-01T00:00:00.000000000Z', '2024-01-01T00:00:00.000Z', '1', 1, 1, 1),
+                        ('2024-01-01T00:00:00.001000Z', '2024-01-01T00:00:00.000000123Z', '2024-01-01T00:00:00.001Z', '2', 2, 2, 10),
+                        ('2024-01-01T00:00:00.000001Z', '2024-01-01T00:00:00.000001000Z', '2024-01-02T00:00:00.000Z', '01', 3, 3_000_000_000, 100)
+                    """);
+            execute("CREATE TABLE ns_vals (x TIMESTAMP_NS)");
+            execute("INSERT INTO ns_vals VALUES ('2024-01-01T00:00:00.000000000Z'), ('2024-01-01T00:00:00.000000123Z'), ('2024-01-01T00:00:00.001000000Z')");
+            execute("CREATE TABLE ts_vals (x TIMESTAMP)");
+            execute("INSERT INTO ts_vals VALUES ('2024-01-01T00:00:00.000000Z'), ('2024-01-01T00:00:00.000001Z')");
+            execute("CREATE TABLE d_vals (x DATE)");
+            execute("INSERT INTO d_vals VALUES ('2024-01-01T00:00:00.000Z'), ('2024-01-01T00:00:00.001Z')");
+            execute("CREATE TABLE s_vals (x STRING)");
+            execute("INSERT INTO s_vals VALUES ('1'), ('01'), ('2')");
+            execute("CREATE TABLE i_vals (x INT)");
+            execute("INSERT INTO i_vals VALUES (1), (3), (NULL)");
+            assertQuery("SELECT * FROM t PIVOT (sum(v) FOR ts IN (SELECT x FROM ns_vals))")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            2024-01-01T00:00:00.000000000Z\t2024-01-01T00:00:00.000000123Z\t2024-01-01T00:00:00.001000000Z
+                            1\tnull\t10
+                            """);
+            assertQuery("SELECT * FROM t PIVOT (sum(v) FOR ts IN (SELECT x FROM d_vals))")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            2024-01-01T00:00:00.000Z\t2024-01-01T00:00:00.001Z
+                            1\t10
+                            """);
+            assertQuery("SELECT * FROM t PIVOT (sum(v) FOR ns IN (SELECT x FROM ts_vals))")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:00.000001Z
+                            1\t100
+                            """);
+            assertQuery("SELECT * FROM t PIVOT (sum(v) FOR d IN (SELECT x FROM ts_vals))")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:00.000001Z
+                            1\tnull
+                            """);
+            assertQuery("SELECT * FROM t PIVOT (sum(v) FOR sym IN (SELECT x FROM s_vals))")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            1\t01\t2
+                            1\t100\t10
+                            """);
+            assertQuery("SELECT * FROM t PIVOT (sum(v) FOR i IN (SELECT x FROM s_vals))")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            1\t01\t2
+                            1\t1\t10
+                            """);
+            assertQuery("SELECT * FROM t PIVOT (sum(v) FOR l IN (SELECT x FROM i_vals))")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            1\t3\tNULL
+                            1\tnull\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testPivotInputWhereBindsAsSelect() throws Exception {
+        configOverrideUseWithinLatestByOptimisation();
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL INDEX, g GEOHASH(2c), v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE k (s SYMBOL, g GEOHASH(2c), v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE picks (sym SYMBOL)");
+            final String rows = """
+                    VALUES
+                        ('a', #u3, 1, '2024-01-01T00:00:00Z'), ('b', #u3, 2, '2024-01-01T00:00:01Z'), ('c', #u3, 3, '2024-01-01T00:00:02Z'),
+                        ('a', #u4, 4, '2024-01-01T00:00:03Z'), ('b', #u3, 5, '2024-01-02T00:00:04Z'), ('c', #u4, 6, '2024-01-02T00:00:05Z')
+                    """;
+            execute("INSERT INTO t " + rows);
+            execute("INSERT INTO k " + rows);
+            execute("INSERT INTO picks VALUES ('a'), ('c')");
+            assertPivotInputAsSelect(
+                    "SELECT * FROM t WHERE s IN ('a', 'b') AND s IN (SELECT sym FROM picks)",
+                    "SELECT * FROM t WHERE s IN (SELECT sym FROM picks) PIVOT (sum(v) FOR s IN ('a', 'b'))",
+                    "SELECT sum(CASE WHEN s = 'a' THEN v END) a, sum(CASE WHEN s = 'b' THEN v END) b FROM t WHERE s IN (SELECT sym FROM picks)"
+            );
+            assertPivotInputAsSelect(
+                    "SELECT * FROM k WHERE s IN ('a', 'b') AND s IN (SELECT sym FROM picks) LATEST ON ts PARTITION BY s",
+                    "SELECT * FROM k WHERE s IN (SELECT sym FROM picks) LATEST ON ts PARTITION BY s PIVOT (sum(v) FOR s IN ('a', 'b'))",
+                    """
+                            SELECT sum(CASE WHEN s = 'a' THEN v END) a, sum(CASE WHEN s = 'b' THEN v END) b
+                            FROM (SELECT * FROM k WHERE s IN ('a', 'b') AND s IN (SELECT sym FROM picks) LATEST ON ts PARTITION BY s)
+                            """
+            );
+            assertPivotInputAsSelect(
+                    "SELECT * FROM t WHERE s IN ('a', 'b') AND g WITHIN (#u3) LATEST ON ts PARTITION BY s",
+                    "SELECT * FROM t WHERE g WITHIN (#u3) LATEST ON ts PARTITION BY s PIVOT (sum(v) FOR s IN ('a', 'b'))",
+                    """
+                            SELECT sum(CASE WHEN s = 'a' THEN v END) a, sum(CASE WHEN s = 'b' THEN v END) b
+                            FROM (SELECT * FROM t WHERE s IN ('a', 'b') AND g WITHIN (#u3) LATEST ON ts PARTITION BY s)
+                            """
+            );
+            final String within = "SELECT * FROM t WHERE g WITHIN (#u3) AND g WITHIN (#u4) LATEST ON ts PARTITION BY s";
+            assertQuery(within).fails(24, "Multiple 'within' expressions not supported");
+            assertQuery(within + " PIVOT (sum(v) FOR s IN ('a', 'b'))").fails(24, "Multiple 'within' expressions not supported");
+        });
+    }
+
+    @Test
     public void testPivotOverLatestOn() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE k (s SYMBOL, g INT, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -7012,6 +7171,28 @@ public class PivotTest extends AbstractSqlParserTest {
         Assert.assertEquals(0, engine.getBusyWriterCount());
     }
 
+    // the PIVOT reads its input as the SELECT of the same source does: the SELECT's plan is a subtree of the PIVOT's
+    private static void assertPivotInputAsSelect(String select, String pivot, String reference) throws Exception {
+        final String[] selectLines = selectPlanText(select).split("\n");
+        final String[] pivotLines = selectPlanText(pivot).split("\n");
+        int start = 0;
+        while (start < pivotLines.length && !pivotLines[start].trim().equals(selectLines[0].trim())) {
+            start++;
+        }
+        final StringBuilder expected = new StringBuilder();
+        final StringBuilder actual = new StringBuilder();
+        for (int i = 0; i < selectLines.length; i++) {
+            expected.append(selectLines[i].substring(selectLines[0].indexOf(selectLines[0].trim()))).append('\n');
+            if (start + i < pivotLines.length) {
+                final String line = pivotLines[start + i];
+                final int indent = pivotLines[start].indexOf(pivotLines[start].trim());
+                actual.append(line.length() > indent ? line.substring(indent) : line).append('\n');
+            }
+        }
+        Assert.assertEquals(pivot, expected.toString(), actual.toString());
+        assertSqlCursors(reference, pivot);
+    }
+
     private static void assertViewCompileFlagsClear() {
         Assert.assertFalse(sqlExecutionContext.isViewCompile());
         Assert.assertFalse(sqlExecutionContext.isViewMetadataSubquery());
@@ -7032,6 +7213,12 @@ public class PivotTest extends AbstractSqlParserTest {
                     ('B', 'X', 30),
                     ('B', 'Y', 40)
                 """);
+    }
+
+    private static String selectPlanText(String sql) throws SqlException {
+        try (RecordCursorFactory factory = select(sql)) {
+            return planText(factory);
+        }
     }
 
     /**

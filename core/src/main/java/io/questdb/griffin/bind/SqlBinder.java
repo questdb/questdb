@@ -535,7 +535,7 @@ public final class SqlBinder implements Mutable {
         final int outerColumnBase = bindScope.outerColumnIds.size();
         LogicalPlan sourcePlan;
         if (isHorizonJoin) {
-            sourcePlan = temporalJoinBinder.bindHorizonJoin(model, source, where, executionContext);
+            sourcePlan = temporalJoinBinder.bindHorizonJoin(model, source, where, null, executionContext);
             where = null;
             ctx.promoteNoArgFunctions(model, sourcePlan.getOutput(), null, executionContext);
         } else {
@@ -556,11 +556,7 @@ public final class SqlBinder implements Mutable {
         bindScope.projectionAliasIndexes.clear();
 
         final LatestByPlan latest = bindSourceLatestBy(sourcePlan, source);
-        if (where != null && latest != null && sourcePlan instanceof ScanPlan && configuration.useWithinLatestByOptimisation()) {
-            bindScope.hasWithin = false;
-            validateWithin(where, sourcePlan.getOutput(), sourceAlias(source), executionContext);
-        }
-        LogicalPlan input = bindWhere(where, sourcePlan, latest, source, executionContext);
+        LogicalPlan input = bindWhere(where, null, sourcePlan, latest, source, executionContext);
 
         if (source.getSampleBy() != null) {
             input = sampleByBinder.bindSampleByRange(source, input, executionContext);
@@ -1262,20 +1258,12 @@ public final class SqlBinder implements Mutable {
         scope.namedWindowScope = model;
         final LogicalPlan sourcePlan;
         try {
-            sourcePlan = hasJoins ? joinBinder.bindJoins(source, where, executionContext) : bindSource(source, executionContext);
+            sourcePlan = hasJoins ? joinBinder.bindJoins(source, where, null, executionContext) : bindSource(source, executionContext);
         } finally {
             scope.namedWindowScope = previousWindowScope;
         }
         ctx.promoteNoArgFunctions(model, sourcePlan.getOutput(), hasJoins ? null : sourceAlias(source), executionContext);
         return sourcePlan;
-    }
-
-    /**
-     * Binds the conjuncts of a filter as conjuncts of a WHERE clause; the caller combines them with the filter's
-     * other conjuncts.
-     */
-    BoundExpression bindConjuncts(ExpressionNode expression, LogicalPlan input, QueryModel source, SqlExecutionContext executionContext) throws SqlException {
-        return bindFilterConjunct(expression, input.getOutput(), input, sourceAlias(source), true, executionContext);
     }
 
     LatestByPlan bindLatestBy(LogicalPlan input, QueryModel source) throws SqlException {
@@ -1304,16 +1292,13 @@ public final class SqlBinder implements Mutable {
     }
 
     /**
-     * Binds LATEST ON over the input, the leading input of the block's joins, filtered by the conjuncts that run
-     * before it.
+     * Binds LATEST ON over the input, filtered by the conjuncts that run before it: those of {@code where} after the
+     * bound {@code conjuncts} the caller adds to them, see {@link #bindWhere}.
      */
-    LatestByPlan bindLatestBy(LogicalPlan input, ExpressionNode where, QueryModel source, SqlExecutionContext executionContext) throws SqlException {
+    LatestByPlan bindLatestBy(LogicalPlan input, ExpressionNode where, @Nullable BoundExpression conjuncts, QueryModel source,
+                              SqlExecutionContext executionContext) throws SqlException {
         final LatestByPlan latest = bindLatestBy(input, source);
-        if (where != null && input instanceof ScanPlan && configuration.useWithinLatestByOptimisation()) {
-            ctx.scope().hasWithin = false;
-            validateWithin(where, input.getOutput(), sourceAlias(source), executionContext);
-        }
-        latest.replaceInput(0, bindWhere(where, input, latest, source, executionContext));
+        latest.replaceInput(0, bindWhere(where, conjuncts, input, latest, source, executionContext));
         return latest;
     }
 
@@ -1490,24 +1475,47 @@ public final class SqlBinder implements Mutable {
     }
 
     /**
-     * Filters a single source by its WHERE clause; a joined source's WHERE belongs to the join.
+     * Filters a single source by its WHERE clause after {@code conjuncts}, the bound conjuncts the caller adds to it,
+     * see {@link WhereConjuncts}; a joined source's WHERE belongs to the join.
      */
-    LogicalPlan bindWhere(ExpressionNode where, LogicalPlan sourcePlan, LatestByPlan latest, QueryModel source,
-                          SqlExecutionContext executionContext) throws SqlException {
-        if (where == null || sourcePlan instanceof JoinPlan) {
+    LogicalPlan bindWhere(ExpressionNode where, @Nullable BoundExpression conjuncts, LogicalPlan sourcePlan, LatestByPlan latest,
+                          QueryModel source, SqlExecutionContext executionContext) throws SqlException {
+        if (where == null && conjuncts == null || sourcePlan instanceof JoinPlan) {
+            assert conjuncts == null : "the conjuncts added to the WHERE clause of a join bind into the join";
             return sourcePlan;
         }
-        final BoundExpression predicate;
-        collectKeySubqueryColumns(sourcePlan, latest, executionContext);
-        try {
-            predicate = bindPredicate(where, sourcePlan, source, executionContext);
-        } finally {
-            ctx.scope().keySubqueryColumnIds.clear();
+        BoundExpression predicate = null;
+        if (where != null) {
+            if (latest != null && sourcePlan instanceof ScanPlan && configuration.useWithinLatestByOptimisation()) {
+                ctx.scope().hasWithin = false;
+                validateWithin(where, sourcePlan.getOutput(), sourceAlias(source), executionContext);
+            }
+            collectKeySubqueryColumns(sourcePlan, latest, executionContext);
+            try {
+                predicate = bindPredicate(where, sourcePlan, source, executionContext);
+            } finally {
+                ctx.scope().keySubqueryColumnIds.clear();
+            }
+            if (predicate instanceof ConstantExpression constant && constant.getLongValue() != 0) {
+                predicate = null;
+            }
         }
-        if (!(predicate instanceof ConstantExpression constant) || constant.getLongValue() == 0) {
-            return ctx.planNodes.filters.next().of(sourcePlan, predicate, predicate.getPosition());
+        predicate = ctx.expressionRewriter.combineConjunction(conjuncts, predicate, where == null ? 0 : where.position);
+        return predicate == null ? sourcePlan : ctx.planNodes.filters.next().of(sourcePlan, predicate, predicate.getPosition());
+    }
+
+    /**
+     * Binds the conjuncts the caller adds to a WHERE clause over {@code output}, whose source {@code alias} names, as
+     * one conjunction in their order; null without any.
+     */
+    BoundExpression bindWhereConjuncts(@Nullable WhereConjuncts conjuncts, OutputSchema output, CharSequence alias,
+                                       SqlExecutionContext executionContext) throws SqlException {
+        BoundExpression conjunction = null;
+        for (int i = 0, n = conjuncts == null ? 0 : conjuncts.getConjunctCount(); i < n; i++) {
+            final BoundExpression conjunct = conjuncts.bindConjunct(i, output, alias, executionContext);
+            conjunction = ctx.expressionRewriter.combineConjunction(conjunction, conjunct, conjunct.getPosition());
         }
-        return sourcePlan;
+        return conjunction;
     }
 
     void clearCursorColumns() {
