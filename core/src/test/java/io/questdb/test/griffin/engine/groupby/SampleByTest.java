@@ -13363,7 +13363,7 @@ public class SampleByTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("Sample By\n" +
                             "  fill: null\n" +
-                            "  range: (timestamp_floor('day',now()),)\n" +
+                            "  range: (timestamp_floor('day',now()),null)\n" +
                             "  values: [count(*)]\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +

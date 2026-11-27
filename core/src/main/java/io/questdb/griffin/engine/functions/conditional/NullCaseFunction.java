@@ -29,6 +29,7 @@ import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.engine.functions.constants.NullConstant;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
@@ -40,146 +41,150 @@ import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+/**
+ * The CASE whose every branch is NULL. Its getters return what {@link NullConstant} returns,
+ * so a cast of it, as in {@code (CASE WHEN x > 1 THEN null END)::SYMBOL}, reads NULL.
+ */
 public record NullCaseFunction(ObjList<Function> args) implements CaseFunction {
 
     @Override
     public ArrayView getArray(Record rec) {
-        throw new UnsupportedOperationException();
+        return NullConstant.NULL.getArray(rec);
     }
 
     @Override
     public BinarySequence getBin(Record rec) {
-        throw new UnsupportedOperationException();
+        return NullConstant.NULL.getBin(rec);
     }
 
     @Override
     public long getBinLen(Record rec) {
-        throw new UnsupportedOperationException();
+        return NullConstant.NULL.getBinLen(rec);
     }
 
     @Override
     public boolean getBool(Record rec) {
-        throw new UnsupportedOperationException();
+        return NullConstant.NULL.getBool(rec);
     }
 
     @Override
     public byte getByte(Record rec) {
-        throw new UnsupportedOperationException();
+        return NullConstant.NULL.getByte(rec);
     }
 
     @Override
     public char getChar(Record rec) {
-        throw new UnsupportedOperationException();
+        return NullConstant.NULL.getChar(rec);
     }
 
     @Override
     public long getDate(Record rec) {
-        throw new UnsupportedOperationException();
+        return NullConstant.NULL.getDate(rec);
     }
 
     @Override
     public void getDecimal128(Record rec, Decimal128 sink) {
-        throw new UnsupportedOperationException();
+        NullConstant.NULL.getDecimal128(rec, sink);
     }
 
     @Override
     public short getDecimal16(Record rec) {
-        throw new UnsupportedOperationException();
+        return NullConstant.NULL.getDecimal16(rec);
     }
 
     @Override
     public void getDecimal256(Record rec, Decimal256 sink) {
-        throw new UnsupportedOperationException();
+        NullConstant.NULL.getDecimal256(rec, sink);
     }
 
     @Override
     public int getDecimal32(Record rec) {
-        throw new UnsupportedOperationException();
+        return NullConstant.NULL.getDecimal32(rec);
     }
 
     @Override
     public long getDecimal64(Record rec) {
-        throw new UnsupportedOperationException();
+        return NullConstant.NULL.getDecimal64(rec);
     }
 
     @Override
     public byte getDecimal8(Record rec) {
-        throw new UnsupportedOperationException();
+        return NullConstant.NULL.getDecimal8(rec);
     }
 
     @Override
     public double getDouble(Record rec) {
-        throw new UnsupportedOperationException();
+        return NullConstant.NULL.getDouble(rec);
     }
 
     @Override
     public float getFloat(Record rec) {
-        throw new UnsupportedOperationException();
+        return NullConstant.NULL.getFloat(rec);
     }
 
     @Override
     public byte getGeoByte(Record rec) {
-        throw new UnsupportedOperationException();
+        return NullConstant.NULL.getGeoByte(rec);
     }
 
     @Override
     public int getGeoInt(Record rec) {
-        throw new UnsupportedOperationException();
+        return NullConstant.NULL.getGeoInt(rec);
     }
 
     @Override
     public long getGeoLong(Record rec) {
-        throw new UnsupportedOperationException();
+        return NullConstant.NULL.getGeoLong(rec);
     }
 
     @Override
     public short getGeoShort(Record rec) {
-        throw new UnsupportedOperationException();
+        return NullConstant.NULL.getGeoShort(rec);
     }
 
     @Override
     public int getIPv4(Record rec) {
-        throw new UnsupportedOperationException();
+        return NullConstant.NULL.getIPv4(rec);
     }
 
     @Override
     public int getInt(Record rec) {
-        throw new UnsupportedOperationException();
+        return NullConstant.NULL.getInt(rec);
     }
 
     @Override
     public @NotNull Interval getInterval(Record rec) {
-        throw new UnsupportedOperationException();
+        return NullConstant.NULL.getInterval(rec);
     }
 
     @Override
     public long getLong(Record rec) {
-        throw new UnsupportedOperationException();
+        return NullConstant.NULL.getLong(rec);
     }
 
     @Override
     public long getLong128Hi(Record rec) {
-        throw new UnsupportedOperationException();
+        return NullConstant.NULL.getLong128Hi(rec);
     }
 
     @Override
     public long getLong128Lo(Record rec) {
-        throw new UnsupportedOperationException();
+        return NullConstant.NULL.getLong128Lo(rec);
     }
 
     @Override
     public void getLong256(Record rec, CharSink<?> sink) {
-        throw new UnsupportedOperationException();
+        NullConstant.NULL.getLong256(rec, sink);
     }
 
     @Override
     public Long256 getLong256A(Record rec) {
-        throw new UnsupportedOperationException();
+        return NullConstant.NULL.getLong256A(rec);
     }
 
     @Override
     public Long256 getLong256B(Record rec) {
-        throw new UnsupportedOperationException();
+        return NullConstant.NULL.getLong256B(rec);
     }
 
     @Override
@@ -189,37 +194,37 @@ public record NullCaseFunction(ObjList<Function> args) implements CaseFunction {
 
     @Override
     public short getShort(Record rec) {
-        throw new UnsupportedOperationException();
+        return NullConstant.NULL.getShort(rec);
     }
 
     @Override
     public CharSequence getStrA(Record rec) {
-        throw new UnsupportedOperationException();
+        return NullConstant.NULL.getStrA(rec);
     }
 
     @Override
     public CharSequence getStrB(Record rec) {
-        throw new UnsupportedOperationException();
+        return NullConstant.NULL.getStrB(rec);
     }
 
     @Override
     public int getStrLen(Record rec) {
-        throw new UnsupportedOperationException();
+        return NullConstant.NULL.getStrLen(rec);
     }
 
     @Override
     public CharSequence getSymbol(Record rec) {
-        throw new UnsupportedOperationException();
+        return NullConstant.NULL.getSymbol(rec);
     }
 
     @Override
     public CharSequence getSymbolB(Record rec) {
-        throw new UnsupportedOperationException();
+        return NullConstant.NULL.getSymbolB(rec);
     }
 
     @Override
     public long getTimestamp(Record rec) {
-        throw new UnsupportedOperationException();
+        return NullConstant.NULL.getTimestamp(rec);
     }
 
     @Override
@@ -229,16 +234,16 @@ public record NullCaseFunction(ObjList<Function> args) implements CaseFunction {
 
     @Override
     public @Nullable Utf8Sequence getVarcharA(Record rec) {
-        throw new UnsupportedOperationException();
+        return NullConstant.NULL.getVarcharA(rec);
     }
 
     @Override
     public @Nullable Utf8Sequence getVarcharB(Record rec) {
-        throw new UnsupportedOperationException();
+        return NullConstant.NULL.getVarcharB(rec);
     }
 
     @Override
     public int getVarcharSize(Record rec) {
-        throw new UnsupportedOperationException();
+        return NullConstant.NULL.getVarcharSize(rec);
     }
 }
