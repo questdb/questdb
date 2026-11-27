@@ -107,6 +107,22 @@ public interface SecurityContext extends Mutable {
         throw CairoException.authorization().put("audited views are only available in QuestDB Enterprise").setCacheable(true);
     }
 
+    /**
+     * Authorizes the owner of a table or a column that ingestion is about to auto-create, i.e. the entity
+     * the {@link DdlListener} grants the new object to, see {@link #getAutoCreateOwner()}. QWP ingestion
+     * calls it right before it auto-creates a table or adds a column, so that a refusal leaves nothing
+     * behind: a new column commits before the listener grants it.
+     * <p>
+     * Implementations with access control re-check the owner named via
+     * {@link #setAutoCreateOwner(CharSequence)}, since the ACL may have changed since the owner was named,
+     * and refuse a principal that cannot own the objects itself and named no owner, such as an external
+     * user. The default accepts, since a context without access control records no owner.
+     *
+     * @throws CairoException an authorization error when the owner is not allowed
+     */
+    default void authorizeAutoCreateOwner() {
+    }
+
     void authorizeCopyCancel(SecurityContext cancellingSecurityContext);
 
     void authorizeDatabaseBackup();
@@ -221,7 +237,8 @@ public interface SecurityContext extends Mutable {
     /**
      * The principal to record as owner when this context auto-creates a database object during
      * ingestion (e.g. ILP auto-creates a table or column), or {@code null} when this context carries no
-     * ACL identity that should receive an owner grant. Defaults to {@link #getPrincipal()}.
+     * ACL identity that should receive an owner grant. Defaults to {@link #getPrincipal()}. Contexts that
+     * support {@link #setAutoCreateOwner(CharSequence)} return the owner named there instead.
      * <p>
      * The identity-less allow-all / read-only contexts the ILP line-ACL bypass hands out still report a
      * default principal from {@link #getPrincipal()} (so {@code current_user()} stays coherent), but they
@@ -299,5 +316,22 @@ public interface SecurityContext extends Mutable {
      */
     default boolean isWalTableVisible(TableToken tableToken) {
         return isTableVisible(tableToken);
+    }
+
+    /**
+     * Makes {@code ownerName} the owner of every table and column this context auto-creates during
+     * ingestion, for the lifetime of the context, the way the OWNED BY clause does for a single SQL
+     * statement: the {@link DdlListener} grants the new objects to the owner instead of the principal, see
+     * {@link #getAutoCreateOwner()}. The owner is checked like OWNED BY, so the call throws when the
+     * principal may not name it. Unlike the OWNED BY state, {@link #clear()} leaves it in place.
+     * <p>
+     * The default refuses: object ownership is part of access control, which only QuestDB Enterprise has.
+     *
+     * @param ownerName name of the entity to own the objects this context auto-creates
+     * @throws CairoException when this context does not support an owner, or an authorization error when
+     *                        the owner is not allowed
+     */
+    default void setAutoCreateOwner(@NotNull CharSequence ownerName) {
+        throw CairoException.nonCritical().put("the owner of auto-created tables and columns can only be set in QuestDB Enterprise");
     }
 }

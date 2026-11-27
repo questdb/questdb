@@ -67,6 +67,28 @@ public class QwpIngressUpgradeProcessorTest extends AbstractWebSocketTest {
     }
 
     @Test
+    public void testWriteBadRequestResponseBufferTooSmall() throws Exception {
+        // an arbitrary reason has no precomputed response, so it takes the path that builds one
+        assertMemoryLeak(() -> {
+            final String reason = "Invalid WebSocket handshake";
+            final String expected = "HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\nContent-Length: 27\r\n\r\n" + reason;
+            final int bufferSize = expected.length();
+            final long buffer = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
+            try {
+                Assert.assertEquals(-1, QwpIngressUpgradeProcessor.writeBadRequestResponse(buffer, bufferSize - 1, reason));
+                Assert.assertEquals(bufferSize, QwpIngressUpgradeProcessor.writeBadRequestResponse(buffer, bufferSize, reason));
+                final byte[] responseBytes = new byte[bufferSize];
+                for (int i = 0; i < bufferSize; i++) {
+                    responseBytes[i] = Unsafe.getByte(buffer + i);
+                }
+                Assert.assertEquals(expected, new String(responseBytes, StandardCharsets.US_ASCII));
+            } finally {
+                Unsafe.free(buffer, bufferSize, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
     public void testWriteHandshakeResponse() throws Exception {
         assertMemoryLeak(() -> {
             // Given a valid WebSocket key

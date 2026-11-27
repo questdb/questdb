@@ -24,6 +24,8 @@
 
 package io.questdb.test.cutlass.qwp.e2e;
 
+import io.questdb.DefaultFactoryProvider;
+import io.questdb.FactoryProvider;
 import io.questdb.client.LineSenderServerException;
 import io.questdb.client.Sender;
 import io.questdb.client.SenderError;
@@ -50,6 +52,7 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 
+import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
@@ -62,6 +65,8 @@ public class AbstractQwpWebSocketTest extends AbstractCairoTest {
     // that without masking real bugs.
     private static final long CLOSE_FLUSH_TIMEOUT_MS = 300_000L;
     private static final Log LOG = LogFactory.getLog(AbstractQwpWebSocketTest.class);
+    // Factory provider of the HTTP server runInContext() starts, e.g. for the security contexts of its connections.
+    protected FactoryProvider factoryProvider = DefaultFactoryProvider.INSTANCE;
     protected int recvChunk;
     protected int sendChunk;
     protected WorkerPoolMode workerPoolMode;
@@ -179,6 +184,18 @@ public class AbstractQwpWebSocketTest extends AbstractCairoTest {
             Assert.assertTrue("Expected rejection terminal containing '" + part + "' but got: " + msg,
                     msg != null && msg.contains(part));
         }
+    }
+
+    // Asserts that the first error the sender's handler saw is the retriable refusal of a block for a table that was
+    // renamed under the connection, which the client replays on a new connection.
+    protected static void assertRenameRefusal(List<SenderError> errors, String tableName) throws Exception {
+        TestUtils.assertEventually(() -> {
+            Assert.assertFalse("the server must refuse the block for the renamed table", errors.isEmpty());
+            final SenderError error = errors.get(0);
+            Assert.assertSame(SenderError.Category.WRITE_ERROR, error.getCategory());
+            Assert.assertSame(SenderError.Policy.RETRIABLE, error.getAppliedPolicy());
+            Assert.assertEquals("table is being renamed, cannot ingest [table=" + tableName + ']', error.getServerMessage());
+        });
     }
 
     /**
@@ -305,6 +322,11 @@ public class AbstractQwpWebSocketTest extends AbstractCairoTest {
             @Override
             public int getBindPort() {
                 return 0;
+            }
+
+            @Override
+            public FactoryProvider getFactoryProvider() {
+                return factoryProvider;
             }
 
             @Override

@@ -26,6 +26,7 @@ package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cutlass.qwp.protocol.QwpSchemaCacheEntry;
@@ -179,6 +180,16 @@ public class WalTableUpdateDetails extends TableUpdateDetails {
     @TestOnly
     public boolean hasQwpCaches() {
         return qwpColumnMapping != null || qwpSchemaCacheEntry != null;
+    }
+
+    /**
+     * Whether the table no longer goes by the name this entry caches it under, read from the table name registry
+     * now by the rule {@link #isRenamedAtLookup()} records at a lookup: the entry's directory resolves to a token
+     * that is not equal to the entry's, or no longer resolves. A table renamed away and back goes by its name again.
+     */
+    public boolean isRenamed() {
+        final TableToken cachedToken = getTableToken();
+        return !cachedToken.equals(getEngine().getTableTokenByDirName(cachedToken.getDirName()));
     }
 
     public boolean isRenamedAtLookup() {

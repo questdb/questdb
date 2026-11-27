@@ -26,12 +26,16 @@ package io.questdb.test.cutlass.qwp;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.client.cutlass.qwp.client.QwpWebSocketEncoder;
+import io.questdb.client.cutlass.qwp.protocol.QwpTableBuffer;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
 import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
 import io.questdb.cutlass.qwp.codec.QwpEgressMsgKind;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.server.QwpIngressProcessorState;
+import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractCairoTest;
@@ -39,6 +43,8 @@ import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.util.concurrent.TimeUnit;
 
 /**
  * Pins the read-only REFUSAL-SHAPE contract on the QWP ingress path. A
@@ -81,6 +87,56 @@ import org.junit.Test;
 public class QwpIngressReadOnlyRefusalShapeTest extends AbstractCairoTest {
 
     private static final int RECONNECT_ATTEMPTS = 3;
+
+    @Test
+    public void testRoleDerivedOwnerRefusalTakesRoleChangeCloseWhileNameIsHeld() throws Exception {
+        // A primary demoted in place refuses the owner of a table it is about to auto-create as a replica does, with a
+        // read-only refusal, here while another operation holds the table's name to create it. The refusal must take
+        // the reconnect-eligible role-change close, as it does when nobody holds the name, not the error a client
+        // retries on the same node.
+        assertMemoryLeak(() -> {
+            final LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            final TableToken heldName = engine.lockTableName("tab");
+            Assert.assertNotNull(heldName);
+            // This thread holds the name and drives the batch, so a lookup that waited for the name would wait
+            // forever. The watchdog gives the name up after a while: such a lookup then creates the table, and the
+            // assertions below fail the test instead of it hanging.
+            final SOCountDownLatch done = new SOCountDownLatch(1);
+            final Thread watchdog = new Thread(() -> {
+                if (!done.await(TimeUnit.SECONDS.toNanos(30))) {
+                    engine.unlockTableName(heldName);
+                }
+            });
+            watchdog.start();
+            try {
+                final QwpIngressProcessorState state =
+                        new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
+                try {
+                    state.of(1, new AllowAllSecurityContext() {
+                        @Override
+                        public void authorizeAutoCreateOwner() {
+                            throw CairoException.readOnlyAccess();
+                        }
+                    });
+                    final boolean isRoleChangeClose = driveBatch(state, oneRowMessage("tab"));
+
+                    Assert.assertFalse("the batch must be refused", state.isOk());
+                    Assert.assertEquals(QwpIngressProcessorState.Status.NOT_ACCEPTING_WRITES, state.getStatus());
+                    Assert.assertTrue("a read-only refusal must take the role-change close", isRoleChangeClose);
+                    TestUtils.assertContains(state.getErrorText(), CairoException.READ_ONLY_ACCESS_MESSAGE);
+                } finally {
+                    state.onDisconnected();
+                    state.close();
+                }
+            } finally {
+                done.countDown();
+                watchdog.join();
+                engine.unlockTableName(heldName);
+            }
+            Assert.assertNull(engine.getTableTokenIfExists("tab"));
+        });
+    }
 
     @Test
     public void testRoleDerivedReadOnlyTakesRoleChangeClose() throws Exception {
@@ -306,6 +362,23 @@ public class QwpIngressReadOnlyRefusalShapeTest extends AbstractCairoTest {
                 return true;
             }
         });
+    }
+
+    // A QWP v1 message with one row for table tableName: [v LONG, designated timestamp].
+    private static byte[] oneRowMessage(String tableName) {
+        try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
+             QwpTableBuffer table = new QwpTableBuffer(tableName)) {
+            table.getOrCreateColumn("v", QwpConstants.TYPE_LONG, false).addLong(1);
+            table.getOrCreateDesignatedTimestampColumn(QwpConstants.TYPE_TIMESTAMP).addLong(1_000_000L);
+            table.nextRow();
+            final int length = encoder.encode(table);
+            final long address = encoder.getBuffer().getBufferPtr();
+            final byte[] message = new byte[length];
+            for (int i = 0; i < length; i++) {
+                message[i] = Unsafe.getByte(address + i);
+            }
+            return message;
+        }
     }
 
     /**

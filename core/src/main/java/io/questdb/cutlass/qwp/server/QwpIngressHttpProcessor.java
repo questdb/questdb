@@ -36,8 +36,10 @@ import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.std.FiberLocal;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
+import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.TestOnly;
 
@@ -74,6 +76,10 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
     public static final Utf8String HEADER_X_QWP_CLIENT_ID = new Utf8String("X-QWP-Client-Id");
     public static final Utf8String HEADER_X_QWP_MAX_BATCH_ROWS = new Utf8String("X-QWP-Max-Batch-Rows");
     public static final Utf8String HEADER_X_QWP_MAX_VERSION = new Utf8String("X-QWP-Max-Version");
+    // Names the owner of the tables and columns the connection auto-creates, as percent-encoded UTF-8, see
+    // SecurityContext.setAutoCreateOwner(). The 101 response echoes the accepted owner in the same header,
+    // in the canonical encoding of encodeOwnedBy(), so a client can tell apart a server that ignored it.
+    public static final Utf8String HEADER_X_QWP_OWNED_BY = new Utf8String("X-QWP-Owned-By");
     // Client opt-in for STATUS_DURABLE_ACK frames. Value "true" (case-insensitive) enables.
     // Any other value, or header absent, leaves the feature disabled for this connection.
     public static final Utf8String HEADER_X_QWP_REQUEST_DURABLE_ACK = new Utf8String("X-QWP-Request-Durable-Ack");
@@ -85,6 +91,9 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
     public static final Utf8String URL_PARAM_QWP_ACCEPT_ENCODING = new Utf8String("qwp_accept_encoding");
     public static final Utf8String URL_PARAM_QWP_BROWSER_HANDSHAKE = new Utf8String("qwp_browser_handshake");
     public static final Utf8String URL_PARAM_QWP_MAX_BATCH_ROWS = new Utf8String("qwp_max_batch_rows");
+    // Browser carrier of HEADER_X_QWP_OWNED_BY, consulted only when the header is absent. Percent-encoded
+    // like any URL parameter, which the HTTP parser decodes.
+    public static final Utf8String URL_PARAM_QWP_OWNED_BY = new Utf8String("qwp_owned_by");
     // Header values
     public static final Utf8String VALUE_WEBSOCKET = new Utf8String("websocket");
     /**
@@ -104,6 +113,7 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
     // the reject path the per-call reason.getBytes / Integer.toString /
     // contentLength.getBytes allocations.
     static final String ERROR_CONNECTION_MUST_CONTAIN_UPGRADE = "Connection header must contain 'upgrade'";
+    static final String ERROR_INVALID_OWNED_BY = "Invalid X-QWP-Owned-By (must be a non-empty, percent-encoded UTF-8 name)";
     static final String ERROR_INVALID_SEC_WEBSOCKET_KEY = "Invalid Sec-WebSocket-Key (must be 24-character base64 key)";
     static final String ERROR_INVALID_UPGRADE_HEADER_VALUE = "Invalid Upgrade header value";
     static final String ERROR_MISSING_CONNECTION_HEADER = "Missing Connection header";
@@ -127,6 +137,8 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
     // Lower-case, as Utf8s.startsWithLowerCaseAscii requires of its pattern.
     private static final Utf8String ORIGIN_PREFIX_HTTP = new Utf8String("http://");
     private static final Utf8String ORIGIN_PREFIX_HTTPS = new Utf8String("https://");
+    // Upper-case, as RFC 3986 section 2.1 recommends for percent-encoding.
+    private static final byte[] PERCENT_ENCODING_HEX_DIGITS = "0123456789ABCDEF".getBytes(StandardCharsets.US_ASCII);
     private static final byte[] RESPONSE_AFTER_ACCEPT = "\r\nX-QWP-Version: ".getBytes(StandardCharsets.US_ASCII);
     private static final byte[] RESPONSE_CONTENT_ENCODING_PREFIX =
             "\r\nX-QWP-Content-Encoding: ".getBytes(StandardCharsets.US_ASCII);
@@ -148,6 +160,8 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
     // oversized batch and reacting to STATUS_PARSE_ERROR.
     private static final byte[] RESPONSE_MAX_BATCH_SIZE_PREFIX =
             "\r\nX-QWP-Max-Batch-Size: ".getBytes(StandardCharsets.US_ASCII);
+    // Header prefix of the X-QWP-Owned-By echo, see HEADER_X_QWP_OWNED_BY.
+    private static final byte[] RESPONSE_OWNED_BY_PREFIX = "\r\nX-QWP-Owned-By: ".getBytes(StandardCharsets.US_ASCII);
     // Response template
     private static final byte[] RESPONSE_PREFIX =
             "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ".getBytes(StandardCharsets.US_ASCII);
@@ -272,6 +286,55 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
             }
         }
         return false;
+    }
+
+    /**
+     * Decodes the owner of the tables and columns the connection auto-creates, which the upgrade request
+     * names in the {@code X-QWP-Owned-By} header, or else in the {@code qwp_owned_by} URL parameter. The
+     * header carries the name as percent-encoded UTF-8, so a name outside ASCII survives proxies intact; the
+     * HTTP parser has already decoded the URL parameter. Leaves both sinks empty when the request names no
+     * owner.
+     *
+     * @param header   the upgrade request header
+     * @param utf8Sink receives the owner as UTF-8
+     * @param sink     receives the owner
+     * @return false when the name is malformed: empty, a bad percent escape, or not UTF-8
+     */
+    public static boolean decodeOwnedBy(HttpRequestHeader header, Utf8StringSink utf8Sink, StringSink sink) {
+        utf8Sink.clear();
+        sink.clear();
+        final Utf8Sequence headerValue = header.getHeader(HEADER_X_QWP_OWNED_BY);
+        if (headerValue != null) {
+            if (!percentDecode(headerValue, utf8Sink)) {
+                return false;
+            }
+        } else {
+            final Utf8Sequence paramValue = header.getUrlParam(URL_PARAM_QWP_OWNED_BY);
+            if (paramValue == null) {
+                return true;
+            }
+            utf8Sink.put(paramValue);
+        }
+        return utf8Sink.size() > 0 && Utf8s.utf8ToUtf16(utf8Sink, sink);
+    }
+
+    /**
+     * Writes the canonical {@code X-QWP-Owned-By} encoding of the UTF-8 owner name into {@code sink}: the
+     * RFC 3986 unreserved characters as they are, every other byte as {@code %XX} with upper-case hex
+     * digits. A client that encodes the name the same way can compare the 101 echo to what it sent.
+     */
+    public static void encodeOwnedBy(Utf8Sequence owner, Utf8StringSink sink) {
+        sink.clear();
+        for (int i = 0, n = owner.size(); i < n; i++) {
+            final byte b = owner.byteAt(i);
+            if (isUnreservedByte(b)) {
+                sink.putAny(b);
+            } else {
+                sink.putAny((byte) '%');
+                sink.putAny(PERCENT_ENCODING_HEX_DIGITS[(b >> 4) & 0xF]);
+                sink.putAny(PERCENT_ENCODING_HEX_DIGITS[b & 0xF]);
+            }
+        }
     }
 
     /**
@@ -550,6 +613,16 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
     }
 
     public static int responseSize(byte[] acceptKey, int qwpVersion, byte[] contentEncodingBytes, Utf8Sequence durableAckConfirmToken, byte[] roleBytes, byte[] maxBatchSizeBytes, byte[] sessionCookieValueBytes, boolean durableAckWebSocketProtocol, boolean isQwpV1WebSocketProtocol) {
+        return responseSize(acceptKey, qwpVersion, contentEncodingBytes, durableAckConfirmToken, roleBytes, maxBatchSizeBytes, sessionCookieValueBytes, durableAckWebSocketProtocol, isQwpV1WebSocketProtocol, null);
+    }
+
+    /**
+     * Same as {@link #responseSize(byte[], int, byte[], Utf8Sequence, byte[], byte[], byte[], boolean, boolean)}
+     * but also accounts for an optional {@code X-QWP-Owned-By} echo of the owner the connection's
+     * auto-created tables and columns get, in the encoding of {@link #encodeOwnedBy}. Pass {@code null} to
+     * skip it.
+     */
+    public static int responseSize(byte[] acceptKey, int qwpVersion, byte[] contentEncodingBytes, Utf8Sequence durableAckConfirmToken, byte[] roleBytes, byte[] maxBatchSizeBytes, byte[] sessionCookieValueBytes, boolean durableAckWebSocketProtocol, boolean isQwpV1WebSocketProtocol, Utf8Sequence ownedBy) {
         int size = RESPONSE_PREFIX.length + acceptKey.length
                 + RESPONSE_AFTER_ACCEPT.length + VERSION_BYTES[qwpVersion].length
                 + RESPONSE_SUFFIX.length;
@@ -572,6 +645,9 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
         }
         if (sessionCookieValueBytes != null) {
             size += RESPONSE_SESSION_COOKIE_PREFIX.length + sessionCookieValueBytes.length;
+        }
+        if (ownedBy != null) {
+            size += RESPONSE_OWNED_BY_PREFIX.length + ownedBy.size();
         }
         return size;
     }
@@ -766,6 +842,15 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
     }
 
     public static int writeResponse(long buf, byte[] acceptKey, int qwpVersion, byte[] contentEncodingBytes, Utf8Sequence durableAckConfirmToken, byte[] roleBytes, byte[] maxBatchSizeBytes, byte[] sessionCookieValueBytes, boolean durableAckWebSocketProtocol, boolean isQwpV1WebSocketProtocol) {
+        return writeResponse(buf, acceptKey, qwpVersion, contentEncodingBytes, durableAckConfirmToken, roleBytes, maxBatchSizeBytes, sessionCookieValueBytes, durableAckWebSocketProtocol, isQwpV1WebSocketProtocol, null);
+    }
+
+    /**
+     * Same as {@link #writeResponse(long, byte[], int, byte[], Utf8Sequence, byte[], byte[], byte[], boolean, boolean)}
+     * but also writes an optional {@code X-QWP-Owned-By} echo of the owner the connection's auto-created
+     * tables and columns get, in the encoding of {@link #encodeOwnedBy}. Pass {@code null} to skip it.
+     */
+    public static int writeResponse(long buf, byte[] acceptKey, int qwpVersion, byte[] contentEncodingBytes, Utf8Sequence durableAckConfirmToken, byte[] roleBytes, byte[] maxBatchSizeBytes, byte[] sessionCookieValueBytes, boolean durableAckWebSocketProtocol, boolean isQwpV1WebSocketProtocol, Utf8Sequence ownedBy) {
         int offset = 0;
 
         for (byte b : RESPONSE_PREFIX) {
@@ -844,6 +929,15 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
             }
         }
 
+        if (ownedBy != null) {
+            for (byte b : RESPONSE_OWNED_BY_PREFIX) {
+                Unsafe.putByte(buf + offset++, b);
+            }
+            final int ownedBySize = ownedBy.size();
+            Utf8s.strCpy(ownedBy, ownedBySize, buf + offset);
+            offset += ownedBySize;
+        }
+
         for (byte b : RESPONSE_SUFFIX) {
             Unsafe.putByte(buf + offset++, b);
         }
@@ -887,8 +981,49 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
         return false;
     }
 
+    private static int hexDigitValue(byte b) {
+        if (b >= '0' && b <= '9') {
+            return b - '0';
+        }
+        if (b >= 'A' && b <= 'F') {
+            return b - 'A' + 10;
+        }
+        if (b >= 'a' && b <= 'f') {
+            return b - 'a' + 10;
+        }
+        return -1;
+    }
+
     private static boolean isSpaceOrTab(byte b) {
         return b == ' ' || b == '\t';
+    }
+
+    // RFC 3986 section 2.3
+    private static boolean isUnreservedByte(byte b) {
+        return (b >= 'A' && b <= 'Z') || (b >= 'a' && b <= 'z') || (b >= '0' && b <= '9')
+                || b == '-' || b == '.' || b == '_' || b == '~';
+    }
+
+    // Decodes RFC 3986 percent-encoding; any byte other than '%' stands for itself, '+' included.
+    private static boolean percentDecode(Utf8Sequence value, Utf8StringSink sink) {
+        for (int i = 0, n = value.size(); i < n; i++) {
+            final byte b = value.byteAt(i);
+            if (b != '%') {
+                sink.putAny(b);
+                continue;
+            }
+            if (i + 2 >= n) {
+                return false;
+            }
+            final int hi = hexDigitValue(value.byteAt(i + 1));
+            final int lo = hexDigitValue(value.byteAt(i + 2));
+            if (hi < 0 || lo < 0) {
+                return false;
+            }
+            sink.putAny((byte) ((hi << 4) | lo));
+            i += 2;
+        }
+        return true;
     }
 
     private static byte toLowerAscii(byte value) {

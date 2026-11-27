@@ -140,6 +140,18 @@ public class QwpUpgradeRejectFragmentationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void test400MalformedOwnedByRejectIsFullyDeliveredUnderSendFragmentation() throws Exception {
+        final byte[] expected = textReject("400 Bad Request", "Invalid X-QWP-Owned-By (must be a non-empty, percent-encoded UTF-8 name)");
+        runWithFragmentedSend(port -> {
+            assertFullRejectDelivered(port, ownedByUpgradeRequest(port, "/write/v4", "team%zz"), expected);
+            // An empty browser carrier, a URL parameter. The HTTP parser keeps the empty value because another
+            // parameter follows it; it drops a trailing one (HttpHeaderParserTest.testUrlParamsTrailingEmpty),
+            // which then names no owner.
+            assertFullRejectDelivered(port, ownedByUpgradeRequest(port, "/write/v4?qwp_owned_by=&x=1", null), expected);
+        });
+    }
+
+    @Test
     public void test400OriginRejectIsFullyDeliveredUnderSendFragmentation() throws Exception {
         runWithFragmentedSend(port -> {
             String request = "GET /write/v4 HTTP/1.1\r\n"
@@ -151,6 +163,18 @@ public class QwpUpgradeRejectFragmentationTest extends AbstractCairoTest {
                     + "Sec-WebSocket-Version: 13\r\n"
                     + "\r\n";
             assertFullRejectDelivered(port, request, EXPECTED_400_ORIGIN_REJECT);
+        });
+    }
+
+    @Test
+    public void test403OwnedByRejectIsFullyDeliveredUnderSendFragmentation() throws Exception {
+        // Without access control an owner cannot be honored, so the upgrade fails instead of the
+        // first table the client auto-creates, and the server says why.
+        final byte[] expected = textReject("403 Forbidden", "owned_by refused: the owner of auto-created tables and columns can only be set in QuestDB Enterprise");
+        runWithFragmentedSend(port -> {
+            assertFullRejectDelivered(port, ownedByUpgradeRequest(port, "/write/v4", "caf%C3%A9"), expected);
+            // the browser carrier, a URL parameter
+            assertFullRejectDelivered(port, ownedByUpgradeRequest(port, "/write/v4?qwp_owned_by=caf%C3%A9", null), expected);
         });
     }
 
@@ -185,7 +209,7 @@ public class QwpUpgradeRejectFragmentationTest extends AbstractCairoTest {
 
     @Test
     public void testEgress400OriginRejectIsFullyDeliveredUnderSendFragmentation() throws Exception {
-        // Egress (/read/v1) shares QwpWebSocketHttpProcessor.validateHandshake
+        // Egress (/read/v1) shares QwpIngressHttpProcessor.validateHandshake
         // with ingress, so the same Origin-header rejection path applies. The
         // egress upgrade processor's reject branch still synchronously calls
         // rawSocket.send inside onHeadersReady and catches PISR -- the
@@ -351,6 +375,22 @@ public class QwpUpgradeRejectFragmentationTest extends AbstractCairoTest {
         byte[] out = new byte[total];
         System.arraycopy(buf, 0, out, 0, total);
         return out;
+    }
+
+    private static String ownedByUpgradeRequest(int port, String path, String ownedByHeaderValue) {
+        return "GET " + path + " HTTP/1.1\r\n"
+                + "Host: localhost:" + port + "\r\n"
+                + "Upgrade: websocket\r\n"
+                + "Connection: Upgrade\r\n"
+                + "Sec-WebSocket-Key: AQIDBAUGBwgJCgsMDQ4PEA==\r\n"
+                + "Sec-WebSocket-Version: 13\r\n"
+                + (ownedByHeaderValue != null ? "X-QWP-Owned-By: " + ownedByHeaderValue + "\r\n" : "")
+                + "\r\n";
+    }
+
+    private static byte[] textReject(String status, String reason) {
+        return ("HTTP/1.1 " + status + "\r\nContent-Type: text/plain\r\nContent-Length: "
+                + reason.length() + "\r\n\r\n" + reason).getBytes(StandardCharsets.US_ASCII);
     }
 
     private void runWithFragmentedSend(PortTest test) throws Exception {

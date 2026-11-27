@@ -33,6 +33,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CommitFailedException;
 import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.TableNameRegistry;
 import io.questdb.cairo.TableStructure;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -989,13 +990,22 @@ public class QwpTudCache implements QwpSchemaCache, QuietCloseable {
      * When the rename lands concurrently with the lookup -- the registry not
      * yet updated when the guard reads it -- the replay does rebind the
      * writer; the token comparison around goActive() below catches exactly
-     * that case, salvages and refuses. See the in-method comment.
+     * that case, salvages and refuses. See the in-method comment. A column add
+     * that replayed a RENAME after an earlier lookup left the writer rebound
+     * the same way, see QwpWalAppender.addColumn(), and gets the same answer.
      */
     private void applyPendingStructureChanges(WalTableUpdateDetails tud) {
         if (!(tud.getWriter() instanceof WalWriter walWriter)) {
             return;
         }
         final TableToken cachedToken = tud.getTableToken();
+        if (walWriter.getTableToken() != cachedToken) {
+            // A column add replayed a RENAME into the writer and refused its
+            // block, and nothing has refused this entry since: a WebSocket
+            // connection takes no more frames after that error, but the UDP
+            // receiver goes on to its next datagram.
+            throw refuseReboundWriter(tud, walWriter, cachedToken);
+        }
         final TableToken tokenByDir = engine.getTableTokenByDirName(cachedToken.getDirName());
         // What the sequencer's token check at commit compares: equal tokens, so that a
         // token re-minted for the same table commits. A commit batch refuses a renamed
@@ -1035,17 +1045,55 @@ public class QwpTudCache implements QwpSchemaCache, QuietCloseable {
             // whatever the old name resolves to after the rename -- duplicate
             // delivery across tables, consistent with commitAll's
             // partial-commit replay posture.
-            if (salvageBufferedRows(tud, walWriter)) {
-                reportCommittedTxn(tud, committedTxnConsumer);
-            }
-            throw CairoException.nonCritical()
-                    .put("table is being renamed, cannot ingest [table=")
-                    .put(tokenBeforeReplay.getTableName())
-                    .put(']');
+            throw refuseReboundWriter(tud, walWriter, tokenBeforeReplay);
         }
         // Only a successful replay advances the gate: a failure must be retried
         // by the next lookup, not latched as done.
         tud.setLastStructureCheckSeqTxn(seqTxn);
+    }
+
+    // Checks the owner of a table this connection is about to auto-create, ahead of createTable(), whose DDL
+    // listener grants the new table to that owner, see SecurityContext.authorizeAutoCreateOwner(). The refusal
+    // stands only when this connection would create the table. A table another connection has just created
+    // needs no owner from this connection, so this method returns it. A table another operation is still
+    // creating gets a retriable refusal instead of a wait: nothing bounds how long the operation holds the
+    // name, and a wait would pin this I/O thread for all that time. The client replays the frame, which then
+    // finds the table. A name another operation holds while it drops, renames or rebases the table gets the
+    // same retriable refusal: a DROP or a RENAME frees the name, where the refusal stands at the replay, but
+    // REBASE WAL hands it to the rebased table, see TableNameRegistryRW.swapTable(), which the replay finds. A
+    // read-only refusal stands, whatever the registry holds for the name: a node that turned read-only, such as a
+    // primary demoted in place, refuses every write, and the refusal must keep the read-only marker that gets the
+    // connection the role-change close, see QwpIngressProcessorState.rejectCairoError(), as QwpWalAppender keeps it
+    // for a refused column.
+    // Returns null when this connection may create the table.
+    private TableToken authorizeOwnerOrGetTable(SecurityContext securityContext, CharSequence tableName) {
+        try {
+            securityContext.authorizeAutoCreateOwner();
+            return null;
+        } catch (CairoException e) {
+            if (e.isReadOnlyAccessRefusal()) {
+                throw e;
+            }
+            final TableToken tableToken = engine.getTableNameRegistry().getTableToken(tableName);
+            if (tableToken == TableNameRegistry.LOCKED_TOKEN) {
+                // neither an authorization error nor a schema mismatch, so the client retries it, see
+                // QwpIngressProcessorState.cairoExceptionStatus()
+                throw CairoException.nonCritical()
+                        .put("table is being created, cannot ingest [table=")
+                        .put(tableName)
+                        .put(']');
+            }
+            if (tableToken == TableNameRegistry.LOCKED_DROP_TOKEN) {
+                throw CairoException.nonCritical()
+                        .put("table is being dropped, renamed or rebased, cannot ingest [table=")
+                        .put(tableName)
+                        .put(']');
+            }
+            if (tableToken == null) {
+                throw e;
+            }
+            return tableToken;
+        }
     }
 
     // Evicts a stale cached entry (see isTableTokenStale): either the table was
@@ -1160,7 +1208,10 @@ public class QwpTudCache implements QwpSchemaCache, QuietCloseable {
                     return null;
                 }
             }
-            tableToken = engine.createTable(securityContext, ddlMem, path, true, tsa, false, TableUtils.TABLE_KIND_REGULAR_TABLE);
+            tableToken = authorizeOwnerOrGetTable(securityContext, tableNameUtf16);
+            if (tableToken == null) {
+                tableToken = engine.createTable(securityContext, ddlMem, path, true, tsa, false, TableUtils.TABLE_KIND_REGULAR_TABLE);
+            }
         }
         if (tableToken != null && tableToken.getType() != TableToken.Type.TABLE) {
             // schemaMismatch(), not a bare nonCritical(): the target's kind is a property of
@@ -1211,6 +1262,19 @@ public class QwpTudCache implements QwpSchemaCache, QuietCloseable {
         if (tud == lastCachedTud) {
             lastCachedTud = null;
         }
+    }
+
+    // Answers a lookup of an entry whose writer a replayed RENAME rebound to the renamed table, see
+    // applyPendingStructureChanges(): salvages the rows the writer buffered under the old name, which belong to the
+    // same physical table, and returns the refusal to throw. The caller evicts the entry.
+    private CairoException refuseReboundWriter(WalTableUpdateDetails tud, WalWriter walWriter, TableToken oldToken) {
+        if (salvageBufferedRows(tud, walWriter)) {
+            reportCommittedTxn(tud, committedTxnConsumer);
+        }
+        return CairoException.nonCritical()
+                .put("table is being renamed, cannot ingest [table=")
+                .put(oldToken.getTableName())
+                .put(']');
     }
 
     /**
