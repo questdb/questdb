@@ -127,6 +127,11 @@ public class ModeBooleanGroupByFunction extends BooleanFunction implements Unary
     }
 
     @Override
+    public boolean isStateSelfContained() {
+        return true;
+    }
+
+    @Override
     public void toPlan(PlanSink sink) {
         sink.val("mode(").val(arg).val(')');
     }

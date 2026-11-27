@@ -159,7 +159,7 @@ public class PostingIndexO3ConcurrencyFuzzTest extends AbstractFuzzTest {
                 prepareReplaceOnParquetList(rnd, tableNameNoWal, tableNameWal, tableNameWalParallel)
         );
         counts.log(LOG, getTestName());
-        // The follow-up list writes into a parquet partition's day on both WAL tables. A replace
+        // The follow-up list writes into a parquet partition on both WAL tables. A replace
         // that drops whole days can remove that partition before any write reaches it, and the
         // later rows then build a native partition in its place.
         Assert.assertTrue("no parquet O3 ran: " + counts, counts.getWritten() + counts.getReplaceRemoval() > 0);
@@ -367,7 +367,7 @@ public class PostingIndexO3ConcurrencyFuzzTest extends AbstractFuzzTest {
             Assert.assertTrue("no parquet partition in " + tableNames.getQuick(i), countParquetPartitions(tableNames.getQuick(i)) > 0);
         }
 
-        // The list's rows go into one Parquet partition's day. The table's partitions need not
+        // The list's rows go into one Parquet partition. The table's partitions need not
         // be contiguous (TTL, drops, truncate), so a list spread over [min, max] can miss them
         // all. A replace range reaches about 7.4 h past its rows, so neighbours are hit too.
         final long startTimestamp;
@@ -383,7 +383,7 @@ public class PostingIndexO3ConcurrencyFuzzTest extends AbstractFuzzTest {
             // FuzzRunner.generateTransactions() takes micros whatever the table's timestamp type
             final TimestampDriver driver = ColumnType.getTimestampDriver(reader.getMetadata().getTimestampType());
             startTimestamp = driver.toMicros(reader.getPartitionTimestampByIndex(partitionIndex));
-            endTimestamp = MicrosTimestampDriver.INSTANCE.addDays(startTimestamp, 1);
+            endTimestamp = MicrosTimestampDriver.INSTANCE.getPartitionAddMethod(reader.getPartitionedBy()).calculate(startTimestamp, 1);
             LOG.info().$("follow-up list targets parquet [table=").$(tableNameWal)
                     .$(", partitions=").$(reader.getPartitionCount())
                     .$(", parquetPartitions=").$(parquetPartitions.size())

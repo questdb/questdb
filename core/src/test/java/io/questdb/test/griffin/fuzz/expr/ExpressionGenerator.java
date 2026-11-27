@@ -30,6 +30,8 @@ import io.questdb.test.griffin.fuzz.FuzzColumn;
 import io.questdb.test.griffin.fuzz.types.ColumnKind;
 import io.questdb.test.griffin.fuzz.types.FuzzColumnType;
 import io.questdb.test.griffin.fuzz.types.FuzzColumnTypes;
+import io.questdb.test.griffin.fuzz.types.IntType;
+import io.questdb.test.griffin.fuzz.types.LongType;
 
 /**
  * Builds typed {@link FuzzExpr} trees over a fixed column list. The
@@ -43,14 +45,22 @@ import io.questdb.test.griffin.fuzz.types.FuzzColumnTypes;
  *     <li>typed constant;</li>
  *     <li>arithmetic {@code a op b} where both sides are numeric;</li>
  *     <li>curated single-arg function call (abs, length, upper, ...);</li>
- *     <li>cast {@code inner::TYPE} to a target kind, provided a numeric
- *     expression can be cast to it at all -- see
- *     {@link #castTargetFromNumeric(ColumnKind)}.</li>
+ *     <li>cast {@code inner::TYPE} or {@code cast(inner AS TYPE)} to a target kind,
+ *     provided a numeric expression can be cast to it at all -- see
+ *     {@link #castTargetFromNumeric(ColumnKind)};</li>
+ *     <li>searched or simple {@code CASE} of any kind -- see {@link #generateCase};</li>
+ *     <li>{@code extract(part FROM temporal)}.</li>
  * </ul>
+ * CASE, extract and the cast keyword form also have a plain spelling, see
+ * {@link BindContext#plainSpelling()}.
  */
 public final class ExpressionGenerator {
 
     private static final String[] ARITH_OPS = {"+", "-", "*"};
+    private static final String[] EXTRACT_PARTS = {
+            "century", "day", "decade", "dow", "doy", "epoch", "hour", "isodow", "isoyear", "microseconds",
+            "millennium", "milliseconds", "minute", "month", "nanoseconds", "quarter", "second", "week", "year"
+    };
     private static final FunctionSpec[] FUNCTIONS = {
             new FunctionSpec("abs", ColumnKind.NUMERIC, ColumnKind.NUMERIC),
             new FunctionSpec("length", ColumnKind.STRING_LIKE, ColumnKind.NUMERIC),
@@ -167,7 +177,7 @@ public final class ExpressionGenerator {
         if (depth >= maxDepth || rnd.nextInt(3) == 0) {
             return generateLeafOfKind(target);
         }
-        int choice = rnd.nextInt(4);
+        int choice = rnd.nextInt(6);
         if (choice == 0 && target == ColumnKind.NUMERIC) {
             String op = ARITH_OPS[rnd.nextInt(ARITH_OPS.length)];
             return new ArithmeticExpr(
@@ -185,10 +195,100 @@ public final class ExpressionGenerator {
         if (choice == 2) {
             FuzzColumnType castTarget = castTargetFromNumeric(target);
             if (castTarget != null) {
-                return new CastExpr(generateOfKind(ColumnKind.NUMERIC, depth + 1), castTarget);
+                return new CastExpr(generateOfKind(ColumnKind.NUMERIC, depth + 1), castTarget, rnd.nextBoolean());
             }
         }
+        if (choice == 3) {
+            return generateCase(target, depth + 1);
+        }
+        if (choice == 4 && target == ColumnKind.NUMERIC) {
+            String part = EXTRACT_PARTS[rnd.nextInt(EXTRACT_PARTS.length)];
+            return new ExtractExpr(part, generateOfKind(ColumnKind.TEMPORAL, depth + 1));
+        }
         return generateLeafOfKind(target);
+    }
+
+    /**
+     * A CASE whose values are of the {@code target} kind, with one or two WHEN branches and an
+     * optional ELSE. Half of them take the simple form over an operand from
+     * {@link #generateCaseOperand}; the rest take the searched form with {@code lhs > rhs}
+     * conditions. A third of the simple forms have five to eight branches instead, more keys than
+     * {@code switch()} compares one by one before it looks a DOUBLE operand up by hash. The keys
+     * of the simple form are distinct
+     * INT literals around -1, the default empty-slot key of the hash maps behind {@code switch()}.
+     * They never become bind variables: {@code switch()} accepts only constant keys, so a bound
+     * key would fail the bind form alone.
+     */
+    private FuzzExpr generateCase(ColumnKind target, int depth) {
+        final FuzzExpr operand = rnd.nextBoolean() ? generateCaseOperand(depth) : null;
+        final ObjList<FuzzExpr> whens = new ObjList<>();
+        final ObjList<FuzzExpr> thens = new ObjList<>();
+        int key = rnd.nextInt(4) - 2;
+        final int branchCount = operand != null && rnd.nextInt(3) == 0 ? 5 + rnd.nextInt(4) : 1 + rnd.nextInt(2);
+        for (int i = 0; i < branchCount; i++) {
+            if (operand != null) {
+                whens.add(new ConstantExpr(ColumnKind.NUMERIC, Integer.toString(key)));
+                key += 1 + rnd.nextInt(3);
+            } else {
+                whens.add(new CaseExpr.GreaterThan(
+                        generateOfKind(ColumnKind.NUMERIC, depth),
+                        generateOfKind(ColumnKind.NUMERIC, depth)
+                ));
+            }
+            thens.add(generateOfKind(target, depth));
+        }
+        final FuzzExpr elseValue = rnd.nextBoolean() ? generateOfKind(target, depth) : null;
+        return new CaseExpr(target, operand, whens, thens, elseValue);
+    }
+
+    /**
+     * The operand of a simple CASE: a function call, a cast, a column or a constant, which can
+     * be negative or NULL. {@code round(x) * -1.0} gives a DOUBLE that the integer keys can
+     * match, -0.0 among them.
+     */
+    private FuzzExpr generateCaseOperand(int depth) {
+        if (depth < maxDepth) {
+            switch (rnd.nextInt(6)) {
+                case 0 -> {
+                    return new ExtractExpr(EXTRACT_PARTS[rnd.nextInt(EXTRACT_PARTS.length)], generateOfKind(ColumnKind.TEMPORAL, depth + 1));
+                }
+                case 1 -> {
+                    return new FunctionCallExpr("length", ColumnKind.NUMERIC, generateOfKind(ColumnKind.STRING_LIKE, depth + 1));
+                }
+                case 2 -> {
+                    return new FunctionCallExpr("abs", ColumnKind.NUMERIC, generateCaseOperand(depth + 1));
+                }
+                case 3 -> {
+                    return new CastExpr(generateOfKind(ColumnKind.NUMERIC, depth + 1), LongType.INSTANCE, rnd.nextBoolean());
+                }
+                case 4 -> {
+                    return new ArithmeticExpr(
+                            new FunctionCallExpr("round", ColumnKind.NUMERIC, generateOfKind(ColumnKind.NUMERIC, depth + 1)),
+                            "*",
+                            new ConstantExpr(ColumnKind.NUMERIC, "-1.0")
+                    );
+                }
+                default -> {
+                }
+            }
+        }
+        if (rnd.nextInt(8) == 0) {
+            // switch() picks a NULL operand's branch at compile time, apart from the others
+            return new ConstantExpr(ColumnKind.NUMERIC, "null");
+        }
+        final ObjList<FuzzColumn> numbers = new ObjList<>();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            final FuzzColumn column = columns.getQuick(i);
+            switch (column.getType().getDdl()) {
+                case "BYTE", "SHORT", "INT", "LONG", "FLOAT", "DOUBLE" -> numbers.add(column);
+                default -> {
+                }
+            }
+        }
+        if (numbers.size() > 0 && rnd.nextBoolean()) {
+            return new ColumnRefExpr(rnd, numbers.getQuick(rnd.nextInt(numbers.size())), qualifier);
+        }
+        return new ConstantExpr(ColumnKind.NUMERIC, IntType.INSTANCE.generateConstant(rnd));
     }
 
     /**
