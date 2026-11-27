@@ -34,6 +34,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
@@ -50,6 +51,7 @@ public class FuzzDropCreateTableOperation implements FuzzTransactionOperation {
     private int dedupMode = TableUtils.DEDUP_MODE_UPSERT;
     private boolean dedupTsColumn;
     private boolean isWal;
+    private int partitionBy = PartitionBy.DAY;
     private RecordMetadata recreateTableMetadata;
     private String tableName;
 
@@ -60,6 +62,10 @@ public class FuzzDropCreateTableOperation implements FuzzTransactionOperation {
         isWal = engine.isWalTable(tableToken);
         int timestampIndex = tableWriter.getMetadata().getTimestampIndex();
         recreateTableMetadata = denseMetaCopy(tableWriter.getMetadata(), timestampIndex);
+        // the table is recreated with its own partitioning, which the fuzz picks at random
+        try (TableMetadata tableMetadata = engine.getTableMetadata(tableToken)) {
+            partitionBy = tableMetadata.getPartitionBy();
+        }
 
         try (MemoryMARW vm = Vm.getCMARWInstance(); Path path = new Path()) {
             engine.releaseInactive();
@@ -154,7 +160,7 @@ public class FuzzDropCreateTableOperation implements FuzzTransactionOperation {
                 isWal,
                 recreateTableMetadata,
                 engine.getConfiguration(),
-                PartitionBy.DAY,
+                partitionBy,
                 recreateTableMetadata.getTimestampIndex(),
                 // the mode applies only to a table with dedup keys, see denseMetaCopy()
                 dedupTsColumn && isWal ? dedupMode : TableUtils.DEDUP_MODE_UPSERT

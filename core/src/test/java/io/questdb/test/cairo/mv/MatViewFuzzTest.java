@@ -431,7 +431,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                 // A transaction that removes rows the replay does not model empties every partition and leaves the
                 // replay unchecked, though its rows differ from the base's.
                 final FuzzTransaction dropPartition = new FuzzTransaction();
-                dropPartition.operationList.add(new FuzzDropPartitionOperation(driver.parseFloorLiteral("2022-02-26")));
+                dropPartition.operationList.add(new FuzzDropPartitionOperation(driver.parseFloorLiteral("2022-02-26"), driver.fromDays(1), false));
                 extraTransactions.add(dropPartition);
                 inexactReplay.replay(extraTransactions);
                 Assert.assertTrue(isEmptied(inexactReplay.emptiedPartitions, driver.parseFloorLiteral("1970-01-01")));

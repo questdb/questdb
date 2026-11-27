@@ -1657,6 +1657,8 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
     public void testTimeFrameBoundaries() throws Exception {
         final int[] partitionBys = new int[]{
                 PartitionBy.NONE,
+                PartitionBy.MINUTE_5,
+                PartitionBy.MINUTE_30,
                 PartitionBy.HOUR,
                 PartitionBy.DAY,
                 PartitionBy.WEEK,
