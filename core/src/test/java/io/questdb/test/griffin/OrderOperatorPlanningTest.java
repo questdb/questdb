@@ -417,6 +417,43 @@ public class OrderOperatorPlanningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLatestByOverSwappableJoinKeepsJoinMasterOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, k LONG, s SYMBOL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2024-01-01T00:00:00.000000Z', 3, 'a'),
+                        ('2024-01-01T01:00:00.000000Z', 2, 'b'),
+                        ('2024-01-01T02:00:00.000000Z', 1, 'c'),
+                        ('2024-01-01T03:00:00.000000Z', 4, 'd'),
+                        ('2024-01-01T04:00:00.000000Z', 5, 'e')
+                    """);
+            final String latest = """
+                    SELECT * FROM (
+                        (SELECT l.x, t.ts, t.s FROM long_sequence(3) l JOIN t ON t.k = l.x) TIMESTAMP(ts)
+                        LATEST ON ts PARTITION BY s
+                    )""";
+            assertPlanned(engine, sqlExecutionContext, latest, LatestByPlan.class,
+                    latestBy -> Assert.assertEquals(LatestByPlan.Algorithm.MATERIALIZED, latestBy.getAlgorithm()));
+            assertPlanned(engine, sqlExecutionContext, latest, JoinPlan.class,
+                    join -> Assert.assertTrue(join.getOrderedInputs().getQuick(1).isSmallerDriven()));
+            assertPlanned(engine, sqlExecutionContext, latest + " ORDER BY x", JoinPlan.class,
+                    join -> Assert.assertEquals(BuildSide.FIXED_MASTER, join.getOrderedInputs().getQuick(1).getBuildSide()));
+            assertQuery(latest + " ORDER BY x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanNotContaining("Sort")
+                    .returns("""
+                            x\tts\ts
+                            1\t2024-01-01T02:00:00.000000Z\tc
+                            2\t2024-01-01T01:00:00.000000Z\tb
+                            3\t2024-01-01T00:00:00.000000Z\ta
+                            """);
+        });
+    }
+
+    @Test
     public void testLightHashJoinMasterSide() throws Exception {
         assertMemoryLeak(() -> {
             createTables();

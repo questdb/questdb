@@ -138,6 +138,22 @@ final class OrderPlanning implements OptimiserPass {
         return false;
     }
 
+    /**
+     * True when the sort orders by every grouping key of the aggregate beneath it, through the projections and filters
+     * between them: the aggregate emits one row per key, so no tie of the sort keeps the order of the aggregate's input.
+     */
+    private static boolean isGroupingKeySorted(SortPlan sort, AggregatePlan aggregate) {
+        if (aggregate.hasGroupingSets()) {
+            return false;
+        }
+        for (int k = 0, n = aggregate.getGroupingExpressions().size(); k < n; k++) {
+            if (!isSortKey(sort, aggregate.getOutput().getColumnId(k))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     private static boolean isHiddenSortKeyPrefix(ProjectPlan project, ProjectPlan inner) {
         final int n = project.getExpressions().size();
         if (!LogicalPlans.isColumnProjection(project) || project.hasTimestampDeclaration() || inner.hasTimestampDeclaration()
@@ -148,22 +164,6 @@ final class OrderPlanning implements OptimiserPass {
             final ColumnExpression column = (ColumnExpression) project.getExpressions().getQuick(i);
             if (!column.isDirectReference() || column.isCast() || column.getColumnId() != inner.getOutput().getColumnId(i)
                     || !Chars.equals(project.getOutput().getColumnName(i), inner.getOutput().getColumnName(i))) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    /**
-     * True when the sort orders by every grouping key of the aggregate beneath it, through the projections and filters
-     * between them: the aggregate emits one row per key, so no tie of the sort keeps the order of the aggregate's input.
-     */
-    private static boolean isKeyOrdered(SortPlan sort, AggregatePlan aggregate) {
-        if (aggregate.hasGroupingSets()) {
-            return false;
-        }
-        for (int k = 0, n = aggregate.getGroupingExpressions().size(); k < n; k++) {
-            if (!isSortKey(sort, aggregate.getOutput().getColumnId(k))) {
                 return false;
             }
         }
@@ -374,7 +374,7 @@ final class OrderPlanning implements OptimiserPass {
             case SortPlan sort -> {
                 final LogicalPlan source = LogicalPlans.skipProjects(sort.getChild());
                 final AggregatePlan sortedAggregate = LogicalPlans.skipProjectsAndFilters(sort.getChild()) instanceof AggregatePlan aggregate
-                        && isKeyOrdered(sort, aggregate) ? aggregate : null;
+                        && isGroupingKeySorted(sort, aggregate) ? aggregate : null;
                 final LogicalPlan input = removeReorderedSorts0(sort.getChild(), true, false, sort.isMarkoutHorizon(), sortedAggregate);
                 if (source instanceof WindowPlan) {
                     sort.replaceInput(0, input);

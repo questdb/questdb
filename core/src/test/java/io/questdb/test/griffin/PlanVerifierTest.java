@@ -210,6 +210,16 @@ public class PlanVerifierTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBoundedSortPresortedWithoutProvenTimestampOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE grouped (s STRING, sym SYMBOL, x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            assertPresortedContradicts("SELECT x FROM grouped ORDER BY x LIMIT 5, 10", SortPlan.Algorithm.LIMITED, SortPlan.Algorithm.PRESORTED_LIMITED);
+            assertPresortedContradicts("SELECT * FROM generate_series(1.0, 5.0, 1.0) ORDER BY generate_series DESC LIMIT 2",
+                    SortPlan.Algorithm.COPIED_LIMITED, SortPlan.Algorithm.PRESORTED_COPIED_LIMITED);
+        });
+    }
+
+    @Test
     public void testBoundedSortTopKWithLimitHi() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE grouped (s STRING, sym SYMBOL, x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -637,6 +647,18 @@ public class PlanVerifierTest extends AbstractCairoTest {
                     FillPlan.class, fill -> {
                         Assert.assertEquals(FillPlan.Algorithm.SAMPLE_BY_ROWS, fill.getAlgorithm());
                         fill.setAlgorithm(FillPlan.Algorithm.SORTED);
+                    }, PlanVerifier.FILL_ALGORITHM);
+        });
+    }
+
+    @Test
+    public void testFillInputOrderWithoutProvenBucketOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE grouped (s STRING, sym SYMBOL, x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            assertAlgorithmContradicts("SELECT g1.ts, g1.sym, first(g1.x) f FROM grouped g1 ASOF JOIN grouped g2 SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR",
+                    FillPlan.class, fill -> {
+                        Assert.assertEquals(FillPlan.Algorithm.SORTED, fill.getAlgorithm());
+                        fill.setAlgorithm(FillPlan.Algorithm.INPUT_ORDER);
                     }, PlanVerifier.FILL_ALGORITHM);
         });
     }
@@ -1942,6 +1964,20 @@ public class PlanVerifierTest extends AbstractCairoTest {
             change.apply(node);
             verifier.verify(plan, PlanStage.REWRITTEN, PASS);
             assertAccessPathsFail(plan, PlanVerifier.CHOICE_UNPLANNED, type.getSimpleName());
+        }
+    }
+
+    private void assertPresortedContradicts(String sql, SortPlan.Algorithm planned, SortPlan.Algorithm presorted) throws Exception {
+        try (
+                SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
+                RecordCursorFactory ignored = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()
+        ) {
+            final LogicalPlan plan = compiler.getPlanForTesting();
+            final SortPlan sort = find(plan, SortPlan.class);
+            Assert.assertEquals(planned, sort.getAlgorithm());
+            verifier.verify(plan, PlanStage.PHYSICAL, PASS);
+            sort.setAlgorithm(presorted);
+            assertFails(plan, PlanVerifier.LIMIT_APPLICATION, "LimitPlan");
         }
     }
 

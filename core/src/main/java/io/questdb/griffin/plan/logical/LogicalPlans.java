@@ -1059,13 +1059,22 @@ public final class LogicalPlans {
      */
     public static int orderSourceColumnId(ProjectPlan project, int columnId) {
         final int index = project.getOutput().getColumnIndexById(columnId);
-        final ColumnExpression source = index < 0 ? null : orderSource(project.getExpressions().getQuick(index));
+        final OutputSchema input = project.getChild().getOutput();
+        final int inputIndex = index < 0 ? -1 : orderSourceIndex(input, project.getExpressions().getQuick(index));
+        return inputIndex < 0 ? -1 : input.getColumnId(inputIndex);
+    }
+
+    /**
+     * The index of the column of {@code input} whose order the expression keeps, see {@link #orderSource}, read as that
+     * column's own type; -1 for none.
+     */
+    public static int orderSourceIndex(OutputSchema input, BoundExpression expression) {
+        final ColumnExpression source = orderSource(expression);
         if (source == null) {
             return -1;
         }
-        final OutputSchema input = project.getChild().getOutput();
-        final int inputIndex = input.getColumnIndexById(source.getColumnId());
-        return inputIndex >= 0 && source.getDataType() == input.getColumnType(inputIndex) ? source.getColumnId() : -1;
+        final int index = input.getColumnIndexById(source.getColumnId());
+        return index >= 0 && source.getDataType() == input.getColumnType(index) ? index : -1;
     }
 
     /**
@@ -1239,6 +1248,17 @@ public final class LogicalPlans {
             plan = plan.inputAt(0);
         }
         return plan;
+    }
+
+    /**
+     * The expression past the outermost calls that are their order argument itself, see
+     * {@link FunctionExpression#isOrderIdentity}.
+     */
+    public static BoundExpression skipIdentities(BoundExpression expression) {
+        while (expression instanceof FunctionExpression call && call.isOrderIdentity()) {
+            expression = call.argumentAt(call.getOrderArgumentIndex());
+        }
+        return expression;
     }
 
     public static LogicalPlan skipProjects(LogicalPlan plan) {

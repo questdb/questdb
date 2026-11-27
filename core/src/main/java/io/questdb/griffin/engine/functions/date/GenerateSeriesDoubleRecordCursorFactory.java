@@ -53,6 +53,19 @@ public final class GenerateSeriesDoubleRecordCursorFactory extends AbstractGener
         return cursor;
     }
 
+    /**
+     * The direction of a constant step: the compensated sum of a positive step never decreases, as the error it carries
+     * stays below half a unit in the last place of the series value, and that of a negative step never increases.
+     */
+    @Override
+    public int getScanDirection() {
+        if (!stepFunc.isConstant()) {
+            return SCAN_DIRECTION_OTHER;
+        }
+        final double step = stepFunc.getDouble(null);
+        return step > 0 ? SCAN_DIRECTION_FORWARD : step < 0 ? SCAN_DIRECTION_BACKWARD : SCAN_DIRECTION_OTHER;
+    }
+
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;

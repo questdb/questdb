@@ -39,6 +39,7 @@ public final class FunctionExpression extends BoundExpression {
     private final IntList argumentPositions = new IntList();
     private final ObjList<BoundExpression> arguments;
     private RequirementFact administrativeFact;
+    private boolean isOrderIdentity;
     private boolean isPolicyPredicate;
     private boolean isProjectedOffset;
     private boolean isSetOperation;
@@ -69,6 +70,7 @@ public final class FunctionExpression extends BoundExpression {
         isSetOperation = false;
         isProjectedOffset = false;
         orderArgumentIndex = -1;
+        isOrderIdentity = false;
     }
 
     /**
@@ -116,8 +118,8 @@ public final class FunctionExpression extends BoundExpression {
 
     /**
      * The argument whose order the values of the call keep, -1 for none: they never decrease as it grows while every
-     * other argument stays the same, or the call is that argument itself, as the factory declares it, see
-     * {@link io.questdb.griffin.engine.functions.MonotonicTimestampFunctionFactory}.
+     * other argument stays the same, or the call is that argument itself, see {@link #isOrderIdentity}, as the factory
+     * declares it, see {@link io.questdb.griffin.engine.functions.MonotonicTimestampFunctionFactory}.
      */
     public int getOrderArgumentIndex() {
         return orderArgumentIndex;
@@ -156,6 +158,14 @@ public final class FunctionExpression extends BoundExpression {
 
     public boolean isOr() {
         return overload.isOr();
+    }
+
+    /**
+     * True when the function built for the call is its order argument itself, see {@link #getOrderArgumentIndex}, as
+     * the factory declares it.
+     */
+    public boolean isOrderIdentity() {
+        return isOrderIdentity;
     }
 
     /**
@@ -246,8 +256,10 @@ public final class FunctionExpression extends BoundExpression {
         return this;
     }
 
-    public void setOrderArgumentIndex(int orderArgumentIndex) {
+    public void setOrderArgument(int orderArgumentIndex, boolean isOrderIdentity) {
+        assert !isOrderIdentity || orderArgumentIndex >= 0;
         this.orderArgumentIndex = orderArgumentIndex;
+        this.isOrderIdentity = isOrderIdentity;
     }
 
     private void copyFacts(FunctionExpression expression) {
@@ -256,5 +268,6 @@ public final class FunctionExpression extends BoundExpression {
         isSetOperation = expression.isSetOperation;
         isProjectedOffset = expression.isProjectedOffset;
         orderArgumentIndex = expression.orderArgumentIndex;
+        isOrderIdentity = expression.isOrderIdentity;
     }
 }

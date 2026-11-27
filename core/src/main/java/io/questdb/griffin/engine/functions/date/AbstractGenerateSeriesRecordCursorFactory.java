@@ -87,6 +87,27 @@ public abstract class AbstractGenerateSeriesRecordCursorFactory extends Abstract
         this.stepPosition = argPositions.size() > 2 ? argPositions.getQuick(2) : 0;
     }
 
+    /**
+     * The series is the only column, and it follows the direction of the step, see {@link #getScanDirection()}.
+     */
+    @Override
+    public int getOrderedColumnIndex() {
+        return 0;
+    }
+
+    /**
+     * The direction of a constant integral step. A bind-variable step is only known at runtime, so the order cannot be
+     * guaranteed at plan time, and reading it off the unbound function would yield a misleading direction.
+     */
+    @Override
+    public int getScanDirection() {
+        if (!stepFunc.isConstant()) {
+            return SCAN_DIRECTION_OTHER;
+        }
+        final long step = stepFunc.getLong(null);
+        return step > 0 ? SCAN_DIRECTION_FORWARD : step < 0 ? SCAN_DIRECTION_BACKWARD : SCAN_DIRECTION_OTHER;
+    }
+
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return true;

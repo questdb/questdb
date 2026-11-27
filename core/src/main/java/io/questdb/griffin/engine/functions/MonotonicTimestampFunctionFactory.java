@@ -81,20 +81,12 @@ public interface MonotonicTimestampFunctionFactory {
     }
 
     /**
-     * The expression past the outermost calls whose built function is their timestamp argument itself, see
-     * {@link #isIdentity}.
+     * Whether the function built for the call is its timestamp argument itself, see {@link #isIdentity} and
+     * {@link FunctionExpression#isOrderIdentity()}.
      */
-    static BoundExpression skipIdentities(BoundExpression expression, ConstantArguments arguments) throws SqlException {
-        MonotonicTimestampFunctionFactory factory;
-        while ((factory = of(expression)) != null) {
-            final FunctionExpression call = (FunctionExpression) expression;
-            final int index = factory.getTimestampArgumentIndex(call, arguments);
-            if (index < 0 || !factory.isIdentity(call, arguments)) {
-                break;
-            }
-            expression = call.argumentAt(index);
-        }
-        return expression;
+    static boolean isIdentityCall(FunctionExpression call, ConstantArguments arguments) throws SqlException {
+        final MonotonicTimestampFunctionFactory factory = of(call);
+        return factory != null && factory.getTimestampArgumentIndex(call, arguments) >= 0 && factory.isIdentity(call, arguments);
     }
 
     /**
