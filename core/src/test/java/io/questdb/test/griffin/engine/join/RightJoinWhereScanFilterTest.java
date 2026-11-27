@@ -629,6 +629,7 @@ public class RightJoinWhereScanFilterTest extends AbstractCairoTest {
             // NULL sorts first among INT values
             assertQuery("SELECT t0.c, t2.k " + X_JOINS + where + " ORDER BY t2.k, t0.c LIMIT 2")
                     .noLeakCheck()
+                    .expectSize()
                     .withPlanContaining("Interval forward scan on: t0")
                     .returns("c\tk\nnull\t0\n1\t0\n");
             assertQuery("SELECT t0.c, t2.k " + X_JOINS + where + " ORDER BY t2.k, t0.c LIMIT -2")

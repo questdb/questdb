@@ -52,7 +52,10 @@ import java.util.regex.Pattern;
  */
 public class HorizonJoinShapeCoverageTest {
     private static final int CORPUS_SIZE = 2_000;
-    private static final Pattern ON_CLAUSE = Pattern.compile(" ON \\([^)]*\\)");
+    private static final String HORIZON_JOIN = " HORIZON JOIN s p";
+    // The ON clause of the HORIZON JOIN only: a WINDOW JOIN sub-query on its left-hand side, see
+    // FuzzSource.rowIdJoinSide(), has an ON clause of its own before it.
+    private static final Pattern ON_CLAUSE = Pattern.compile("(?<=" + HORIZON_JOIN + ") ON \\([^)]*\\)");
     private static final String SINGLE_KEY = " ON (t.sym = p.sym)";
 
     @Test
@@ -76,7 +79,7 @@ public class HorizonJoinShapeCoverageTest {
     @Test
     public void testCorpusCoversEveryKeyForm() {
         final String corpus = corpus();
-        assertCorpusContains(corpus, "the single key", SINGLE_KEY);
+        assertCorpusContains(corpus, "the single key", HORIZON_JOIN + SINGLE_KEY);
         assertCorpusContains(corpus, "the key with its sides swapped", " ON (t.sym = p.sym AND p.sym = t.sym)");
         assertCorpusContains(corpus, "an upper case master column", " ON (t.sym = p.sym AND t.SYM = p.sym)");
         assertCorpusContains(corpus, "an upper case slave column", " ON (t.sym = p.sym AND t.sym = p.SYM)");
@@ -135,7 +138,7 @@ public class HorizonJoinShapeCoverageTest {
         return corpus.toString();
     }
 
-    // The ON clause of the query, or null for a non-keyed join.
+    // The ON clause of the HORIZON JOIN, or null for a non-keyed join.
     private static String onClause(String sql) {
         final Matcher matcher = ON_CLAUSE.matcher(sql);
         return matcher.find() ? matcher.group() : null;

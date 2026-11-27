@@ -11965,6 +11965,7 @@ public class JoinTest extends AbstractCairoTest {
                 final String trailingFalse = trailingJoin.formatted(isFalse, "RIGHT");
                 assertQuery("SELECT * FROM (" + trailingFalse + ") ORDER BY c3k LIMIT 1")
                         .noLeakCheck()
+                        .expectSize()
                         .fullFatJoins(isFullFat)
                         .returns("""
                                 k\tid\tck\tc2k\tc3k

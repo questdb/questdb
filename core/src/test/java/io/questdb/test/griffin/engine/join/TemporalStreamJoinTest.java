@@ -421,13 +421,17 @@ public class TemporalStreamJoinTest extends AbstractCairoTest {
             final String sql = "SELECT l.ts, b.s, b.dynamic_symbol, b.v, b.n FROM l " + join
                     + " JOIN (" + sub + ") b ON b.s = l.s AND b.s = l.v";
             final String expected = TestUtils.printSqlToString(engine, context, sql.replace("FROM r ", "FROM r_hash "), new StringSink());
-            // The repeated key implies a master-side s = v filter, so even the RA oracle has unknown size.
+            // The repeated key matches only left rows whose s and v are equal. The join keeps both key pairs
+            // and every left row, so no filter runs on l and the size is known.
+            final String keys = "condition: b.s=l.v and b.s=l.s";
             final String oracle = sql.replace("FROM r ", "FROM r_hash ");
             assertQuery(oracle).withEngine(engine).withContext(context).noLeakCheck()
-                    .timestamp("ts").expectSize(false).noRandomAccess().returns(expected);
+                    .timestamp("ts").expectSize().noRandomAccess().withPlanContaining(keys).withPlanNotContaining("Filter")
+                    .returns(expected);
             assertQuery(sql).withEngine(engine).withContext(context).noLeakCheck()
-                    .timestamp("ts").expectSize(false).noRandomAccess().columnType(1, ColumnType.SYMBOL).columnType(2, ColumnType.SYMBOL)
-                    .withPlanContaining("Materialize", "Stream Group By", lightJoinPlan(true), "Filter").returns(expected);
+                    .timestamp("ts").expectSize().noRandomAccess().columnType(1, ColumnType.SYMBOL).columnType(2, ColumnType.SYMBOL)
+                    .withPlanContaining("Materialize", "Stream Group By", lightJoinPlan(true), keys)
+                    .withPlanNotContaining("Filter").returns(expected);
         });
     }
 

@@ -293,6 +293,7 @@ public class JoinScanLimitTest extends AbstractCairoTest {
             // an ORDER BY takes no LIMIT advice, whatever the joins
             assertQuery(INNER + " ORDER BY t.id DESC LIMIT 2")
                     .noLeakCheck()
+                    .expectSize()
                     .returns(HEADER + "8\t12\n7\t10\n");
         });
     }
