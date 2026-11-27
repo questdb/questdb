@@ -37,6 +37,7 @@ import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.security.ReadOnlySecurityContext;
+import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursor;
@@ -903,6 +904,55 @@ public class UpdateTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000000Z\t1\t[[1.0,2.0],[3.0,4.0]]
                             1970-01-01T00:00:01.000000Z\t2\t[[2.0,3.0],[4.0,5.0]]
                             1970-01-01T00:00:02.000000Z\t3\t[]
+                            """);
+        });
+    }
+
+    @Test
+    public void testUpdateBindNullArrayOnWalTable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE tab AS (
+                        SELECT timestamp_sequence(0, 1_000_000) ts, x::INT x, ARRAY[[1.0, 2.0], [3.0, 4.0]] y
+                        FROM long_sequence(3)
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            final BindVariableService bindVariableService = sqlExecutionContext.getBindVariableService();
+            try (DirectArray array = new DirectArray()) {
+                array.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, 2));
+                array.setDimLen(0, 1);
+                array.setDimLen(1, 1);
+                array.applyShape();
+                array.startMemoryA().putDouble(5);
+
+                bindVariableService.clear();
+                bindVariableService.setArray(0, array);
+                bindVariableService.setArray(0, null);
+                update("UPDATE tab SET y = $1 WHERE x = 1");
+
+                bindVariableService.clear();
+                bindVariableService.define(0, ColumnType.encodeArrayType(ColumnType.DOUBLE, 2), 0);
+                bindVariableService.setStr(0, null);
+                update("UPDATE tab SET y = $1 WHERE x = 2");
+
+                bindVariableService.clear();
+                bindVariableService.setArray(0, array);
+                update("UPDATE tab SET y = $1 WHERE x = 3");
+            }
+            execute("INSERT INTO tab VALUES ('1970-01-01T00:00:03.000000Z', 4, ARRAY[[6.0]])");
+            drainWalQueue();
+
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("tab")));
+            assertQuery("tab")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tx\ty
+                            1970-01-01T00:00:00.000000Z\t1\tnull
+                            1970-01-01T00:00:01.000000Z\t2\tnull
+                            1970-01-01T00:00:02.000000Z\t3\t[[5.0]]
+                            1970-01-01T00:00:03.000000Z\t4\t[[6.0]]
                             """);
         });
     }

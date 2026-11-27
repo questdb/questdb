@@ -114,7 +114,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private final ObjList<StateResumeAction> resumeActions = new ObjList<>();
     private final StringSink selectCacheKeySink = new StringSink();
     private final SqlExecutionOwner sqlExecutionOwner = new SqlExecutionOwner();
-    private final long statementTimeout;
     private byte apiVersion = DEFAULT_API_VERSION;
     private long clientWaitAccumNanos;
     // -1 when not parked; doubles as the isParked flag.
@@ -178,7 +177,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         resumeActions.extendAndSet(QUERY_INSERT_CONFIRMATION, (response, _) -> onResumeInsertConfirmation(response));
         resumeActions.extendAndSet(QUERY_UPDATE_CONFIRMATION, (response, _) -> onResumeUpdateConfirmation(response));
         this.nanosecondClock = nanosecondClock;
-        this.statementTimeout = httpConnectionContext.getRequestHeader().getStatementTimeout();
         this.keepAliveHeader = keepAliveHeader;
     }
 
@@ -356,7 +354,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     }
 
     public long getStatementTimeout() {
-        return statementTimeout;
+        return httpConnectionContext.getRequestHeader().getStatementTimeout();
     }
 
     public LogRecord info() {

@@ -73,10 +73,10 @@ public class DoubleMatrixMultiplyFunctionFactory implements FunctionFactory {
         private final DirectArray arrayOut;
         private final Function leftArg;
         private final int leftArgPos;
+        private final DerivedArrayView leftDerived = new DerivedArrayView();
         private final Function rightArg;
         private final int rightArgPos;
-        private DerivedArrayView leftDerived;
-        private DerivedArrayView rightDerived;
+        private final DerivedArrayView rightDerived = new DerivedArrayView();
 
         public Func(
                 CairoConfiguration configuration,
@@ -112,15 +112,19 @@ public class DoubleMatrixMultiplyFunctionFactory implements FunctionFactory {
                 arrayOut.ofNull();
                 return arrayOut;
             }
-            if (leftDerived != null) {
+            if (left.getDimCount() == 1) {
                 leftDerived.of(left);
                 leftDerived.prependDimensions(1);
                 left = leftDerived;
+            } else if (left.getDimCount() != 2) {
+                throw CairoException.nonCritical().position(leftArgPos).put("left array is not one or two-dimensional");
             }
-            if (rightDerived != null) {
+            if (right.getDimCount() == 1) {
                 rightDerived.of(right);
                 rightDerived.appendDimensions(1);
                 right = rightDerived;
+            } else if (right.getDimCount() != 2) {
+                throw CairoException.nonCritical().position(rightArgPos).put("right array is not one or two-dimensional");
             }
             int commonDimLen = left.getDimLen(1);
             if (right.getDimLen(0) != commonDimLen) {
@@ -177,25 +181,10 @@ public class DoubleMatrixMultiplyFunctionFactory implements FunctionFactory {
 
             // left/right argument may be a bind var, i.e. have weak dimensionality,
             // so that the number of dimensions is only available at init() time
-            final int dimsLeft = ColumnType.decodeArrayDimensionality(leftArg.getType());
-            final int dimsRight = ColumnType.decodeArrayDimensionality(rightArg.getType());
-            if (dimsLeft == 1) {
-                if (leftDerived == null) {
-                    leftDerived = new DerivedArrayView();
-                }
-            } else if (dimsLeft == 2) {
-                leftDerived = null;
-            } else {
+            if (ColumnType.decodeKnownArrayDimensionality(leftArg.getType()) > 2) {
                 throw SqlException.position(leftArgPos).put("left array is not one or two-dimensional");
             }
-
-            if (dimsRight == 1) {
-                if (rightDerived == null) {
-                    rightDerived = new DerivedArrayView();
-                }
-            } else if (dimsRight == 2) {
-                rightDerived = null;
-            } else {
+            if (ColumnType.decodeKnownArrayDimensionality(rightArg.getType()) > 2) {
                 throw SqlException.position(rightArgPos).put("right array is not one or two-dimensional");
             }
         }

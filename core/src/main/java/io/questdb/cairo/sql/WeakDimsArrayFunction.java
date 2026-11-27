@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.sql;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.griffin.SqlException;
 
@@ -52,6 +53,23 @@ public abstract class WeakDimsArrayFunction extends ArrayFunction {
     @Override
     public int getType() {
         return assignedType != ColumnType.UNDEFINED ? assignedType : type;
+    }
+
+    /**
+     * Returns the type of the array this row yields: the type derived in init(), or, when the arguments'
+     * dimensionality was unknown there, the type of an array with the given dimensionality.
+     */
+    protected int rowType(int dims) {
+        if (ColumnType.decodeKnownArrayDimensionality(type) > 0) {
+            return type;
+        }
+        final int rowType = ColumnType.encodeArrayType(ColumnType.decodeArrayElementType(type), dims);
+        if (assignedType != ColumnType.UNDEFINED && assignedType != rowType) {
+            throw CairoException.nonCritical().position(position)
+                    .put("inconvertible types: ").put(ColumnType.nameOf(rowType))
+                    .put(" -> ").put(ColumnType.nameOf(assignedType));
+        }
+        return rowType;
     }
 
     /**

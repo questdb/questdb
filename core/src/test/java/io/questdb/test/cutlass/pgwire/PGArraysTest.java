@@ -185,6 +185,25 @@ public class PGArraysTest extends BasePGTest {
     }
 
     @Test
+    public void testArrayBindFunctionsWithNullArray() throws Exception {
+        assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
+            try (PreparedStatement stmt = connection.prepareStatement(
+                    "SELECT array_position(?, 1.0) p, insertion_point(?, 1.0) i, matmul(?, ARRAY[[1.0], [2.0]]) m, l2price(1.0, ?, ARRAY[1.0, 2.0]) l, ? + ARRAY[1.0, 2.0] s"
+            )) {
+                for (int i = 0; i < 2; i++) {
+                    for (int p = 1; p <= 5; p++) {
+                        stmt.setArray(p, null);
+                    }
+                    sink.clear();
+                    try (ResultSet rs = stmt.executeQuery()) {
+                        assertResultSet("p[INTEGER],i[INTEGER],m[ARRAY],l[DOUBLE],s[ARRAY]\nnull,null,null,null,null\n", sink, rs);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testArrayBindNullPercentiles() throws Exception {
         // a NULL percentile list fails like a NULL percentile does, rather than yielding {}
         assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
@@ -490,6 +509,81 @@ public class PGArraysTest extends BasePGTest {
                                     al[ARRAY],i[INTEGER],ts[TIMESTAMP]
                                     {1.0,2.0,3.0,4.0,5.0},0,1970-01-01 00:00:00.0
                                     {11.0,12.0,13.0,14.0,15.0},1,1970-01-01 00:00:00.001
+                                    """,
+                            sink,
+                            rs
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testArrayUpdateFromSubqueryChecksDimensionality() throws Exception {
+        assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
+            execute("DROP TABLE IF EXISTS t");
+            execute("CREATE TABLE t (ts TIMESTAMP, x INT, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO t VALUES ('2024-01-01T00:00:00.000000Z', 1, ARRAY[1.0, 2.0])");
+            try (PreparedStatement stmt = connection.prepareStatement(
+                    "UPDATE t SET arr = s.a + ARRAY[1.0, 2.0] FROM (SELECT ? a FROM long_sequence(1)) s WHERE x = 1"
+            )) {
+                stmt.setArray(1, connection.createArrayOf("float8", new Double[][]{{1d, 2d}, {3d, 4d}}));
+                try {
+                    stmt.executeUpdate();
+                    fail();
+                } catch (SQLException e) {
+                    TestUtils.assertContains(e.getMessage(), "inconvertible types: DOUBLE[][] -> DOUBLE[]");
+                }
+                stmt.setArray(1, connection.createArrayOf("float8", new Double[]{3d, 4d}));
+                stmt.executeUpdate();
+            }
+            try (PreparedStatement stmt = connection.prepareStatement("SELECT x, arr FROM t")) {
+                sink.clear();
+                try (ResultSet rs = stmt.executeQuery()) {
+                    assertResultSet("""
+                                    x[INTEGER],arr[ARRAY]
+                                    1,{4.0,6.0}
+                                    """,
+                            sink,
+                            rs
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testArrayUpdateWithNullOnWalTable() throws Exception {
+        assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
+            execute("DROP TABLE IF EXISTS t");
+            execute("CREATE TABLE t (ts TIMESTAMP, x INT, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2024-01-01T00:00:00.000000Z', 1, ARRAY[1.0]),
+                        ('2024-01-01T00:00:01.000000Z', 2, ARRAY[2.0]),
+                        ('2024-01-01T00:00:02.000000Z', 3, ARRAY[3.0])
+                    """);
+            try (PreparedStatement stmt = connection.prepareStatement("UPDATE t SET arr = ? WHERE x = ?")) {
+                stmt.setNull(1, Types.ARRAY);
+                stmt.setInt(2, 1);
+                stmt.executeUpdate();
+                stmt.setArray(1, connection.createArrayOf("float8", new Double[]{7d, 8d}));
+                stmt.setInt(2, 2);
+                stmt.executeUpdate();
+                stmt.setArray(1, null);
+                stmt.setInt(2, 3);
+                stmt.executeUpdate();
+            }
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("t")));
+            try (PreparedStatement stmt = connection.prepareStatement("SELECT x, arr FROM t ORDER BY x")) {
+                sink.clear();
+                try (ResultSet rs = stmt.executeQuery()) {
+                    assertResultSet("""
+                                    x[INTEGER],arr[ARRAY]
+                                    1,null
+                                    2,{7.0,8.0}
+                                    3,null
                                     """,
                             sink,
                             rs

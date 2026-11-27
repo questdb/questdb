@@ -4901,12 +4901,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         throw SqlException.$(modelPosition, "array cast to lower dimensionality is not supported [column=")
                                                 .put(castFromMetadata.getColumnName(i)).put(']');
                                     }
-                                    if (fromDims == -1) {
-                                        // must be a bind variable, i.e. weak dimensionality case
-                                        castFunctions.add(new CastDoubleArrayToDoubleArrayFunctionFactory.WeakDimsFunc(ArrayColumn.newInstance(i, fromType), toType, modelPosition));
-                                    } else {
-                                        castFunctions.add(new CastDoubleArrayToDoubleArrayFunctionFactory.Func(ArrayColumn.newInstance(i, fromType), toType, toDims - fromDims));
-                                    }
+                                    assert fromDims != -1 : "getUnionCastType() rejects arrays of unknown dimensionality";
+                                    castFunctions.add(new CastDoubleArrayToDoubleArrayFunctionFactory.Func(ArrayColumn.newInstance(i, fromType), toType, toDims - fromDims));
                                 }
                                 break;
                             case DOUBLE:

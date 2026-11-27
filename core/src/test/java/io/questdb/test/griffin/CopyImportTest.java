@@ -788,6 +788,29 @@ public class CopyImportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelCopyNonExistingFileReleasesTableName() throws Exception {
+        CopyRunnable insert = () -> runAndFetchCopyID(
+                "COPY t FROM 'does-not-exist.csv' WITH HEADER true TIMESTAMP 'ts' FORMAT 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' PARTITION BY DAY",
+                sqlExecutionContext
+        );
+        CopyRunnable assertion = () -> {
+            assertQuery("select status from " + configuration.getSystemTableNamePrefix() + "text_import_log limit -1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("status\nfailed\n");
+            execute("CREATE TABLE t (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('2024-01-01T00:00:00.000000Z', 1)");
+            drainWalQueue();
+            assertQuery("t")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\tx\n2024-01-01T00:00:00.000000Z\t1\n");
+        };
+        testCopy(insert, assertion);
+    }
+
+    @Test
     public void testParallelCopyRequiresWithBeforeOptions() throws Exception {
         assertMemoryLeak(() -> {
             try {
