@@ -54,7 +54,9 @@ public class CoveringIndexAddedColumnSealTest extends AbstractCairoTest {
                     """);
             drainWalQueue();
             execute("ALTER TABLE t ADD COLUMN var_top VARCHAR");
-            execute("ALTER TABLE t ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (var_top)");
+            // VARCHAR returns from its aux read, so only a fixed-size column reaches the data-file read
+            execute("ALTER TABLE t ADD COLUMN d DOUBLE");
+            execute("ALTER TABLE t ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (var_top, d)");
             drainWalQueue();
 
             final TableToken token = engine.verifyTableName("t");
@@ -82,10 +84,10 @@ public class CoveringIndexAddedColumnSealTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("suspended\nfalse\n");
-            assertQuery("SELECT ts, sym, v, var_top FROM t WHERE sym = 'b'")
+            assertQuery("SELECT ts, sym, v, var_top, d FROM t WHERE sym = 'b'")
                     .noLeakCheck()
                     .timestamp("ts")
-                    .returns("ts\tsym\tv\tvar_top\n2022-02-25T10:00:00.000000Z\tb\t2\t\n");
+                    .returns("ts\tsym\tv\tvar_top\td\n2022-02-25T10:00:00.000000Z\tb\t2\t\tnull\n");
         });
     }
 }

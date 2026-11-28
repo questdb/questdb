@@ -156,23 +156,13 @@ public class ColumnWithoutRowsInPartitionTest extends AbstractCairoTest {
 
     @Test
     public void testMergeAppendIntoPartitionThatPredatesCoveredColumn() throws Exception {
-        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
-        assertMemoryLeak(() -> {
-            createTableWithTwoDays();
-            final TableToken token = engine.verifyTableName("t");
-            addCoveredColumn();
-            Assert.assertEquals("precondition: the older partition must not have the covered column", -1, columnTop(token, "var_top"));
+        testAppendToPartitionThatPredatesCoveredColumn(true);
+    }
 
-            execute("INSERT INTO t VALUES ('2022-02-25T12:00:00.000000Z', 'b', 4, 'x')");
-            drainWalQueue();
-
-            assertNotSuspended();
-            assertCoveredRows("""
-                    ts\tvar_top
-                    2022-02-25T10:00:00.000000Z\t
-                    2022-02-25T12:00:00.000000Z\tx
-                    """);
-        });
+    @Test
+    public void testO3AppendToPartitionThatPredatesCoveredColumn() throws Exception {
+        // the O3 seal must map the covered column whose only row in the partition is the last one
+        testAppendToPartitionThatPredatesCoveredColumn(false);
     }
 
     @Test
@@ -383,6 +373,26 @@ public class ColumnWithoutRowsInPartitionTest extends AbstractCairoTest {
                     ('2022-02-25T10:00:00.000000Z', 'b', 2),
                     ('2022-02-26T01:00:00.000000Z', 'a', 3)
                 """);
+    }
+
+    private void testAppendToPartitionThatPredatesCoveredColumn(boolean isMergeAppend) throws Exception {
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, String.valueOf(isMergeAppend));
+        assertMemoryLeak(() -> {
+            createTableWithTwoDays();
+            final TableToken token = engine.verifyTableName("t");
+            addCoveredColumn();
+            Assert.assertEquals("precondition: the older partition must not have the covered column", -1, columnTop(token, "var_top"));
+
+            execute("INSERT INTO t VALUES ('2022-02-25T12:00:00.000000Z', 'b', 4, 'x')");
+            drainWalQueue();
+
+            assertNotSuspended();
+            assertCoveredRows("""
+                    ts\tvar_top
+                    2022-02-25T10:00:00.000000Z\t
+                    2022-02-25T12:00:00.000000Z\tx
+                    """);
+        });
     }
 
     private void testDropIndexFailsWhenLinkFails(String columnName, boolean isFilePresent, boolean isRowAdded) throws Exception {
