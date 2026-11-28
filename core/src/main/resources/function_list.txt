@@ -74,6 +74,7 @@ io.questdb.griffin.engine.functions.eq.EqLongCursorFunctionFactory
 io.questdb.griffin.engine.functions.eq.EqCharCharFunctionFactory
 io.questdb.griffin.engine.functions.eq.EqIntStrCFunctionFactory
 io.questdb.griffin.engine.functions.eq.EqTimestampFunctionFactory
+io.questdb.griffin.engine.functions.eq.EqTimestampKeyFunctionFactory
 io.questdb.griffin.engine.functions.eq.EqDateFunctionFactory
 io.questdb.griffin.engine.functions.eq.EqBooleanFunctionFactory
 io.questdb.griffin.engine.functions.eq.EqBooleanCharFunctionFactory

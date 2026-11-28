@@ -4027,6 +4027,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         for (int i = 0, n = listColumnFilterA.getColumnCount(); i < n; i++) {
             intHashSet.add(listColumnFilterA.getColumnIndexFactored(i));
         }
+        // The map stores a key column in its key only, while the join reads the slave timestamp from the
+        // map value, so a key on the slave timestamp would leave the join without it.
+        if (intHashSet.contains(slaveMetadata.getTimestampIndex())) {
+            throw SqlException.$(joinPosition, "ASOF/LT JOIN cannot use designated timestamp as a join key");
+        }
         // ASOF and LT joins keep both key pairs of a.x = b.k AND a.k = b.k, so one slave column
         // can occupy several key positions. The map key stores every position, but the join
         // record exposes each slave key column once, as a prefix of the map key columns.

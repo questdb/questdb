@@ -64,6 +64,7 @@ import io.questdb.griffin.engine.functions.catalogue.ShowTransactionIsolationLev
 import io.questdb.griffin.engine.functions.constants.CharConstant;
 import io.questdb.griffin.engine.functions.date.TimestampFloorFromOffsetUtcFunctionFactory;
 import io.questdb.griffin.engine.functions.date.ToUTCTimestampFunctionFactory;
+import io.questdb.griffin.engine.functions.eq.EqTimestampKeyFunctionFactory;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.griffin.engine.join.NullRecordFactory;
 import io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory;
@@ -2159,21 +2160,42 @@ public class SqlOptimiser implements Mutable {
         // A WHERE conjunct that drops the unmatched master rows of an ASOF or LT join leaves the rows of
         // an INNER join, so an implied equality between two columns of one master table may filter that
         // table, as the keys of an INNER join do. The table must not be a slave itself, no master-nulling
-        // join may run between it and the join, and the filter must keep the rows that the keys match.
+        // join may run between it and the join, and the filter must keep the rows that the keys match:
+        // a = b does for two columns of one type, see isFilterEqualToKeyMatch(), and a TIMESTAMP and a
+        // TIMESTAMP_NS column get a filter that compares them as their keys do, see
+        // makeTimestampKeyEquality().
         final boolean isNullRejectedMasterKey = (joinType == IQueryModel.JOIN_ASOF || joinType == IQueryModel.JOIN_LT)
                 && ai == bi
                 && ai < contextSlaveIndex
                 && nullRejectedJoinIndexes.contains(contextSlaveIndex)
                 && joinBarriers.excludes(parent.getJoinModels().getQuick(ai).getJoinType())
                 && !hasMasterNullingJoinBetween(parent, ai, contextSlaveIndex)
-                && isFilterEqualToKeyMatch(parent.getJoinModels().getQuick(ai), an, bn);
+                && (isFilterEqualToKeyMatch(parent.getJoinModels().getQuick(ai), an, bn)
+                || isTimestampPrecisionPair(parent.getJoinModels().getQuick(ai), an, bn));
+        // The same WHERE conjunct lets an implied equality between columns of two master tables key the
+        // INNER or CROSS join of the later table, as the keys of an INNER join do. That key compares the
+        // columns as the keys of the ASOF or LT join do, whatever their types. Unless an INNER join key
+        // enforces the equality already, see below, the ASOF or LT join then keeps one key pair.
+        final boolean isNullRejectedMasterJoinKey = (joinType == IQueryModel.JOIN_ASOF || joinType == IQueryModel.JOIN_LT)
+                && ai != bi
+                && nullRejectedJoinIndexes.contains(contextSlaveIndex)
+                && joinBarriers.excludes(parent.getJoinModels().getQuick(maxMasterIndex).getJoinType())
+                && !isInnerJoinKey(parent, ai, an, bi, bn, contextSlaveIndex);
+        // The later table joins before the ASOF or LT join, as its join type is no barrier, and
+        // collectNullRejectedJoins() collects no join of a level that holds a master-nulling join.
+        assert !isNullRejectedMasterJoinKey
+                || (maxMasterIndex < contextSlaveIndex && !hasMasterNullingJoinBetween(parent, Math.min(ai, bi), contextSlaveIndex));
         // An outer join that got an implied key because later conjuncts drop the rows it NULL-extends
         // matches like an INNER join, see isNullExtensionRejected(). The equalities that a merge into its
         // context implies hold only because of that, so they follow the INNER join rules, which check
         // the joins they would key.
         final boolean isInnerContext = joinBarriers.excludes(joinType)
                 || (isEmittedClause && nullRejectedKeyedOuterJoins.contains(contextSlaveIndex));
-        if (!isEmittedClause && joinBarriers.contains(joinType) && !isRightJoinMasterKey && !isNullRejectedMasterKey) {
+        if (!isEmittedClause
+                && joinBarriers.contains(joinType)
+                && !isRightJoinMasterKey
+                && !isNullRejectedMasterKey
+                && !isNullRejectedMasterJoinKey) {
             final boolean isSlaveOnly = ai == bi && ai == contextSlaveIndex;
             final boolean isSlavePreserved = joinType != IQueryModel.JOIN_LEFT_OUTER
                     && joinType != IQueryModel.JOIN_ASOF
@@ -2231,8 +2253,10 @@ public class SqlOptimiser implements Mutable {
             // (same table)
             // the join context keeps ao and bo as keys, and the filter push-down rewrites
             // its nodes in place, so the filter gets its own copies
-            ExpressionNode node = makeOperation("=", ExpressionNode.deepClone(expressionNodePool, ao), ExpressionNode.deepClone(expressionNodePool, bo));
             final IQueryModel keyedModel = parent.getJoinModels().getQuick(ai);
+            final ExpressionNode node = isNullRejectedMasterKey && isTimestampPrecisionPair(keyedModel, an, bn)
+                    ? makeTimestampKeyEquality(ao, bo)
+                    : makeOperation("=", ExpressionNode.deepClone(expressionNodePool, ao), ExpressionNode.deepClone(expressionNodePool, bo));
             if (ai < contextSlaveIndex && isInnerContext) {
                 // The equality holds for the rows that the INNER join of the context matches. Place it
                 // like an ON conjunct of that join: at the table, unless a master-nulling join executes
@@ -9442,6 +9466,15 @@ public class SqlOptimiser implements Mutable {
         return node != null && node.type == LITERAL && matchesColumnName(node.token, timestampColumn);
     }
 
+    // Returns true when one of the two columns of the model is a TIMESTAMP and the other a TIMESTAMP_NS.
+    // The = filter of such columns fails on a TIMESTAMP outside the TIMESTAMP_NS range, which their join
+    // keys compare without failing, see makeTimestampKeyEquality().
+    private boolean isTimestampPrecisionPair(IQueryModel model, CharSequence aName, CharSequence bName) {
+        final int aType = getQueryColumnType(model, getModelColumn(model, aName));
+        final int bType = getQueryColumnType(model, getModelColumn(model, bName));
+        return ColumnType.isTimestamp(aType) && ColumnType.isTimestamp(bType) && aType != bType;
+    }
+
     /**
      * Checks if the given predicate references the model's timestamp column or offset alias.
      */
@@ -9596,6 +9629,17 @@ public class SqlOptimiser implements Mutable {
         node.paramCount = 2;
         node.lhs = lhs;
         node.rhs = rhs;
+        return node;
+    }
+
+    // Makes the filter that keeps the rows whose TIMESTAMP and TIMESTAMP_NS key columns ao and bo match as
+    // join keys, see EqTimestampKeyFunctionFactory. The join context keeps ao and bo as keys, and the
+    // filter push-down rewrites its nodes in place, so the filter gets its own copies.
+    private ExpressionNode makeTimestampKeyEquality(ExpressionNode ao, ExpressionNode bo) {
+        final ExpressionNode node = expressionNodePool.next().of(FUNCTION, EqTimestampKeyFunctionFactory.NAME, 0, ao.position);
+        node.paramCount = 2;
+        node.lhs = ExpressionNode.deepClone(expressionNodePool, ao);
+        node.rhs = ExpressionNode.deepClone(expressionNodePool, bo);
         return node;
     }
 

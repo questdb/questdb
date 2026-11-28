@@ -217,3 +217,19 @@ SELECT mc.rn mr, s3.rn sr FROM mc JOIN y ON y.rn = mc.rn LT JOIN s3 ON s3.t = mc
 4	6
 5	8
 6	NULL
+
+# ASOF JOIN after a CROSS JOIN, with a WHERE clause that drops the unmatched rows
+query III rowsort
+SELECT mc.rn mr, y.rn yr, s3.rn sr FROM mc CROSS JOIN y ASOF JOIN s3 ON s3.t = mc.ts AND s3.t = y.n WHERE s3.l > 0
+----
+1	1	1
+2	2	2
+5	5	9
+
+# LT JOIN after a CROSS JOIN, with a WHERE clause that drops the unmatched rows
+query III rowsort
+SELECT mc.rn mr, y.rn yr, s3.rn sr FROM mc CROSS JOIN y LT JOIN s3 ON s3.t = mc.ts AND s3.t = y.n WHERE s3.l > 0
+----
+1	1	1
+2	2	2
+5	5	8
