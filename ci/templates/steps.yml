@@ -275,8 +275,9 @@ steps:
       # goes into it. A PR run reads the entries of its own earlier builds and of its target
       # branch, and writes only to its own scope; an entry never changes once saved. A PR that
       # changes Rust neither reads nor writes the cache: its legs compile the library
-      # instrumented for coverage (qdbr-coverage). .cargo/config.toml is named on its own in
-      # case the pattern skips dot directories.
+      # instrumented for coverage (qdbr-coverage). The pattern matches dot directories;
+      # .cargo/config.toml is also named on its own, so that the compiler flags stay in the
+      # key if that ever changes.
       - task: Cache@2
         displayName: "Cache Rust library"
         continueOnError: true
