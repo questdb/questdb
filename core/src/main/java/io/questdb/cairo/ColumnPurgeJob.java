@@ -49,6 +49,7 @@ import io.questdb.std.Os;
 import io.questdb.std.Rows;
 import io.questdb.std.WeakMutableObjectPool;
 import io.questdb.std.datetime.Clock;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.tasks.ColumnPurgeTask;
 import org.jetbrains.annotations.TestOnly;
 
@@ -60,6 +61,10 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
     private static final int COLUMN_TYPE_COLUMN = 5;
     private static final int COLUMN_VERSION_COLUMN = 8;
     private static final Log LOG = LogFactory.getLog(ColumnPurgeJob.class);
+    // The reopen of the log after a log failure waits a delay that starts at 0, then 1 s, and doubles up to 60 s, as
+    // MetricsPersistenceJob waits to reopen its writer
+    private static final long LOG_RETRY_DELAY_MAX_MICROS = Micros.MINUTE_MICROS;
+    private static final long LOG_RETRY_DELAY_START_MICROS = Micros.SECOND_MICROS;
     private static final int MAX_ERRORS = 11;
     private static final int PARTITION_BY_COLUMN = 6;
     private static final int PARTITION_NAME_COLUMN = 10;
@@ -73,6 +78,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
     private static final int TABLE_TRUNCATE_VERSION = 4;
     private static final int UPDATE_TXN_COLUMN = 7;
     private final Clock clock;
+    private final CairoEngine engine;
     private final RingQueue<ColumnPurgeTask> inQueue;
     private final Sequence inSubSequence;
     // the entries of a task that resolveMicrosPartitionTimestamps() located, reused across the tasks of the startup pass
@@ -84,6 +90,13 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
     private final TableToken tableToken;
     private ColumnPurgeOperator columnPurgeOperator;
     private int inErrorCount;
+    // the clock at the reopen of the log writer the job holds
+    private long logReopenTimestamp;
+    // The delay of the reopen after the next log failure. A commit that saves rows through a writer held since its
+    // reopen for at least this delay resets it to 0.
+    private long logRetryDelay;
+    // the clock from which the job reopens the log, after a log failure
+    private long logRetryTimestamp;
     // the writer index of partition_timestamp_raw, or -1 when the log lacks the column
     private int partitionTimestampRawWriterIndex = -1;
     private SqlExecutionContextImpl sqlExecutionContext;
@@ -92,6 +105,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
 
     public ColumnPurgeJob(CairoEngine engine) throws SqlException {
         try {
+            this.engine = engine;
             final CairoConfiguration configuration = engine.getConfiguration();
             this.clock = configuration.getMicrosecondClock();
             this.inQueue = engine.getMessageBus().getColumnPurgeQueue();
@@ -141,6 +155,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                     ColumnPurgeOperator.ScoreboardUseMode.BAU_QUEUE_PROCESSING
             );
             processTableRecords(engine);
+            reopenLogWriterIfDue();
         } catch (Throwable th) {
             close();
             throw th;
@@ -237,16 +252,17 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
     }
 
     private void commit() {
-        try {
-            if (writer != null) {
+        if (writer != null) {
+            try {
+                final boolean isSavingRows = writer.getUncommittedRowCount() > 0;
                 writer.commit();
+                // the log took rows through a writer that the job has held for the retry delay since its reopen
+                if (isSavingRows && logRetryDelay > 0 && clock.getTicks() - logReopenTimestamp >= logRetryDelay) {
+                    logRetryDelay = 0;
+                }
+            } catch (Throwable th) {
+                releaseLogWriter("could not commit", th);
             }
-        } catch (Throwable th) {
-            LOG.error().$("error saving to column version house keeping log, cannot commit")
-                    .$(", releasing writer and stop updating log [table=").$(tableToken)
-                    .$(", error=").$(th)
-                    .I$();
-            writer = Misc.free(writer);
         }
     }
 
@@ -300,6 +316,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
         if (useful) {
             commit();
         }
+        reopenLogWriterIfDue();
         return useful;
     }
 
@@ -436,16 +453,12 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
             }
 
             if (writer != null) {
-                boolean truncated = false;
                 try {
                     writer.truncate();
-                    truncated = true;
                 } catch (Throwable th) {
-                    LOG.error().$("failed to truncate column version purge log table").$(th).$();
+                    releaseLogWriter("could not truncate", th);
                 }
-                if (truncated) {
-                    retryHeldTasks(heldTasks);
-                }
+                retryHeldTasks(heldTasks);
             }
         } catch (SqlException e) {
             LOG.error().$("failed to reload column version purge tasks").$((Throwable) e).$();
@@ -497,6 +510,56 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
             return true;
         }
         return false;
+    }
+
+    // Gives the log writer up after a log failure, and sets the reopen a retry delay ahead. The failure left the writer
+    // in an unknown state, so the job marks it distressed and the pool closes it: the pool keeps a writer whose failed
+    // row was the first since its last commit, see TableWriter.rollback(). Purges go on without the log meanwhile, and
+    // mark nothing.
+    private void releaseLogWriter(CharSequence reason, Throwable cause) {
+        final TableWriter releasedWriter = writer;
+        writer = null;
+        columnPurgeOperator.setPurgeLogWriter(null);
+        logRetryTimestamp = clock.getTicks() + logRetryDelay;
+        logRetryDelay = logRetryDelay == 0 ? LOG_RETRY_DELAY_START_MICROS : Math.min(LOG_RETRY_DELAY_MAX_MICROS, 2 * logRetryDelay);
+        if (releasedWriter != null) {
+            releasedWriter.markDistressed();
+            Misc.free(releasedWriter, cause);
+        }
+        LOG.error().$("column purge log failed, purging without it until it reopens [table=").$(tableToken)
+                .$(", reason=").$(reason)
+                .$(", retryAt=").$ts(logRetryTimestamp)
+                .$(", error=").$(cause)
+                .I$();
+    }
+
+    // Reopens the log once the retry delay after a log failure has passed, and writes every queued task back to it at
+    // fresh timestamps: the rows that the job wrote before may be gone or moved, so their ids name no task any more.
+    private void reopenLogWriterIfDue() {
+        if (writer != null) {
+            return;
+        }
+        final long now = clock.getTicks();
+        if (now < logRetryTimestamp) {
+            return;
+        }
+        try {
+            writer = engine.getWriter(tableToken, TableUtils.SYSTEM_WRITER_LOCK_REASON);
+            logReopenTimestamp = now;
+            columnPurgeOperator.setPurgeLogWriter(writer);
+            partitionTimestampRawWriterIndex = getPartitionTimestampRawIndex(writer.getMetadata());
+            for (ColumnPurgeRetryTask task : retryQueue) {
+                task.timestamp = now;
+                saveToStorage(task);
+                if (writer == null) {
+                    // saveToStorage() gave the writer up
+                    return;
+                }
+            }
+            commit();
+        } catch (Throwable th) {
+            releaseLogWriter("could not reopen", th);
+        }
     }
 
     // Locates the partitions of the task entries that the log keeps in micros only, see
@@ -584,8 +647,9 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
         }
     }
 
-    // Writes the held tasks back to the truncated log at their original timestamps, which keeps them unique and in
-    // order, and queues them for the running job. The tasks the queue takes leave the list.
+    // Queues the held tasks for the running job, and writes them back to the truncated log at their original
+    // timestamps, which keeps them unique and in order. When the log fails, the reopen writes them back. The tasks
+    // leave the list.
     private void retryHeldTasks(ObjList<ColumnPurgeRetryTask> heldTasks) {
         final int taskCount = heldTasks.size();
         if (taskCount == 0) {
@@ -597,24 +661,19 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
             task.retryDelay = retryDelay;
             task.nextRunTimestamp = now + retryDelay;
             saveToStorage(task);
-        }
-        commit();
-        if (writer == null) {
-            // The log lost the rows, so the running job could not mark them completed.
-            LOG.error().$("could not keep column versions a save point holds, VACUUM TABLE removes them once the save points move on [taskCount=")
-                    .$(taskCount).I$();
-            return;
-        }
-        for (int i = 0; i < taskCount; i++) {
-            retryQueue.add(heldTasks.getQuick(i));
+            retryQueue.add(task);
         }
         heldTasks.clear();
+        commit();
         LOG.info().$("column versions a save point holds, retrying [taskCount=").$(taskCount).I$();
     }
 
     private void saveToStorage(ColumnPurgeRetryTask cleanTask) {
         if (writer != null) {
             try {
+                // A task goes after the last row of the log, at a timestamp of its own, which the restart replay groups
+                // its rows by: an out-of-order append would move the rows whose ids the queued tasks keep.
+                cleanTask.timestamp = Math.max(cleanTask.timestamp, writer.getMaxTimestamp() + 1);
                 LongList updatedColumnInfo = cleanTask.getUpdatedColumnInfo();
                 for (int i = 0, n = updatedColumnInfo.size(); i < n; i += ColumnPurgeTask.BLOCK_SIZE) {
                     TableWriter.Row row = writer.newRow(cleanTask.timestamp);
@@ -641,11 +700,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                     );
                 }
             } catch (Throwable th) {
-                LOG.error().$("error saving to column version house keeping log, unable to insert")
-                        .$(", releasing writer and stop updating log [table=").$(tableToken)
-                        .$(", error=").$(th)
-                        .I$();
-                writer = Misc.free(writer);
+                releaseLogWriter("could not save purge task", th);
             }
         }
     }

@@ -44,6 +44,7 @@ import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.griffin.PurgingOperator;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
@@ -152,6 +153,63 @@ public class CompositeGeometryPurgeTest extends AbstractCairoTest {
                     "the STARTUP_ONLY replay deleted the re-created live generation: " + generationZero,
                     generationZero.exists()
             );
+            assertDayResolvesItsPieces(tt);
+        });
+    }
+
+    /**
+     * The purge log fails while a retire note for generation 0 waits in it, and the job writes the note back to the
+     * log. The run that takes the note completes the written-back row and leaves the first row pending, which a
+     * restart replays. The note retired an older incarnation of generation 0, which a later commit re-created: the
+     * replay must leave the live file alone, as the run did.
+     */
+    @Test
+    public void testAReusedGenerationZeroSurvivesTheReplayOfAWrittenBackNote() throws Exception {
+        final AtomicBoolean isLogOpenFailureArmed = new AtomicBoolean();
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (isLogOpenFailureArmed.get()
+                        && Utf8s.containsAscii(name, "column_versions_purge_log")
+                        && Utf8s.endsWithAscii(name, Files.SEPARATOR + "ts.d")
+                        && isLogOpenFailureArmed.compareAndSet(true, false)) {
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        };
+        assertMemoryLeak(() -> {
+            setCurrentMicros(0);
+            final TableToken tt = buildNearFullGenerationZero();
+            final File generationZero = geometryFileOfDay(0);
+            Assert.assertTrue("fixture wrote no generation-0 file", generationZero.exists());
+            final long firstWriterTxn = firstWriterTxnOfGeneration(0);
+            final String logTableName;
+            try (ColumnPurgeJob purgeJob = new ColumnPurgeJob(engine)) {
+                logTableName = purgeJob.getLogTableName();
+                // the log takes the stale note, which the job tries a retry delay later
+                queueRetiredGeometryGeneration(tt, 0, firstWriterTxn - 1);
+                purgeJob.run();
+                // the note of generation 1, which has no file, goes to a new month of the log, whose first partition
+                // file fails to open once: the job reopens the log and writes both notes back
+                setCurrentMicros(45 * Micros.DAY_MICROS);
+                isLogOpenFailureArmed.set(true);
+                queueRetiredGeometryGeneration(tt, 1, firstWriterTxn);
+                purgeJob.run();
+                Assert.assertFalse("the log open did not fail", isLogOpenFailureArmed.get());
+            }
+            Assert.assertTrue("BAU processing deleted the re-created live generation: " + generationZero, generationZero.exists());
+            assertQuery("SELECT count(), count(completed) FROM '" + logTableName + "' WHERE column_name = '"
+                    + TableUtils.PARTITION_GEOMETRY_FILE_NAME + "' AND column_version = 0")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\tcount1\n2\t1\n");
+            engine.releaseInactive();
+            try (ColumnPurgeJob replay = new ColumnPurgeJob(engine)) {
+                Assert.assertEquals(0, replay.getOutstandingPurgeTasks());
+            }
+            Assert.assertTrue("the replay deleted the re-created live generation: " + generationZero, generationZero.exists());
             assertDayResolvesItsPieces(tt);
         });
     }

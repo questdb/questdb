@@ -33,8 +33,10 @@ import io.questdb.cairo.IndexType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.PostingSealPurgeJob;
 import io.questdb.cairo.PostingSealPurgeOperator;
+import io.questdb.cairo.SymbolMapWriter;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TxnScoreboard;
 import io.questdb.cairo.idx.PostingIndexFwdReader;
 import io.questdb.cairo.idx.PostingIndexKeyFileView;
@@ -47,12 +49,15 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.MPSequence;
 import io.questdb.mp.RingQueue;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
@@ -64,7 +69,11 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.io.File;
+import java.util.Arrays;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
@@ -73,6 +82,8 @@ import static org.junit.Assert.*;
 public class PostingSealPurgeTest extends AbstractCairoTest {
 
     private static final int BATCH_KEYS = 4;
+    // the first microsecond of 1970-02-15, in a later month than the first rows of the purge log
+    private static final long FEB_15 = 45 * Micros.DAY_MICROS;
     private int iteration;
 
     @Before
@@ -1197,7 +1208,7 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
         });
     }
 
-    private long countLogRows(String whereClause) throws Exception {
+    static long countLogRows(String whereClause) throws Exception {
         try (SqlCompiler compiler = engine.getSqlCompiler();
              SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1)) {
             ctx.with(
@@ -1215,7 +1226,7 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
         }
     }
 
-    private TableToken createPostingTable(String name) {
+    static TableToken createPostingTable(String name) {
         return createTable(
                 new TableModel(configuration, name, PartitionBy.NONE)
                         .col("c", ColumnType.INT)
@@ -1223,7 +1234,7 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
         );
     }
 
-    private PostingSealPurgeTask newPostingSealPurgeTask(
+    private static PostingSealPurgeTask newPostingSealPurgeTask(
             TableToken tok,
             String columnName,
             long sealTxn,
@@ -1245,7 +1256,7 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
         return task;
     }
 
-    private Path partitionPathFor(TableToken tok) {
+    static Path partitionPathFor(TableToken tok) {
         FilesFacade ff = configuration.getFilesFacade();
         Path p = new Path().of(configuration.getDbRoot()).concat(tok.getDirName());
         TableUtils.setPathForNativePartition(
@@ -1254,7 +1265,7 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
         return p;
     }
 
-    private void publishPurgeTask(
+    static void publishPurgeTask(
             TableToken tok,
             String colName,
             long sealTxn,
@@ -1263,7 +1274,7 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
         publishPurgeTask(tok, colName, COLUMN_NAME_TXN_NONE, sealTxn, toTableTxn);
     }
 
-    private void publishPurgeTask(
+    private static void publishPurgeTask(
             TableToken tok,
             String colName,
             long postingColumnNameTxn,
@@ -1654,7 +1665,7 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
      * production schedules (recordPostingSealPurge fires on the OLD sealTxn once
      * a new head supersedes it).
      */
-    private long writeAndSeal(Path partitionPath, String colName) {
+    static long writeAndSeal(Path partitionPath, String colName) {
         FilesFacade ff = configuration.getFilesFacade();
         int pLen = partitionPath.size();
         long supersededSealTxn;
@@ -1845,6 +1856,841 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
                 actionRuns++;
                 action.run();
             }
+        }
+    }
+
+    @Test
+    public void testCompletedMarkAfterReopenLandsOnOwnRow() throws Exception {
+        // The commit of a batch of A, which a pinned txn holds, and B fails: the batch adds a partition to the log, and
+        // the _txn of the log cannot grow. Each month adds a partition until the _txn record outgrows the file. The job
+        // writes back C, pinned since the start, the A of every month and B, so the written-back rows are not where the
+        // rolled-back rows were. The completion of B lands on its written-back row, and once the pin goes, so do those
+        // of the A entries and C; their first rows stay pending.
+        final TxnExtendFailingFacade faultFf = new TxnExtendFailingFacade(postingSealPurgeLogTableName());
+        assertMemoryLeak(faultFf, () -> {
+            final TableToken tok = createPostingTable("ps_commit");
+            try (
+                    Path partitionPath = partitionPathFor(tok);
+                    PostingSealPurgeJob job = new PostingSealPurgeJob(engine);
+                    TxnScoreboard scoreboard = engine.getTxnScoreboard(tok)
+            ) {
+                final int pLen = partitionPath.size();
+                long failedMonthStart = -1;
+                int failedMonth = -1;
+                assertTrue(scoreboard.acquireTxn(0, 5L, 5L));
+                try {
+                    publishPurgeTask(tok, "c_held", writeAndSeal(partitionPath.trimTo(pLen), "c_held"), 10L);
+                    runPurgeJobAt(job, 10);
+                    for (int month = 1; failedMonthStart < 0; month++) {
+                        assertTrue("the _txn of the log did not grow", month < 300);
+                        final long monthStart = Micros.addMonths(0, month);
+                        publishPurgeTask(tok, "a_" + month, writeAndSeal(partitionPath.trimTo(pLen), "a_" + month), 10L);
+                        publishPurgeTask(tok, "b_" + month, writeAndSeal(partitionPath.trimTo(pLen), "b_" + month), 1L);
+                        faultFf.isArmed.set(true);
+                        runPurgeJobAt(job, monthStart + 10);
+                        if (!faultFf.isArmed.getAndSet(false)) {
+                            failedMonthStart = monthStart;
+                            failedMonth = month;
+                        }
+                    }
+                    assertEquals(0, job.getErrorCountForTesting());
+                    assertTrue(job.isJobAliveForTesting());
+                    assertPostingSealLogRowsSince(failedMonthStart, failedMonth + 2, 1);
+                    assertQuery("SELECT column_name, completed FROM '" + postingSealPurgeLogTableName() + "' WHERE completed != null AND ts >= '"
+                            + Micros.toUSecString(failedMonthStart) + "'")
+                            .noLeakCheck()
+                            .returns("column_name\tcompleted\nb_" + failedMonth + "\t" + Micros.toUSecString(failedMonthStart + 10) + "\n");
+                } finally {
+                    scoreboard.releaseTxn(0, 5L);
+                }
+                runPurgeJobAt(job, failedMonthStart + 20);
+                assertEquals(0, job.getOutstandingPurgeTasks());
+                assertPostingSealLogRowsSince(failedMonthStart, failedMonth + 2, failedMonth + 2);
+                // the first rows of C and of the A entries before the failure
+                assertEquals(failedMonth, countLogRows("completed = null"));
+            }
+        });
+    }
+
+    @Test
+    public void testLogAtMaxTimestampTakesEntriesAtIt() throws Exception {
+        // While the job is without its writer, a row at the last microsecond of year 9999 lands in the log. The entries
+        // after it go to the same microsecond, which keeps them in order, and they are logged and completed.
+        final PurgeLogFaultFacade faultFf = new PurgeLogFaultFacade();
+        assertMemoryLeak(faultFf, () -> {
+            final TableToken tok = createPostingTable("ps_max");
+            final FilesFacade runtimeFf = configuration.getFilesFacade();
+            try (Path partitionPath = partitionPathFor(tok); PostingSealPurgeJob job = new PostingSealPurgeJob(engine)) {
+                final int pLen = partitionPath.size();
+                logPurgeInJanuary(job, tok, partitionPath);
+                failPostingSealLogTwice(job, faultFf, tok, partitionPath, FEB_15);
+                execute("INSERT INTO '" + postingSealPurgeLogTableName() + "' (ts, table_name, completed) VALUES ("
+                        + (Micros.YEAR_10000 - 1) + "::TIMESTAMP, 'max', '1970-02-15T00:00:00.000000Z')");
+                for (int i = 1; i <= 2; i++) {
+                    final String col = "c_" + i;
+                    final long sealTxn = writeAndSeal(partitionPath.trimTo(pLen), col);
+                    publishPurgeTask(tok, col, sealTxn, 1L);
+                    runPurgeJobAt(job, FEB_15 + i * Micros.SECOND_MICROS);
+                    assertTrue(job.isJobAliveForTesting());
+                    assertFalse(runtimeFf.exists(PostingIndexUtils.valueFileName(partitionPath.trimTo(pLen), col, COLUMN_NAME_TXN_NONE, sealTxn)));
+                }
+                assertEquals(0, job.getErrorCountForTesting());
+                assertQuery("SELECT table_name, column_name, ts, completed FROM '" + postingSealPurgeLogTableName() + "' WHERE ts > '1970-02'")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .returns("table_name\tcolumn_name\tts\tcompleted\n"
+                                + "max\t\t9999-12-31T23:59:59.999999Z\t1970-02-15T00:00:00.000000Z\n"
+                                + tok.getDirName() + "\tc_1\t9999-12-31T23:59:59.999999Z\t1970-02-15T00:00:01.000000Z\n"
+                                + tok.getDirName() + "\tc_2\t9999-12-31T23:59:59.999999Z\t1970-02-15T00:00:02.000000Z\n");
+            }
+        });
+    }
+
+    @Test
+    public void testLogBackoffFollowsScheduleUnderPersistentFault() throws Exception {
+        assertLogBackoffUnderPersistentFault(false);
+    }
+
+    @Test
+    public void testLogBackoffFollowsScheduleUnderPersistentFaultWithPinnedEntry() throws Exception {
+        assertLogBackoffUnderPersistentFault(true);
+    }
+
+    @Test
+    public void testLogDroppedDuringOutage() throws Exception {
+        assertLogUnusableDuringOutage("DROP TABLE '" + postingSealPurgeLogTableName() + "'", false);
+    }
+
+    @Test
+    public void testLogFailureNeverThrottlesDrain() throws Exception {
+        // Every write into February fails, and each run comes exactly when the next reopen is due, so 11 runs in a
+        // row fail, as many as arm the error throttle. Log failures do not count as errors: the run 1 s after them
+        // still drains and purges, and no run is throttled.
+        final PurgeLogFaultFacade faultFf = new PurgeLogFaultFacade();
+        assertMemoryLeak(faultFf, () -> {
+            final TableToken tok = createPostingTable("ps_throttle");
+            final FilesFacade runtimeFf = configuration.getFilesFacade();
+            final LogCapture capture = new LogCapture();
+            try (Path partitionPath = partitionPathFor(tok); PostingSealPurgeJob job = new PostingSealPurgeJob(engine)) {
+                final int pLen = partitionPath.size();
+                logPurgeInJanuary(job, tok, partitionPath);
+                faultFf.failMonth("1970-02");
+                capture.start();
+                // the due times of the failures: 0, 1, 3, 7, 15, 31, 63, 123, 183, 243 and 303 s after the first
+                final long[] runSeconds = {0, 1, 3, 7, 15, 31, 63, 123, 183, 243, 303, 304};
+                int failureCount = 0;
+                for (int i = 0; i < runSeconds.length; i++) {
+                    final String col = "c_" + i;
+                    final long sealTxn = writeAndSeal(partitionPath.trimTo(pLen), col);
+                    publishPurgeTask(tok, col, sealTxn, 1L);
+                    runPurgeJobAt(job, FEB_15 + runSeconds[i] * Micros.SECOND_MICROS);
+                    failureCount += i == 0 ? 2 : i < runSeconds.length - 1 ? 1 : 0;
+                    assertEquals("run " + i, failureCount, faultFf.getFailureCount());
+                    assertEquals("run " + i, 0, job.getErrorCountForTesting());
+                    assertFalse("run " + i, runtimeFf.exists(PostingIndexUtils.valueFileName(partitionPath.trimTo(pLen), col, COLUMN_NAME_TXN_NONE, sealTxn)));
+                }
+                capture.drain();
+                capture.assertNotLogged("throttling retries");
+            } finally {
+                capture.stop();
+            }
+        });
+    }
+
+    @Test
+    public void testLogIdleReopenKeepsDelay() throws Exception {
+        // After two failures the delay is 2 s. Runs with nothing to purge reopen the log when it is due, and the
+        // write-back has no rows: nothing fails, and the delay stays. The next entry fails at 2 s, and the reopen after
+        // it comes 2 s later, its failure 4 s after that.
+        final PurgeLogFaultFacade faultFf = new PurgeLogFaultFacade();
+        assertMemoryLeak(faultFf, () -> {
+            final TableToken tok = createPostingTable("ps_idle");
+            try (Path partitionPath = partitionPathFor(tok); PostingSealPurgeJob job = new PostingSealPurgeJob(engine)) {
+                final int pLen = partitionPath.size();
+                logPurgeInJanuary(job, tok, partitionPath);
+                failPostingSealLogTwice(job, faultFf, tok, partitionPath, FEB_15);
+                faultFf.failMonth("1970-02");
+                for (long now = FEB_15 + Micros.SECOND_MICROS; now <= FEB_15 + 5 * Micros.SECOND_MICROS; now += 500_000) {
+                    runPurgeJobAt(job, now);
+                    assertEquals(2, faultFf.getFailureCount());
+                    assertTrue("the reopen at FEB_15 + 1 s holds the writer", job.isJobAliveForTesting());
+                }
+                final long f3 = FEB_15 + 5_500_000;
+                final long[] runTimes = {f3, f3 + 2 * Micros.SECOND_MICROS - 1, f3 + 2 * Micros.SECOND_MICROS, f3 + 6 * Micros.SECOND_MICROS - 1, f3 + 6 * Micros.SECOND_MICROS};
+                final int[] failureCounts = {3, 3, 4, 4, 5};
+                for (int i = 0; i < runTimes.length; i++) {
+                    final String col = "c_" + i;
+                    publishPurgeTask(tok, col, writeAndSeal(partitionPath.trimTo(pLen), col), 1L);
+                    runPurgeJobAt(job, runTimes[i]);
+                    assertEquals("run " + i, failureCounts[i], faultFf.getFailureCount());
+                    assertFalse("run " + i, job.isJobAliveForTesting());
+                }
+                assertEquals(0, job.getOutstandingPurgeTasks());
+                assertEquals(0, job.getErrorCountForTesting());
+                assertEquals(1, countLogRows("1 = 1"));
+            }
+        });
+    }
+
+    @Test
+    public void testLogReopenAfterRecoveryTruncateFailure() throws Exception {
+        // The recovery of the constructor purges a logged entry, and its TRUNCATE of the log fails as it empties a
+        // symbol map, after it published the empty _txn. The job gives that writer up and opens a new one, which logs
+        // and completes the next entry.
+        final SymbolMapTruncateFailingFacade faultFf = new SymbolMapTruncateFailingFacade();
+        assertMemoryLeak(faultFf, () -> {
+            final TableToken tok = createPostingTable("ps_recover_truncate");
+            final FilesFacade runtimeFf = configuration.getFilesFacade();
+            try (Path partitionPath = partitionPathFor(tok)) {
+                final int pLen = partitionPath.size();
+                final long sealTxnX = writeAndSeal(partitionPath.trimTo(pLen), "c_x");
+                try (PostingSealPurgeJob job = new PostingSealPurgeJob(engine); TxnScoreboard scoreboard = engine.getTxnScoreboard(tok)) {
+                    assertTrue(scoreboard.acquireTxn(0, 5L, 5L));
+                    try {
+                        publishPurgeTask(tok, "c_x", sealTxnX, 10L);
+                        runPurgeJobAt(job, 10);
+                    } finally {
+                        scoreboard.releaseTxn(0, 5L);
+                    }
+                }
+                engine.releaseInactive();
+                faultFf.isArmed.set(true);
+                try (PostingSealPurgeJob job = new PostingSealPurgeJob(engine)) {
+                    assertFalse("the recovery truncate did not fail", faultFf.isArmed.get());
+                    assertFalse(runtimeFf.exists(PostingIndexUtils.valueFileName(partitionPath.trimTo(pLen), "c_x", COLUMN_NAME_TXN_NONE, sealTxnX)));
+                    assertTrue(job.isJobAliveForTesting());
+                    final long sealTxnY = writeAndSeal(partitionPath.trimTo(pLen), "c_y");
+                    publishPurgeTask(tok, "c_y", sealTxnY, 1L);
+                    runPurgeJobAt(job, 20);
+                    assertFalse(runtimeFf.exists(PostingIndexUtils.valueFileName(partitionPath.trimTo(pLen), "c_y", COLUMN_NAME_TXN_NONE, sealTxnY)));
+                    assertEquals(0, job.getErrorCountForTesting());
+                    assertQuery("SELECT column_name, ts, completed FROM '" + postingSealPurgeLogTableName() + "'")
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .expectSize()
+                            .returns("""
+                                    column_name\tts\tcompleted
+                                    c_y\t1970-01-01T00:00:00.000020Z\t1970-01-01T00:00:00.000020Z
+                                    """);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testLogReopenWhileWriterBusy() throws Exception {
+        // The test takes the log writer while the job is without it, so the reopens fail as busy, on the retry
+        // schedule. The job drains and purges meanwhile, with no errors. Once the test gives the writer back, the next
+        // due reopen logs the entry that a pinned txn holds.
+        final PurgeLogFaultFacade faultFf = new PurgeLogFaultFacade();
+        assertMemoryLeak(faultFf, () -> {
+            final TableToken tok = createPostingTable("ps_busy");
+            final FilesFacade runtimeFf = configuration.getFilesFacade();
+            try (
+                    Path partitionPath = partitionPathFor(tok);
+                    PostingSealPurgeJob job = new PostingSealPurgeJob(engine);
+                    TxnScoreboard scoreboard = engine.getTxnScoreboard(tok)
+            ) {
+                final int pLen = partitionPath.size();
+                logPurgeInJanuary(job, tok, partitionPath);
+                failPostingSealLogTwice(job, faultFf, tok, partitionPath, FEB_15);
+                assertTrue(scoreboard.acquireTxn(0, 5L, 5L));
+                try {
+                    try (TableWriter ignored = getWriter(postingSealPurgeLogTableName())) {
+                        // the reopens at FEB_15 + 1 s and 3 s fail as busy: the next is due at FEB_15 + 7 s
+                        final long[] runTimes = {FEB_15 + Micros.SECOND_MICROS, FEB_15 + 2 * Micros.SECOND_MICROS, FEB_15 + 3 * Micros.SECOND_MICROS};
+                        for (int i = 0; i < runTimes.length; i++) {
+                            final String col = "c_" + i;
+                            final long sealTxn = writeAndSeal(partitionPath.trimTo(pLen), col);
+                            publishPurgeTask(tok, col, sealTxn, 1L);
+                            runPurgeJobAt(job, runTimes[i]);
+                            assertFalse(runtimeFf.exists(PostingIndexUtils.valueFileName(partitionPath.trimTo(pLen), col, COLUMN_NAME_TXN_NONE, sealTxn)));
+                            assertFalse(job.isJobAliveForTesting());
+                            assertEquals(0, job.getErrorCountForTesting());
+                        }
+                    }
+                    publishPurgeTask(tok, "c_held", writeAndSeal(partitionPath.trimTo(pLen), "c_held"), 10L);
+                    runPurgeJobAt(job, FEB_15 + 7 * Micros.SECOND_MICROS - 1);
+                    assertFalse(job.isJobAliveForTesting());
+                    runPurgeJobAt(job, FEB_15 + 7 * Micros.SECOND_MICROS);
+                    assertTrue(job.isJobAliveForTesting());
+                    assertEquals(1, job.getOutstandingPurgeTasks());
+                    assertQuery("SELECT column_name, ts, completed FROM '" + postingSealPurgeLogTableName() + "' WHERE ts > '1970-02'")
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .returns("""
+                                    column_name\tts\tcompleted
+                                    c_held\t1970-02-15T00:00:07.000000Z\t
+                                    """);
+                } finally {
+                    scoreboard.releaseTxn(0, 5L);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testLogRowsFromDirectPersistDuringOutage() throws Exception {
+        // While the job is without its writer, a TableWriter persists a ready task straight into the log, at a clock
+        // 100 us ahead of the one the job runs at next. The job stamps its rows at that row's timestamp, so the log
+        // takes them in order, and the completion of its entry lands on its own row. The direct row stays pending
+        // until a restart replays it.
+        final PurgeLogFaultFacade faultFf = new PurgeLogFaultFacade();
+        assertMemoryLeak(faultFf, () -> {
+            final TableToken tok = createPostingTable("ps_direct");
+            final FilesFacade runtimeFf = configuration.getFilesFacade();
+            try (Path partitionPath = partitionPathFor(tok)) {
+                final int pLen = partitionPath.size();
+                final long sealTxnDirect = writeAndSeal(partitionPath.trimTo(pLen), "c_direct");
+                try (PostingSealPurgeJob job = new PostingSealPurgeJob(engine)) {
+                    logPurgeInJanuary(job, tok, partitionPath);
+                    failPostingSealLogTwice(job, faultFf, tok, partitionPath, FEB_15);
+                    final long t = FEB_15 + Micros.SECOND_MICROS;
+                    setCurrentMicros(t + 100);
+                    final ObjList<PostingSealPurgeTask> tasks = new ObjList<>();
+                    tasks.add(newPostingSealPurgeTask(tok, "c_direct", sealTxnDirect, 1L));
+                    assertTrue(PostingSealPurgeJob.persistReadyTasksDirect(engine, tasks, 0, tasks.size(), 1L));
+                    final String logPartitions = listPostingSealLogPartitions();
+                    final long sealTxnJob = writeAndSeal(partitionPath.trimTo(pLen), "c_job");
+                    publishPurgeTask(tok, "c_job", sealTxnJob, 1L);
+                    runPurgeJobAt(job, t);
+                    assertTrue(job.isJobAliveForTesting());
+                    assertEquals(logPartitions, listPostingSealLogPartitions());
+                    assertFalse(runtimeFf.exists(PostingIndexUtils.valueFileName(partitionPath.trimTo(pLen), "c_job", COLUMN_NAME_TXN_NONE, sealTxnJob)));
+                    assertTrue(runtimeFf.exists(PostingIndexUtils.valueFileName(partitionPath.trimTo(pLen), "c_direct", COLUMN_NAME_TXN_NONE, sealTxnDirect)));
+                    assertQuery("SELECT column_name, ts, completed FROM '" + postingSealPurgeLogTableName() + "'")
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .expectSize()
+                            .returns("""
+                                    column_name\tts\tcompleted
+                                    col_jan\t1970-01-01T00:00:00.000010Z\t1970-01-01T00:00:00.000010Z
+                                    c_direct\t1970-02-15T00:00:01.000100Z\t
+                                    c_job\t1970-02-15T00:00:01.000100Z\t1970-02-15T00:00:01.000000Z
+                                    """);
+                }
+                engine.releaseInactive();
+                try (PostingSealPurgeJob job = new PostingSealPurgeJob(engine)) {
+                    assertEquals(0, job.getOutstandingPurgeTasks());
+                    assertEquals(0, countLogRows("1 = 1"));
+                }
+                assertFalse(runtimeFf.exists(PostingIndexUtils.valueFileName(partitionPath.trimTo(pLen), "c_direct", COLUMN_NAME_TXN_NONE, sealTxnDirect)));
+            }
+        });
+    }
+
+    @Test
+    public void testLogWithoutCompletedColumnDuringOutage() throws Exception {
+        assertLogUnusableDuringOutage("ALTER TABLE '" + postingSealPurgeLogTableName() + "' DROP COLUMN completed", true);
+    }
+
+    @Test
+    public void testPinnedTaskReplayedAfterLogFailureAndRestart() throws Exception {
+        // The append of X, which a pinned txn holds, fails once. The job writes X back in the same run, so a restart
+        // with the pin gone replays X and purges its superseded .pv.
+        final PurgeLogFaultFacade faultFf = new PurgeLogFaultFacade();
+        assertMemoryLeak(faultFf, () -> {
+            final TableToken tok = createPostingTable("ps_restart");
+            final FilesFacade runtimeFf = configuration.getFilesFacade();
+            try (Path partitionPath = partitionPathFor(tok)) {
+                final int pLen = partitionPath.size();
+                final long sealTxn = writeAndSeal(partitionPath.trimTo(pLen), "x1");
+                try (TxnScoreboard scoreboard = engine.getTxnScoreboard(tok)) {
+                    assertTrue(scoreboard.acquireTxn(0, 5L, 5L));
+                    try (PostingSealPurgeJob job = new PostingSealPurgeJob(engine)) {
+                        faultFf.failNextOpen("ts.d");
+                        publishPurgeTask(tok, "x1", sealTxn, 10L);
+                        runPurgeJobAt(job, 10);
+                        assertEquals(1, faultFf.getFailureCount());
+                        assertEquals(1, job.getOutstandingPurgeTasks());
+                        assertEquals(1, countLogRows("column_name = 'x1' AND completed = null"));
+                    } finally {
+                        scoreboard.releaseTxn(0, 5L);
+                    }
+                }
+                engine.releaseInactive();
+                try (PostingSealPurgeJob job = new PostingSealPurgeJob(engine)) {
+                    assertEquals(0, job.getOutstandingPurgeTasks());
+                    assertEquals(0, countLogRows("1 = 1"));
+                }
+                assertFalse(runtimeFf.exists(PostingIndexUtils.valueFileName(partitionPath.trimTo(pLen), "x1", COLUMN_NAME_TXN_NONE, sealTxn)));
+            }
+        });
+    }
+
+    @Test
+    public void testQueueDrainsAfterLogFailure() throws Exception {
+        // The append of c1 fails once, as the log opens its first partition. The job reopens the log in the same run,
+        // writes c1 back and completes it, and it keeps draining its queue: c2 is logged, purged and completed.
+        final PurgeLogFaultFacade faultFf = new PurgeLogFaultFacade();
+        assertMemoryLeak(faultFf, () -> {
+            final TableToken tok = createPostingTable("ps_drain");
+            final FilesFacade runtimeFf = configuration.getFilesFacade();
+            try (Path partitionPath = partitionPathFor(tok); PostingSealPurgeJob job = new PostingSealPurgeJob(engine)) {
+                final int pLen = partitionPath.size();
+                final long sealTxn1 = writeAndSeal(partitionPath.trimTo(pLen), "c1");
+                final long sealTxn2 = writeAndSeal(partitionPath.trimTo(pLen), "c2");
+                faultFf.failNextOpen("ts.d");
+                publishPurgeTask(tok, "c1", sealTxn1, 1L);
+                runPurgeJobAt(job, 10);
+                assertEquals(1, faultFf.getFailureCount());
+                assertFalse(runtimeFf.exists(PostingIndexUtils.valueFileName(partitionPath.trimTo(pLen), "c1", COLUMN_NAME_TXN_NONE, sealTxn1)));
+                publishPurgeTask(tok, "c2", sealTxn2, 1L);
+                runPurgeJobAt(job, 20);
+                assertFalse(runtimeFf.exists(PostingIndexUtils.valueFileName(partitionPath.trimTo(pLen), "c2", COLUMN_NAME_TXN_NONE, sealTxn2)));
+                assertEquals(0, job.getErrorCountForTesting());
+                assertEquals(0, job.getOutstandingPurgeTasks());
+                assertQuery("SELECT column_name, ts, completed FROM '" + postingSealPurgeLogTableName() + "'")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                column_name\tts\tcompleted
+                                c1\t1970-01-01T00:00:00.000010Z\t1970-01-01T00:00:00.000010Z
+                                c2\t1970-01-01T00:00:00.000020Z\t1970-01-01T00:00:00.000020Z
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testRowsStampedAfterLogMaxTimestamp() throws Exception {
+        // The clock steps back 50 us between two batches. The job stamps the second batch at the last timestamp of the
+        // log, which keeps the rows in order: no out-of-order commit moves the rows whose ids the job keeps, and each
+        // completion lands on its own row.
+        assertMemoryLeak(() -> {
+            final TableToken tok = createPostingTable("ps_stamp");
+            try (
+                    Path partitionPath = partitionPathFor(tok);
+                    PostingSealPurgeJob job = new PostingSealPurgeJob(engine);
+                    TxnScoreboard scoreboard = engine.getTxnScoreboard(tok)
+            ) {
+                final int pLen = partitionPath.size();
+                final long t = Micros.SECOND_MICROS;
+                final String logPartitions;
+                assertTrue(scoreboard.acquireTxn(0, 5L, 5L));
+                try {
+                    publishPurgeTask(tok, "p1", writeAndSeal(partitionPath.trimTo(pLen), "p1"), 10L);
+                    publishPurgeTask(tok, "u1", writeAndSeal(partitionPath.trimTo(pLen), "u1"), 1L);
+                    runPurgeJobAt(job, t);
+                    logPartitions = listPostingSealLogPartitions();
+                    publishPurgeTask(tok, "p2", writeAndSeal(partitionPath.trimTo(pLen), "p2"), 10L);
+                    publishPurgeTask(tok, "u2", writeAndSeal(partitionPath.trimTo(pLen), "u2"), 1L);
+                    runPurgeJobAt(job, t - 50);
+                    assertEquals(logPartitions, listPostingSealLogPartitions());
+                } finally {
+                    scoreboard.releaseTxn(0, 5L);
+                }
+                runPurgeJobAt(job, t + 100);
+                assertEquals(0, job.getOutstandingPurgeTasks());
+                assertEquals(logPartitions, listPostingSealLogPartitions());
+                assertQuery("SELECT column_name, ts, completed FROM '" + postingSealPurgeLogTableName() + "'")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                column_name\tts\tcompleted
+                                p1\t1970-01-01T00:00:01.000000Z\t1970-01-01T00:00:01.000100Z
+                                u1\t1970-01-01T00:00:01.000000Z\t1970-01-01T00:00:01.000000Z
+                                p2\t1970-01-01T00:00:01.000000Z\t1970-01-01T00:00:01.000100Z
+                                u2\t1970-01-01T00:00:01.000000Z\t1970-01-01T00:00:00.999950Z
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testWrittenBackEntryReplayKeepsReusedSealTxn() throws Exception {
+        // A reopen writes X back, and the run that purges X completes the written-back row: the first row of X stays
+        // pending. A later index of the same column reuses the sealTxn of X as its live head, so the restart that
+        // replays the first row must keep the live .pv.
+        final PurgeLogFaultFacade faultFf = new PurgeLogFaultFacade();
+        assertMemoryLeak(faultFf, () -> {
+            final TableToken tok = createPostingTable("ps_reuse");
+            final FilesFacade runtimeFf = configuration.getFilesFacade();
+            try (Path partitionPath = partitionPathFor(tok)) {
+                final int pLen = partitionPath.size();
+                final long sealTxn = writeAndSeal(partitionPath.trimTo(pLen), "x1");
+                try (PostingSealPurgeJob job = new PostingSealPurgeJob(engine); TxnScoreboard scoreboard = engine.getTxnScoreboard(tok)) {
+                    assertTrue(scoreboard.acquireTxn(0, 5L, 5L));
+                    try {
+                        publishPurgeTask(tok, "x1", sealTxn, 10L);
+                        runPurgeJobAt(job, 10);
+                        // an entry in a new month, whose first log partition file fails to open once
+                        faultFf.failNextOpen("ts.d");
+                        publishPurgeTask(tok, "c_feb", writeAndSeal(partitionPath.trimTo(pLen), "c_feb"), 1L);
+                        runPurgeJobAt(job, FEB_15);
+                        assertEquals(1, faultFf.getFailureCount());
+                    } finally {
+                        scoreboard.releaseTxn(0, 5L);
+                    }
+                    runPurgeJobAt(job, FEB_15 + 10);
+                    assertEquals(0, job.getOutstandingPurgeTasks());
+                    assertFalse(runtimeFf.exists(PostingIndexUtils.valueFileName(partitionPath.trimTo(pLen), "x1", COLUMN_NAME_TXN_NONE, sealTxn)));
+                    assertQuery("SELECT column_name, ts, completed FROM '" + postingSealPurgeLogTableName() + "' WHERE column_name = 'x1'")
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .returns("""
+                                    column_name\tts\tcompleted
+                                    x1\t1970-01-01T00:00:00.000010Z\t
+                                    x1\t1970-02-15T00:00:00.000000Z\t1970-02-15T00:00:00.000010Z
+                                    """);
+                }
+                // a new index of x1, whose live head is the sealTxn of X
+                removeIndexFiles(partitionPath.trimTo(pLen), "x1");
+                final long liveHead = writeAndSealOnce(partitionPath.trimTo(pLen), "x1");
+                assertEquals(sealTxn, liveHead);
+                engine.releaseInactive();
+                try (PostingSealPurgeJob job = new PostingSealPurgeJob(engine)) {
+                    assertEquals(0, job.getOutstandingPurgeTasks());
+                }
+                assertTrue(runtimeFf.exists(PostingIndexUtils.valueFileName(partitionPath.trimTo(pLen), "x1", COLUMN_NAME_TXN_NONE, sealTxn)));
+            }
+        });
+    }
+
+    private void assertLogBackoffUnderPersistentFault(boolean isPinnedEntryQueued) throws Exception {
+        // Every write into February fails, as on a disk that fills up when the log starts the month, while a reopen and
+        // a commit without rows succeed: they touch January only. 40 runs 500 ms apart each queue an entry. The
+        // failures follow the retry schedule: two in the first run, at the append and at the reopen in the same run,
+        // then 1 s, 2 s, 4 s and 8 s apart. Each entry is purged in its run, without the log and without errors.
+        final PurgeLogFaultFacade faultFf = new PurgeLogFaultFacade();
+        assertMemoryLeak(faultFf, () -> {
+            final TableToken tok = createPostingTable("ps_schedule");
+            final FilesFacade runtimeFf = configuration.getFilesFacade();
+            try (
+                    Path partitionPath = partitionPathFor(tok);
+                    PostingSealPurgeJob job = new PostingSealPurgeJob(engine);
+                    TxnScoreboard scoreboard = engine.getTxnScoreboard(tok)
+            ) {
+                final int pLen = partitionPath.size();
+                logPurgeInJanuary(job, tok, partitionPath);
+                assertTrue(scoreboard.acquireTxn(0, 5L, 5L));
+                try {
+                    if (isPinnedEntryQueued) {
+                        publishPurgeTask(tok, "c_pinned", writeAndSeal(partitionPath.trimTo(pLen), "c_pinned"), 10L);
+                        runPurgeJobAt(job, 20);
+                    }
+                    faultFf.failMonth("1970-02");
+                    final LogBackoffModel model = new LogBackoffModel();
+                    final LongList failureTimes = new LongList();
+                    for (int i = 0; i < 40; i++) {
+                        final long now = FEB_15 + i * 500_000L;
+                        final String col = "c_" + i;
+                        final long sealTxn = writeAndSeal(partitionPath.trimTo(pLen), col);
+                        publishPurgeTask(tok, col, sealTxn, 1L);
+                        runPurgeJobAt(job, now);
+                        if (model.isHolding()) {
+                            model.onFailure(now);
+                            failureTimes.add(now - FEB_15);
+                        }
+                        if (model.isReopenDue(now)) {
+                            model.onReopen(now);
+                            model.onFailure(now);
+                            failureTimes.add(now - FEB_15);
+                        }
+                        assertEquals("run " + i, failureTimes.size(), faultFf.getFailureCount());
+                        assertEquals("run " + i, 0, job.getErrorCountForTesting());
+                        assertEquals("run " + i, isPinnedEntryQueued ? 1 : 0, job.getOutstandingPurgeTasks());
+                        assertFalse("run " + i, job.isJobAliveForTesting());
+                        assertFalse("run " + i, runtimeFf.exists(PostingIndexUtils.valueFileName(partitionPath.trimTo(pLen), col, COLUMN_NAME_TXN_NONE, sealTxn)));
+                    }
+                    assertEquals("[0,0,1000000,3000000,7000000,15000000]", failureTimes.toString());
+                } finally {
+                    scoreboard.releaseTxn(0, 5L);
+                }
+                assertQuery("SELECT column_name, ts FROM '" + postingSealPurgeLogTableName() + "'")
+                        .noLeakCheck()
+                        .expectSize()
+                        .timestamp("ts")
+                        .returns("column_name\tts\n"
+                                + "col_jan\t1970-01-01T00:00:00.000010Z\n"
+                                + (isPinnedEntryQueued ? "c_pinned\t1970-01-01T00:00:00.000020Z\n" : ""));
+            }
+        });
+    }
+
+    // Leaves the log unusable while the job is without its writer: each due reopen fails, on the retry schedule, and
+    // frees what it took, while the job drains and purges without the log and without errors
+    private void assertLogUnusableDuringOutage(String sql, boolean isLogKept) throws Exception {
+        final PurgeLogFaultFacade faultFf = new PurgeLogFaultFacade();
+        assertMemoryLeak(faultFf, () -> {
+            final TableToken tok = createPostingTable("ps_unusable");
+            final FilesFacade runtimeFf = configuration.getFilesFacade();
+            final String logTableName = postingSealPurgeLogTableName();
+            final LogCapture capture = new LogCapture();
+            try (Path partitionPath = partitionPathFor(tok); PostingSealPurgeJob job = new PostingSealPurgeJob(engine)) {
+                final int pLen = partitionPath.size();
+                logPurgeInJanuary(job, tok, partitionPath);
+                failPostingSealLogTwice(job, faultFf, tok, partitionPath, FEB_15);
+                execute(sql);
+                capture.start();
+                // the reopens at FEB_15 + 1 s, 3 s and 7 s fail
+                for (int i = 1; i <= 20; i++) {
+                    final String col = "c_" + i;
+                    final long sealTxn = writeAndSeal(partitionPath.trimTo(pLen), col);
+                    publishPurgeTask(tok, col, sealTxn, 1L);
+                    runPurgeJobAt(job, FEB_15 + i * 500_000L);
+                    assertFalse("run " + i, job.isJobAliveForTesting());
+                    assertEquals("run " + i, 0, job.getErrorCountForTesting());
+                    assertEquals("run " + i, 0, job.getOutstandingPurgeTasks());
+                    assertFalse("run " + i, runtimeFf.exists(PostingIndexUtils.valueFileName(partitionPath.trimTo(pLen), col, COLUMN_NAME_TXN_NONE, sealTxn)));
+                    if (isLogKept) {
+                        // the job gave up the writer it took
+                        getWriter(logTableName).close();
+                    }
+                }
+                capture.drain();
+                capture.assertLoggedRE("^(?:(?!reason=could not reopen)[\\s\\S])*(?:reason=could not reopen(?:(?!reason=could not reopen)[\\s\\S])*){3}$");
+                if (isLogKept) {
+                    assertEquals(1, countLogRows("1 = 1"));
+                } else {
+                    assertNull(engine.getTableTokenIfExists(logTableName));
+                }
+            } finally {
+                capture.stop();
+            }
+        });
+    }
+
+    private void assertPostingSealLogRowsSince(long timestamp, long expectedCount, long expectedCompletedCount) throws Exception {
+        assertQuery("SELECT count(), count(completed) FROM '" + postingSealPurgeLogTableName() + "' WHERE ts >= '" + Micros.toUSecString(timestamp) + "'")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("count\tcount1\n" + expectedCount + "\t" + expectedCompletedCount + "\n");
+    }
+
+    // Makes the log fail twice in one run: the append of an entry into February, and the write-back of the reopen in
+    // the same run. The job is without its writer after the run, with a delay of 2 s and the next reopen 1 s ahead. The
+    // log must have a January row, so that the reopen does not touch February.
+    private void failPostingSealLogTwice(PostingSealPurgeJob job, PurgeLogFaultFacade faultFf, TableToken tok, Path partitionPath, long now) {
+        final int failureCount = faultFf.getFailureCount();
+        final int pLen = partitionPath.size();
+        faultFf.failMonth("1970-02");
+        publishPurgeTask(tok, "c_outage", writeAndSeal(partitionPath, "c_outage"), 1L);
+        runPurgeJobAt(job, now);
+        partitionPath.trimTo(pLen);
+        faultFf.failMonth(null);
+        assertEquals(failureCount + 2, faultFf.getFailureCount());
+        assertFalse(job.isJobAliveForTesting());
+        assertEquals(0, job.getErrorCountForTesting());
+    }
+
+    // the partition directories of the posting seal purge log, in name order
+    private static String listPostingSealLogPartitions() {
+        final File dir = new File(configuration.getDbRoot().toString(), engine.verifyTableName(postingSealPurgeLogTableName()).getDirName());
+        final String[] names = dir.list((d, name) -> Character.isDigit(name.charAt(0)));
+        assertNotNull(names);
+        Arrays.sort(names);
+        return String.join(" ", names);
+    }
+
+    // logs the purge of the superseded .pv of col_jan in January, at 10 us, and completes it in the same run
+    private void logPurgeInJanuary(PostingSealPurgeJob job, TableToken tok, Path partitionPath) {
+        final int pLen = partitionPath.size();
+        publishPurgeTask(tok, "col_jan", writeAndSeal(partitionPath, "col_jan"), 1L);
+        partitionPath.trimTo(pLen);
+        runPurgeJobAt(job, 10);
+    }
+
+    static String postingSealPurgeLogTableName() {
+        return configuration.getSystemTableNamePrefix() + "posting_seal_purge_log";
+    }
+
+    // removes the files of the index of colName in the partition
+    private static void removeIndexFiles(Path partitionPath, String colName) {
+        final File dir = new File(partitionPath.toString());
+        final String[] names = dir.list((d, name) -> name.startsWith(colName + "."));
+        assertNotNull(names);
+        for (String name : names) {
+            assertTrue(name, new File(dir, name).delete());
+        }
+    }
+
+    static void runPurgeJobAt(PostingSealPurgeJob job, long now) {
+        setCurrentMicros(now);
+        job.run();
+    }
+
+    // writes data and seals once, returning the live head sealTxn
+    private static long writeAndSealOnce(Path partitionPath, String colName) {
+        final int pLen = partitionPath.size();
+        try (PostingIndexWriter writer = new PostingIndexWriter(configuration, partitionPath, colName, COLUMN_NAME_TXN_NONE)) {
+            for (int i = 0; i < 8; i++) {
+                writer.add(i % BATCH_KEYS, i);
+            }
+            writer.setMaxValue(7);
+            writer.commit();
+            writer.seal();
+        }
+        final long sealTxn = PostingIndexUtils.readSealTxnFromKeyFile(
+                configuration.getFilesFacade(), PostingIndexUtils.keyFileName(partitionPath.trimTo(pLen), colName, COLUMN_NAME_TXN_NONE));
+        partitionPath.trimTo(pLen);
+        return sealTxn;
+    }
+
+    /**
+     * The retry schedule of the purge log, as the jobs keep it: a failure makes the next reopen wait the current delay,
+     * which grows from 0 to 1 s and then doubles, up to 60 s. A commit that saves rows through a writer the job reopened
+     * at least the current delay before resets the delay to 0.
+     */
+    static class LogBackoffModel {
+        private long delay;
+        private long dueAt;
+        private boolean isHolding = true;
+        private long reopenedAt;
+
+        boolean isHolding() {
+            return isHolding;
+        }
+
+        boolean isReopenDue(long now) {
+            return !isHolding && now >= dueAt;
+        }
+
+        void onFailure(long now) {
+            dueAt = now + delay;
+            delay = delay == 0 ? Micros.SECOND_MICROS : Math.min(Micros.MINUTE_MICROS, 2 * delay);
+            isHolding = false;
+        }
+
+        void onReopen(long now) {
+            isHolding = true;
+            reopenedAt = now;
+        }
+
+        void onRowSavingCommit(long now) {
+            if (now - reopenedAt >= delay) {
+                delay = 0;
+            }
+        }
+    }
+
+    /**
+     * Fails file operations of the posting seal purge log as a test arms them, and counts each failure once, when it
+     * fires: the next allocate() of a file in a partition of the log, which extends a column file by a page, as on a
+     * full disk; every open of a file in the partitions of a month, as on a disk that fills up when the log starts the
+     * month; the next open of a file of the log that ends with a suffix.
+     */
+    static class PurgeLogFaultFacade extends TestFilesFacadeImpl {
+        private final AtomicInteger failureCount = new AtomicInteger();
+        private final AtomicReference<String> failingOpenSuffix = new AtomicReference<>();
+        private final AtomicBoolean isAllocateFailureArmed = new AtomicBoolean();
+        private final LongList partitionFds = new LongList();
+        private volatile String failingMonth;
+
+        @Override
+        public boolean allocate(long fd, long size) {
+            if (isAllocateFailureArmed.get() && isPartitionFd(fd) && isAllocateFailureArmed.compareAndSet(true, false)) {
+                failureCount.incrementAndGet();
+                return false;
+            }
+            return super.allocate(fd, size);
+        }
+
+        @Override
+        public boolean close(long fd) {
+            synchronized (partitionFds) {
+                final int index = partitionFds.indexOf(fd);
+                if (index > -1) {
+                    partitionFds.removeIndex(index);
+                }
+            }
+            return super.close(fd);
+        }
+
+        @Override
+        public long openRW(LPSZ name, int opts) {
+            final File file = new File(Utf8s.stringFromUtf8Bytes(name));
+            final String partitionDir = logPartitionDir(file);
+            if (partitionDir != null) {
+                final String month = failingMonth;
+                if (month != null && partitionDir.startsWith(month)) {
+                    failureCount.incrementAndGet();
+                    return -1;
+                }
+                final String suffix = failingOpenSuffix.get();
+                if (suffix != null && file.getName().endsWith(suffix) && failingOpenSuffix.compareAndSet(suffix, null)) {
+                    failureCount.incrementAndGet();
+                    return -1;
+                }
+            }
+            final long fd = super.openRW(name, opts);
+            if (fd > -1 && partitionDir != null) {
+                synchronized (partitionFds) {
+                    partitionFds.add(fd);
+                }
+            }
+            return fd;
+        }
+
+        // fails the next allocate() of a file in a partition of the log
+        void failNextAllocate() {
+            isAllocateFailureArmed.set(true);
+        }
+
+        // fails the next open of a file in a partition of the log whose name ends with suffix
+        void failNextOpen(String suffix) {
+            failingOpenSuffix.set(suffix);
+        }
+
+        // fails every open of a file in the partitions of the log whose names start with month, or none when null
+        void failMonth(String month) {
+            failingMonth = month;
+        }
+
+        int getFailureCount() {
+            return failureCount.get();
+        }
+
+        // the name of the partition directory of the log that holds the file, or null when the file is not in one
+        private static String logPartitionDir(File file) {
+            final File dir = file.getParentFile();
+            if (dir != null && dir.getParentFile() != null
+                    && dir.getParentFile().getName().startsWith(postingSealPurgeLogTableName() + TableUtils.SYSTEM_TABLE_NAME_SUFFIX)
+                    && Character.isDigit(dir.getName().charAt(0))) {
+                return dir.getName();
+            }
+            return null;
+        }
+
+        private boolean isPartitionFd(long fd) {
+            synchronized (partitionFds) {
+                return partitionFds.indexOf(fd) > -1;
+            }
+        }
+    }
+
+    // Fails, once when armed, the remap of the table_name.c symbol map file of the posting seal purge log while
+    // TRUNCATE empties the map, after TRUNCATE published the empty _txn
+    private static class SymbolMapTruncateFailingFacade extends TestFilesFacadeImpl {
+        private final AtomicBoolean isArmed = new AtomicBoolean();
+        private volatile long fd = -1;
+
+        @Override
+        public long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
+            if (fd == this.fd && isArmed.get() && isSymbolMapTruncateCalling() && isArmed.compareAndSet(true, false)) {
+                return FilesFacade.MAP_FAILED;
+            }
+            return super.mremap(fd, addr, previousSize, newSize, offset, mode, memoryTag);
+        }
+
+        @Override
+        public long openRW(LPSZ name, int opts) {
+            final long fd = super.openRW(name, opts);
+            if (Utf8s.containsAscii(name, Files.SEPARATOR + postingSealPurgeLogTableName() + TableUtils.SYSTEM_TABLE_NAME_SUFFIX)
+                    && Utf8s.endsWithAscii(name, Files.SEPARATOR + "table_name.c")) {
+                this.fd = fd;
+            }
+            return fd;
+        }
+
+        // whether SymbolMapWriter.truncate(), which TRUNCATE calls to empty a symbol map, asks for the remap
+        private static boolean isSymbolMapTruncateCalling() {
+            return StackWalker.getInstance().walk(
+                    frames -> frames.anyMatch(frame -> SymbolMapWriter.class.getName().equals(frame.getClassName()) && "truncate".equals(frame.getMethodName()))
+            );
         }
     }
 }

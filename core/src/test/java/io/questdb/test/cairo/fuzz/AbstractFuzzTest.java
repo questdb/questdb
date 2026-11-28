@@ -530,6 +530,11 @@ public class AbstractFuzzTest extends AbstractCairoTest {
         }
     }
 
+    // plants purge log faults, see FuzzRunner.setPurgeLogFaultProbability(), with draws from the seeds of the set-up Rnd
+    protected void setPurgeLogFaultProbability(double purgeLogFaultProb) {
+        fuzzer.setPurgeLogFaultProbability(purgeLogFaultProb, setUpRnd.getSeed0(), setUpRnd.getSeed1());
+    }
+
     /**
      * Draws the parquet O3 dead-bytes rewrite gate for the run: the defaults, low thresholds
      * (ratio 0.1-0.5, max 4-64 KiB) that send most merges to rewrite, or no gate at all. Without
@@ -575,6 +580,8 @@ public class AbstractFuzzTest extends AbstractCairoTest {
     protected void setupWriterJobs() throws SqlException {
         WorkerPoolUtils.setupWriterJobs(sharedWorkerPool, engine);
         fuzzer.setHasPoolColumnPurgeJob(!engine.getConfiguration().disableColumnPurgeJob());
+        // the first write of the PostingSealPurgeJob of the pool opens a partition of its log
+        fuzzer.plantPostingSealPurgeLogFault();
     }
 
     // Joins every job the caller started, including a partially started batch, so a failure mid-run

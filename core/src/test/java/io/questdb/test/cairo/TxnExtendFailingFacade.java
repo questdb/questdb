@@ -27,6 +27,7 @@ package io.questdb.test.cairo;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TxWriter;
 import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -34,7 +35,8 @@ import io.questdb.test.std.TestFilesFacadeImpl;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * Fails, once when armed, the extension of the _txn file of one table by its writer.
+ * Fails, once when armed, the extension of the _txn file of one table by its writer: the disk space allocation,
+ * or the remap of the grown file.
  * <p>
  * The tests size their commits for Linux x86-64. Its 4 KB page holds the _txn file of a new table, and a
  * commit that adds 300 partitions writes a _txn record of about 10 KB: the writer extends its mapping of the
@@ -47,16 +49,25 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class TxnExtendFailingFacade extends TestFilesFacadeImpl {
     private static final long TXN_WRITER_PAGE_SIZE = 4 * 1024;
     public final AtomicBoolean isArmed = new AtomicBoolean();
+    private final boolean isRemapFailure;
     private final String tableDirPrefix;
     private volatile long txnFd = -1;
 
     public TxnExtendFailingFacade(String tableName) {
+        this(tableName, false);
+    }
+
+    /**
+     * @param isRemapFailure fail the remap of the grown file instead of the disk space allocation
+     */
+    public TxnExtendFailingFacade(String tableName, boolean isRemapFailure) {
         this.tableDirPrefix = Files.SEPARATOR + tableName;
+        this.isRemapFailure = isRemapFailure;
     }
 
     @Override
     public boolean allocate(long fd, long size) {
-        if (fd == txnFd && isArmed.compareAndSet(true, false)) {
+        if (!isRemapFailure && fd == txnFd && isArmed.compareAndSet(true, false)) {
             return false;
         }
         return super.allocate(fd, size);
@@ -70,7 +81,15 @@ public class TxnExtendFailingFacade extends TestFilesFacadeImpl {
 
     @Override
     public long length(long fd) {
-        return fd == txnFd && isArmed.get() ? 0 : super.length(fd);
+        return fd == txnFd && isArmed.get() && !isRemapFailure ? 0 : super.length(fd);
+    }
+
+    @Override
+    public long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
+        if (isRemapFailure && fd == txnFd && isArmed.compareAndSet(true, false)) {
+            return FilesFacade.MAP_FAILED;
+        }
+        return super.mremap(fd, addr, previousSize, newSize, offset, mode, memoryTag);
     }
 
     @Override

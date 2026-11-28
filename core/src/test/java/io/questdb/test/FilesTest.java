@@ -47,6 +47,7 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
+import io.questdb.test.cairo.fuzz.FailureFileFacade;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -1634,6 +1635,80 @@ public class FilesTest {
                 Assert.assertTrue(Files.exists(path.$()));
                 Assert.assertTrue(TestUtils.remove(path.$()));
                 Assert.assertFalse(Files.exists(path.$()));
+            }
+        });
+    }
+
+    @Test
+    public void testSeekDataReportsEveryWrittenByte() throws Exception {
+        // On the file systems seekData() trusts, space allocated and never written holds no data, and no byte written
+        // through a shared mapping, written back or not, lies in a hole. Elsewhere it cannot tell.
+        assertMemoryLeak(() -> {
+            final File temp = temporaryFolder.newFile();
+            try (Path path = new Path().of(temp.getAbsolutePath())) {
+                // getFileSystemStatus() writes the name of the file system over the path
+                final long fsMagic = Math.abs((long) Files.getFileSystemStatus(path.$()));
+                path.of(temp.getAbsolutePath());
+                final boolean isTrusted = Os.isLinux() && (fsMagic == 0xEF53 || fsMagic == 0x58465342 || fsMagic == Files.TMPFS_MAGIC);
+                final long len = 1024 * 1024;
+                final long fd = Files.openRW(path.$());
+                Assert.assertTrue(fd > 0);
+                try {
+                    Assert.assertTrue(Files.allocate(fd, len));
+                    if (!isTrusted) {
+                        Assert.assertEquals(-2, Files.seekData(fd, 0));
+                        Assert.assertEquals(-2, Files.seekHole(fd, 0));
+                        return;
+                    }
+                    Assert.assertEquals(-1, Files.seekData(fd, 0));
+                    final long[] written = {640_096, 800_000, len - 1};
+                    final long addr = Files.mmap(fd, len, 0, Files.MAP_RW, MemoryTag.MMAP_DEFAULT);
+                    try {
+                        for (long w : written) {
+                            Unsafe.putByte(addr + w, (byte) 1);
+                        }
+                        for (long w : written) {
+                            final long dataLo = Files.seekData(fd, w - w % Files.PAGE_SIZE);
+                            Assert.assertTrue("data at " + w + " starts at " + dataLo, dataLo >= 0 && dataLo <= w);
+                            Assert.assertEquals(w, Files.seekData(fd, w));
+                            Assert.assertTrue(Files.seekHole(fd, w) > w);
+                        }
+                        // the end of the file is a hole
+                        Assert.assertEquals(len, Files.seekHole(fd, len - 1));
+                        Assert.assertEquals(-1, Files.seekData(fd, len));
+                    } finally {
+                        Files.munmap(addr, len, MemoryTag.MMAP_DEFAULT);
+                    }
+                    // the mapping is gone, the bytes are not written back yet
+                    for (long w : written) {
+                        Assert.assertEquals(w, Files.seekData(fd, w));
+                    }
+                } finally {
+                    Files.close(fd);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSeekDataUnknownToFacadesThatDoNotSay() throws Exception {
+        // FilesFacadeImpl asks the file system where a file holds data. A facade that does not implement the question
+        // cannot tell, whatever the file system knows.
+        assertMemoryLeak(() -> {
+            final File temp = temporaryFolder.newFile();
+            try (Path path = new Path().of(temp.getAbsolutePath())) {
+                final long fd = Files.openRW(path.$());
+                Assert.assertTrue(fd > 0);
+                try {
+                    Assert.assertTrue(Files.allocate(fd, 64 * 1024));
+                    final FilesFacade ff = new FailureFileFacade(FilesFacadeImpl.INSTANCE);
+                    Assert.assertEquals(-2, ff.seekData(fd, 0));
+                    Assert.assertEquals(-2, ff.seekHole(fd, 0));
+                    Assert.assertEquals(Files.seekData(fd, 0), FilesFacadeImpl.INSTANCE.seekData(fd, 0));
+                    Assert.assertEquals(Files.seekHole(fd, 0), FilesFacadeImpl.INSTANCE.seekHole(fd, 0));
+                } finally {
+                    Files.close(fd);
+                }
             }
         });
     }

@@ -66,7 +66,11 @@ import org.junit.Test;
  *       fuzz harness propagates as a test failure;</li>
  *   <li>asserts the WAL and parallel-WAL tables match the single-threaded non-WAL
  *       reference row-for-row AND index-for-index (assertRandomIndexes), so a
- *       posting/covering index returning wrong rows fails immediately.</li>
+ *       posting/covering index returning wrong rows fails immediately;</li>
+ *   <li>plants one-shot faults on the posting seal purge log, which the
+ *       PostingSealPurgeJob of the pool meets in its own writes: it drains and
+ *       purges without the log, reopens it on its retry schedule and writes its
+ *       queue back, while the index reads keep matching.</li>
  * </ul>
  * Reproduce a failure by replacing {@code generateRandom(LOG)} with
  * {@code generateRandom(LOG, s0, s1)} using the {@code random seeds: ...} log line.
@@ -77,6 +81,8 @@ public class PostingIndexO3ConcurrencyFuzzTest extends AbstractFuzzTest {
     public void testCoveringPostingO3NativeSpillFuzz() throws Exception {
         Rnd rnd = generateRandom(LOG);
         forcePostingSpill(rnd);
+        // the PostingSealPurgeJob of the pool meets faults of its log, which it reopens on its retry schedule
+        setPurgeLogFaultProbability(0.2);
         // Native-only (no parquet): exercises O3CopyJob.updateIndex on per-partition
         // O3Basket indexers + the writer-thread covering reseal sweep
         // (sealPostingIndexForPartition: discardForRebuild -> index -> commitDense ->
@@ -116,6 +122,8 @@ public class PostingIndexO3ConcurrencyFuzzTest extends AbstractFuzzTest {
     public void testCoveringPostingParquetO3SpillFuzz() throws Exception {
         Rnd rnd = generateRandom(LOG);
         forcePostingSpill(rnd);
+        // the PostingSealPurgeJob of the pool meets faults of its log, which it reopens on its retry schedule
+        setPurgeLogFaultProbability(0.2);
         // Parquet rewrite: O3PartitionJob.updateParquetIndexes runs on the workers
         // and each calls back into TableWriter.deferParquetPostingSealPurges under
         // parquetSealPurgeLock; several partitions in flight contend on the shared
@@ -169,6 +177,8 @@ public class PostingIndexO3ConcurrencyFuzzTest extends AbstractFuzzTest {
     public void testCoveringPostingSquashSpillFuzz() throws Exception {
         Rnd rnd = generateRandom(LOG);
         forcePostingSpill(rnd);
+        // the PostingSealPurgeJob of the pool meets faults of its log, which it reopens on its retry schedule
+        setPurgeLogFaultProbability(0.2);
         // Maximal split/squash churn: split-min-size=1, max-splits=1 means every O3
         // insert into a partition splits it and the next commit squashes, repeatedly
         // reseal-ing the merged partition's covering index under spill pressure.

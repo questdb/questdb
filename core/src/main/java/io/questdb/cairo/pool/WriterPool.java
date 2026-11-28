@@ -291,10 +291,13 @@ public class WriterPool extends AbstractPool {
                 if (other == null) {
                     if (lockAndNotify(thread, e, tableToken, lockReason)) {
                         return OWNERSHIP_REASON_NONE;
-                    } else {
-                        entries.remove(dirName);
-                        return reinterpretOwnershipReason(e.ownershipReason);
                     }
+                    // Evict the entry while this thread still owns it, and never hand it back. A free entry would let
+                    // another thread's get() open a writer in it, which the eviction would then leave outside the
+                    // pool, holding the table lock. A thread that found the entry before the eviction sees it busy,
+                    // with the reason lockAndNotify() set, and retries or reports the table busy.
+                    evictEntry(e);
+                    return OWNERSHIP_REASON_MISSING;
                 } else {
                     e = other;
                 }
@@ -308,7 +311,7 @@ public class WriterPool extends AbstractPool {
                 } catch (Throwable th) {
                     // The writer is unusable after a close, thrown or not, and closeWriter() has already nulled it.
                     // Leave the entry free and empty, with the reason a completed close sets and the owner a failed
-                    // lockAndNotify() resets: the next get() opens a new writer, the next lock() locks the table, and
+                    // table lock below resets: the next get() opens a new writer, the next lock() locks the table, and
                     // the reaper evicts it.
                     e.ownershipReason = OWNERSHIP_REASON_RELEASED;
                     Unsafe.storeFence();
@@ -318,7 +321,11 @@ public class WriterPool extends AbstractPool {
                 if (lockAndNotify(thread, e, tableToken, lockReason)) {
                     return OWNERSHIP_REASON_NONE;
                 }
-                return reinterpretOwnershipReason(e.ownershipReason);
+                // The entry stays in the pool, free and empty: the next get() opens a writer in it, and the reaper
+                // evicts it. Report the failure from here: once free, the entry may already carry the next holder's
+                // reason.
+                e.owner = UNALLOCATED;
+                return OWNERSHIP_REASON_MISSING;
             }
 
             long owner = e.owner;
@@ -580,7 +587,6 @@ public class WriterPool extends AbstractPool {
                     .$(", msg=").$safe(ex.getFlyweightMessage())
                     .$(", errno=").$(ex.getErrno())
                     .I$();
-            e.ex = ex;
             e.ownershipReason = OWNERSHIP_REASON_WRITER_ERROR;
             e.owner = UNALLOCATED;
             notifyListener(e.owner, tableToken, PoolListener.EV_CREATE_EX);
@@ -620,10 +626,12 @@ public class WriterPool extends AbstractPool {
         }
     }
 
-    // Evicts an orphaned entry whose writer was already freed out of band (TableWriter.destroy()),
-    // where the table dir name is no longer reachable through the nulled e.writer. The entry caches
-    // the map key it was inserted under, so this removes it in O(1), and only when the key still
-    // maps to this exact entry. Rare path - only a dropped WAL table reaches it.
+    // Removes an entry that the calling thread owns and never hands back, so that no other thread can
+    // claim it once it is out of the map. The entry caches the map key it was inserted under, so this
+    // removes it in O(1), even once e.writer has been nulled, and only when the key still maps to this
+    // exact entry. Two rare paths reach it: a lock() that created the entry and could not lock the
+    // table, and an orphaned entry whose writer was already freed out of band (TableWriter.destroy(),
+    // reached only by a dropped WAL table).
     private void evictEntry(Entry e) {
         entries.remove(e.dirName, e);
     }
@@ -677,14 +685,6 @@ public class WriterPool extends AbstractPool {
                     if (e.lockFd != -1L) {
                         throw EntryLockedException.instance(reinterpretOwnershipReason(e.ownershipReason));
                     }
-
-                    if (e.ex != null) {
-                        notifyListener(thread, tableToken, PoolListener.EV_EX_RESEND);
-                        // this writer failed to allocate by this very thread
-                        // ensure consistent response
-                        entries.remove(tableToken.getDirName());
-                        throw e.ex;
-                    }
                 }
                 if (asyncWriterCommand != null) {
                     addCommandToWriterQueue(tableToken, e, asyncWriterCommand, thread, publishedWriterIdSink);
@@ -712,6 +712,8 @@ public class WriterPool extends AbstractPool {
         }
     }
 
+    // Takes the table lock for an entry the calling thread owns. When the lock fails, the entry keeps its owner: the
+    // caller decides whether the entry goes back to the pool or out of it.
     private boolean lockAndNotify(long thread, Entry e, TableToken tableToken, String lockReason) {
         assertLockReasonIsNone(lockReason);
         Path path = Path.getThreadLocal(root).concat(tableToken.getDirName());
@@ -720,7 +722,6 @@ public class WriterPool extends AbstractPool {
             LOG.error().$("could not lock [table=").$(tableToken)
                     .$(", thread=").$(thread).I$();
             e.ownershipReason = OWNERSHIP_REASON_MISSING;
-            e.owner = UNALLOCATED;
             return false;
         }
         LOG.debug().$("locked [table=").$(tableToken).$(", thread=").$(thread).I$();
@@ -868,8 +869,11 @@ public class WriterPool extends AbstractPool {
         while (iterator.hasNext()) {
             Entry e = iterator.next();
             // lastReleaseTime is volatile, which makes
-            // order of conditions important
-            if ((deadline > e.lastReleaseTime && e.owner == UNALLOCATED)) {
+            // order of conditions important.
+            // An entry without a writer holds nothing, a failed open leaves one: the reaper takes it at once, like an
+            // expired entry. It claims the entry first, so it never removes an entry that a thread holds or opens a
+            // writer in.
+            if ((deadline > e.lastReleaseTime || e.writer == null) && e.owner == UNALLOCATED) {
                 // looks like this writer is unallocated and can be released
                 // Lock with negative 3-based owner thread id to indicate it's that next
                 // allocating thread can wait until the entry is released.
@@ -896,10 +900,6 @@ public class WriterPool extends AbstractPool {
                     iterator.remove();
                     removed = true;
                 }
-            } else if (e.ex != null) {
-                LOG.info().$("purging entry for failed to allocate writer").$();
-                iterator.remove();
-                removed = true;
             }
         }
         CairoException.rethrowCleanupFailure(closeFailure);
@@ -916,7 +916,6 @@ public class WriterPool extends AbstractPool {
         // dir name is stable across renames, so it stays valid for the entry's whole life and
         // lets evictEntry() remove the entry in O(1) even once e.writer has been nulled.
         private final String dirName;
-        private CairoException ex = null;
         // time writer was last released
         private volatile long lastReleaseTime;
         private volatile long lockFd = -1;

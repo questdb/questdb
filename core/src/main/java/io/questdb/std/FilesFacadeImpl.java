@@ -635,6 +635,16 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
+    public long seekData(long fd, long offset) {
+        return Files.seekData(fd, offset);
+    }
+
+    @Override
+    public long seekHole(long fd, long offset) {
+        return Files.seekHole(fd, offset);
+    }
+
+    @Override
     public int softLink(LPSZ src, LPSZ softLink) {
         return Files.softLink(src, softLink);
     }

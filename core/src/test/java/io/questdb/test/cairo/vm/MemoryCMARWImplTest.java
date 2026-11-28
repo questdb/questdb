@@ -25,11 +25,14 @@
 package io.questdb.test.cairo.vm;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.vm.MemoryCMARWImpl;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -40,12 +43,16 @@ import org.junit.ClassRule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class MemoryCMARWImplTest {
 
     @ClassRule
     public static TemporaryFolder temp = new TemporaryFolder();
+    private static final long HEADER_SIZE = 64;
+    // non-zero longs, so that a zeroed byte shows
+    private static final long MARK = 0x5EED_0000L;
 
     /**
      * A closed instance must not keep the append bounds of the mapping it no longer owns.
@@ -362,6 +369,46 @@ public class MemoryCMARWImplTest {
         });
     }
 
+    // Owners such as PostingIndexWriter treat a closed memory as the degraded state a failed remap leaves.
+    @Test
+    public void testFailedRemapClosesMemoryByDefault() throws Exception {
+        testFailedRemap(false);
+    }
+
+    // TxWriter reloads what it wrote after a failed commit, so the memory stays as it was.
+    @Test
+    public void testFailedRemapKeepsMappingWhenAsked() throws Exception {
+        testFailedRemap(true);
+    }
+
+    // Files.mremap0() leaves the mapping in place when the remap fails, on every platform, as mremap(2) on Linux.
+    @Test
+    public void testFailedRemapLeavesPreviousMappingInPlace() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
+            final long pageSize = Files.PAGE_SIZE;
+            try (Path path = new Path().of(temp.newFile().getAbsolutePath())) {
+                final long fd = ff.openRW(path.$(), CairoConfiguration.O_NONE);
+                Assert.assertTrue(fd > -1);
+                try {
+                    Assert.assertTrue(ff.allocate(fd, pageSize));
+                    final long addr = ff.mmap(fd, pageSize, 0, Files.MAP_RW, MemoryTag.MMAP_DEFAULT);
+                    Assert.assertNotEquals(FilesFacade.MAP_FAILED, addr);
+                    try {
+                        Unsafe.putLong(addr, 0x5EED_CAFEL);
+                        // no address space holds 2^62 bytes
+                        Assert.assertEquals(FilesFacade.MAP_FAILED, ff.mremap(fd, addr, pageSize, 1L << 62, 0, Files.MAP_RW, MemoryTag.MMAP_DEFAULT));
+                        Assert.assertEquals(0x5EED_CAFEL, Unsafe.getLong(addr));
+                    } finally {
+                        ff.munmap(addr, pageSize, MemoryTag.MMAP_DEFAULT);
+                    }
+                } finally {
+                    ff.close(fd);
+                }
+            }
+        });
+    }
+
     @Test
     public void testReopenAfterCloseRestoresAppendBounds() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
@@ -418,10 +465,204 @@ public class MemoryCMARWImplTest {
         });
     }
 
+    /**
+     * truncateKeepHeader() empties the memory as truncate() does, past a header that keeps its bytes at every
+     * instant: the file shows them when truncate() cuts it, where a process kill can land, and after.
+     */
+    @Test
+    public void testTruncateKeepHeader() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final long pageSize = Files.PAGE_SIZE;
+            final LongList headerAtCut = new LongList();
+            final FilesFacade ff = new TestFilesFacadeImpl() {
+                @Override
+                public boolean truncate(long fd, long size) {
+                    for (long offset = 0; offset < HEADER_SIZE; offset += Long.BYTES) {
+                        headerAtCut.add(readNonNegativeLong(fd, offset));
+                    }
+                    return super.truncate(fd, size);
+                }
+            };
+            try (Path path = new Path().of(temp.newFile().getAbsolutePath())) {
+                final MemoryCMARWImpl mem = new MemoryCMARWImpl();
+                try {
+                    mem.of(ff, path.$(), pageSize, -1, MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE, -1);
+                    appendMarks(mem, 3 * pageSize);
+                    mem.truncateKeepHeader(HEADER_SIZE);
+
+                    Assert.assertEquals("one cut", HEADER_SIZE / Long.BYTES, headerAtCut.size());
+                    for (int i = 0, n = headerAtCut.size(); i < n; i++) {
+                        Assert.assertEquals(MARK + i, headerAtCut.getQuick(i));
+                    }
+                    for (long offset = 0; offset < HEADER_SIZE; offset += Long.BYTES) {
+                        Assert.assertEquals(MARK + offset / Long.BYTES, mem.getLong(offset));
+                    }
+                    for (long offset = HEADER_SIZE; offset < pageSize; offset += Long.BYTES) {
+                        Assert.assertEquals(0, mem.getLong(offset));
+                    }
+                    Assert.assertEquals(HEADER_SIZE, mem.getAppendOffset());
+                    // Windows does not shrink a mapped file: truncate() zeroes the tail in place
+                    Assert.assertEquals(Os.isWindows() ? 3 * pageSize : pageSize, ff.length(mem.getFd()));
+
+                    // the next append lands after the header
+                    mem.putLong(42);
+                    Assert.assertEquals(MARK, mem.getLong(0));
+                    Assert.assertEquals(42, mem.getLong(HEADER_SIZE));
+                    Assert.assertEquals(HEADER_SIZE + Long.BYTES, mem.getAppendOffset());
+                } finally {
+                    mem.close();
+                }
+                final long fd = ff.openRO(path.$());
+                Assert.assertTrue(fd > -1);
+                try {
+                    for (long offset = 0; offset < HEADER_SIZE; offset += Long.BYTES) {
+                        Assert.assertEquals(MARK + offset / Long.BYTES, ff.readNonNegativeLong(fd, offset));
+                    }
+                    Assert.assertEquals(42, ff.readNonNegativeLong(fd, HEADER_SIZE));
+                } finally {
+                    ff.close(fd);
+                }
+            }
+        });
+    }
+
+    /**
+     * When truncateKeepHeader() cannot remap to the minimum size, the previous mapping stays: the memory empties what
+     * follows the header in it, and the file keeps its length rather than lose the header with the rest.
+     */
+    @Test
+    public void testTruncateKeepHeaderWhenRemapFails() throws Exception {
+        assertTruncateWhenRemapFails(HEADER_SIZE);
+    }
+
+    /**
+     * When truncate() cannot remap to the minimum size, it cuts the file to nothing, or, where the cut of a mapped file
+     * fails as on Windows, it zeroes the mapping.
+     */
+    @Test
+    public void testTruncateWhenRemapFails() throws Exception {
+        assertTruncateWhenRemapFails(0);
+    }
+
+    private static void appendMarks(MemoryCMARWImpl mem, long bytes) {
+        for (long i = 0, n = bytes / Long.BYTES; i < n; i++) {
+            mem.putLong(MARK + i);
+        }
+    }
+
+    private static void assertTruncateWhenRemapFails(long headerSize) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final AtomicBoolean isRemapFailing = new AtomicBoolean();
+            final FilesFacade ff = new TestFilesFacadeImpl() {
+                @Override
+                public long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
+                    if (isRemapFailing.get()) {
+                        return FilesFacade.MAP_FAILED;
+                    }
+                    return super.mremap(fd, addr, previousSize, newSize, offset, mode, memoryTag);
+                }
+            };
+            final long pageSize = Files.PAGE_SIZE;
+            try (Path path = new Path().of(temp.newFile().getAbsolutePath())) {
+                final MemoryCMARWImpl mem = new MemoryCMARWImpl();
+                try {
+                    mem.of(ff, path.$(), pageSize, -1, MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE, -1);
+                    appendMarks(mem, 3 * pageSize);
+                    final long fd = mem.getFd();
+                    final long size = mem.size();
+                    Assert.assertEquals(3 * pageSize, size);
+
+                    isRemapFailing.set(true);
+                    try {
+                        mem.truncateKeepHeader(headerSize);
+                        Assert.fail("the remap did not fail");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "could not remap file");
+                    } finally {
+                        isRemapFailing.set(false);
+                    }
+
+                    Assert.assertEquals(headerSize, mem.getAppendOffset());
+                    if (headerSize > 0 || Os.isWindows()) {
+                        // the file keeps its length under the mapping: what follows the header reads zero
+                        Assert.assertEquals(size, ff.length(fd));
+                        for (long offset = 0; offset < headerSize; offset += Long.BYTES) {
+                            Assert.assertEquals(MARK + offset / Long.BYTES, mem.getLong(offset));
+                        }
+                        for (long offset = headerSize; offset < size; offset += Long.BYTES) {
+                            Assert.assertEquals(0, mem.getLong(offset));
+                        }
+                    } else {
+                        // the mapping now lies past the end of the file, which nothing reads any more
+                        Assert.assertEquals(0, ff.length(fd));
+                    }
+                } finally {
+                    mem.close();
+                }
+            }
+        });
+    }
+
     private static void appendLongs(MemoryCMARWImpl mem, long bytes) {
         for (long i = 0, n = bytes / Long.BYTES; i < n; i++) {
             mem.putLong(i);
         }
+    }
+
+    private static void testFailedRemap(boolean isMappingKept) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final AtomicInteger remapFailures = new AtomicInteger();
+            final FilesFacade ff = new TestFilesFacadeImpl() {
+                @Override
+                public long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
+                    if (remapFailures.getAndUpdate(n -> Math.max(0, n - 1)) > 0) {
+                        return FilesFacade.MAP_FAILED;
+                    }
+                    return super.mremap(fd, addr, previousSize, newSize, offset, mode, memoryTag);
+                }
+            };
+            final long pageSize = Files.PAGE_SIZE;
+            try (Path path = new Path().of(temp.newFile().getAbsolutePath())) {
+                final MemoryCMARWImpl mem = new MemoryCMARWImpl();
+                try {
+                    mem.of(ff, path.$(), pageSize, -1, MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE, -1);
+                    mem.setMappingKeptOnFailedRemap(isMappingKept);
+                    appendLongs(mem, pageSize);
+                    final long fd = mem.getFd();
+                    final long size = mem.size();
+                    Assert.assertEquals(pageSize, size);
+
+                    remapFailures.set(1);
+                    try {
+                        mem.putLong(pageSize / Long.BYTES);
+                        Assert.fail("the remap did not fail");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "could not remap file");
+                    }
+
+                    if (!isMappingKept) {
+                        Assert.assertFalse(mem.isOpen());
+                        Assert.assertEquals(0, mem.size());
+                        Assert.assertEquals(0, mem.getAppendOffset());
+                        return;
+                    }
+                    Assert.assertEquals(fd, mem.getFd());
+                    Assert.assertEquals(size, mem.size());
+                    Assert.assertEquals(pageSize, mem.getAppendOffset());
+                    for (long i = 0, n = pageSize / Long.BYTES; i < n; i++) {
+                        Assert.assertEquals(i, mem.getLong(i * Long.BYTES));
+                    }
+                    // the write that failed goes through once the remap succeeds
+                    mem.putLong(pageSize / Long.BYTES);
+                    Assert.assertEquals(pageSize + Long.BYTES, mem.getAppendOffset());
+                    for (long i = 0, n = pageSize / Long.BYTES + 1; i < n; i++) {
+                        Assert.assertEquals(i, mem.getLong(i * Long.BYTES));
+                    }
+                } finally {
+                    mem.close();
+                }
+            }
+        });
     }
 
     private static class RecordingFilesFacade extends TestFilesFacadeImpl {

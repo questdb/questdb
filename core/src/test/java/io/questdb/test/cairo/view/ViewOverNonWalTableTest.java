@@ -1407,8 +1407,8 @@ public class ViewOverNonWalTableTest extends AbstractViewTest {
                     assertViewColumns("v", "a:INT, b:INT");
                     assertPendingCompileBusyRetries("");
 
-                    // The failed attempt kept the first slot of t's reader pool. DROP TABLE on the
-                    // same thread passes over the slot, and drops t's pool entry with the slot.
+                    // The failed attempt freed the slots of t's reader pool that it took, so DROP
+                    // TABLE locks t and drops t's pool entry.
                     execute("DROP VIEW v");
                     execute("DROP TABLE t");
                     Assert.assertEquals(0, engine.getBusyReaderCount());
@@ -1459,9 +1459,8 @@ public class ViewOverNonWalTableTest extends AbstractViewTest {
                     drainViewQueue();
                     assertViewsValidAtAlterTime("a:INT, b:INT");
                 } finally {
-                    // The failed attempt kept the first slot of t's reader pool. TRUNCATE on the
-                    // same thread passes over the slot, and its unlock drops t's pool entry with
-                    // the slot.
+                    // The failed attempt freed the slots of t's reader pool that it took, so
+                    // TRUNCATE locks t's readers.
                     execute("TRUNCATE TABLE t");
                 }
                 assertQuery("t")
@@ -2430,9 +2429,8 @@ public class ViewOverNonWalTableTest extends AbstractViewTest {
                             2\tnull
                             """);
 
-            // The failed second attempt kept the first slot of t's reader pool, as any failed lock
-            // attempt keeps the slots it took. TRUNCATE on the same thread passes over the slot,
-            // and its unlock drops t's pool entry with the slot.
+            // The failed second attempt freed the slots of t's reader pool that it took, as any
+            // failed lock attempt does, so TRUNCATE locks t's readers.
             execute("TRUNCATE TABLE t");
             assertQuery("t")
                     .noLeakCheck()
@@ -2445,8 +2443,8 @@ public class ViewOverNonWalTableTest extends AbstractViewTest {
     public void testTruncateWaitsForViewCompileInSecondReaderSlot() throws Exception {
         // An idle reader of t sits in the first slot of the pool, and a view compile run holds t's
         // reader in the second. The lock attempt of TRUNCATE takes the first slot, closes the idle
-        // reader, and fails on the run. TRUNCATE passes over the slot that its own attempt took,
-        // waits for the run, and then succeeds.
+        // reader, fails on the run, and frees the slot it took. TRUNCATE waits for the run, and
+        // then succeeds.
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, Long.MAX_VALUE);
             createTableAndViewsThenAddColumn();
@@ -2466,8 +2464,9 @@ public class ViewOverNonWalTableTest extends AbstractViewTest {
                 Misc.free(idleReader);
                 engine.setPoolListener(null);
             }
-            // the second attempt closes the reader that the run returned to the second slot
-            Assert.assertEquals("close 0:0 close 0:1 lock ", readerLockEvents.toString());
+            // a later borrow of the run takes the first slot, which the failed attempt freed: the
+            // second attempt closes the readers that the run returned to the first and second slot
+            Assert.assertEquals("close 0:0 close 0:0 close 0:1 lock ", readerLockEvents.toString());
             capture.drain();
             capture.assertOnlyOnce(Pattern.quote(WAIT_LINE));
             assertQuery("t")
@@ -2621,8 +2620,8 @@ public class ViewOverNonWalTableTest extends AbstractViewTest {
                 drainViewQueue();
                 assertViewState("v");
                 assertViewColumns("v", "a:INT, b:INT");
-                // The failed second attempt kept the first slot of t's reader pool. DROP on the same
-                // thread passes over the slot, and drops t's pool entry with the slot.
+                // The failed second attempt freed the slots of t's reader pool that it took, so DROP
+                // locks t and drops t's pool entry.
                 execute("DROP VIEW v");
                 execute("DROP TABLE t");
                 assertTableListed("t", false);
@@ -3304,9 +3303,10 @@ public class ViewOverNonWalTableTest extends AbstractViewTest {
         Assert.assertEquals("close 0:0 ", readerLockEventsInSecondWait[0]);
         Assert.assertEquals(isDrop ? 2 : 0, metadataLocksInSecondWait[0]);
         Assert.assertEquals(2, lookupsInSecondWait[0]);
-        // the third attempt passes over the slot that the second one took, closes the reader that the
-        // second run returned to the second slot, and locks t
-        Assert.assertEquals("close 0:0 close 0:1 lock ", readerLockEvents.toString());
+        // a later borrow of the second run takes the first slot, which the failed second attempt freed:
+        // the third attempt closes the readers that the second run returned to the first and second
+        // slot, and locks t
+        Assert.assertEquals("close 0:0 close 0:0 close 0:1 lock ", readerLockEvents.toString());
         Assert.assertEquals(isDrop ? 3 : 0, metadataLocks.get());
         Assert.assertEquals(2, lookups.get());
         capture.drain();

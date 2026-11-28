@@ -1231,6 +1231,20 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         return columnIndex * 2;
     }
 
+    /**
+     * Paces a wait for {@code _txn} to name the {@code _cv} version, which a commit in flight publishes first, and
+     * tells when the wait is over: at the deadline {@code TableReader} keeps for the same wait. Past it, the commit
+     * stopped between the two and nothing rolled {@code _cv} back, as when the process died there. {@code _cv} then
+     * stays ahead until a table writer opens the table and rolls it back, which the caller does not wait for.
+     */
+    private static boolean isColumnVersionWaitOver(MillisecondClock clock, long deadline) {
+        if (clock.getTicks() > deadline) {
+            return true;
+        }
+        Os.pause();
+        return false;
+    }
+
     private void applyMetadataChangeLog(long structureVersionHi) {
         try (TableMetadataChangeLog log = sequencer.getMetadataChangeLog(tableToken, getColumnStructureVersion())) {
             long structVer = getColumnStructureVersion();
@@ -1896,9 +1910,10 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
 
                     initialized = true;
                     long structureVersion = getMetadataVersion();
+                    final long deadline = milliClock.getTicks() + spinLockTimeout;
 
                     try {
-                        do {
+                        while (true) {
                             TableUtils.safeReadTxn(txReader, milliClock, spinLockTimeout);
                             if (txReader.getColumnStructureVersion() != structureVersion) {
                                 initialized = false;
@@ -1907,7 +1922,20 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                             // Names a _cv stuck behind _txn instead of looping on it; see ColumnVersionReader.readSafe.
                             columnVersionReader.readSafe(milliClock, spinLockTimeout, txReader.getColumnVersion());
                             throwIfTxnLiveAreaTorn();
-                        } while (txReader.getColumnVersion() != columnVersionReader.getVersion());
+                            if (txReader.getColumnVersion() == columnVersionReader.getVersion()) {
+                                break;
+                            }
+                            if (isColumnVersionWaitOver(milliClock, deadline)) {
+                                // As for unreadable symbol tables below.
+                                LOG.error().$("_cv stays ahead of _txn, writing symbols in full [table=").$(tableToken)
+                                        .$(", txnColumnVersion=").$(txReader.getColumnVersion())
+                                        .$(", timeout=").$(spinLockTimeout).$("ms")
+                                        .I$();
+                                initialized = false;
+                                isTableSymbolTableUnreadable = true;
+                                break;
+                            }
+                        }
                     } catch (CairoException e) {
                         if (!e.isCvTorn() && !e.isTxnLiveAreaTorn()) {
                             throw e;
@@ -2369,8 +2397,9 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         columnVersionReader.ofRO(ff, txPath.$());
 
         long structureVersion = getMetadataVersion();
+        final long deadline = milliClock.getTicks() + spinLockTimeout;
         try {
-            do {
+            while (true) {
                 TableUtils.safeReadTxn(txReader, milliClock, spinLockTimeout);
                 if (txReader.getColumnStructureVersion() != structureVersion) {
                     return false; // Version mismatch - caller should use fallback
@@ -2378,7 +2407,18 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 // Names a _cv stuck behind _txn instead of looping on it; see ColumnVersionReader.readSafe.
                 columnVersionReader.readSafe(milliClock, spinLockTimeout, txReader.getColumnVersion());
                 throwIfTxnLiveAreaTorn();
-            } while (txReader.getColumnVersion() != columnVersionReader.getVersion());
+                if (txReader.getColumnVersion() == columnVersionReader.getVersion()) {
+                    break;
+                }
+                if (isColumnVersionWaitOver(milliClock, deadline)) {
+                    // Keep the counts this writer already has, as on a version mismatch.
+                    LOG.error().$("_cv stays ahead of _txn, keeping symbol watermarks [table=").$(tableToken)
+                            .$(", txnColumnVersion=").$(txReader.getColumnVersion())
+                            .$(", timeout=").$(spinLockTimeout).$("ms")
+                            .I$();
+                    return false;
+                }
+            }
         } catch (CairoException e) {
             if (!e.isCvTorn() && !e.isTxnLiveAreaTorn()) {
                 throw e;

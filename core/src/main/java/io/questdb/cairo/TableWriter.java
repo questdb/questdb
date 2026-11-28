@@ -261,6 +261,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private static final Runnable NOOP = () -> {
     };
     private static final Row NOOP_ROW = new NoOpRow();
+    // Zero symbol counts, for a _txn record published before the symbol maps are emptied, see truncate0(). Never
+    // modified.
+    private static final ObjList<SymbolCountProvider> NO_SYMBOL_COUNTS = new ObjList<>();
     private static final int O3_ERRNO_FATAL = Integer.MAX_VALUE - 1;
     private static final int POSTING_SEAL_PURGE_CLOSE_QUEUE_RETRY_COUNT = 32;
     private static final String POSTING_SEAL_PURGE_PENDING_FILE_NAME = "_posting_seal_purge_pending.d";
@@ -849,8 +852,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
             }
 
-            // we have to do truncate repair at this stage of constructor
-            // because this operation requires metadata
+            // The truncate repair needs the metadata and _cv. It runs before the symbol map writers open, which then
+            // open with the symbol counts it publishes. TRUNCATE arms no _todo_ entry any more: the repair completes
+            // an entry that a TRUNCATE of an earlier build armed, see repairTruncate().
             switch (todo) {
                 case TODO_TRUNCATE:
                     repairTruncate();
@@ -6212,10 +6216,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * Truncates table including symbol tables. When the operation is unsuccessful, it throws CairoException.
-     * With that truncate can be retried or alternatively, the table can be closed. The outcome of any other operation
-     * with the table is undefined and likely to cause a segmentation fault. When the table re-opens, any partial
-     * truncate will be retried.
+     * Truncates table including symbol tables. When the operation is unsuccessful, it throws and leaves this writer
+     * distressed: the writer must be closed, and the pool closes it instead of handing it out again. A failure before
+     * the empty {@code _txn} is published leaves the table as it was; a failure after it leaves the table empty and
+     * throws a housekeeping {@link CairoException}, see {@link #truncate0(boolean)}.
      */
     @Override
     public final void truncate() {
@@ -6223,10 +6227,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * Truncates table, but keeps symbol tables. When the operation is unsuccessful, it throws CairoException.
-     * With that truncate can be retried or alternatively, the table can be closed. The outcome of any other operation
-     * with the table is undefined and likely to cause a segmentation fault. When the table re-opens, any partial
-     * truncate will be retried.
+     * Truncates table, but keeps symbol tables. When the operation is unsuccessful, it throws and leaves this writer
+     * distressed: the writer must be closed, and the pool closes it instead of handing it out again. A failure before
+     * the empty {@code _txn} is published leaves the table as it was; a failure after it leaves the table empty and
+     * throws a housekeeping {@link CairoException}, see {@link #truncate0(boolean)}.
      */
     @Override
     public final void truncateSoft() {
@@ -10635,6 +10639,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // drop-table purge path) cannot free the command queue underneath a publisher
         // mid-serialize and crash the JVM with a SIGSEGV. The default hook is a no-op.
         lifecycleManager.onBeforeClose();
+        // A writer that gives the table up after a failed commit must not leave that commit's _cv published, see
+        // rollbackColumnVersionOfFailedCommit(). The drop path and a half-built writer close with truncate false.
+        if (truncate && distressed) {
+            rollbackColumnVersionOfFailedCommit();
+        }
         // destroy() may have already closed everything
         boolean tx = inTransaction();
         // A graceful close of a healthy adaptive WAL writer folds the committed tail into a final epoch, so a
@@ -11925,6 +11934,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return rowCount;
         }
         return Math.max(rowCount, getGeometry().getE(lastPartitionIndex));
+    }
+
+    /**
+     * The lowest name txn among the column files of the partition, {@code Long.MAX_VALUE} when no column is live.
+     * {@link PartitionOverwriteControl} uses it to tell a mutation of new column versions from one of the files a
+     * reader maps.
+     */
+    private long getMinColumnNameTxn(long partitionTimestamp) {
+        long minColumnNameTxn = Long.MAX_VALUE;
+        for (int i = 0; i < columnCount; i++) {
+            if (metadata.getColumnType(i) > 0) {
+                minColumnNameTxn = Math.min(minColumnNameTxn, columnVersionWriter.getColumnNameTxn(partitionTimestamp, i));
+            }
+        }
+        return minColumnNameTxn;
     }
 
     private long getMoveTailFutureFloor() {
@@ -13813,6 +13837,49 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
         }
         return Math.max(1, size / rowCount);
+    }
+
+    /**
+     * Moves every column of a non-partitioned table to a new file version for {@link #repairTruncate()}, the
+     * way UPDATE moves the columns it changes. TRUNCATE empties the files of the default partition in place, which it
+     * may do only while no query reads them. A query of the old rows may still map them during the repair, so the rows
+     * written after it go to new files, and the column purge removes the old files once no reader of the old rows is
+     * left. The truncated {@code _txn} publishes the new versions, which are named for the txn the repair starts from,
+     * as UPDATE names them.
+     * <p>
+     * Files that an operation rolled back at that txn left under the new version are removed first. One can be a hard
+     * link to the old rows, see {@code UpdateOperatorImpl}, and writing into it would change what their readers see.
+     */
+    private void moveColumnsToNewVersionForTruncateRepair() {
+        final long partitionTimestamp = txWriter.getLastPartitionTimestamp();
+        final long newColumnNameTxn = txWriter.getTxn();
+        final PurgingOperator purgingOperator = getPurgingOperator();
+        try {
+            setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, -1L);
+            final int partitionDirLen = other.size();
+            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                final int columnType = metadata.getColumnType(i);
+                if (columnType > 0) {
+                    final String columnName = metadata.getColumnName(i);
+                    final byte indexType = metadata.getColumnIndexType(i);
+                    final long columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, i);
+                    // _txn has published every version the table holds, and each was named for an earlier txn
+                    assert columnNameTxn < newColumnNameTxn : "column version is not older than the repair [column="
+                            + columnName + ", columnNameTxn=" + columnNameTxn + ", txn=" + newColumnNameTxn + ']';
+                    removeStaleColumnFileOrFail(dFile(other.trimTo(partitionDirLen), columnName, newColumnNameTxn));
+                    if (ColumnType.isVarSize(columnType)) {
+                        removeStaleColumnFileOrFail(iFile(other.trimTo(partitionDirLen), columnName, newColumnNameTxn));
+                    }
+                    if (IndexType.isIndexed(indexType)) {
+                        removeIndexFilesOrFail(partitionDirLen, columnName, newColumnNameTxn, indexType);
+                    }
+                    purgingOperator.add(i, columnName, columnType, indexType, columnNameTxn, partitionTimestamp, -1L);
+                    columnVersionWriter.upsert(partitionTimestamp, i, newColumnNameTxn, 0);
+                }
+            }
+        } finally {
+            other.trimTo(pathSize);
+        }
     }
 
     private int moveTailCut(LongList bounds, O3CompositeMergeStrategy.Plan plan, long futureFloor) {
@@ -20102,6 +20169,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    private void removeStaleColumnFileOrFail(LPSZ file) {
+        // the writer lock keeps anyone else from creating the file in between
+        if (ff.exists(file) && !ff.removeQuiet(file)) {
+            throw CairoException.critical(ff.errno()).put("cannot remove stale column file [path=").put(file).put(']');
+        }
+    }
+
     /**
      * One entry of the directory {@link #removeSupersededParquetIndexFiles} lists: removes the file when
      * {@link TableUtils#isSupersededIndexFile} calls it superseded. A name that is not valid UTF-8 stays, and so does a
@@ -20332,13 +20406,70 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         clearTodoLog();
     }
 
+    /**
+     * Completes a TRUNCATE of an earlier build that stopped after it armed its {@code _todo_} entry and before it
+     * published the empty {@code _txn}, as {@link #truncate0(boolean)} would have: no partitions, no rows, no column
+     * tops. Of a non-partitioned table, that TRUNCATE may have cut column files before it stopped. TRUNCATE no longer
+     * arms the entry: it publishes the empty {@code _txn} before it empties anything. The constructor calls the repair
+     * before it opens the columns and the symbol map writers, which open with the symbol counts it publishes.
+     * <p>
+     * Those builds armed the same entry with and without KEEP SYMBOL MAPS, and only the symbol maps tell which ran.
+     * Without it, the TRUNCATE emptied every map before it armed the entry. With it, the maps hold the symbols
+     * {@code _txn} counts, and a query of the old rows, or a partition detached before the TRUNCATE and attached after
+     * it, resolves its keys in them. Each SYMBOL column keeps its count when its map holds that many symbols, see
+     * {@link SymbolMapWriter#hasSymbolCount}, and starts from none otherwise, so that a new symbol takes no key of an
+     * old one. The repair reads the maps before it changes anything: a map it cannot read fails the writer open and
+     * leaves the table as the TRUNCATE did.
+     * <p>
+     * The repair runs in whichever writer open comes first, without {@link CairoEngine#lockReaders(TableToken)}, and a
+     * query that opened the table after the TRUNCATE stopped still reads the old rows, so the rows written after the
+     * repair must not land in the files that query maps. A partitioned table leaves its old partitions to the
+     * partition purge and writes new rows to new partition versions. A non-partitioned table has a single partition
+     * directory, so its columns move to new file versions, see {@link #moveColumnsToNewVersionForTruncateRepair()}.
+     */
     private void repairTruncate() {
         LOG.info().$("repairing abnormally terminated truncate on ").$substr(pathRootSize, path).$();
-        scheduleRemoveAllPartitions();
-        txWriter.truncate(columnVersionWriter.getVersion(), denseSymbolMapWriters);
+        final ObjList<SymbolCountProvider> symbolCounts = new ObjList<>();
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            if (ColumnType.isSymbol(metadata.getColumnType(i))) {
+                // the symbol map writers take the _txn counts in column order, see configureColumnMemory()
+                final int txnSymbolCount = txWriter.getSymbolValueCount(symbolCounts.size());
+                final String columnName = metadata.getColumnName(i);
+                final int symbolCount = SymbolMapWriter.hasSymbolCount(
+                        ff,
+                        path.trimTo(pathSize),
+                        columnName,
+                        columnVersionWriter.getSymbolTableNameTxn(i),
+                        txnSymbolCount,
+                        tempMem16b
+                ) ? txnSymbolCount : 0;
+                LOG.info().$("truncate repair symbol count [column=").$safe(columnName)
+                        .$(", count=").$(symbolCount)
+                        .$(", txnCount=").$(txnSymbolCount)
+                        .I$();
+                symbolCounts.add(() -> symbolCount);
+            }
+        }
+        assert symbolCounts.size() == txWriter.getSymbolColumnCount() : "symbol columns do not match _txn [columns="
+                + symbolCounts.size() + ", txnSymbolColumns=" + txWriter.getSymbolColumnCount() + ']';
+        final boolean isPartitioned = PartitionBy.isPartitioned(partitionBy);
+        if (isPartitioned) {
+            scheduleRemoveAllPartitions();
+        } else {
+            moveColumnsToNewVersionForTruncateRepair();
+        }
+        columnVersionWriter.truncate();
+        txWriter.truncate(columnVersionWriter.getVersion(), symbolCounts);
+        // The symbol map writers open with the counts txWriter loaded, so it loads the record it just published
+        txWriter.unsafeLoadAll();
         resetCompositePartitionTracking();
         clearTodoLog();
         processPartitionRemoveCandidates();
+        if (!isPartitioned) {
+            // _txn names the new column versions now: the old ones go at once, or to the column purge job when a
+            // reader of the old rows, or a checkpoint, may still map them
+            finishColumnPurge();
+        }
     }
 
     private long tryFastAppendInOrderBlock(long o3Lo, long o3LoHi, int blockTransactionCount, long timestampAddr) {
@@ -20789,6 +20920,39 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         assert isRewritten : "split parent has no rows to rewrite";
         // REWRITE keeps the entry's seqTxn, but the removed split changed the logical partition
         txWriter.setPartitionSeqTxn(partitionIndex, getCompositePartitionSeqTxn());
+    }
+
+    /**
+     * Rolls back the _cv version that a failed commit published ahead of the _txn record naming it, as
+     * rollbackColumnVersionToTxn() does on open and on rollback(), when this writer gives the table up distressed.
+     * Readers wait for _txn to name the _cv version, see ColumnVersionReader.readSafe(MillisecondClock, long, long),
+     * and the WAL table that the failure suspends opens no other writer until RESUME WAL. This runs while the writer
+     * still owns the table, before the pool lets another writer open it, and never throws: the next writer's
+     * constructor rolls back what this cannot. It takes the column version from the live _txn record, not from
+     * txWriter's fields, which the failed commit already moved on: the record the reader view holds changes only
+     * when a commit publishes its own.
+     */
+    private void rollbackColumnVersionOfFailedCommit() {
+        try {
+            // A failed mremap unmaps _cv, and reading it then faults. _txn keeps its mapping through a failed commit,
+            // see TxWriter.mapWriteArea(); the writer still checks it before reading.
+            if (txWriter.isOpen() && columnVersionWriter.isOpen()) {
+                final long txnColumnVersion = txWriter.unsafeReadColumnVersion();
+                // A failed commit leaves _cv exactly one version ahead of _txn. The next writer's constructor
+                // refuses any wider gap.
+                if (columnVersionWriter.getVersion() - 1 == txnColumnVersion) {
+                    LOG.info().$("rolling back column version of failed commit [table=").$(tableToken)
+                            .$(", txnVersion=").$(txnColumnVersion)
+                            .$(", actualFileVersion=").$(columnVersionWriter.getVersion())
+                            .I$();
+                    columnVersionWriter.rollback();
+                }
+            }
+        } catch (Throwable th) {
+            LOG.critical().$("could not roll back column version of failed commit [table=").$(tableToken)
+                    .$(", error=").$(th)
+                    .I$();
+        }
     }
 
     /**
@@ -21526,13 +21690,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void setAppendPosition(final long rowCount, boolean doubleAllocate) {
-        engine.getPartitionOverwriteControl().notifyPartitionMutates(
-                tableToken,
-                timestampType,
-                lastOpenPartitionTs,
-                lastOpenPartitionTxnName,
-                rowCount
-        );
+        final PartitionOverwriteControl overwriteControl = engine.getPartitionOverwriteControl();
+        if (overwriteControl.isEnabled()) {
+            overwriteControl.notifyPartitionMutates(
+                    tableToken,
+                    timestampType,
+                    lastOpenPartitionTs,
+                    lastOpenPartitionTxnName,
+                    rowCount,
+                    getMinColumnNameTxn(lastOpenPartitionTs)
+            );
+        }
 
         long recordLength = 0;
         for (int i = 0; i < columnCount; i++) {
@@ -23305,25 +23473,36 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         try {
             truncate0(keepSymbolTables);
         } catch (Throwable th) {
+            // A truncate0() that fails before it publishes the empty _txn may have scheduled the removal of every
+            // partition and committed _cv, and one that fails after it may have half emptied the symbol maps and the
+            // column files, none of which inTransaction() sees. The pool would hand this writer out again without a
+            // rollback. The pool closes a distressed writer instead: the close drops the scheduled removals and rolls
+            // back a _cv version that _txn does not name, and the next open positions the files from _txn.
+            distressed = true;
             // A non-WAL TRUNCATE reports to the statement: a failed data sync stops the engine here
-            if (engine.isDataSyncFailureFatal(th)) {
-                distressed = true;
-                engine.handleDataSyncFailure(th);
-            }
+            engine.handleDataSyncFailure(th);
             throw th;
         }
     }
 
     private void truncate0(boolean keepSymbolTables) {
         rollback();
+        // Growing _txn for the truncated record can fail: disk full, a failed remap. Map the record before the steps
+        // below remove anything, so that such a failure leaves the table as it was; txWriter.truncate() then writes
+        // inside the mapping.
+        txWriter.mapTruncatedRecordArea();
 
+        // TRUNCATE empties no file that the published _txn names before txWriter.truncate() publishes the empty
+        // record. One that stops before it, on an I/O error or a process kill, leaves the table as it was, and a query
+        // reads it whole: there is nothing for a later writer open to complete, so TRUNCATE arms no _todo_ entry.
+        // Once _txn names no rows, and no symbols unless TRUNCATE keeps the symbol maps, emptyTruncatedFiles() empties
+        // the symbol maps and the column files of a non-partitioned table in place. TRUNCATE TABLE holds
+        // CairoEngine.lockReaders(), which keeps queries and checkpoints out until it returns, and a query that opens
+        // after it reads none of the old bytes.
         boolean hasNonEmptySymbolTables = false;
         if (!keepSymbolTables) {
-            // we do this before size check so that "old" corrupt symbol tables are brought back in line
             for (int i = 0, n = denseSymbolMapWriters.size(); i < n; i++) {
-                MapWriter symbolMapWriter = denseSymbolMapWriters.getQuick(i);
-                hasNonEmptySymbolTables |= symbolMapWriter.getSymbolCount() > 0;
-                symbolMapWriter.truncate();
+                hasNonEmptySymbolTables |= denseSymbolMapWriters.getQuick(i).getSymbolCount() > 0;
             }
         }
 
@@ -23331,23 +23510,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (hasNonEmptySymbolTables) {
                 txWriter.resetTimestamp();
                 columnVersionWriter.truncate();
-                txWriter.truncate(columnVersionWriter.getVersion(), denseSymbolMapWriters);
+                txWriter.truncate(columnVersionWriter.getVersion(), NO_SYMBOL_COUNTS);
                 resetCompositePartitionTracking();
             }
+            // also when the counts are zero, so that "old" corrupt symbol tables are brought back in line
+            emptyTruncatedFiles(!keepSymbolTables, false);
             return;
         }
-
-        // this is a crude block to test things for now
-        todoMem.putLong(0, ++todoTxn); // write txn, reader will first read txn at offset 24 and then at offset 0
-        Unsafe.storeFence(); // make sure we do not write hash before writing txn (view from another thread)
-        todoMem.putLong(8, configuration.getDatabaseIdLo()); // write out our instance hashes
-        todoMem.putLong(16, configuration.getDatabaseIdHi());
-        Unsafe.storeFence();
-        todoMem.putLong(24, todoTxn);
-        todoMem.putLong(32, 1);
-        todoMem.putLong(40, TODO_TRUNCATE);
-        // ensure file is closed with correct length
-        todoMem.jumpTo(48);
 
         if (partitionBy != PartitionBy.NONE) {
             freeColumns(false);
@@ -23355,16 +23524,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // Schedule removal of all partitions
             scheduleRemoveAllPartitions();
             rowAction = ROW_ACTION_OPEN_PARTITION;
-        } else {
-            // truncate columns, we cannot remove them
-            truncateColumns();
         }
 
         txWriter.resetTimestamp();
         columnVersionWriter.truncate();
-        txWriter.truncate(columnVersionWriter.getVersion(), denseSymbolMapWriters);
+        txWriter.truncate(columnVersionWriter.getVersion(), keepSymbolTables ? denseSymbolMapWriters : NO_SYMBOL_COUNTS);
         resetCompositePartitionTracking();
-        clearTodoLog();
         this.minSplitPartitionTimestamp = Long.MAX_VALUE;
         processPartitionRemoveCandidates();
 
@@ -23372,6 +23537,29 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
             metadataRW.hydrateTable(metadata);
+        }
+        // a partitioned table drops its partitions, a non-partitioned one empties its column files
+        emptyTruncatedFiles(!keepSymbolTables, partitionBy == PartitionBy.NONE);
+    }
+
+    /**
+     * Empties the symbol maps and the column files of a non-partitioned table in place, once the published
+     * {@code _txn} names nothing they hold, see {@link #truncate0(boolean)}. A failure leaves the table empty and this
+     * writer distressed, with a housekeeping exception: the files may be half emptied, and the next open positions
+     * them from {@code _txn}.
+     */
+    private void emptyTruncatedFiles(boolean isSymbolMaps, boolean isColumns) {
+        try {
+            if (isSymbolMaps) {
+                for (int i = 0, n = denseSymbolMapWriters.size(); i < n; i++) {
+                    denseSymbolMapWriters.getQuick(i).truncate();
+                }
+            }
+            if (isColumns) {
+                truncateColumns();
+            }
+        } catch (Throwable th) {
+            handleHousekeepingException(th);
         }
     }
 

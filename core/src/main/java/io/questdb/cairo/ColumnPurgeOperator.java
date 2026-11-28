@@ -40,6 +40,7 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.ColumnPurgeTask;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 import java.util.function.ObjIntConsumer;
@@ -76,18 +77,19 @@ public class ColumnPurgeOperator implements Closeable {
     private final MicrosecondClock microClock;
     private final Path path;
     private final int pathRootLen;
-    private final TableWriter purgeLogWriter;
     private final ScoreboardUseMode scoreboardUseMode;
     private final SealedPostingFileScanProbe sealedPostingFileScanProbe = new SealedPostingFileScanProbe();
     private final String updateCompleteColumnName;
-    private final int updateCompleteColumnWriterIndex;
     private boolean isLastPurgeHeldByEpoch;
     private long longBytes;
     private int pathTableLen;
     private long purgeLogPartitionFd = -1;
     private long purgeLogPartitionTimestamp = Long.MAX_VALUE;
+    // the writer of the purge log that completion marks go through, or null while the job is without it
+    private TableWriter purgeLogWriter;
     private TxReader txReader;
     private TxnScoreboard txnScoreboard;
+    private int updateCompleteColumnWriterIndex;
 
     public ColumnPurgeOperator(CairoEngine engine, TableWriter purgeLogWriter, String updateCompleteColumnName, ScoreboardUseMode scoreboardUseMode) {
         try {
@@ -155,7 +157,7 @@ public class ColumnPurgeOperator implements Closeable {
         assert task.getTableToken() != null;
         assert scoreboardUseMode != ScoreboardUseMode.VACUUM_TABLE;
         boolean done = purge0(task);
-        if (done && scoreboardUseMode == ScoreboardUseMode.BAU_QUEUE_PROCESSING) {
+        if (done && scoreboardUseMode == ScoreboardUseMode.BAU_QUEUE_PROCESSING && purgeLogWriter != null) {
             setCompletionTimestamp(completedRowIds, microClock.getTicks());
         }
         return done;
@@ -167,6 +169,22 @@ public class ColumnPurgeOperator implements Closeable {
         txReader = tableReader.getTxFile();
         txnScoreboard = tableReader.getTxnScoreboard();
         return purge0(task);
+    }
+
+    /**
+     * Sets the writer of the purge log that {@link #purge(ColumnPurgeTask)} marks completed purges through, or none:
+     * without a writer a purge marks nothing. The row ids of the tasks that the operator purges from then on must be
+     * rows of that writer. Throws when the log lacks the completion column, before it changes anything.
+     */
+    public void setPurgeLogWriter(@Nullable TableWriter purgeLogWriter) {
+        assert scoreboardUseMode == ScoreboardUseMode.BAU_QUEUE_PROCESSING;
+        final int updateCompleteColumnWriterIndex = purgeLogWriter != null
+                ? purgeLogWriter.getMetadata().getColumnIndex(updateCompleteColumnName)
+                : -1;
+        closePurgeLogCompleteFile();
+        purgeLogPartitionTimestamp = Long.MAX_VALUE;
+        this.purgeLogWriter = purgeLogWriter;
+        this.updateCompleteColumnWriterIndex = updateCompleteColumnWriterIndex;
     }
 
     private static boolean couldNotRemove(FilesFacade ff, LPSZ path) {

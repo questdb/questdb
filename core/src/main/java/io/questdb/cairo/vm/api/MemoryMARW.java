@@ -34,4 +34,11 @@ public interface MemoryMARW extends MemoryMW, MemoryARW, MemoryMA, MemoryMR, Mem
     void of(FilesFacade ff, long fd, @Nullable LPSZ fileName, long size, int memoryTag);
 
     void of(FilesFacade ff, long fd, boolean keepFdOpen, @Nullable LPSZ fileName, long extendSegmentSize, long size, int memoryTag);
+
+    /**
+     * Truncates the memory as {@link #truncate()} does, but leaves its first {@code headerSize} bytes as they are: the
+     * zeroing starts after them, and so does the append position. The header of a file that readers validate stays
+     * valid at every instant of the truncate, so a process killed part way leaves a file that they accept.
+     */
+    void truncateKeepHeader(long headerSize);
 }

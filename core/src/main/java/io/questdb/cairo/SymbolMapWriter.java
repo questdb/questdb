@@ -220,6 +220,38 @@ public class SymbolMapWriter implements Closeable, MapWriter {
         }
     }
 
+    /**
+     * Tells whether the symbol map of {@code columnName} under {@code tableDir} holds {@code symbolCount} symbols:
+     * whether its offset file records, at {@link #keyToOffset(int) keyToOffset(symbolCount)}, an end of the chars of
+     * those symbols that a writer opening with that count accepts, see {@link #jumpCharMemToSymbolCount(int)}. An
+     * emptied map holds zeros there, or its offset file ends before. Throws when the offset file cannot be opened or
+     * read, which tells nothing about the map.
+     */
+    public static boolean hasSymbolCount(
+            FilesFacade ff,
+            Path tableDir,
+            CharSequence columnName,
+            long columnNameTxn,
+            int symbolCount,
+            long tempMem8b
+    ) {
+        final int tableDirLen = tableDir.size();
+        try {
+            final LPSZ offsetFile = offsetFileName(tableDir, columnName, columnNameTxn);
+            final long fd = TableUtils.openRO(ff, offsetFile, LOG);
+            try {
+                final long offset = keyToOffset(symbolCount);
+                return ff.length(fd) >= offset + Long.BYTES
+                        && TableUtils.readLongOrFail(ff, fd, offset, tempMem8b, offsetFile)
+                        >= calculateMinCharFileSize(symbolCount);
+            } finally {
+                ff.close(fd);
+            }
+        } finally {
+            tableDir.trimTo(tableDirLen);
+        }
+    }
+
     public static long keyToOffset(int key) {
         return HEADER_SIZE + key * 8L;
     }
@@ -558,9 +590,11 @@ public class SymbolMapWriter implements Closeable, MapWriter {
 
     @Override
     public void truncate() {
-        final int symbolCapacity = offsetMem.getInt(HEADER_CAPACITY);
-        offsetMem.truncate();
-        offsetMem.putInt(HEADER_CAPACITY, symbolCapacity);
+        // TableWriter.truncate0() publishes a _txn that counts no symbols in this map before it empties the map, so
+        // readers and the next writer open need nothing from its files but the headers. The offset file keeps its
+        // header here, and the index key file keeps its own, see BitmapIndexWriter.truncate(): a process killed at any
+        // instant leaves an empty map that both accept.
+        offsetMem.truncateKeepHeader(HEADER_SIZE);
         offsetMem.putBool(HEADER_CACHE_ENABLED, isCached());
         updateNullFlag(false);
         offsetMem.jumpTo(keyToOffset(0) + Long.BYTES);
@@ -614,6 +648,12 @@ public class SymbolMapWriter implements Closeable, MapWriter {
         nullValue = flag;
     }
 
+    // The least the chars of symbolCount symbols take in the char file: one char each, but one of them may be the
+    // empty string
+    private static long calculateMinCharFileSize(int symbolCount) {
+        return symbolCount * Vm.getStorageLength(1) - 2;
+    }
+
     private int calculateMaxHashFromCapacity() {
         return Math.max(Numbers.ceilPow2(symbolCapacity / 2) - 1, 1);
     }
@@ -637,7 +677,7 @@ public class SymbolMapWriter implements Closeable, MapWriter {
     private void jumpCharMemToSymbolCount(int symbolCount) {
         if (symbolCount > 0) {
             long cFileSize = offsetMem.getLong(keyToOffset(symbolCount));
-            long minExpectedSize = symbolCount * Vm.getStorageLength(1) - 2;
+            long minExpectedSize = calculateMinCharFileSize(symbolCount);
             if (cFileSize < minExpectedSize) {
                 // There should be at least 1 character per symbol
                 // the size read from .o file is less than that

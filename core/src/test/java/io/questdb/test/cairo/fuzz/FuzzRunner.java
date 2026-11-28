@@ -40,6 +40,7 @@ import io.questdb.cairo.O3PartitionPurgeJob;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.PartitionCompactionRequestQueue;
 import io.questdb.cairo.PartitionCompactionScanJob;
+import io.questdb.cairo.PostingSealPurgeJob;
 import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
@@ -117,6 +118,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicIntegerArray;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
@@ -163,6 +165,8 @@ public class FuzzRunner {
     private final AtomicLong noopCommitsDuringParquetRebuild = new AtomicLong();
     // the native conversions of every value of a type without a NULL sentinel, by source type and target type
     private final Map<String, Map<String, String>> noSentinelConversions = new HashMap<>();
+    // the purge log faults planted, by kind: those of the column purge log, then those of the posting seal purge log
+    private final AtomicIntegerArray plantedPurgeLogFaults = new AtomicIntegerArray(2 * FailureFileFacade.TableFailureKind.values().length);
     private final Map<TableReader, ReaderSnapshot> readerSnapshots = Collections.synchronizedMap(new IdentityHashMap<>());
     // the columns the generator widened from a type without a NULL sentinel, see setNoSentinelWideningChecked()
     private final ObjHashSet<String> widenedColumns = new ObjHashSet<>();
@@ -207,6 +211,11 @@ public class FuzzRunner {
     private double partitionToParquetProb;
     // The chance that a WAL commit or rollback goes through WalWriter.prepareCommit(); 0 keeps the plain path.
     private double preparedCommitProb;
+    // the chance that a run of the column purge job of an apply meets a fault of its log, and that one is planted for
+    // the posting seal purge job of a worker pool, see plantPurgeLogFault()
+    private double purgeLogFaultProb;
+    // the draws of the purge log faults: off the apply Rnd, so that a seed replays the same applies with or without them
+    private Rnd purgeLogFaultRnd;
     private double queryProb;
     private double replaceInsertProb;
     private double rollbackProb;
@@ -879,6 +888,11 @@ public class FuzzRunner {
         return ff;
     }
 
+    // the faults of a kind that the runs planted on the column purge log, or on the posting seal purge log, and that fired
+    public int getFiredPurgeLogFaultCount(boolean isPostingSealLog, FailureFileFacade.TableFailureKind kind) {
+        return ff.getTableFailuresFired(isPostingSealLog ? postingSealPurgeLogTableName() : columnPurgeLogTableName(), kind);
+    }
+
     /**
      * The IO failures this runner planted that fired, on the non-WAL oracle and on WAL apply.
      */
@@ -913,6 +927,11 @@ public class FuzzRunner {
      */
     public long getPartitionsPerDay() {
         return Micros.DAY_MICROS / getPartitionDurationMicros();
+    }
+
+    // the faults of a kind that the runs planted on the column purge log, or on the posting seal purge log
+    public int getPlantedPurgeLogFaultCount(boolean isPostingSealLog, FailureFileFacade.TableFailureKind kind) {
+        return plantedPurgeLogFaults.get(purgeLogFaultIndex(isPostingSealLog, kind));
     }
 
     public int getTimestampType() {
@@ -1258,8 +1277,8 @@ public class FuzzRunner {
     }
 
     /**
-     * Tells the applies that a worker pool runs a {@link ColumnPurgeJob}. A pool job that fails to save a purge frees
-     * the purge log but keeps draining the queue, so the purge log cannot tell.
+     * Tells the applies that a worker pool runs a {@link ColumnPurgeJob}. A pool job that fails to save a purge gives
+     * the purge log up until it reopens it, and keeps draining the queue meanwhile, so the purge log cannot tell.
      */
     public void setHasPoolColumnPurgeJob(boolean hasPoolColumnPurgeJob) {
         this.hasPoolColumnPurgeJob = hasPoolColumnPurgeJob;
@@ -1355,6 +1374,35 @@ public class FuzzRunner {
     }
 
     /**
+     * Plants a fault on the posting seal purge log, with the purge log fault chance, for the PostingSealPurgeJob of a
+     * worker pool that starts, whose first write opens a partition of its log, see {@link #setPurgeLogFaultProbability}
+     */
+    public void plantPostingSealPurgeLogFault() {
+        plantPurgeLogFault(true);
+    }
+
+    /**
+     * Plants a one-shot fault on the purge logs with this chance before each run of the column purge job of an apply:
+     * the failure of a page allocation or of a file open in a partition of the log, which the append of a row, the
+     * reopen of the log writer or the mark of a completed purge meets. The column purge log fault fires only in that
+     * run of the job of the apply, so this plants none when a worker pool runs the job. The posting seal purge log fault
+     * stays until the next write of a {@link PostingSealPurgeJob} to its log, not the direct persist of a TableWriter,
+     * meets it, or the next fault replaces it. The draws use a Rnd of their own, from the seeds.
+     * <p>
+     * No fault targets the commit of a log, which allocates disk space only as it grows the mapping of _txn: a log needs
+     * that only past dozens of monthly partitions, more with larger pages, and a run stamps the rows of the logs with
+     * the clock, within a month or two. ColumnPurgeJobTest and PostingSealPurgeTest step the clock month by month to
+     * fail those commits.
+     */
+    public void setPurgeLogFaultProbability(double purgeLogFaultProb, long seed0, long seed1) {
+        this.purgeLogFaultProb = purgeLogFaultProb;
+        this.purgeLogFaultRnd = new Rnd(seed0, seed1);
+        LOG.info().$("purge log fault seeds: ").$(seed0).$("L, ").$(seed1).$('L').$();
+        ff.watchTable(columnPurgeLogTableName());
+        ff.watchTable(postingSealPurgeLogTableName());
+    }
+
+    /**
      * Sets designated timestamp type of the tables the runner creates. {@link #generateRandom(Log)}
      * picks it randomly, call this after it to pin the type.
      */
@@ -1410,6 +1458,10 @@ public class FuzzRunner {
             case ColumnType.INT, ColumnType.LONG, ColumnType.FLOAT, ColumnType.DOUBLE -> "null";
             default -> "";
         };
+    }
+
+    private static int purgeLogFaultIndex(boolean isPostingSealLog, FailureFileFacade.TableFailureKind kind) {
+        return (isPostingSealLog ? FailureFileFacade.TableFailureKind.values().length : 0) + kind.ordinal();
     }
 
     /**
@@ -2976,12 +3028,48 @@ public class FuzzRunner {
     /**
      * Runs the column purge job, which purges the column versions that the queue holds and no reader uses. The job
      * swallows the failures of its file operations, so it does not run while a planted failure is pending: the failure
-     * belongs to the operation it was planted for.
+     * belongs to the operation it was planted for. A purge log fault, see {@link #setPurgeLogFaultProbability}, fires
+     * only in this run of the job.
      */
     private void runColumnPurgeJob(@Nullable ColumnPurgeJob columnPurgeJob) {
+        plantPurgeLogFault(true);
         if (columnPurgeJob != null && !ff.isArmed()) {
+            final boolean isPlanted = plantPurgeLogFault(false);
             columnPurgeJob.run();
+            if (isPlanted) {
+                ff.disarmTableFailure(columnPurgeLogTableName());
+            }
         }
+    }
+
+    private String columnPurgeLogTableName() {
+        return engine.getConfiguration().getSystemTableNamePrefix() + "column_versions_purge_log";
+    }
+
+    // Plants a one-shot fault on a purge log, with the purge log fault chance, and returns whether it did. The fault
+    // fires only in a write of the job of that log, not in the direct persist of a TableWriter.
+    private boolean plantPurgeLogFault(boolean isPostingSealLog) {
+        if (purgeLogFaultProb == 0) {
+            return false;
+        }
+        final FailureFileFacade.TableFailureKind kind;
+        synchronized (purgeLogFaultRnd) {
+            if (purgeLogFaultRnd.nextDouble() >= purgeLogFaultProb) {
+                return false;
+            }
+            kind = FailureFileFacade.TableFailureKind.values()[purgeLogFaultRnd.nextInt(FailureFileFacade.TableFailureKind.values().length)];
+        }
+        if (isPostingSealLog) {
+            ff.armTableFailure(postingSealPurgeLogTableName(), kind, PostingSealPurgeJob.class.getName(), "persistReadyTasksDirect");
+        } else {
+            ff.armTableFailure(columnPurgeLogTableName(), kind, ColumnPurgeJob.class.getName(), null);
+        }
+        plantedPurgeLogFaults.incrementAndGet(purgeLogFaultIndex(isPostingSealLog, kind));
+        return true;
+    }
+
+    private String postingSealPurgeLogTableName() {
+        return engine.getConfiguration().getSystemTableNamePrefix() + "posting_seal_purge_log";
     }
 
     /**

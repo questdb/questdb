@@ -376,6 +376,118 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_syncFileRange0(JNIEnv *e, jclas
 }
 
 #if defined(__linux__)
+#include <sys/sysmacros.h>
+#include <sys/vfs.h>
+/* <unistd.h> defines SEEK_DATA and SEEK_HOLE only under _GNU_SOURCE (glibc), which this file does not define.
+ * These are their values in the Linux ABI since 3.1. */
+#ifndef SEEK_DATA
+#define SEEK_DATA 3
+#endif
+#ifndef SEEK_HOLE
+#define SEEK_HOLE 4
+#endif
+
+/* Whether lseek(2) SEEK_DATA and SEEK_HOLE are trusted on a file system: they count pages written through a shared
+ * mapping and not written back yet as data, report space that was allocated and never written as a hole, and cost
+ * an extent lookup. True of ext2/3/4, XFS and tmpfs. Not of ZFS, whose SEEK_DATA on a file with dirty data waits for
+ * its transaction group to sync, and which had releases that reported such data as a hole; nor of a file system that
+ * reports holes through a network round trip or another layer, such as NFS, FUSE or overlayfs. */
+static int is_seek_data_trusted_fs(int fd) {
+    struct statfs sb;
+    if (fstatfs(fd, &sb) != 0) {
+        return 0;
+    }
+    switch (sb.f_type) {
+        case 0xEF53:     /* EXT2/3/4_SUPER_MAGIC */
+        case 0x58465342: /* XFS_SUPER_MAGIC */
+        case 0x01021994: /* TMPFS_MAGIC */
+            return 1;
+        default:
+            return 0;
+    }
+}
+
+/* The block devices is_seek_data_trusted() has classified: (st_dev << 2) | 3 when trusted, (st_dev << 2) | 1 when
+ * not, 0 for a free slot. Slots fill in order. fstatfs(2) is not cheap everywhere: XFS expedites its background inode
+ * reclaim on every call, which costs microseconds once files have been deleted. A block device keeps its file system
+ * while it is mounted; an anonymous device number, which tmpfs, NFS, ZFS and overlayfs mount on, can come back for
+ * another file system after an unmount, so those are classified on every call. Two threads that classify the same
+ * device at once both store it, which only takes a slot twice. */
+#define SEEK_DATA_DEVICE_SLOTS 64
+static uint64_t seek_data_devices[SEEK_DATA_DEVICE_SLOTS];
+
+static int is_seek_data_trusted(int fd) {
+    struct stat st;
+    if (fstat(fd, &st) != 0) {
+        return 0;
+    }
+    const uint64_t dev = (uint64_t) st.st_dev;
+    if (major(st.st_dev) == 0 || (dev >> 62) != 0) {
+        /* an anonymous device, or one that does not fit a slot */
+        return is_seek_data_trusted_fs(fd);
+    }
+    int i = 0;
+    for (; i < SEEK_DATA_DEVICE_SLOTS; i++) {
+        const uint64_t slot = __atomic_load_n(&seek_data_devices[i], __ATOMIC_ACQUIRE);
+        if (slot == 0) {
+            break;
+        }
+        if ((slot >> 2) == dev) {
+            return (slot & 2) != 0;
+        }
+    }
+    const int trusted = is_seek_data_trusted_fs(fd);
+    const uint64_t slot = (dev << 2) | (trusted ? 3 : 1);
+    for (; i < SEEK_DATA_DEVICE_SLOTS; i++) {
+        uint64_t expected = 0;
+        if (__atomic_compare_exchange_n(&seek_data_devices[i], &expected, slot, 0, __ATOMIC_RELEASE, __ATOMIC_ACQUIRE)
+            || (expected >> 2) == dev) {
+            break;
+        }
+    }
+    return trusted;
+}
+#endif
+
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_seekData0(JNIEnv *e, jclass cl, jint fd, jlong offset) {
+#if defined(__linux__)
+    /* The first offset at or past offset that the file may hold as non-zero, -1 when it holds only holes from
+     * offset to its end, -2 when it cannot tell. */
+    if (is_seek_data_trusted((int) fd)) {
+        const off_t res = lseek((int) fd, (off_t) offset, SEEK_DATA);
+        if (res >= 0) {
+            return res;
+        }
+        if (errno == ENXIO) {
+            return -1;
+        }
+    }
+    return -2;
+#else
+    /* macOS and FreeBSD: not trusted, see is_seek_data_trusted() */
+    (void) fd; (void) offset;
+    return -2;
+#endif
+}
+
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_seekHole0(JNIEnv *e, jclass cl, jint fd, jlong offset) {
+#if defined(__linux__)
+    /* The first offset at or past offset where a hole starts, the file length when no hole follows, -2 when it
+     * cannot tell. */
+    if (is_seek_data_trusted((int) fd)) {
+        const off_t res = lseek((int) fd, (off_t) offset, SEEK_HOLE);
+        if (res >= 0) {
+            return res;
+        }
+    }
+    return -2;
+#else
+    (void) fd; (void) offset;
+    return -2;
+#endif
+}
+
+#if defined(__linux__)
 /* syncfs(2) is exposed by <unistd.h> only under _GNU_SOURCE (glibc); this file does not define it
  * globally, so forward-declare the prototype here. syncfs has existed in glibc since 2.14 and the
  * syscall since Linux 2.6.39, so it is present on every supported target. */

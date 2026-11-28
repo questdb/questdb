@@ -35,6 +35,8 @@ import io.questdb.cairo.SymbolValueCountCollector;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.idx.BitmapIndexUtils;
+import io.questdb.cairo.idx.BitmapIndexWriter;
 import io.questdb.cairo.lv.LiveViewSymbolCache;
 import io.questdb.cairo.lv.LiveViewSymbolTable;
 import io.questdb.cairo.sql.StaticSymbolTable;
@@ -71,6 +73,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
+import static io.questdb.cairo.SymbolMapWriter.hasSymbolCount;
 import static io.questdb.cairo.SymbolMapWriter.keyToOffset;
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 import static io.questdb.cairo.TableUtils.offsetFileName;
@@ -493,6 +496,166 @@ public class SymbolMapTest extends AbstractCairoTest {
     @Test
     public void testFilterBySymbolWhileWriterHoldsUncommittedSymbols() throws Exception {
         assertFilterBySymbolWhileWriterHoldsUncommittedSymbols(false);
+    }
+
+    @Test
+    public void testHasSymbolCountAtMinimumCharSize() throws Exception {
+        // A symbol takes a 4-byte length and 2 bytes per char: '' takes 4 bytes, every other symbol at least 6. The
+        // chars of '' alone end at 4, and those of '', 'a' and 'b' at 16, the least that 1 and 3 symbols take.
+        TestUtils.assertMemoryLeak(() -> {
+            final FilesFacade ff = configuration.getFilesFacade();
+            final long tempMem8b = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                create(path, "e", 64, true);
+                try (SymbolMapWriter writer = openWriter(path, "e")) {
+                    Assert.assertEquals(0, writer.put(""));
+                }
+                Assert.assertEquals(4, readOffsetFileLong(path, "e", keyToOffset(1), tempMem8b));
+                Assert.assertTrue(hasSymbolCount(ff, path, "e", COLUMN_NAME_TXN_NONE, 1, tempMem8b));
+
+                create(path, "x", 64, true);
+                try (SymbolMapWriter writer = openWriter(path, "x")) {
+                    Assert.assertEquals(0, writer.put(""));
+                    Assert.assertEquals(1, writer.put("a"));
+                    Assert.assertEquals(2, writer.put("b"));
+                }
+                Assert.assertEquals(16, readOffsetFileLong(path, "x", keyToOffset(3), tempMem8b));
+                Assert.assertTrue(hasSymbolCount(ff, path, "x", COLUMN_NAME_TXN_NONE, 3, tempMem8b));
+
+                // a byte less than 3 symbols take
+                writeOffsetFileLong(path, "x", keyToOffset(3), 15, tempMem8b);
+                Assert.assertFalse(hasSymbolCount(ff, path, "x", COLUMN_NAME_TXN_NONE, 3, tempMem8b));
+            } finally {
+                Unsafe.free(tempMem8b, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testHasSymbolCountFailsOnUnreadableMap() throws Exception {
+        // An offset file that cannot be opened, sized or read tells nothing about the map: the check throws rather than
+        // answer, closes what it opened, and leaves the path as it found it.
+        TestUtils.assertMemoryLeak(() -> {
+            final UnreadableOffsetFileFacade ff = new UnreadableOffsetFileFacade();
+            final long tempMem8b = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            try (Path path = new Path().of(configuration.getDbRoot()); Path offsetFile = new Path()) {
+                final int pathSize = path.size();
+                try {
+                    hasSymbolCount(ff, path, "missing", COLUMN_NAME_TXN_NONE, 0, tempMem8b);
+                    Assert.fail("the offset file does not exist");
+                } catch (CairoException e) {
+                    offsetFileName(offsetFile.of(path), "missing", COLUMN_NAME_TXN_NONE);
+                    TestUtils.assertContains(
+                            e.getFlyweightMessage(),
+                            "could not open, file does not exist: " + offsetFile + ']'
+                    );
+                }
+                Assert.assertEquals(pathSize, path.size());
+
+                create(path, "x", 64, true);
+                try (SymbolMapWriter writer = openWriter(path, "x")) {
+                    Assert.assertEquals(0, writer.put("a"));
+                }
+                ff.isLengthFailing = true;
+                try {
+                    hasSymbolCount(ff, path, "x", COLUMN_NAME_TXN_NONE, 1, tempMem8b);
+                    Assert.fail("the offset file cannot be sized");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "Checking file size failed");
+                }
+                Assert.assertFalse("the failure was not injected", ff.isLengthFailing);
+                Assert.assertEquals(pathSize, path.size());
+
+                ff.isReadFailing = true;
+                try {
+                    hasSymbolCount(ff, path, "x", COLUMN_NAME_TXN_NONE, 1, tempMem8b);
+                    Assert.fail("the offset file cannot be read");
+                } catch (CairoException e) {
+                    offsetFileName(offsetFile.of(path), "x", COLUMN_NAME_TXN_NONE);
+                    TestUtils.assertContains(
+                            e.getFlyweightMessage(),
+                            "could not read long [path=" + offsetFile + ", fd="
+                    );
+                }
+                Assert.assertFalse("the failure was not injected", ff.isReadFailing);
+                Assert.assertEquals(pathSize, path.size());
+
+                // the map holds its symbol, now that the file reads
+                Assert.assertTrue(hasSymbolCount(ff, path, "x", COLUMN_NAME_TXN_NONE, 1, tempMem8b));
+                Assert.assertEquals(pathSize, path.size());
+            } finally {
+                Unsafe.free(tempMem8b, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testHasSymbolCountOfEmptiedMap() throws Exception {
+        // An emptied map holds no symbols: zeros follow the header of its offset file while its writer stays open, as
+        // in a process killed after it emptied the map, and after the writer closed. Past the first page, the offset
+        // file ends before the offset a count names.
+        TestUtils.assertMemoryLeak(() -> {
+            final FilesFacade ff = configuration.getFilesFacade();
+            final long tempMem8b = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                create(path, "x", 64, true);
+                try (SymbolMapWriter writer = openWriter(path, "x")) {
+                    for (int i = 0; i < 6; i++) {
+                        Assert.assertEquals(i, writer.put("A" + (i + 1)));
+                    }
+                    Assert.assertTrue(hasSymbolCount(ff, path, "x", COLUMN_NAME_TXN_NONE, 6, tempMem8b));
+                    writer.truncate();
+                    Assert.assertFalse(hasSymbolCount(ff, path, "x", COLUMN_NAME_TXN_NONE, 6, tempMem8b));
+                    Assert.assertTrue(hasSymbolCount(ff, path, "x", COLUMN_NAME_TXN_NONE, 0, tempMem8b));
+                }
+                Assert.assertFalse(hasSymbolCount(ff, path, "x", COLUMN_NAME_TXN_NONE, 6, tempMem8b));
+                Assert.assertTrue(hasSymbolCount(ff, path, "x", COLUMN_NAME_TXN_NONE, 0, tempMem8b));
+
+                final int symbolCount = 10_000;
+                create(path, "y", 1024, true);
+                try (SymbolMapWriter writer = openWriter(path, "y")) {
+                    for (int i = 0; i < symbolCount; i++) {
+                        Assert.assertEquals(i, writer.put("symbol" + i));
+                    }
+                    Assert.assertTrue(hasSymbolCount(ff, path, "y", COLUMN_NAME_TXN_NONE, symbolCount, tempMem8b));
+                    writer.truncate();
+                    Assert.assertTrue(offsetFileLength(path, "y") < keyToOffset(symbolCount) + Long.BYTES);
+                    Assert.assertFalse(hasSymbolCount(ff, path, "y", COLUMN_NAME_TXN_NONE, symbolCount, tempMem8b));
+                }
+                Assert.assertTrue(offsetFileLength(path, "y") < keyToOffset(symbolCount) + Long.BYTES);
+                Assert.assertFalse(hasSymbolCount(ff, path, "y", COLUMN_NAME_TXN_NONE, symbolCount, tempMem8b));
+                Assert.assertTrue(hasSymbolCount(ff, path, "y", COLUMN_NAME_TXN_NONE, 0, tempMem8b));
+            } finally {
+                Unsafe.free(tempMem8b, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testHasSymbolCountOfMapThatHoldsIt() throws Exception {
+        // A map holds the symbols its writer wrote, whether the writer stays open, as in a process killed with it, or
+        // closed, but not one symbol more: the offset file holds zeros past the end offset of the last symbol.
+        TestUtils.assertMemoryLeak(() -> {
+            final FilesFacade ff = configuration.getFilesFacade();
+            final long tempMem8b = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int pathSize = path.size();
+                create(path, "x", 64, true);
+                try (SymbolMapWriter writer = openWriter(path, "x")) {
+                    for (int i = 0; i < 6; i++) {
+                        Assert.assertEquals(i, writer.put("A" + (i + 1)));
+                    }
+                    Assert.assertTrue(hasSymbolCount(ff, path, "x", COLUMN_NAME_TXN_NONE, 6, tempMem8b));
+                    Assert.assertFalse(hasSymbolCount(ff, path, "x", COLUMN_NAME_TXN_NONE, 7, tempMem8b));
+                }
+                Assert.assertTrue(hasSymbolCount(ff, path, "x", COLUMN_NAME_TXN_NONE, 6, tempMem8b));
+                Assert.assertFalse(hasSymbolCount(ff, path, "x", COLUMN_NAME_TXN_NONE, 7, tempMem8b));
+                Assert.assertTrue(hasSymbolCount(ff, path, "x", COLUMN_NAME_TXN_NONE, 0, tempMem8b));
+                Assert.assertEquals(pathSize, path.size());
+            } finally {
+                Unsafe.free(tempMem8b, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
     }
 
     @Test
@@ -1190,6 +1353,64 @@ public class SymbolMapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReopenWritesNoSkippedKeys() throws Exception {
+        // A writer that opens a symbol map opens the index of the map, which writes nothing to its key file, and the
+        // symbols it adds after that find zeros in the index entries they make keys.
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                // 8_192 hash buckets: the new symbols land in buckets that hold symbols and in buckets that hold none
+                create(path, "x", 16_384, false);
+                try (
+                        SymbolMapWriter writer = new SymbolMapWriter(
+                                configuration,
+                                path,
+                                "x",
+                                COLUMN_NAME_TXN_NONE,
+                                0,
+                                -1,
+                                NOOP_COLLECTOR,
+                                -1
+                        )
+                ) {
+                    for (int i = 0; i < 5_000; i++) {
+                        Assert.assertEquals(i, writer.put("symbol" + i));
+                    }
+                }
+
+                BitmapIndexWriter.testZeroedKeyBytes.set(0);
+                try (
+                        SymbolMapWriter writer = new SymbolMapWriter(
+                                configuration,
+                                path,
+                                "x",
+                                COLUMN_NAME_TXN_NONE,
+                                5_000,
+                                -1,
+                                NOOP_COLLECTOR,
+                                -1
+                        )
+                ) {
+                    Assert.assertEquals(0, BitmapIndexWriter.testZeroedKeyBytes.get());
+                    // the old symbols through the index, then 1_000 new ones
+                    for (int i = 0; i < 6_000; i++) {
+                        Assert.assertEquals(i, writer.put("symbol" + i));
+                    }
+                    Assert.assertEquals(6_000, writer.getSymbolCount());
+                }
+                Assert.assertEquals(0, BitmapIndexWriter.testZeroedKeyBytes.get());
+
+                try (SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, "x", COLUMN_NAME_TXN_NONE, 6_000)) {
+                    for (int i = 0; i < 6_000; i++) {
+                        Assert.assertEquals(i, reader.keyOf("symbol" + i));
+                        TestUtils.assertEquals("symbol" + i, reader.valueOf(i));
+                    }
+                    Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, reader.keyOf("symbol6000"));
+                }
+            }
+        });
+    }
+
+    @Test
     public void testRollback() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             int N = 1024;
@@ -1645,6 +1866,87 @@ public class SymbolMapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTruncateKeepsFileHeaders() throws Exception {
+        // TableWriter publishes zero symbol counts before it empties a map, so a process killed while the map empties
+        // leaves readers and the next writer open nothing to take from its files but the headers. Such a kill can land
+        // at each cut of a file: the offset file and the index key file show valid headers at all of them.
+        final HeaderAtCutFacade ff = new HeaderAtCutFacade();
+        assertMemoryLeak(ff, () -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                create(path, "x", 1024, true);
+                // no writer open writes to the index key file, and no symbol does but the entry of its key
+                BitmapIndexWriter.testZeroedKeyBytes.set(0);
+                try (
+                        SymbolMapWriter writer = new SymbolMapWriter(
+                                configuration,
+                                path,
+                                "x",
+                                COLUMN_NAME_TXN_NONE,
+                                0,
+                                -1,
+                                NOOP_COLLECTOR,
+                                -1
+                        )
+                ) {
+                    // offsets and chars past their first page, index keys in every hash bucket
+                    for (int i = 0; i < 5_000; i++) {
+                        Assert.assertEquals(i, writer.put("symbol" + i));
+                    }
+                    Assert.assertEquals(SymbolTable.VALUE_IS_NULL, writer.put(null));
+                    Assert.assertTrue(writer.getNullFlag());
+                    final long sequence = ff.readNonNegativeLong(ff.keyFd, BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE);
+                    Assert.assertTrue(sequence > 0);
+
+                    ff.isRecording = true;
+                    writer.truncate();
+                    ff.isRecording = false;
+
+                    final String offsetHeader = "capacity=1024, cached=1, ";
+                    // create() makes the index with blocks of 4 values
+                    final String keyHeader = "signature=250, sequence=" + sequence + ", sequenceCheck=" + sequence
+                            + ", blockValueCount=4, keyCount=";
+                    // the offset file and the char file go first, while the index still holds the symbols
+                    final String[] cuts = ff.cuts.toString().split("\n");
+                    Assert.assertEquals(4, cuts.length);
+                    Assert.assertTrue(cuts[0], cuts[0].startsWith("cut x.o: " + offsetHeader + keyHeader));
+                    Assert.assertTrue(cuts[1], cuts[1].startsWith("cut x.c: " + offsetHeader + keyHeader));
+                    Assert.assertEquals("cut x.k: " + offsetHeader + keyHeader + "0, valueMemSize=0, maxValue=-1", cuts[2]);
+                    Assert.assertEquals("cut x.v: " + offsetHeader + keyHeader + "0, valueMemSize=0, maxValue=-1", cuts[3]);
+
+                    // the map starts over, with its capacity and cache flag, and without the null flag
+                    Assert.assertEquals(0, writer.getSymbolCount());
+                    Assert.assertFalse(writer.getNullFlag());
+                    Assert.assertEquals(1024, writer.getSymbolCapacity());
+                    Assert.assertTrue(writer.isCached());
+                    Assert.assertEquals(0, writer.put("symbol4999"));
+                    Assert.assertEquals(1, writer.put("new"));
+                }
+                // a writer open with the zero count of the published _txn, and a reader, take the emptied files
+                try (
+                        SymbolMapWriter writer = new SymbolMapWriter(
+                                configuration,
+                                path,
+                                "x",
+                                COLUMN_NAME_TXN_NONE,
+                                0,
+                                -1,
+                                NOOP_COLLECTOR,
+                                -1
+                        )
+                ) {
+                    Assert.assertEquals(0, writer.put("symbol7"));
+                }
+                Assert.assertEquals(0, BitmapIndexWriter.testZeroedKeyBytes.get());
+                try (SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, "x", COLUMN_NAME_TXN_NONE, 1)) {
+                    Assert.assertEquals(0, reader.keyOf("symbol7"));
+                    Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, reader.keyOf("symbol4999"));
+                    Assert.assertEquals("symbol7", String.valueOf(reader.valueOf(0)));
+                }
+            }
+        });
+    }
+
+    @Test
     public void testTruncateRestoresTheDroppedCache() throws Exception {
         // A column that runs its cache's key buffer out keeps working off the on-disk
         // index, at roughly twice the cost per lookup when the column's declared
@@ -2079,6 +2381,34 @@ public class SymbolMapTest extends AbstractCairoTest {
         return sql.toString();
     }
 
+    private static long offsetFileLength(Path path, CharSequence name) {
+        final int pathSize = path.size();
+        try {
+            return configuration.getFilesFacade().length(offsetFileName(path, name, COLUMN_NAME_TXN_NONE));
+        } finally {
+            path.trimTo(pathSize);
+        }
+    }
+
+    // a writer of the map name with no symbols, which create() makes
+    private static SymbolMapWriter openWriter(Path path, CharSequence name) {
+        return new SymbolMapWriter(configuration, path, name, COLUMN_NAME_TXN_NONE, 0, -1, NOOP_COLLECTOR, -1);
+    }
+
+    private static long readOffsetFileLong(Path path, CharSequence name, long offset, long tempMem8b) {
+        final int pathSize = path.size();
+        try {
+            return TableUtils.readLongAtOffset(
+                    configuration.getFilesFacade(),
+                    offsetFileName(path, name, COLUMN_NAME_TXN_NONE),
+                    tempMem8b,
+                    offset
+            );
+        } finally {
+            path.trimTo(pathSize);
+        }
+    }
+
     /**
      * Peak NATIVE_TABLE_WRITER bytes a symbol map writer holds after interning
      * {@code values} distinct values, over its own baseline. The writer is closed
@@ -2107,4 +2437,91 @@ public class SymbolMapTest extends AbstractCairoTest {
         }
     }
 
+
+    private static void writeOffsetFileLong(Path path, CharSequence name, long offset, long value, long tempMem8b) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        final int pathSize = path.size();
+        final LPSZ offsetFile = offsetFileName(path, name, COLUMN_NAME_TXN_NONE);
+        final long fd = TableUtils.openRW(ff, offsetFile, LOG, configuration.getWriterFileOpenOpts());
+        try {
+            Unsafe.putLong(tempMem8b, value);
+            Assert.assertEquals(Long.BYTES, ff.write(fd, tempMem8b, Long.BYTES, offset));
+        } finally {
+            ff.close(fd);
+            path.trimTo(pathSize);
+        }
+    }
+
+    // Records the headers of x.o and x.k at each cut of a map file while recording: where a process kill can land.
+    private static class HeaderAtCutFacade extends TestFilesFacadeImpl {
+        private final StringSink cuts = new StringSink();
+        private boolean isRecording;
+        private long charFd = -1;
+        private long keyFd = -1;
+        private long offsetFd = -1;
+        private long valueFd = -1;
+
+        @Override
+        public long openRW(LPSZ name, int opts) {
+            final long fd = super.openRW(name, opts);
+            if (Utf8s.endsWithAscii(name, "x.o")) {
+                offsetFd = fd;
+            } else if (Utf8s.endsWithAscii(name, "x.c")) {
+                charFd = fd;
+            } else if (Utf8s.endsWithAscii(name, "x.k")) {
+                keyFd = fd;
+            } else if (Utf8s.endsWithAscii(name, "x.v")) {
+                valueFd = fd;
+            }
+            return fd;
+        }
+
+        @Override
+        public boolean truncate(long fd, long size) {
+            if (isRecording) {
+                final String file = fd == offsetFd ? "x.o" : fd == charFd ? "x.c" : fd == keyFd ? "x.k" : fd == valueFd ? "x.v" : "?";
+                cuts.put("cut ").put(file)
+                        .put(": capacity=").put(readNonNegativeInt(offsetFd, SymbolMapWriter.HEADER_CAPACITY))
+                        .put(", cached=").put((int) readNonNegativeByte(offsetFd, SymbolMapWriter.HEADER_CACHE_ENABLED))
+                        .put(", ").put(BitmapIndexTest.readKeyFileHeader(this, keyFd))
+                        .put('\n');
+            }
+            return super.truncate(fd, size);
+        }
+    }
+
+    // Fails, once armed, the length or the read of the last offset file opened read-only, and disarms
+    private static class UnreadableOffsetFileFacade extends TestFilesFacadeImpl {
+        private boolean isLengthFailing;
+        private boolean isReadFailing;
+        private long offsetFd = -1;
+
+        @Override
+        public long length(long fd) {
+            if (isLengthFailing && fd == offsetFd) {
+                isLengthFailing = false;
+                // what FilesFacadeImpl.length() throws when fstat fails
+                throw CairoException.critical(5).put("Checking file size failed");
+            }
+            return super.length(fd);
+        }
+
+        @Override
+        public long openRO(LPSZ name) {
+            final long fd = super.openRO(name);
+            if (Utf8s.endsWithAscii(name, ".o")) {
+                offsetFd = fd;
+            }
+            return fd;
+        }
+
+        @Override
+        public long read(long fd, long buf, long len, long offset) {
+            if (isReadFailing && fd == offsetFd) {
+                isReadFailing = false;
+                return -1;
+            }
+            return super.read(fd, buf, len, offset);
+        }
+    }
 }
