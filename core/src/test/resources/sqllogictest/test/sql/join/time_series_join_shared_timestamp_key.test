@@ -1,0 +1,219 @@
+# ASOF and LT JOINs whose ON clause ties one column of the joined table to the designated
+# timestamp of the preceding side and to another of its columns, as in
+# ON s.t = m.ts AND s.t = m.n, so a row of the joined table matches only when its t equals
+# both. The two columns of m differ in m row 3, by 1 nanosecond or 1 microsecond, and m.n is
+# NULL in m row 6. Row 6 of the joined table, the latest match of m row 4, has l = 0, and
+# row 9 arrives at the timestamp of m row 5, which ASOF matches and LT does not. The expected
+# rows come from DuckDB ASOF LEFT JOINs with m.ts >= s.ts for ASOF and m.ts > s.ts for LT,
+# and with both sides of each key cast to TIMESTAMP_NS. No row depends on QuestDB matching
+# NULL to NULL in join keys, as no row of the joined table equals both a NULL and a
+# non-NULL value. The tables are not partitioned, so they are not WAL tables and inserted
+# rows are visible at once.
+
+statement ok
+DROP TABLE IF EXISTS m1
+
+statement ok
+DROP TABLE IF EXISTS s1
+
+statement ok
+DROP TABLE IF EXISTS m2
+
+statement ok
+DROP TABLE IF EXISTS s2
+
+statement ok
+DROP TABLE IF EXISTS m3
+
+statement ok
+DROP TABLE IF EXISTS s3
+
+statement ok
+DROP TABLE IF EXISTS mc
+
+statement ok
+DROP TABLE IF EXISTS y
+
+statement ok
+CREATE TABLE m1 (rn INT, n TIMESTAMP_NS, ts TIMESTAMP) TIMESTAMP(ts)
+
+statement ok
+CREATE TABLE s1 (rn INT, t TIMESTAMP_NS, l LONG, ts TIMESTAMP) TIMESTAMP(ts)
+
+statement ok
+CREATE TABLE m2 (rn INT, n TIMESTAMP, ts TIMESTAMP_NS) TIMESTAMP(ts)
+
+statement ok
+CREATE TABLE s2 (rn INT, t TIMESTAMP, l LONG, ts TIMESTAMP_NS) TIMESTAMP(ts)
+
+statement ok
+CREATE TABLE m3 (rn INT, n TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts)
+
+statement ok
+CREATE TABLE s3 (rn INT, t TIMESTAMP, l LONG, ts TIMESTAMP) TIMESTAMP(ts)
+
+statement ok
+CREATE TABLE mc (rn INT, ts TIMESTAMP) TIMESTAMP(ts)
+
+statement ok
+CREATE TABLE y (rn INT, n TIMESTAMP)
+
+statement ok
+INSERT INTO m1 VALUES (1, '2024-01-01T00:00:01.000000000Z', '2024-01-01T00:00:01.000000Z'), (2, '2024-01-01T00:00:02.000000000Z', '2024-01-01T00:00:02.000000Z'), (3, '2024-01-01T00:00:03.000000001Z', '2024-01-01T00:00:03.000000Z'), (4, '2024-01-01T00:00:04.000000000Z', '2024-01-01T00:00:04.000000Z'), (5, '2024-01-01T00:00:05.000000000Z', '2024-01-01T00:00:05.000000Z'), (6, NULL, '2024-01-01T00:00:06.000000Z')
+
+statement ok
+INSERT INTO s1 VALUES (1, '2024-01-01T00:00:01.000000000Z', 1, '2024-01-01T00:00:00.500000Z'), (2, '2024-01-01T00:00:02.000000000Z', 1, '2024-01-01T00:00:01.500000Z'), (3, '2024-01-01T00:00:03.000000001Z', 1, '2024-01-01T00:00:02.500000Z'), (4, '2024-01-01T00:00:03.000000000Z', 1, '2024-01-01T00:00:02.600000Z'), (5, '2024-01-01T00:00:04.000000000Z', 1, '2024-01-01T00:00:03.400000Z'), (6, '2024-01-01T00:00:04.000000000Z', 0, '2024-01-01T00:00:03.500000Z'), (7, '2024-01-01T00:00:05.000000000Z', 1, '2024-01-01T00:00:04.100000Z'), (8, '2024-01-01T00:00:05.000000000Z', 1, '2024-01-01T00:00:04.500000Z'), (9, '2024-01-01T00:00:05.000000000Z', 1, '2024-01-01T00:00:05.000000Z'), (10, '2024-01-01T00:00:05.000000000Z', 1, '2024-01-01T00:00:05.500000Z'), (11, NULL, 1, '2024-01-01T00:00:05.700000Z')
+
+statement ok
+INSERT INTO m2 VALUES (1, '2024-01-01T00:00:01.000000Z', '2024-01-01T00:00:01.000000000Z'), (2, '2024-01-01T00:00:02.000000Z', '2024-01-01T00:00:02.000000000Z'), (3, '2024-01-01T00:00:03.000000Z', '2024-01-01T00:00:03.000000001Z'), (4, '2024-01-01T00:00:04.000000Z', '2024-01-01T00:00:04.000000000Z'), (5, '2024-01-01T00:00:05.000000Z', '2024-01-01T00:00:05.000000000Z'), (6, NULL, '2024-01-01T00:00:06.000000000Z')
+
+statement ok
+INSERT INTO s2 VALUES (1, '2024-01-01T00:00:01.000000Z', 1, '2024-01-01T00:00:00.500000000Z'), (2, '2024-01-01T00:00:02.000000Z', 1, '2024-01-01T00:00:01.500000000Z'), (3, '2024-01-01T00:00:03.000001Z', 1, '2024-01-01T00:00:02.500000000Z'), (4, '2024-01-01T00:00:03.000000Z', 1, '2024-01-01T00:00:02.600000000Z'), (5, '2024-01-01T00:00:04.000000Z', 1, '2024-01-01T00:00:03.400000000Z'), (6, '2024-01-01T00:00:04.000000Z', 0, '2024-01-01T00:00:03.500000000Z'), (7, '2024-01-01T00:00:05.000000Z', 1, '2024-01-01T00:00:04.100000000Z'), (8, '2024-01-01T00:00:05.000000Z', 1, '2024-01-01T00:00:04.500000000Z'), (9, '2024-01-01T00:00:05.000000Z', 1, '2024-01-01T00:00:05.000000000Z'), (10, '2024-01-01T00:00:05.000000Z', 1, '2024-01-01T00:00:05.500000000Z'), (11, NULL, 1, '2024-01-01T00:00:05.700000000Z')
+
+statement ok
+INSERT INTO m3 VALUES (1, '2024-01-01T00:00:01.000000Z', '2024-01-01T00:00:01.000000Z'), (2, '2024-01-01T00:00:02.000000Z', '2024-01-01T00:00:02.000000Z'), (3, '2024-01-01T00:00:03.000001Z', '2024-01-01T00:00:03.000000Z'), (4, '2024-01-01T00:00:04.000000Z', '2024-01-01T00:00:04.000000Z'), (5, '2024-01-01T00:00:05.000000Z', '2024-01-01T00:00:05.000000Z'), (6, NULL, '2024-01-01T00:00:06.000000Z')
+
+statement ok
+INSERT INTO s3 VALUES (1, '2024-01-01T00:00:01.000000Z', 1, '2024-01-01T00:00:00.500000Z'), (2, '2024-01-01T00:00:02.000000Z', 1, '2024-01-01T00:00:01.500000Z'), (3, '2024-01-01T00:00:03.000001Z', 1, '2024-01-01T00:00:02.500000Z'), (4, '2024-01-01T00:00:03.000000Z', 1, '2024-01-01T00:00:02.600000Z'), (5, '2024-01-01T00:00:04.000000Z', 1, '2024-01-01T00:00:03.400000Z'), (6, '2024-01-01T00:00:04.000000Z', 0, '2024-01-01T00:00:03.500000Z'), (7, '2024-01-01T00:00:05.000000Z', 1, '2024-01-01T00:00:04.100000Z'), (8, '2024-01-01T00:00:05.000000Z', 1, '2024-01-01T00:00:04.500000Z'), (9, '2024-01-01T00:00:05.000000Z', 1, '2024-01-01T00:00:05.000000Z'), (10, '2024-01-01T00:00:05.000000Z', 1, '2024-01-01T00:00:05.500000Z'), (11, NULL, 1, '2024-01-01T00:00:05.700000Z')
+
+statement ok
+INSERT INTO mc VALUES (1, '2024-01-01T00:00:01.000000Z'), (2, '2024-01-01T00:00:02.000000Z'), (3, '2024-01-01T00:00:03.000000Z'), (4, '2024-01-01T00:00:04.000000Z'), (5, '2024-01-01T00:00:05.000000Z'), (6, '2024-01-01T00:00:06.000000Z')
+
+statement ok
+INSERT INTO y VALUES (1, '2024-01-01T00:00:01.000000Z'), (2, '2024-01-01T00:00:02.000000Z'), (3, '2024-01-01T00:00:03.000001Z'), (4, '2024-01-01T00:00:04.000000Z'), (5, '2024-01-01T00:00:05.000000Z'), (6, NULL)
+
+# ==== designated TIMESTAMP next to TIMESTAMP_NS columns ====
+
+# ASOF JOIN
+query II rowsort
+SELECT m1.rn mr, s1.rn sr FROM m1 ASOF JOIN s1 ON m1.n = s1.t AND s1.t = m1.ts
+----
+1	1
+2	2
+3	NULL
+4	6
+5	9
+6	NULL
+
+# ASOF JOIN with the equalities swapped
+query II rowsort
+SELECT m1.rn mr, s1.rn sr FROM m1 ASOF JOIN s1 ON s1.t = m1.ts AND m1.n = s1.t
+----
+1	1
+2	2
+3	NULL
+4	6
+5	9
+6	NULL
+
+# ASOF JOIN with a WHERE clause that drops the unmatched rows of m1
+query II rowsort
+SELECT m1.rn mr, s1.rn sr FROM m1 ASOF JOIN s1 ON m1.n = s1.t AND s1.t = m1.ts WHERE s1.l > 0
+----
+1	1
+2	2
+5	9
+
+# LT JOIN
+query II rowsort
+SELECT m1.rn mr, s1.rn sr FROM m1 LT JOIN s1 ON m1.n = s1.t AND s1.t = m1.ts
+----
+1	1
+2	2
+3	NULL
+4	6
+5	8
+6	NULL
+
+# LT JOIN with a WHERE clause that drops the unmatched rows of m1
+query II rowsort
+SELECT m1.rn mr, s1.rn sr FROM m1 LT JOIN s1 ON m1.n = s1.t AND s1.t = m1.ts WHERE s1.l > 0
+----
+1	1
+2	2
+5	8
+
+# ==== designated TIMESTAMP_NS next to TIMESTAMP columns ====
+
+# ASOF JOIN
+query II rowsort
+SELECT m2.rn mr, s2.rn sr FROM m2 ASOF JOIN s2 ON m2.n = s2.t AND s2.t = m2.ts
+----
+1	1
+2	2
+3	NULL
+4	6
+5	9
+6	NULL
+
+# LT JOIN with a WHERE clause that drops the unmatched rows of m2
+query II rowsort
+SELECT m2.rn mr, s2.rn sr FROM m2 LT JOIN s2 ON m2.n = s2.t AND s2.t = m2.ts WHERE s2.l > 0
+----
+1	1
+2	2
+5	8
+
+# ==== columns of one type ====
+
+# ASOF JOIN
+query II rowsort
+SELECT m3.rn mr, s3.rn sr FROM m3 ASOF JOIN s3 ON m3.n = s3.t AND s3.t = m3.ts
+----
+1	1
+2	2
+3	NULL
+4	6
+5	9
+6	NULL
+
+# LT JOIN
+query II rowsort
+SELECT m3.rn mr, s3.rn sr FROM m3 LT JOIN s3 ON m3.n = s3.t AND s3.t = m3.ts
+----
+1	1
+2	2
+3	NULL
+4	6
+5	8
+6	NULL
+
+# ASOF JOIN with a WHERE clause that drops the unmatched rows of m3
+query II rowsort
+SELECT m3.rn mr, s3.rn sr FROM m3 ASOF JOIN s3 ON m3.n = s3.t AND s3.t = m3.ts WHERE s3.l > 0
+----
+1	1
+2	2
+5	9
+
+# ==== the designated timestamp of one table and a column of another ====
+
+# ASOF JOIN
+query II rowsort
+SELECT mc.rn mr, s3.rn sr FROM mc JOIN y ON y.rn = mc.rn ASOF JOIN s3 ON s3.t = mc.ts AND s3.t = y.n
+----
+1	1
+2	2
+3	NULL
+4	6
+5	9
+6	NULL
+
+# ASOF JOIN with a WHERE clause that drops the unmatched rows of mc
+query II rowsort
+SELECT mc.rn mr, s3.rn sr FROM mc JOIN y ON y.rn = mc.rn ASOF JOIN s3 ON s3.t = mc.ts AND s3.t = y.n WHERE s3.l > 0
+----
+1	1
+2	2
+5	9
+
+# LT JOIN
+query II rowsort
+SELECT mc.rn mr, s3.rn sr FROM mc JOIN y ON y.rn = mc.rn LT JOIN s3 ON s3.t = mc.ts AND s3.t = y.n
+----
+1	1
+2	2
+3	NULL
+4	6
+5	8
+6	NULL

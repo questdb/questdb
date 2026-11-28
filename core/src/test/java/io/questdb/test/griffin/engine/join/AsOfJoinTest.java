@@ -47,6 +47,40 @@ import org.junit.Test;
 import java.util.Arrays;
 
 public class AsOfJoinTest extends AbstractCairoTest {
+    // Rows of a ASOF JOIN b and a LT JOIN b over the tables of createSharedTimestampKeyMaster() and
+    // createSharedTimestampKeySlave(), whose keys pair b.t with two master columns: without a WHERE
+    // clause, and with WHERE b.l > 0, which drops the unmatched master rows and the match of 104. ASOF
+    // matches 105 with 208, which shares its timestamp, and LT with 207. Rows checked with DuckDB.
+    private static final String SHARED_TS_KEY_ASOF_ROWS = """
+            id\tid1
+            101\t201
+            102\t202
+            103\tnull
+            104\t204
+            105\t208
+            106\tnull
+            """;
+    private static final String SHARED_TS_KEY_ASOF_WHERE_ROWS = """
+            id\tid1
+            101\t201
+            102\t202
+            105\t208
+            """;
+    private static final String SHARED_TS_KEY_LT_ROWS = """
+            id\tid1
+            101\t201
+            102\t202
+            103\tnull
+            104\t204
+            105\t207
+            106\tnull
+            """;
+    private static final String SHARED_TS_KEY_LT_WHERE_ROWS = """
+            id\tid1
+            101\t201
+            102\t202
+            105\t207
+            """;
     // Rows of the joins over createMixedTimestampKeyTables(). t ASOF JOIN p ON t.n = p.a: the key
     // compares nanoseconds, NULL with NULL and 1970-01-01 with 1970-01-01.
     private static final String TS_KEY_MASTER_NANOS_ROWS = """
@@ -2534,6 +2568,131 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     }
                 }
             }
+        });
+    }
+
+    @Test
+    public void testAsOfJoinOnKeysSharingSlaveColumnWithMasterTimestamp() throws Exception {
+        // s.t pairs with the TIMESTAMP_NS m.n and with the designated TIMESTAMP m.ts, so a row of s matches
+        // when its t equals both, compared in nanoseconds. The two master columns differ in type, so
+        // m.n = m.ts never filters m, not even under a WHERE conjunct that drops the unmatched master rows,
+        // and the join keeps both key pairs. It accepts the designated timestamp at a key position whose
+        // slave column another key position shares. m 107 holds a timestamp past the TIMESTAMP_NS range,
+        // which must not fail the query, and no row of s can match it.
+        assertMemoryLeak(() -> {
+            createSharedTimestampKeyMaster("TIMESTAMP_NS", "TIMESTAMP", "2024-01-01T00:00:03.000000001Z", "2024-01-01T00:00:03.000000Z");
+            execute("INSERT INTO m VALUES (107, '2262-01-01T00:00:00.000000000Z', '2300-01-01T00:00:00.000000Z')");
+            createSharedTimestampKeySlave("TIMESTAMP_NS", "TIMESTAMP");
+            final String asOfRows = SHARED_TS_KEY_ASOF_ROWS + "107\tnull\n";
+            final String ltRows = SHARED_TS_KEY_LT_ROWS + "107\tnull\n";
+            for (String on : new String[]{"a.n = b.t AND b.t = a.ts", "b.t = a.ts AND a.n = b.t", "a.ts = b.t AND b.t = a.n"}) {
+                assertSharedTimestampKeyJoins(on, "", asOfRows, ltRows);
+                assertSharedTimestampKeyJoins(on, " WHERE b.l > 0", SHARED_TS_KEY_ASOF_WHERE_ROWS, SHARED_TS_KEY_LT_WHERE_ROWS);
+            }
+            // a subquery as the master side
+            assertQuery("SELECT a.id, b.id FROM (SELECT * FROM m WHERE id > 0) a ASOF JOIN s b ON a.n = b.t AND b.t = a.ts")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("sharedKeyCheck: true")
+                    .returns(asOfRows);
+        });
+    }
+
+    @Test
+    public void testAsOfJoinOnKeysSharingSlaveColumnWithMasterTimestampNanos() throws Exception {
+        // The designated TIMESTAMP_NS m.ts and the TIMESTAMP m.n share s.t, so the keys compare nanoseconds,
+        // and the copiers convert m.n and s.t. m.ts of m 103 is 1 nanosecond past its n.
+        assertMemoryLeak(() -> {
+            createSharedTimestampKeyMaster("TIMESTAMP", "TIMESTAMP_NS", "2024-01-01T00:00:03.000000Z", "2024-01-01T00:00:03.000000001Z");
+            createSharedTimestampKeySlave("TIMESTAMP", "TIMESTAMP_NS");
+            for (String on : new String[]{"a.n = b.t AND b.t = a.ts", "b.t = a.ts AND a.n = b.t"}) {
+                assertSharedTimestampKeyJoins(on, "", SHARED_TS_KEY_ASOF_ROWS, SHARED_TS_KEY_LT_ROWS);
+                assertSharedTimestampKeyJoins(on, " WHERE b.l > 0", SHARED_TS_KEY_ASOF_WHERE_ROWS, SHARED_TS_KEY_LT_WHERE_ROWS);
+            }
+        });
+    }
+
+    @Test
+    public void testAsOfJoinOnKeysSharingSlaveColumnWithMasterTimestampOfJoin() throws Exception {
+        // s.t pairs with the designated timestamp of mc and with y.n, a column of another master table. The
+        // keys imply mc.ts = y.n across the two tables, so the join keeps both key pairs, with or without a
+        // WHERE conjunct that drops the unmatched master rows.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE mc (id INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO mc VALUES
+                        (101, '2024-01-01T00:00:01.000000Z'),
+                        (102, '2024-01-01T00:00:02.000000Z'),
+                        (103, '2024-01-01T00:00:03.000000Z'),
+                        (104, '2024-01-01T00:00:04.000000Z'),
+                        (105, '2024-01-01T00:00:05.000000Z'),
+                        (106, '2024-01-01T00:00:06.000000Z')
+                    """);
+            execute("CREATE TABLE y (id INT, n TIMESTAMP)");
+            execute("""
+                    INSERT INTO y VALUES
+                        (101, '2024-01-01T00:00:01.000000Z'),
+                        (102, '2024-01-01T00:00:02.000000Z'),
+                        (103, '2024-01-01T00:00:03.000001Z'),
+                        (104, '2024-01-01T00:00:04.000000Z'),
+                        (105, '2024-01-01T00:00:05.000000Z'),
+                        (106, NULL)
+                    """);
+            createSharedTimestampKeySlave("TIMESTAMP", "TIMESTAMP");
+            final String select = "SELECT a.id, b.id FROM mc a JOIN y ON y.id = a.id ";
+            for (String on : new String[]{"b.t = a.ts AND b.t = y.n", "b.t = y.n AND b.t = a.ts"}) {
+                for (String where : new String[]{"", " WHERE b.l > 0"}) {
+                    final boolean isUnfiltered = where.isEmpty();
+                    final String asOfRows = isUnfiltered ? SHARED_TS_KEY_ASOF_ROWS : SHARED_TS_KEY_ASOF_WHERE_ROWS;
+                    final String ltRows = isUnfiltered ? SHARED_TS_KEY_LT_ROWS : SHARED_TS_KEY_LT_WHERE_ROWS;
+                    assertQuery(select + "ASOF JOIN s b ON " + on + where)
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .withPlanContaining("AsOf Join Fast", "sharedKeyCheck: true")
+                            .returns(asOfRows);
+                    assertQuery(select + "LT JOIN s b ON " + on + where)
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .withPlanContaining("Lt Join Light")
+                            .returns(ltRows);
+                    // the full-fat joins materialize the master side, whose size they then know
+                    assertQuery(select + "ASOF JOIN s b ON " + on + where)
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize(isUnfiltered)
+                            .fullFatJoins()
+                            .returns(asOfRows);
+                    assertQuery(select + "LT JOIN s b ON " + on + where)
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize(isUnfiltered)
+                            .fullFatJoins()
+                            .returns(ltRows);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testAsOfJoinOnKeysSharingSlaveColumnWithMasterTimestampSameType() throws Exception {
+        // With m.n and m.ts both TIMESTAMP, a WHERE conjunct that drops the unmatched master rows lets
+        // m.n = m.ts filter m, and the join keeps one key. Without it, the join keeps both key pairs and
+        // returns m 103 and m 106, which a filter on m would lose.
+        assertMemoryLeak(() -> {
+            createSharedTimestampKeyMaster("TIMESTAMP", "TIMESTAMP", "2024-01-01T00:00:03.000001Z", "2024-01-01T00:00:03.000000Z");
+            createSharedTimestampKeySlave("TIMESTAMP", "TIMESTAMP");
+            assertSharedTimestampKeyJoins("a.n = b.t AND b.t = a.ts", "", SHARED_TS_KEY_ASOF_ROWS, SHARED_TS_KEY_LT_ROWS);
+            assertQuery("SELECT a.id, b.id FROM m a ASOF JOIN s b ON a.n = b.t AND b.t = a.ts WHERE b.l > 0")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("filter: n=ts", "condition: b.t=a.ts")
+                    .withPlanNotContaining("sharedKeyCheck")
+                    .returns(SHARED_TS_KEY_ASOF_WHERE_ROWS);
+            assertQuery("SELECT a.id, b.id FROM m a LT JOIN s b ON a.n = b.t AND b.t = a.ts WHERE b.l > 0")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Lt Join", "filter: n=ts")
+                    .returns(SHARED_TS_KEY_LT_WHERE_ROWS);
         });
     }
 
@@ -5502,6 +5661,46 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testJoinOnMasterTimestampAndSomethingElseNotAllowed() throws Exception {
+        // The designated timestamp of m pairs with a slave column that no other master column pairs with,
+        // next to other keys, so the join rejects it as it rejects ON (sym, ts), also when two other keys
+        // share a slave column.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (id INT, n TIMESTAMP_NS, x TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE s (id INT, t TIMESTAMP_NS, u TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts)");
+            for (String join : new String[]{"ASOF", "LT"}) {
+                assertQuery("SELECT m.id, s.id FROM m " + join + " JOIN s ON m.id = s.id AND m.ts = s.u")
+                        .noLeakCheck()
+                        .fails(25, "ASOF/LT JOIN cannot use designated timestamp as a join key");
+                assertQuery("SELECT m.id, s.id FROM m " + join + " JOIN s ON m.n = s.t AND m.x = s.t AND m.ts = s.u")
+                        .noLeakCheck()
+                        .fails(25, "ASOF/LT JOIN cannot use designated timestamp as a join key");
+            }
+        });
+    }
+
+    @Test
+    public void testJoinOnSlaveTimestampSharedByMasterColumnsNotAllowed() throws Exception {
+        // The designated timestamp of s pairs with two master columns of different types, or of different
+        // tables, so the join keeps both key pairs, even under a WHERE conjunct that drops the unmatched
+        // master rows. The full-fat join keeps the slave timestamp among its map values, which exclude the
+        // key columns, so the join rejects the slave timestamp at any key position of several.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (id INT, n TIMESTAMP_NS, x TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE y (id INT, n TIMESTAMP)");
+            execute("CREATE TABLE s (id INT, l LONG, ts TIMESTAMP_NS) TIMESTAMP(ts)");
+            for (String join : new String[]{"ASOF", "LT"}) {
+                assertQuery("SELECT m.id, s.id FROM m " + join + " JOIN s ON m.n = s.ts AND s.ts = m.x WHERE s.l > 0")
+                        .noLeakCheck()
+                        .fails(25, "ASOF/LT JOIN cannot use designated timestamp as a join key");
+                assertQuery("SELECT m.id, s.id FROM m JOIN y ON y.id = m.id " + join + " JOIN s ON s.ts = m.x AND s.ts = y.n WHERE s.l > 0")
+                        .noLeakCheck()
+                        .fails(47, "ASOF/LT JOIN cannot use designated timestamp as a join key");
+            }
+        });
+    }
+
+    @Test
     public void testJoinOnSymbolKey() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("CREATE TABLE x (sym SYMBOL, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", leftTableTimestampType.getTypeName());
@@ -8173,6 +8372,42 @@ public class AsOfJoinTest extends AbstractCairoTest {
         TestUtils.assertEquals(expectedSink, actualSink);
     }
 
+    private void assertSharedTimestampKeyJoin(String query, String expected, boolean hasSize, CharSequence... planFragments) throws Exception {
+        assertQuery(query)
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize(hasSize)
+                .withPlanContaining(planFragments)
+                .returns(expected);
+    }
+
+    // Runs m ASOF JOIN s and m LT JOIN s, aliased a and b, on each algorithm that compares the keys with
+    // record copiers: the ASOF Fast, Dense and Light algorithms, ASOF with TOLERANCE and the joins over a
+    // filtered s, and the full-fat joins, forced and over a UNION ALL. Without a WHERE clause the joins
+    // return a row for each row of m, so they know their size.
+    private void assertSharedTimestampKeyJoins(String on, String where, String asOfRows, String ltRows) throws Exception {
+        final boolean hasSize = where.isEmpty();
+        final String filtered = "(SELECT * FROM s WHERE id > 0) b";
+        final String union = "((SELECT * FROM s UNION ALL SELECT * FROM s WHERE 1 = 0) TIMESTAMP(ts)) b";
+        assertSharedTimestampKeyJoin("SELECT a.id, b.id FROM m a ASOF JOIN s b ON " + on + where, asOfRows, hasSize, "AsOf Join Fast", "sharedKeyCheck: true");
+        assertSharedTimestampKeyJoin("SELECT /*+ asof_dense(a b) */ a.id, b.id FROM m a ASOF JOIN s b ON " + on + where, asOfRows, hasSize, "AsOf Join Dense");
+        assertSharedTimestampKeyJoin("SELECT /*+ asof_linear(a b) */ a.id, b.id FROM m a ASOF JOIN s b ON " + on + where, asOfRows, hasSize, "AsOf Join Light");
+        assertSharedTimestampKeyJoin("SELECT a.id, b.id FROM m a ASOF JOIN s b ON " + on + " TOLERANCE 1h" + where, asOfRows, hasSize, "AsOf Join Fast", "sharedKeyCheck: true");
+        assertSharedTimestampKeyJoin("SELECT a.id, b.id FROM m a ASOF JOIN " + filtered + " ON " + on + where, asOfRows, hasSize, "Filtered AsOf Join Fast", "sharedKeyCheck: true");
+        assertSharedTimestampKeyJoin("SELECT a.id, b.id FROM m a LT JOIN s b ON " + on + where, ltRows, hasSize, "Lt Join Light");
+        assertSharedTimestampKeyJoin("SELECT a.id, b.id FROM m a LT JOIN " + filtered + " ON " + on + where, ltRows, hasSize, "Lt Join Light");
+        for (String join : new String[]{"ASOF", "LT"}) {
+            final String rows = "ASOF".equals(join) ? asOfRows : ltRows;
+            assertQuery("SELECT a.id, b.id FROM m a " + join + " JOIN s b ON " + on + where)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize(hasSize)
+                    .fullFatJoins()
+                    .returns(rows);
+            assertSharedTimestampKeyJoin("SELECT a.id, b.id FROM m a " + join + " JOIN " + union + " ON " + on + where, rows, hasSize, "Union All");
+        }
+    }
+
     private void createBook() throws Exception {
         executeWithRewriteTimestamp(
                 "CREATE TABLE book (ts #TIMESTAMP, sym SYMBOL, side SYMBOL, side_str STRING, qty LONG) TIMESTAMP(ts) PARTITION BY DAY",
@@ -8269,6 +8504,43 @@ public class AsOfJoinTest extends AbstractCairoTest {
                 (30, 'A', NULL, true, 5::TIMESTAMP),
                 (40, 'B', 0.5, false, 6::TIMESTAMP)
                 """);
+    }
+
+    // Creates m, whose key column n equals its designated timestamp ts in every row but m 103, where the
+    // two hold the given times, and m 106, where n is NULL.
+    private void createSharedTimestampKeyMaster(String keyType, String timestampType, String n103, String ts103) throws SqlException {
+        execute("CREATE TABLE m (id INT, n " + keyType + ", ts " + timestampType + ") TIMESTAMP(ts)");
+        execute("""
+                INSERT INTO m VALUES
+                    (101, '2024-01-01T00:00:01.000000Z', '2024-01-01T00:00:01.000000Z'),
+                    (102, '2024-01-01T00:00:02.000000Z', '2024-01-01T00:00:02.000000Z'),
+                    (103, '%s', '%s'),
+                    (104, '2024-01-01T00:00:04.000000Z', '2024-01-01T00:00:04.000000Z'),
+                    (105, '2024-01-01T00:00:05.000000Z', '2024-01-01T00:00:05.000000Z'),
+                    (106, NULL, '2024-01-01T00:00:06.000000Z')
+                """.formatted(n103, ts103));
+    }
+
+    // Creates s, whose t pairs with two master columns. s 203 holds one unit of the key type past 3s and
+    // s 209 holds 3s, so each can match only one of two master columns that differ by that unit. s 204,
+    // the latest row of 4s, has l = 0, and of the rows of 5s, s 208 arrives at 5s and s 210 after it.
+    private void createSharedTimestampKeySlave(String keyType, String timestampType) throws SqlException {
+        final String afterThree = "TIMESTAMP_NS".equals(keyType) ? "2024-01-01T00:00:03.000000001Z" : "2024-01-01T00:00:03.000001Z";
+        execute("CREATE TABLE s (id INT, t " + keyType + ", l LONG, ts " + timestampType + ") TIMESTAMP(ts)");
+        execute("""
+                INSERT INTO s VALUES
+                    (201, '2024-01-01T00:00:01.000000Z', 1, '2024-01-01T00:00:00.500000Z'),
+                    (202, '2024-01-01T00:00:02.000000Z', 1, '2024-01-01T00:00:01.500000Z'),
+                    (203, '%s', 1, '2024-01-01T00:00:02.500000Z'),
+                    (209, '2024-01-01T00:00:03.000000Z', 1, '2024-01-01T00:00:02.600000Z'),
+                    (205, '2024-01-01T00:00:04.000000Z', 1, '2024-01-01T00:00:03.400000Z'),
+                    (204, '2024-01-01T00:00:04.000000Z', 0, '2024-01-01T00:00:03.500000Z'),
+                    (206, '2024-01-01T00:00:05.000000Z', 1, '2024-01-01T00:00:04.100000Z'),
+                    (207, '2024-01-01T00:00:05.000000Z', 1, '2024-01-01T00:00:04.500000Z'),
+                    (208, '2024-01-01T00:00:05.000000Z', 1, '2024-01-01T00:00:05.000000Z'),
+                    (210, '2024-01-01T00:00:05.000000Z', 1, '2024-01-01T00:00:05.500000Z'),
+                    (211, NULL, 1, '2024-01-01T00:00:05.700000Z')
+                """.formatted(afterThree));
     }
 
     private @NotNull String getString(String format) {

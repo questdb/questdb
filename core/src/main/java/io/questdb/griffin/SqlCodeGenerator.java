@@ -2453,6 +2453,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return false;
     }
 
+    // Returns true when the column at the key position occurs at another position of the key as well.
+    private static boolean isRepeatedKeyColumn(ListColumnFilter keyColumns, int position) {
+        final int columnIndex = keyColumns.getColumnIndexFactored(position);
+        for (int j = 0, n = keyColumns.getColumnCount(); j < n; j++) {
+            if (j != position && keyColumns.getColumnIndexFactored(j) == columnIndex) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private static boolean isRightOrFullJoin(int joinType) {
         return joinType == IQueryModel.JOIN_RIGHT_OUTER
                 || joinType == IQueryModel.JOIN_FULL_OUTER
@@ -17793,6 +17804,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         // When timestamp is the ONLY join key, isKeyedTemporalJoin() will return false and simplify
         // "ASOF JOIN ON (ts)" to a non-keyed join, which is harmless. But when timestamp is combined
         // with other keys like "ON (sym, ts)", it causes problems in the join implementation.
+        // The master timestamp may still pair with a slave column that another master column pairs
+        // with too, as in a.n = b.t AND b.t = a.ts, where SqlOptimiser keeps both key pairs. The join
+        // compares the master columns of such a slave column with one another, and reads the
+        // timestamp there like any other key column.
         int keyCount = listColumnFilterA.getColumnCount();
         if (keyCount <= 1) {
             return; // Single key (or no key) is fine - handled by isKeyedTemporalJoin()
@@ -17801,8 +17816,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         int slaveTimestampIndex = slaveMetadata.getTimestampIndex();
         int masterTimestampIndex = masterMetadata.getTimestampIndex();
         for (int i = 0; i < keyCount; i++) {
-            if (listColumnFilterA.getColumnIndexFactored(i) == slaveTimestampIndex ||
-                    listColumnFilterB.getColumnIndexFactored(i) == masterTimestampIndex) {
+            final boolean isSlaveTimestamp = listColumnFilterA.getColumnIndexFactored(i) == slaveTimestampIndex;
+            final boolean isUnsharedMasterTimestamp = listColumnFilterB.getColumnIndexFactored(i) == masterTimestampIndex
+                    && !isRepeatedKeyColumn(listColumnFilterA, i);
+            if (isSlaveTimestamp || isUnsharedMasterTimestamp) {
                 throw SqlException.$(slaveModel.getJoinKeywordPosition(),
                         "ASOF/LT JOIN cannot use designated timestamp as a join key");
             }

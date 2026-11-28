@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Micros;
@@ -97,6 +98,9 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
             case SYMBOL_AND_TIMESTAMP -> renamed
                     ? " on (t1.s = t2.s2) and (t1.ts = t2.ts2) "
                     : " on (t1.s = t2.s) and (t1.ts = t2.ts) ";
+            case TIMESTAMP_SHARING_SLAVE_COLUMN -> renamed
+                    ? " on (t1.ts = t2.tk2) and (t1.tk = t2.tk2) "
+                    : " on (t1.ts = t2.tk) and (t1.tk = t2.tk) ";
         };
     }
 
@@ -124,11 +128,29 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
 
         // Keyed joins can't remove symbol column since it is used as a JOIN key
         if (projectionType == ProjectionType.REMOVE_SYMBOL_COLUMN &&
-                (joinType == JoinType.ASOF || joinType == JoinType.LT)) {
+                (joinType == JoinType.ASOF || joinType == JoinType.LT) &&
+                joinKeyType != JoinKeyType.TIMESTAMP_SHARING_SLAVE_COLUMN) {
             return false;
         }
 
         return true;
+    }
+
+    // The tk of a t1 row: its designated timestamp in microseconds, a microsecond later, or NULL.
+    private static String masterTk(Rnd rnd, long tsMicros) {
+        final int pick = rnd.nextInt(10);
+        if (pick == 0) {
+            return "null";
+        }
+        return String.valueOf(pick == 1 ? tsMicros + 1 : tsMicros);
+    }
+
+    // The tk of a t2 row: the designated timestamp of a random t1 row in microseconds, or NULL.
+    private static String slaveTk(Rnd rnd, LongList masterMicros) {
+        if (masterMicros.size() == 0 || rnd.nextInt(10) == 0) {
+            return "null";
+        }
+        return String.valueOf(masterMicros.getQuick(rnd.nextInt(masterMicros.size())));
     }
 
     private void assertResultSetsMatch0(Rnd rnd) {
@@ -266,27 +288,27 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
         }
 
         String projection;
-        // (ts TIMESTAMP, i INT, s SYMBOL, val INT)
+        // (ts TIMESTAMP, i INT, s SYMBOL, val INT, tk TIMESTAMP)
         String slaveTimestampColumnName = "ts1";
         switch (projectionType) {
             case NONE:
                 projection = "*";
                 break;
             case CROSS_COLUMN:
-                projection = "s, ts, i, val";
+                projection = "s, ts, i, val, tk";
                 break;
             case RENAME_COLUMN:
-                projection = "s as s2, ts as ts2, i as i2, val as val2";
+                projection = "s as s2, ts as ts2, i as i2, val as val2, tk as tk2";
                 slaveTimestampColumnName = "ts2";
                 break;
             case ADD_COLUMN:
                 projection = "*, i as i2";
                 break;
             case REMOVE_SYMBOL_COLUMN:
-                projection = "ts, i, val";
+                projection = "ts, i, val, tk";
                 break;
             case REMOVE_TIMESTAMP_COLUMN:
-                projection = "i, s, val";
+                projection = "i, s, val, tk";
                 slaveTimestampColumnName = null;
                 break;
             default:
@@ -391,7 +413,8 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
             final int table2Size = rnd.nextPositiveInt() % 1000;
 
             final TimestampDriver leftTimestampDriver = leftTableTimestampType.getDriver();
-            executeWithRewriteTimestamp("CREATE TABLE t1 (ts #TIMESTAMP, i INT, s SYMBOL, val INT) timestamp(ts) partition by day bypass wal", leftTableTimestampType.getTypeName());
+            final LongList masterMicros = new LongList();
+            executeWithRewriteTimestamp("CREATE TABLE t1 (ts #TIMESTAMP, i INT, s SYMBOL, val INT, tk TIMESTAMP) timestamp(ts) partition by day bypass wal", leftTableTimestampType.getTypeName());
             long ts = leftTimestampDriver.parseFloorLiteral("2000-01-01T00:00:00.000Z");
             ts += leftTimestampDriver.fromHours((int) (rnd.nextLong() % 48));
             for (int i = 0; i < table1Size; i++) {
@@ -400,12 +423,14 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
                 }
                 String symbol = "s_" + rnd.nextInt(10);
                 int val = rnd.nextInt(20);
-                execute("INSERT INTO t1 values (" + ts + ", " + i + ", '" + symbol + "', " + val + ");");
+                final long tsMicros = leftTimestampDriver.toMicros(ts);
+                masterMicros.add(tsMicros);
+                execute("INSERT INTO t1 values (" + ts + ", " + i + ", '" + symbol + "', " + val + ", " + masterTk(rnd, tsMicros) + ");");
             }
 
             final TimestampDriver rightTimestampDriver = rightTableTimestampType.getDriver();
             executeWithRewriteTimestamp(
-                    "CREATE TABLE t2 (ts #TIMESTAMP, i INT, s SYMBOL INDEX, val INT) timestamp(ts) partition by day bypass wal",
+                    "CREATE TABLE t2 (ts #TIMESTAMP, i INT, s SYMBOL INDEX, val INT, tk TIMESTAMP) timestamp(ts) partition by day bypass wal",
                     rightTableTimestampType.getTypeName());
             ts = rightTimestampDriver.parseFloorLiteral("2000-01-01T00:00:00.000Z");
             ts += rightTimestampDriver.fromHours((int) rnd.nextLong(48));
@@ -415,7 +440,7 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
                 }
                 String symbol = "s_" + rnd.nextInt(10);
                 int val = rnd.nextInt(20);
-                execute("INSERT INTO t2 values (" + ts + ", " + i + ", '" + symbol + "', " + val + ");");
+                execute("INSERT INTO t2 values (" + ts + ", " + i + ", '" + symbol + "', " + val + ", " + slaveTk(rnd, masterMicros) + ");");
             }
 
             assertResultSetsMatch0(rnd);
@@ -429,7 +454,8 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
             final int table2Size = rnd.nextPositiveInt() % 1000;
 
             final TimestampDriver leftTimestampDriver = leftTableTimestampType.getDriver();
-            executeWithRewriteTimestamp("CREATE TABLE t1 (ts #TIMESTAMP, i INT, s SYMBOL, val INT) timestamp(ts)", leftTableTimestampType.getTypeName());
+            final LongList masterMicros = new LongList();
+            executeWithRewriteTimestamp("CREATE TABLE t1 (ts #TIMESTAMP, i INT, s SYMBOL, val INT, tk TIMESTAMP) timestamp(ts)", leftTableTimestampType.getTypeName());
             long ts = leftTimestampDriver.parseFloorLiteral("2000-01-01T00:00:00.000Z");
             ts += leftTimestampDriver.fromHours((int) (rnd.nextLong() % 48));
             for (int i = 0; i < table1Size; i++) {
@@ -438,12 +464,14 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
                 }
                 String symbol = "s_" + rnd.nextInt(10);
                 int val = rnd.nextInt(20);
-                execute("INSERT INTO t1 values (" + ts + ", " + i + ", '" + symbol + "', " + val + ");");
+                final long tsMicros = leftTimestampDriver.toMicros(ts);
+                masterMicros.add(tsMicros);
+                execute("INSERT INTO t1 values (" + ts + ", " + i + ", '" + symbol + "', " + val + ", " + masterTk(rnd, tsMicros) + ");");
             }
 
             final TimestampDriver rightTimestampDriver = rightTableTimestampType.getDriver();
             executeWithRewriteTimestamp(
-                    "CREATE TABLE t2 (ts #TIMESTAMP, i INT, s SYMBOL INDEX, val INT) timestamp(ts)",
+                    "CREATE TABLE t2 (ts #TIMESTAMP, i INT, s SYMBOL INDEX, val INT, tk TIMESTAMP) timestamp(ts)",
                     rightTableTimestampType.getTypeName());
             ts = rightTimestampDriver.parseFloorLiteral("2000-01-01T00:00:00.000Z");
             ts += rightTimestampDriver.fromHours((int) rnd.nextLong(48));
@@ -453,7 +481,7 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
                 }
                 String symbol = "s_" + rnd.nextInt(10);
                 int val = rnd.nextInt(20);
-                execute("INSERT INTO t2 values (" + ts + ", " + i + ", '" + symbol + "', " + val + ");");
+                execute("INSERT INTO t2 values (" + ts + ", " + i + ", '" + symbol + "', " + val + ", " + slaveTk(rnd, masterMicros) + ");");
             }
 
             assertResultSetsMatch0(rnd);
@@ -488,6 +516,12 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
          * Tests multi-column join including the designated timestamp column.
          */
         SYMBOL_AND_TIMESTAMP,
+        /**
+         * Designated timestamp and another timestamp column that share one slave column:
+         * ON (t1.ts = t2.tk) AND (t1.tk = t2.tk). The join keeps both key pairs and checks
+         * that t1.ts and t1.tk agree.
+         */
+        TIMESTAMP_SHARING_SLAVE_COLUMN,
     }
 
     private enum JoinType {
