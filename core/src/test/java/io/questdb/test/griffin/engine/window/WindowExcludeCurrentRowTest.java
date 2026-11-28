@@ -300,6 +300,95 @@ public class WindowExcludeCurrentRowTest extends AbstractCairoTest {
      * Five rows carrying a three-row tie at 00:00:01, so every frame that ends at the current row
      * has to decide what to do with the peers on either side of it.
      */
+    @Test
+    public void testNamedWindowInheritsExclusionFromDefaultRangeFrame() throws Exception {
+        assertMemoryLeak(() -> {
+            createNullableTable();
+
+            // The base frame is RANGE UNBOUNDED PRECEDING .. CURRENT ROW, which is the default
+            // frame, so only the exclusion distinguishes it. The child window w2 must keep it:
+            // OVER w2 returns what OVER w returns, with the current row left out.
+            assertQuery("""
+                    SELECT ts, x,
+                      count(x) OVER w AS c1, count(x) OVER w2 AS c2,
+                      last_value(x) OVER w AS l1, last_value(x) OVER w2 AS l2
+                    FROM tab
+                    WINDOW w AS (PARTITION BY sym ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW EXCLUDE CURRENT ROW),
+                           w2 AS (w)""")
+                    .noRandomAccess()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tx\tc1\tc2\tl1\tl2
+                            2026-01-01T10:00:00.000000Z\t1.0\t0\t0\tnull\tnull
+                            2026-01-01T12:00:00.000000Z\tnull\t1\t1\t1.0\t1.0
+                            2026-01-01T13:00:00.000000Z\t2.0\t1\t1\tnull\tnull
+                            2026-01-02T01:00:00.000000Z\t4.0\t2\t2\t2.0\t2.0
+                            2026-01-02T02:00:00.000000Z\t8.0\t3\t3\t4.0\t4.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testNamedWindowInheritsExclusionWhenChildAddsOrderBy() throws Exception {
+        assertMemoryLeak(() -> {
+            createNullableTable();
+
+            // The child only adds ORDER BY, so the frame and its exclusion come from w.
+            assertQuery("""
+                    SELECT ts, x, count(x) OVER w2 AS c2
+                    FROM tab
+                    WINDOW w AS (PARTITION BY sym RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW EXCLUDE CURRENT ROW),
+                           w2 AS (w ORDER BY ts)""")
+                    .noRandomAccess()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tx\tc2
+                            2026-01-01T10:00:00.000000Z\t1.0\t0
+                            2026-01-01T12:00:00.000000Z\tnull\t1
+                            2026-01-01T13:00:00.000000Z\t2.0\t1
+                            2026-01-02T01:00:00.000000Z\t4.0\t2
+                            2026-01-02T02:00:00.000000Z\t8.0\t3
+                            """);
+        });
+    }
+
+    @Test
+    public void testNamedWindowWithoutExclusionStillIncludesCurrentRow() throws Exception {
+        assertMemoryLeak(() -> {
+            createNullableTable();
+
+            // Guard: a base window with the plain default frame passes on no exclusion.
+            assertQuery("""
+                    SELECT ts, count(x) OVER w AS c1, count(x) OVER w2 AS c2
+                    FROM tab
+                    WINDOW w AS (PARTITION BY sym ORDER BY ts), w2 AS (w)""")
+                    .noRandomAccess()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tc1\tc2
+                            2026-01-01T10:00:00.000000Z\t1\t1
+                            2026-01-01T12:00:00.000000Z\t1\t1
+                            2026-01-01T13:00:00.000000Z\t2\t2
+                            2026-01-02T01:00:00.000000Z\t3\t3
+                            2026-01-02T02:00:00.000000Z\t4\t4
+                            """);
+        });
+    }
+
+    private static void createNullableTable() throws Exception {
+        execute("CREATE TABLE tab (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("""
+                INSERT INTO tab VALUES
+                  ('2026-01-01T10:00:00.000000Z', 'a', 1.0),
+                  ('2026-01-01T12:00:00.000000Z', 'a', NULL),
+                  ('2026-01-01T13:00:00.000000Z', 'a', 2.0),
+                  ('2026-01-02T01:00:00.000000Z', 'a', 4.0),
+                  ('2026-01-02T02:00:00.000000Z', 'a', 8.0)""");
+    }
+
     private static void createTiedTable() throws Exception {
         execute("CREATE TABLE tab (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY");
         execute("""
