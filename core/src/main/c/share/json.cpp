@@ -754,6 +754,10 @@ Java_io_questdb_std_json_SimdJsonParser_destroy(
     delete parser;
 }
 
+// The functions that take more than six Java arguments take every argument after the sixth as a 64-bit
+// value, jlong or a pointer, and narrow it here: on macOS/aarch64, HotSpot compiles no native wrapper
+// for a method that passes a narrower argument on the stack, and runs every call through the
+// interpreter instead. See the note on the natives in SimdJsonParser.java.
 JNIEXPORT void JNICALL
 Java_io_questdb_std_json_SimdJsonParser_queryPointerUtf8(
         JNIEnv * /*env*/,
@@ -767,8 +771,9 @@ Java_io_questdb_std_json_SimdJsonParser_queryPointerUtf8(
         size_t pointer_len,
         json_result *result,
         questdb_byte_sink_t *dest_sink,
-        int32_t max_size
+        jlong max_size_arg
 ) {
+    const auto max_size = static_cast<int32_t>(max_size_arg);
     value_at_pointer(
             parser, json_chars, json_len, tail_padding, pointer_chars, pointer_len, result,
             [result, dest_sink, max_size, json_is_ascii](auto res) -> token_void {
@@ -806,8 +811,9 @@ Java_io_questdb_std_json_SimdJsonParser_queryPointerValue(
         size_t pointer_len,
         json_result *result,
         questdb_byte_sink_t *dest_sink,
-        int32_t max_size
+        jlong max_size_arg
 ) {
+    const auto max_size = static_cast<int32_t>(max_size_arg);
     // this method is used to query utf8 representation of either TIMESTAMP, DATE or IPV4.
     // all these values are ASCII
     const simdjson::padded_string_view json_buf{json_chars, json_len, json_len + tail_padding};
@@ -1005,10 +1011,12 @@ Java_io_questdb_std_json_SimdJsonParser_extractAllArrayElements(
         jboolean is_object_array,
         column_desc_t *descs,
         column_result_t *results,
-        jint column_count,
-        jint element_count,
+        jlong column_count_arg,
+        jlong element_count_arg,
         questdb_byte_sink_t *string_sink
 ) {
+    const auto column_count = static_cast<jint>(column_count_arg);
+    const auto element_count = static_cast<jint>(element_count_arg);
     const simdjson::padded_string_view json_buf{json_chars, json_len, json_len + tail_padding};
 
     auto doc = parser->iterate(json_buf);
@@ -1054,10 +1062,12 @@ Java_io_questdb_std_json_SimdJsonParser_queryAndExtractArray(
         json_result *result,
         column_desc_t *descs,
         column_result_t *results,
-        jint column_count,
-        jint results_capacity,
+        jlong column_count_arg,
+        jlong results_capacity_arg,
         questdb_byte_sink_t *string_sink
 ) {
+    const auto column_count = static_cast<jint>(column_count_arg);
+    const auto results_capacity = static_cast<jint>(results_capacity_arg);
     const simdjson::padded_string_view json_buf{json_chars, json_len, json_len + tail_padding};
 
     auto doc = parser->iterate(json_buf);

@@ -39,6 +39,8 @@ import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
+import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 import java.nio.charset.StandardCharsets;
 import java.util.Objects;
 
@@ -841,6 +843,47 @@ public class SimdJsonParserTest {
             Assert.assertEquals(Long.MIN_VALUE, res);
             Assert.assertEquals(SimdJsonType.NULL, result.getType());
         });
+    }
+
+    @Test
+    public void testNativeArgumentsFitCompiledWrapper() {
+        // On macOS/aarch64, HotSpot builds no compiled wrapper for a native method that passes an argument
+        // narrower than 64 bits on the stack: c_calling_convention_priv() in sharedRuntime_aarch64.cpp gives up
+        // on such an argument, and every call of the method then goes through the interpreter, several times
+        // slower than the parse of a small document. The C function takes JNIEnv and the class first, and eight
+        // registers take the first eight integer and pointer arguments, so every Java argument after the sixth
+        // has to be a long or a reference. JSON UNNEST and json_extract() call these natives once per row.
+        int stackArgumentCount = 0;
+        for (Method method : SimdJsonParser.class.getDeclaredMethods()) {
+            if (!Modifier.isNative(method.getModifiers())) {
+                continue;
+            }
+            // JNIEnv, and the class or the instance
+            int integerRegisterCount = 2;
+            int floatRegisterCount = 0;
+            final Class<?>[] parameterTypes = method.getParameterTypes();
+            for (int i = 0, n = parameterTypes.length; i < n; i++) {
+                final Class<?> type = parameterTypes[i];
+                final boolean isOnStack;
+                final boolean isWide;
+                if (type == float.class || type == double.class) {
+                    isOnStack = floatRegisterCount++ >= 8;
+                    isWide = type == double.class;
+                } else {
+                    isOnStack = integerRegisterCount++ >= 8;
+                    isWide = type == long.class || !type.isPrimitive();
+                }
+                if (isOnStack) {
+                    stackArgumentCount++;
+                    Assert.assertTrue(
+                            method.getName() + " passes argument " + i + ", a " + type.getName() + ", on the stack",
+                            isWide
+                    );
+                }
+            }
+        }
+        // queryAndExtractArray() and extractAllArrayElements() pass five arguments each on the stack
+        Assert.assertTrue(stackArgumentCount >= 10);
     }
 
     @Test

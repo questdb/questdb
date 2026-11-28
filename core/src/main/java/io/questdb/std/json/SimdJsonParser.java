@@ -280,6 +280,12 @@ public class SimdJsonParser implements QuietCloseable {
         );
     }
 
+    // On macOS/aarch64, HotSpot compiles no native wrapper for a native method that passes an argument
+    // narrower than 64 bits, such as an int or a boolean, on the stack: past the eight registers that JNIEnv,
+    // the class and the first six arguments take. Every call of such a method goes through the interpreter's
+    // native entry, which costs several times the parse of a small document. JSON UNNEST and json_extract()
+    // call these natives once per row, so every argument after the sixth is a long, see
+    // SimdJsonParserTest#testNativeArgumentsFitCompiledWrapper().
     private static native void convertJsonPathToPointer(
             long pathPtr,
             long pathLen,
@@ -299,8 +305,8 @@ public class SimdJsonParser implements QuietCloseable {
             boolean isObjectArray,
             long descsPtr,
             long resultsPtr,
-            int columnCount,
-            int elementCount,
+            long columnCount,
+            long elementCount,
             long stringSinkPtr
     );
 
@@ -315,8 +321,8 @@ public class SimdJsonParser implements QuietCloseable {
             long resultPtr,
             long descsPtr,
             long resultsPtr,
-            int columnCount,
-            int resultsCapacity,
+            long columnCount,
+            long resultsCapacity,
             long stringSinkPtr
     );
 
@@ -380,7 +386,7 @@ public class SimdJsonParser implements QuietCloseable {
             long pointerLen,
             long resultPtr,
             long destPtr,
-            int maxSize
+            long maxSize
     );
 
     private static native long queryPointerValue(
@@ -392,7 +398,7 @@ public class SimdJsonParser implements QuietCloseable {
             long pointerLen,
             long resultPtr,
             long destPtr,
-            int maxSize
+            long maxSize
     );
 
     static {
