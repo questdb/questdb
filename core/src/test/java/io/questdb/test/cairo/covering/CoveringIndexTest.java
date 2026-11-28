@@ -4618,6 +4618,66 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCoveredColumnFileCreatedAfterColumnsWereMappedIsRead() throws Exception {
+        // late has no rows below its top and no file when the first commit maps the covered columns to read early.
+        // Its file arrives with its first row, and the same writer must read it rather than publish NULL.
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final String name = "cover_late_file";
+                final int plen = path.size();
+                final ObjList<CharSequence> coverNames = new ObjList<>();
+                coverNames.add("early");
+                coverNames.add("late");
+                final LongList coverNameTxns = new LongList();
+                coverNameTxns.add(COLUMN_NAME_TXN_NONE);
+                coverNameTxns.add(COLUMN_NAME_TXN_NONE);
+                final LongList coverTops = new LongList();
+                coverTops.add(0);
+                coverTops.add(2);
+                final IntList coverShifts = new IntList();
+                coverShifts.add(3);
+                coverShifts.add(3);
+                final IntList coverIndices = new IntList();
+                coverIndices.add(2);
+                coverIndices.add(3);
+                final IntList coverTypes = new IntList();
+                coverTypes.add(ColumnType.DOUBLE);
+                coverTypes.add(ColumnType.DOUBLE);
+
+                writeDoubleColumnFile(path.trimTo(plen), "early", 1.0, 2.0, 3.0, 4.0);
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    writer.configureCovering(coverNames, coverNameTxns, coverTops, coverShifts, coverIndices, coverTypes, -1);
+                    writer.add(0, 0);
+                    writer.add(0, 1);
+                    writer.setMaxValue(1);
+                    writer.commit();
+
+                    writeDoubleColumnFile(path.trimTo(plen), "late", 30.0, 40.0);
+                    writer.add(0, 2);
+                    writer.add(0, 3);
+                    writer.setMaxValue(3);
+                    writer.commit();
+                }
+
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0,
+                        coveringMetadata(new int[]{2, 3}, new int[]{ColumnType.DOUBLE, ColumnType.DOUBLE}), EMPTY_CVR, 0);
+                     CoveringRowCursor cc = (CoveringRowCursor) reader.getCursor(0, 0, Long.MAX_VALUE, new int[]{0, 1})) {
+                    assertTrue(cc.isCoveredAvailable(1));
+                    final double[] expectedLate = {Double.NaN, Double.NaN, 30.0, 40.0};
+                    for (int i = 0; i < 4; i++) {
+                        assertTrue("row " + i, cc.hasNext());
+                        assertEquals(i, cc.next());
+                        assertEquals("early at row " + i, i + 1.0, cc.getCoveredDouble(0), 0.001);
+                        assertEquals("late at row " + i, expectedLate[i], cc.getCoveredDouble(1), 0.001);
+                    }
+                    assertFalse(cc.hasNext());
+                }
+            }
+        });
+    }
+
+    @Test
     public void testCoveringFileNaming() {
         try (Path path = new Path().of("/db/2024-01-01")) {
             int plen = path.size();
@@ -21814,6 +21874,20 @@ public class CoveringIndexTest extends AbstractCairoTest {
             return TestFilesFacadeImpl.INSTANCE.length(pcFile);
         } finally {
             basePath.trimTo(len);
+        }
+    }
+
+    private static void writeDoubleColumnFile(Path partitionDir, String columnName, double... values) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        final int dirLen = partitionDir.size();
+        try (MemoryCMARWImpl data = new MemoryCMARWImpl(
+                ff, TableUtils.dFile(partitionDir, columnName, COLUMN_NAME_TXN_NONE),
+                ff.getPageSize(), -1, MemoryTag.MMAP_DEFAULT, 0)) {
+            for (double value : values) {
+                data.putDouble(value);
+            }
+        } finally {
+            partitionDir.trimTo(dirLen);
         }
     }
 

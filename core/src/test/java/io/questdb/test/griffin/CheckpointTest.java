@@ -3878,6 +3878,49 @@ public class CheckpointTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCheckpointRestoreRebuildsPostingIndexOfPartitionThatPredatesCoveredColumn() throws Exception {
+        // price was added after 2024-01-01 was written, so that partition has no file of it. The rebuild must take
+        // that from the column version and index every row there with a NULL price.
+        final String snapshotId = "00000000-0000-0000-0000-000000000000";
+        final String restartedId = "123e4567-e89b-12d3-a456-426614174000";
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
+            setProperty(PropertyKey.CAIRO_CHECKPOINT_RECOVERY_REBUILD_COLUMN_INDEXES, "true");
+
+            execute("CREATE TABLE t_top (ts TIMESTAMP, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO t_top VALUES ('2024-01-01T00:00:00', 'A'), ('2024-01-02T00:00:00', 'A')");
+            execute("ALTER TABLE t_top ADD COLUMN price DOUBLE");
+            execute("ALTER TABLE t_top ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price)");
+            execute("INSERT INTO t_top VALUES ('2024-01-02T01:00:00', 'A', 5.0)");
+            engine.releaseAllWriters();
+
+            final String expected = """
+                    price
+                    null
+                    null
+                    5.0
+                    """;
+            assertQuery("SELECT price FROM t_top WHERE sym = 'A'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns(expected);
+
+            execute("checkpoint create");
+            engine.clear();
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, restartedId);
+            engine.checkpointRecover();
+
+            assertQuery("SELECT price FROM t_top WHERE sym = 'A'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns(expected);
+            engine.checkpointRelease();
+        });
+    }
+
+    @Test
     public void testCheckpointRestoreRebuildsPostingIndexAfterDropColumn() throws Exception {
         // Regression: TableSnapshotRestore.configureCoveringForPosting()
         // dereferences entries in coveringColumnIndices as dense column

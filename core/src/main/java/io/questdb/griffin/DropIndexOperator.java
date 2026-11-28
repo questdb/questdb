@@ -105,10 +105,14 @@ public class DropIndexOperator {
                         // hard link
                         partitionDFile(other, rootLen, timestampType, partitionBy, pTimestamp, pVersion, columnName, columnDropIndexVersion);
                         if (ff.hardLink(path.$(), other.$()) == -1) {
-                            throw CairoException.critical(ff.errno())
-                                    .put("cannot hardLink [src=").put(path)
-                                    .put(", hardLink=").put(other)
-                                    .put(']');
+                            final int errno = ff.errno();
+                            // A column without rows in the partition may have no file there, and then nothing to link.
+                            if (columnTop < tableWriter.getPartitionPhysicalRowCount(pIndex) || ff.exists(path.$())) {
+                                throw CairoException.critical(errno)
+                                        .put("cannot hardLink [src=").put(path)
+                                        .put(", hardLink=").put(other)
+                                        .put(']');
+                            }
                         }
                         rollbackColumnVersions.add(columnIndex, columnDropIndexVersion, pTimestamp, pVersion);
                     }

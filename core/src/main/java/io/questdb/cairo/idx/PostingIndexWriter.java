@@ -80,6 +80,9 @@ import static io.questdb.cairo.idx.PostingIndexUtils.*;
  * No symbol table needed — encoding is purely arithmetic.
  */
 public class PostingIndexWriter implements IndexWriter {
+    // In coveredColReadSizes and coveredAuxReadSizes, next to an address of 0: the file did not exist when the
+    // covered columns were mapped.
+    private static final long COVERED_FILE_MISSING = -1;
     // Safety ceiling for the batch output buffer when fsst_compress reports
     // produced=0 (a single value didn't fit, grow and retry). 64 MiB is
     // ~four orders of magnitude over the typical batch peak.
@@ -240,7 +243,7 @@ public class PostingIndexWriter implements IndexWriter {
     private long[] coveredAuxReadAddrs;
     private long[] coveredAuxReadSizes;
     // RO mmaps owned by the writer (opened from coveredColumnNames + partitionPath).
-    // size > 0 means writer-owned; size == 0 means addr-based (O3, not owned).
+    // size > 0 means writer-owned; size == 0 means addr-based (O3, not owned); see COVERED_FILE_MISSING.
     private long[] coveredColReadAddrs;
     private long[] coveredColReadSizes;
     // Last-committed table _txn, supplied by TableWriter via
@@ -3239,10 +3242,10 @@ public class PostingIndexWriter implements IndexWriter {
                     continue;
                 }
                 mapColumnFile(p, coveredColumnNames.getQuick(c), coveredColumnNameTxns.getQuick(c),
-                        coveredColReadAddrs, coveredColReadSizes, c, false);
+                        coveredColReadAddrs, coveredColReadSizes, c, false, false);
                 if (ColumnType.isVarSize(coveredColumnTypes.getQuick(c))) {
                     mapColumnFile(p, coveredColumnNames.getQuick(c), coveredColumnNameTxns.getQuick(c),
-                            coveredAuxReadAddrs, coveredAuxReadSizes, c, true);
+                            coveredAuxReadAddrs, coveredAuxReadSizes, c, true, false);
                 }
             }
         } else if (coveredColumnAddrs.size() > 0) {
@@ -4096,6 +4099,14 @@ public class PostingIndexWriter implements IndexWriter {
         ensureCoveredColumnReadMaps();
         long addr = coveredAuxReadAddrs[covIdx];
         long size = coveredAuxReadSizes[covIdx];
+        if (addr == 0 && size == COVERED_FILE_MISSING) {
+            // see getCoveredDataReadAddr
+            mapColumnFile(Path.getThreadLocal(coveredPartitionPath),
+                    coveredColumnNames.getQuick(covIdx), coveredColumnNameTxns.getQuick(covIdx),
+                    coveredAuxReadAddrs, coveredAuxReadSizes, covIdx, true, true);
+            addr = coveredAuxReadAddrs[covIdx];
+            size = coveredAuxReadSizes[covIdx];
+        }
         if (addr == 0) {
             return 0;
         }
@@ -4115,7 +4126,7 @@ public class PostingIndexWriter implements IndexWriter {
             if (coveredColumnNames.size() > 0 && coveredPartitionPath.size() > 0) {
                 mapColumnFile(Path.getThreadLocal(coveredPartitionPath),
                         coveredColumnNames.getQuick(covIdx), coveredColumnNameTxns.getQuick(covIdx),
-                        coveredAuxReadAddrs, coveredAuxReadSizes, covIdx, true);
+                        coveredAuxReadAddrs, coveredAuxReadSizes, covIdx, true, false);
             }
             addr = coveredAuxReadAddrs[covIdx];
             size = coveredAuxReadSizes[covIdx];
@@ -4136,6 +4147,16 @@ public class PostingIndexWriter implements IndexWriter {
         ensureCoveredColumnReadMaps();
         long addr = coveredColReadAddrs[covIdx];
         long size = coveredColReadSizes[covIdx];
+        if (addr == 0 && size == COVERED_FILE_MISSING) {
+            // Only rows at or above the column top are read, and the partition has to have the file of a column
+            // it holds rows of. The file did not exist when the columns were mapped: it does by now, or this
+            // throws rather than publish NULL for a value the column holds.
+            mapColumnFile(Path.getThreadLocal(coveredPartitionPath),
+                    coveredColumnNames.getQuick(covIdx), coveredColumnNameTxns.getQuick(covIdx),
+                    coveredColReadAddrs, coveredColReadSizes, covIdx, false, true);
+            addr = coveredColReadAddrs[covIdx];
+            size = coveredColReadSizes[covIdx];
+        }
         if (addr == 0) {
             return 0;
         }
@@ -4160,7 +4181,7 @@ public class PostingIndexWriter implements IndexWriter {
             if (coveredColumnNames.size() > 0 && coveredPartitionPath.size() > 0) {
                 mapColumnFile(Path.getThreadLocal(coveredPartitionPath),
                         coveredColumnNames.getQuick(covIdx), coveredColumnNameTxns.getQuick(covIdx),
-                        coveredColReadAddrs, coveredColReadSizes, covIdx, false);
+                        coveredColReadAddrs, coveredColReadSizes, covIdx, false, false);
             }
             addr = coveredColReadAddrs[covIdx];
             size = coveredColReadSizes[covIdx];
@@ -4299,8 +4320,13 @@ public class PostingIndexWriter implements IndexWriter {
         return prev <= bufSize - siSize;
     }
 
+    /**
+     * @param isRequired false when no row of the column is known to be read yet: a column without rows in the
+     *                   partition may have no file there, so a missing file is recorded for the first read to
+     *                   come back for it
+     */
     private void mapColumnFile(Path p, CharSequence colName, long colNameTxn,
-                               long[] addrs, long[] sizes, int idx, boolean isAux) {
+                               long[] addrs, long[] sizes, int idx, boolean isAux, boolean isRequired) {
         p.of(coveredPartitionPath);
         LPSZ fileName = isAux
                 ? TableUtils.iFile(p, colName, colNameTxn)
@@ -4311,7 +4337,8 @@ public class PostingIndexWriter implements IndexWriter {
             // A covered column whose top spans the whole partition has no file here, and every row reads
             // as NULL from the top. Any other open failure must fail the write: leaving the mapping at 0
             // would publish NULL covered values for rows the column holds.
-            if (!ff.exists(fileName)) {
+            if (!isRequired && !ff.exists(fileName)) {
+                sizes[idx] = COVERED_FILE_MISSING;
                 return;
             }
             // Reset the lazy read maps, or ensureCoveredColumnReadMaps() would early-return on arrays
@@ -4348,10 +4375,10 @@ public class PostingIndexWriter implements IndexWriter {
             coveredAuxReadSizes = new long[coverCount];
         }
         mapColumnFile(p, coveredColumnNames.getQuick(c), coveredColumnNameTxns.getQuick(c),
-                coveredColReadAddrs, coveredColReadSizes, c, false);
+                coveredColReadAddrs, coveredColReadSizes, c, false, false);
         if (ColumnType.isVarSize(coveredColumnTypes.getQuick(c))) {
             mapColumnFile(p, coveredColumnNames.getQuick(c), coveredColumnNameTxns.getQuick(c),
-                    coveredAuxReadAddrs, coveredAuxReadSizes, c, true);
+                    coveredAuxReadAddrs, coveredAuxReadSizes, c, true, false);
         }
     }
 
