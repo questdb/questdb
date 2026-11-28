@@ -541,6 +541,184 @@ public class QwpBackwardReadAheadTest {
     }
 
     @Test
+    public void testParkAndResumeOutsideTrustReadNothing() throws Exception {
+        // park() and resume() read the faults of a thread only for a stream that trusts its
+        // frames. A read-ahead that streams nothing, a stream that reads its windows itself, one
+        // that checks its frames and one that advises them after a cold check read none, and
+        // stream on as if they had not parked, whichever thread they resume on: checks and advice
+        // depend on no thread. A stream that ends while parked trusting leaves the next one
+        // nothing to trust.
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestFrame frame = smallFrame()) {
+                final RecordingFacade idleFf = new RecordingFacade(true);
+                final QwpBackwardReadAhead idle = new QwpBackwardReadAhead(idleFf);
+                idle.park();
+                idle.resume();
+                Assert.assertEquals(0, idleFf.faultReads);
+
+                // the facade fails the test when a stream that reads its windows itself reads faults
+                final RecordingFacade readFf = new RecordingFacade(false);
+                final QwpBackwardReadAhead reading = new QwpBackwardReadAhead(readFf);
+                reading.of(frame.metadata());
+                for (int f = 0; f < 2 * TRUST_STREAK; f++) {
+                    Assert.assertEquals(0, walkOnAnotherThread(reading, frame));
+                }
+                Assert.assertEquals(2L * TRUST_STREAK * frame.frameBytes(), readFf.requestedBytes());
+                Assert.assertEquals(0, readFf.faultReads);
+
+                // a stream that checks its frames: the streak goes on across the parks
+                final RecordingFacade ff = new RecordingFacade(true);
+                ff.isResident = true;
+                final QwpBackwardReadAhead readAhead = new QwpBackwardReadAhead(ff);
+                readAhead.of(frame.metadata());
+                walkFirstFrame(readAhead, frame);
+                for (int f = 0; f < TRUST_STREAK - 1; f++) {
+                    Assert.assertEquals(0, walkOnAnotherThread(readAhead, frame));
+                    Assert.assertEquals(2 * (f + 1), ff.residencyChecks);
+                }
+                Assert.assertEquals(0, ff.faultReads);
+                // the last frame of the streak reads the faults the trust starts from
+                Assert.assertEquals(0, walk(readAhead, frame));
+                Assert.assertEquals(2 * TRUST_STREAK, ff.residencyChecks);
+                Assert.assertEquals(1, ff.faultReads);
+
+                // a stream that advises its frames after a cold check: the back-off goes on across the parks
+                final RecordingFacade coldFf = new RecordingFacade(true);
+                final QwpBackwardReadAhead cold = new QwpBackwardReadAhead(coldFf);
+                cold.of(frame.metadata());
+                walkFirstFrame(cold, frame);
+                final IntList checkedFrames = new IntList();
+                for (int f = 0; f < 31; f++) {
+                    final int checks = coldFf.residencyChecks;
+                    Assert.assertEquals(frame.frameBytes(), walkOnAnotherThread(cold, frame));
+                    if (coldFf.residencyChecks > checks) {
+                        checkedFrames.add(f);
+                    }
+                }
+                Assert.assertEquals("[0,2,6,14,30]", checkedFrames.toString());
+                Assert.assertEquals(0, coldFf.faultReads);
+
+                // a stream that ends while parked trusting, as a query its client cancels does
+                final RecordingFacade endedFf = new RecordingFacade(true);
+                endedFf.isResident = true;
+                final QwpBackwardReadAhead ended = new QwpBackwardReadAhead(endedFf);
+                ended.of(frame.metadata());
+                walkUntilTrusted(ended, endedFf, frame);
+                ended.park();
+                Assert.assertEquals(3, endedFf.faultReads);
+                ended.clear();
+                ended.of(frame.metadata());
+                ended.resume();
+                Assert.assertEquals(3, endedFf.faultReads);
+                // the next stream asks for its first frame unchecked, and checks the one after it
+                walkFirstFrame(ended, frame);
+                Assert.assertEquals(2 * TRUST_STREAK, endedFf.residencyChecks);
+                Assert.assertEquals(0, walk(ended, frame));
+                Assert.assertEquals(2 * TRUST_STREAK + 2, endedFf.residencyChecks);
+            }
+        });
+    }
+
+    @Test
+    public void testParkEndsTrustAfterAFault() throws Exception {
+        // A walk of a trusted frame that read from storage since the stream's last check ends
+        // the trust when the stream parks, as the next frame's check would have, and doubles the
+        // streak the stream needs to trust again; so does a count the OS no longer reports. The
+        // stream resumes checking, whichever thread it resumes on, and reads no faults until the
+        // streak is over.
+        TestUtils.assertMemoryLeak(() -> {
+            for (long faultsAtPark : new long[]{1, -1}) {
+                try (TestFrame frame = smallFrame()) {
+                    final String context = "faults at park " + faultsAtPark;
+                    final RecordingFacade ff = new RecordingFacade(true);
+                    ff.isResident = true;
+                    final QwpBackwardReadAhead readAhead = new QwpBackwardReadAhead(ff);
+                    readAhead.of(frame.metadata());
+                    walkUntilTrusted(readAhead, ff, frame);
+                    ff.majorFaults = faultsAtPark;
+                    readAhead.park();
+                    Assert.assertEquals(context, 3, ff.faultReads);
+                    // the thread the stream resumes on counts its own faults
+                    ff.majorFaults = 0;
+                    onAnotherThread(() -> {
+                        readAhead.resume();
+                        Assert.assertEquals(context, 3, ff.faultReads);
+                        for (int f = 0; f < 2 * TRUST_STREAK; f++) {
+                            Assert.assertEquals(context, 0, walk(readAhead, frame));
+                            Assert.assertEquals(context, 2 * TRUST_STREAK + 2 * (f + 1), ff.residencyChecks);
+                        }
+                        // the last frame of the doubled streak reads the faults the trust starts from
+                        Assert.assertEquals(context, 4, ff.faultReads);
+                        // trusted
+                        Assert.assertEquals(context, 0, walk(readAhead, frame));
+                        Assert.assertEquals(context, 6 * TRUST_STREAK, ff.residencyChecks);
+                        Assert.assertEquals(context, 5, ff.faultReads);
+                    });
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testParkOffTheTrustedThreadEndsTrust() throws Exception {
+        // A stream that moved to another thread without parking, as a query fiber may after a
+        // yield, and parks there cannot tell whether it read from storage on the thread it left:
+        // park() ends the trust without reading faults or doubling the streak. Wherever the
+        // stream resumes, on the thread it trusted too, it checks its next frames, and trusts
+        // after the usual streak.
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestFrame frame = smallFrame()) {
+                final RecordingFacade ff = new RecordingFacade(true);
+                ff.isResident = true;
+                final QwpBackwardReadAhead readAhead = new QwpBackwardReadAhead(ff);
+                readAhead.of(frame.metadata());
+                walkUntilTrusted(readAhead, ff, frame);
+                onAnotherThread(readAhead::park);
+                Assert.assertEquals(2, ff.faultReads);
+                // back on the thread the stream trusted, whose faults have not moved
+                readAhead.resume();
+                Assert.assertEquals(2, ff.faultReads);
+                for (int f = 0; f < TRUST_STREAK; f++) {
+                    Assert.assertEquals(0, walk(readAhead, frame));
+                    Assert.assertEquals(2 * TRUST_STREAK + 2 * (f + 1), ff.residencyChecks);
+                }
+                Assert.assertEquals(3, ff.faultReads);
+                // trusted again, after a streak no longer than the first
+                Assert.assertEquals(0, walk(readAhead, frame));
+                Assert.assertEquals(4 * TRUST_STREAK, ff.residencyChecks);
+            }
+        });
+    }
+
+    @Test
+    public void testResumeWithoutThreadFaultsStopsTrusting() throws Exception {
+        // A stream that parked trusting resumes on a thread whose major faults the OS does not
+        // count: it could not tell when to stop trusting, so it checks every frame from there,
+        // and reads the faults no more.
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestFrame frame = smallFrame()) {
+                final RecordingFacade ff = new RecordingFacade(true);
+                ff.isResident = true;
+                final QwpBackwardReadAhead readAhead = new QwpBackwardReadAhead(ff);
+                readAhead.of(frame.metadata());
+                walkUntilTrusted(readAhead, ff, frame);
+                readAhead.park();
+                Assert.assertEquals(3, ff.faultReads);
+                ff.majorFaults = -1;
+                onAnotherThread(() -> {
+                    readAhead.resume();
+                    Assert.assertEquals(4, ff.faultReads);
+                    for (int f = 0; f < 100; f++) {
+                        Assert.assertEquals(0, walk(readAhead, frame));
+                        Assert.assertEquals(2 * TRUST_STREAK + 2 * (f + 1), ff.residencyChecks);
+                    }
+                    Assert.assertEquals(4, ff.faultReads);
+                });
+            }
+        });
+    }
+
+    @Test
     public void testSmallFrameBounds() throws Exception {
         // A frame is small, and the stream trusts it after a streak in memory, when no range it
         // publishes holds more than SMALL_FRAME_RANGE_BYTES: values, aux entries and data
@@ -624,8 +802,9 @@ public class QwpBackwardReadAheadTest {
     @Test
     public void testStreamAllocatesNothingPerFrame() throws Exception {
         // The read-ahead runs on the egress data path, frame after frame: once warm, it allocates
-        // nothing, whether it checks windows, trusts small frames or reads its windows itself, on
-        // a worker thread, which binds as a carrier, and on a thread that does not.
+        // nothing, whether it checks windows, trusts small frames or reads its windows itself,
+        // whether the stream parks after every frame or not, on a worker thread, which binds as a
+        // carrier, and on a thread that does not.
         TestUtils.assertMemoryLeak(() -> {
             final ExecutorService carrier = newCarrier();
             try (
@@ -644,22 +823,25 @@ public class QwpBackwardReadAheadTest {
                 for (boolean isWillNeedSupported : new boolean[]{true, false}) {
                     for (TestFrame frame : new TestFrame[]{small, large}) {
                         for (boolean isCarrier : new boolean[]{false, true}) {
-                            final String context = (isWillNeedSupported ? "advised windows" : "windows read")
-                                    + ", rows=" + frame.rows + ", carrier=" + isCarrier;
-                            final ReadAheadFilesFacade ff = new ReadAheadFilesFacade(isWillNeedSupported);
-                            final QwpBackwardReadAhead readAhead = new QwpBackwardReadAhead(ff);
-                            readAhead.of(frame.metadata());
-                            final Callable<Long> stream = () -> leastAllocatedPerRound(threadMXBean, readAhead, frame);
-                            Assert.assertEquals(context, 0, (long) (isCarrier ? runOn(carrier, stream) : stream.call()));
-                            if (!isWillNeedSupported) {
-                                Assert.assertEquals(context, 0, ff.residencyCheckCount());
-                            } else if (Os.isLinux() && frame == small) {
-                                // The stream trusted the frames in memory: fewer checks than frames, where
-                                // a stream that checked every frame would ask about both columns of each.
-                                final long frames = ALLOCATION_WARM_UP_FRAMES + (long) ALLOCATION_ROUNDS * ALLOCATION_ROUND_FRAMES;
-                                Assert.assertTrue(context + ", checks=" + ff.residencyCheckCount(), ff.residencyCheckCount() < frames);
-                            } else {
-                                Assert.assertTrue(context, ff.residencyCheckCount() > 0);
+                            for (boolean isParking : new boolean[]{false, true}) {
+                                final String context = (isWillNeedSupported ? "advised windows" : "windows read")
+                                        + ", rows=" + frame.rows + ", carrier=" + isCarrier + ", parking=" + isParking;
+                                final ReadAheadFilesFacade ff = new ReadAheadFilesFacade(isWillNeedSupported);
+                                final QwpBackwardReadAhead readAhead = new QwpBackwardReadAhead(ff);
+                                readAhead.of(frame.metadata());
+                                final Callable<Long> stream = () -> leastAllocatedPerRound(threadMXBean, readAhead, frame, isParking);
+                                Assert.assertEquals(context, 0, (long) (isCarrier ? runOn(carrier, stream) : stream.call()));
+                                if (!isWillNeedSupported) {
+                                    Assert.assertEquals(context, 0, ff.residencyCheckCount());
+                                } else if (Os.isLinux() && frame == small) {
+                                    // The stream trusted the frames in memory, parked or not: fewer checks than
+                                    // frames, where a stream that checked every frame would ask about both
+                                    // columns of each.
+                                    final long frames = ALLOCATION_WARM_UP_FRAMES + (long) ALLOCATION_ROUNDS * ALLOCATION_ROUND_FRAMES;
+                                    Assert.assertTrue(context + ", checks=" + ff.residencyCheckCount(), ff.residencyCheckCount() < frames);
+                                } else {
+                                    Assert.assertTrue(context, ff.residencyCheckCount() > 0);
+                                }
                             }
                         }
                     }
@@ -1170,8 +1352,9 @@ public class QwpBackwardReadAheadTest {
 
     @Test
     public void testTrustEndsWhenTheStreamMovesThread() throws Exception {
-        // A parked stream can resume on another worker thread, whose major faults say nothing
-        // about the frames before: the stream checks again, and trusts after the usual streak.
+        // A stream that goes on on another thread without parking first, see park() and resume(),
+        // runs on a thread whose major faults say nothing about the frames before: the stream
+        // checks again, and trusts after the usual streak.
         TestUtils.assertMemoryLeak(() -> {
             try (TestFrame frame = smallFrame()) {
                 final RecordingFacade ff = new RecordingFacade(true);
@@ -1200,6 +1383,123 @@ public class QwpBackwardReadAheadTest {
                 Assert.assertEquals(0, walk(readAhead, frame));
                 Assert.assertEquals(4 * TRUST_STREAK + 2, ff.residencyChecks);
                 Assert.assertEquals(4, ff.faultReads);
+            }
+        });
+    }
+
+    @Test
+    public void testTrustSurvivesAParkWhenTheFiberMovesCarrier() throws Exception {
+        // A query fiber whose stream parks before the fiber yields keeps the trust on whichever
+        // carrier the fiber resumes: resume() reads the faults of the carrier that runs it, which
+        // CarrierLocal names whatever Thread compiled code still holds after the yield. Both
+        // carriers stay bound throughout, as the workers of a pool do.
+        TestUtils.assertMemoryLeak(() -> {
+            final ExecutorService first = newCarrier();
+            final ExecutorService second = newCarrier();
+            final FiberRuntime runtime = new FiberRuntime(1, 1);
+            try (TestFrame frame = smallFrame()) {
+                final RecordingFacade ff = new RecordingFacade(true);
+                ff.isResident = true;
+                final QwpBackwardReadAhead readAhead = new QwpBackwardReadAhead(ff);
+                readAhead.of(frame.metadata());
+                // the carrier of each stretch the fiber runs between two yields
+                final IntList stretchCarriers = new IntList();
+                final AtomicReference<Throwable> failure = new AtomicReference<>();
+                final FiberTask stream = new FiberTask() {
+                    @Override
+                    protected void onError(Throwable th) {
+                        failure.set(th);
+                    }
+
+                    @Override
+                    protected boolean runStep() {
+                        stretchCarriers.add(CarrierIdentity.current());
+                        walkUntilTrusted(readAhead, ff, frame);
+                        for (int move = 0; move < 2; move++) {
+                            readAhead.park();
+                            yieldAndRecordCarrier(stretchCarriers);
+                            readAhead.resume();
+                            // trusted on the carrier the fiber resumed on: the faults read at the
+                            // park, at the resume and before the frame, and no check
+                            Assert.assertEquals(0, walk(readAhead, frame));
+                            Assert.assertEquals(5 + 3 * move, ff.faultReads);
+                            Assert.assertEquals(2 * TRUST_STREAK, ff.residencyChecks);
+                        }
+                        return true;
+                    }
+                };
+                Assert.assertEquals(LaunchResult.LAUNCHED, runOn(first, () -> runtime.launch(stream)));
+                // each drain runs the fiber from where it yielded last to its next yield
+                for (ExecutorService carrier : new ExecutorService[]{first, second, first}) {
+                    final int drained = runOn(carrier, () -> runtime.drain(1));
+                    if (failure.get() != null) {
+                        throw new AssertionError(failure.get());
+                    }
+                    Assert.assertEquals(1, drained);
+                }
+                Assert.assertTrue(stream.isDone());
+                final int firstId = runOn(first, CarrierIdentity::current);
+                final int secondId = runOn(second, CarrierIdentity::current);
+                Assert.assertNotEquals(firstId, secondId);
+                Assert.assertEquals("[" + firstId + ',' + secondId + ',' + firstId + ']', stretchCarriers.toString());
+            } finally {
+                try {
+                    close(runtime);
+                } finally {
+                    stop(first);
+                    stop(second);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testTrustSurvivesParks() throws Exception {
+        // A stream that waits for its client parks on the thread that ran it and resumes on any
+        // worker: park() compares the major faults of the thread it leaves, and resume() counts
+        // those of the thread it resumes on from there. The stream trusts on across the moves and
+        // checks no frame after them, whatever faults the thread it resumes on took for other
+        // work, before the stream came or while it was parked. A read from storage after the
+        // stream resumed still ends the trust.
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestFrame frame = smallFrame()) {
+                final RecordingFacade ff = new RecordingFacade(true);
+                ff.isResident = true;
+                final QwpBackwardReadAhead readAhead = new QwpBackwardReadAhead(ff);
+                readAhead.of(frame.metadata());
+                walkUntilTrusted(readAhead, ff, frame);
+                readAhead.park();
+                Assert.assertEquals(3, ff.faultReads);
+                // the other thread has read from storage for other work
+                ff.majorFaults = 7;
+                onAnotherThread(() -> {
+                    readAhead.resume();
+                    Assert.assertEquals(4, ff.faultReads);
+                    for (int f = 0; f < TRUST_STREAK; f++) {
+                        Assert.assertEquals(0, walk(readAhead, frame));
+                    }
+                    // trusted throughout: the faults read before each frame, and no check
+                    Assert.assertEquals(4 + TRUST_STREAK, ff.faultReads);
+                    Assert.assertEquals(2 * TRUST_STREAK, ff.residencyChecks);
+                    readAhead.park();
+                    Assert.assertEquals(5 + TRUST_STREAK, ff.faultReads);
+                });
+                // this thread read from storage for other connections while the stream ran elsewhere
+                ff.majorFaults = 12;
+                readAhead.resume();
+                Assert.assertEquals(0, walk(readAhead, frame));
+                Assert.assertEquals(7 + TRUST_STREAK, ff.faultReads);
+                // and while the stream was parked on it
+                readAhead.park();
+                ff.majorFaults = 15;
+                readAhead.resume();
+                Assert.assertEquals(0, walk(readAhead, frame));
+                Assert.assertEquals(10 + TRUST_STREAK, ff.faultReads);
+                Assert.assertEquals(2 * TRUST_STREAK, ff.residencyChecks);
+                // the walk of that frame read from storage: the stream checks the next one
+                ff.majorFaults++;
+                Assert.assertEquals(0, walk(readAhead, frame));
+                Assert.assertEquals(2 * TRUST_STREAK + 2, ff.residencyChecks);
             }
         });
     }
@@ -1243,6 +1543,38 @@ public class QwpBackwardReadAheadTest {
                 Assert.assertEquals(7, trustedFrameTouch(frame, varcharFirst));
                 frame.set(0, 0, 0, vcAux.addressOf(0), 0);
                 Assert.assertEquals(7, trustedFrameTouch(frame, varcharFirst));
+            }
+        });
+    }
+
+    @Test
+    public void testUnpairedParksAndResumes() throws Exception {
+        // A second park() before resume() reads no faults: the stream has compared them, and has
+        // not run since. resume() reads faults only after park(): on the thread it trusts, the
+        // stream trusts on, and a stream that moved without parking cannot tell what it read on
+        // the thread it left, so it checks its next frame, as it would without resume().
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestFrame frame = smallFrame()) {
+                final RecordingFacade ff = new RecordingFacade(true);
+                ff.isResident = true;
+                final QwpBackwardReadAhead readAhead = new QwpBackwardReadAhead(ff);
+                readAhead.of(frame.metadata());
+                walkUntilTrusted(readAhead, ff, frame);
+                readAhead.park();
+                readAhead.park();
+                Assert.assertEquals(3, ff.faultReads);
+                readAhead.resume();
+                readAhead.resume();
+                Assert.assertEquals(4, ff.faultReads);
+                Assert.assertEquals(0, walk(readAhead, frame));
+                Assert.assertEquals(5, ff.faultReads);
+                Assert.assertEquals(2 * TRUST_STREAK, ff.residencyChecks);
+                onAnotherThread(() -> {
+                    readAhead.resume();
+                    Assert.assertEquals(5, ff.faultReads);
+                    Assert.assertEquals(0, walk(readAhead, frame));
+                    Assert.assertEquals(2 * TRUST_STREAK + 2, ff.residencyChecks);
+                });
             }
         });
     }
@@ -1717,16 +2049,16 @@ public class QwpBackwardReadAheadTest {
 
     // The fewest bytes the calling thread allocates in a round of frames of the stream, after
     // a warm-up: a round that allocates nothing shows that the compiled code allocates nothing
-    // per frame.
-    private static long leastAllocatedPerRound(com.sun.management.ThreadMXBean threadMXBean, QwpBackwardReadAhead readAhead, TestFrame frame) {
+    // per frame. A parking stream parks and resumes after every frame.
+    private static long leastAllocatedPerRound(com.sun.management.ThreadMXBean threadMXBean, QwpBackwardReadAhead readAhead, TestFrame frame, boolean isParking) {
         for (int f = 0; f < ALLOCATION_WARM_UP_FRAMES; f++) {
-            walk(readAhead, frame);
+            walkAndPark(readAhead, frame, isParking);
         }
         long leastAllocated = Long.MAX_VALUE;
         for (int round = 0; round < ALLOCATION_ROUNDS; round++) {
             final long allocatedBefore = threadMXBean.getCurrentThreadAllocatedBytes();
             for (int f = 0; f < ALLOCATION_ROUND_FRAMES; f++) {
-                walk(readAhead, frame);
+                walkAndPark(readAhead, frame, isParking);
             }
             leastAllocated = Math.min(leastAllocated, threadMXBean.getCurrentThreadAllocatedBytes() - allocatedBefore);
         }
@@ -1844,6 +2176,14 @@ public class QwpBackwardReadAheadTest {
         return walk(readAhead, frame, frame.rows);
     }
 
+    private static void walkAndPark(QwpBackwardReadAhead readAhead, TestFrame frame, boolean isParking) {
+        walk(readAhead, frame);
+        if (isParking) {
+            readAhead.park();
+            readAhead.resume();
+        }
+    }
+
     // Walks frames of a stream down as the egress appends them, in batches of batchRows rows and
     // slices of at most SLICE_ROWS, and tells the read-ahead the lowest row of each frame the first
     // batch takes; returns the bytes the stream asked for, or read, by the end of the first batch.
@@ -1875,6 +2215,34 @@ public class QwpBackwardReadAheadTest {
     // the stream's first frame, which it asks for whole without checking whether it is in memory
     private static void walkFirstFrame(QwpBackwardReadAhead readAhead, TestFrame frame) {
         Assert.assertEquals(frame.frameBytes(), walk(readAhead, frame));
+    }
+
+    // Parks the stream on the calling thread, resumes it on another, walks the frame there, and
+    // parks it there to resume it on the calling thread, as the egress moves a stream that waits
+    // for its client from worker to worker; returns the bytes the walk asked for.
+    private static long walkOnAnotherThread(QwpBackwardReadAhead readAhead, TestFrame frame) throws InterruptedException {
+        final long[] bytes = {-1};
+        readAhead.park();
+        onAnotherThread(() -> {
+            readAhead.resume();
+            bytes[0] = walk(readAhead, frame);
+            readAhead.park();
+        });
+        readAhead.resume();
+        return bytes[0];
+    }
+
+    // Walks a new stream of small frames in memory on the calling thread until the stream
+    // trusts them: its first frame, unchecked, the TRUST_STREAK frames it checks, and one
+    // frame it trusts, which reads the faults of the thread as the last frame of the streak did.
+    private static void walkUntilTrusted(QwpBackwardReadAhead readAhead, RecordingFacade ff, TestFrame frame) {
+        walkFirstFrame(readAhead, frame);
+        for (int f = 0; f < TRUST_STREAK; f++) {
+            Assert.assertEquals(0, walk(readAhead, frame));
+        }
+        Assert.assertEquals(0, walk(readAhead, frame));
+        Assert.assertEquals(2 * TRUST_STREAK, ff.residencyChecks);
+        Assert.assertEquals(2, ff.faultReads);
     }
 
     // yields the fiber that runs the code, and records the carrier it resumes on

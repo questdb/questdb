@@ -69,8 +69,13 @@ import org.jetbrains.annotations.TestOnly;
  * after {@link #TRUST_STREAK} frames in a row turn out to be in memory, and trusts the next
  * ones to be. Before each trusted frame it reads the byte its walk reads first, and goes
  * back to checking as soon as its thread has taken a major page fault, a read from
- * storage, see {@link FilesFacade#getThreadMajorFaults()}, or the stream runs on another
- * thread, as a query fiber may after a yield. A trusted frame that is not in memory
+ * storage, see {@link FilesFacade#getThreadMajorFaults()}. The OS counts the faults of each
+ * thread, and a stream that waits for its client resumes on any worker: the stream compares
+ * the faults of the thread it leaves when it parks, see {@link #park()}, and counts those of
+ * the thread it resumes on from there, see {@link #resume()}, so it trusts on across the
+ * move, and the faults a thread takes for other work while the stream waits are not the
+ * stream's. A stream that runs on another thread without parking, as a query fiber may
+ * after a yield, goes back to checking. A trusted frame that is not in memory
  * after all costs synchronous reads of each range the stream did not ask for, see
  * {@link #SMALL_FRAME_RANGE_BYTES}, and the frames the stream must find in memory before
  * it trusts again double each time.
@@ -142,9 +147,9 @@ public class QwpBackwardReadAhead implements Mutable {
     // Sum of the bytes the stream loads itself. Storing it keeps the JIT from dropping loads
     // whose values nothing else reads; only tests read it back.
     private long touchSink;
-    // the carrier the stream trusts, see CARRIER
+    // the carrier the stream trusts, see CARRIER; null from park() until resume() takes the carrier it resumes on
     private Object trustedCarrier;
-    // the major faults of the trusted carrier when the stream started trusting
+    // the major faults of the trusted carrier when the stream started trusting, or resumed on it
     private long trustedMajorFaults;
     // small frames in a row found in memory, and how many the stream needs to trust the next ones
     private int trustStreak;
@@ -281,6 +286,45 @@ public class QwpBackwardReadAhead implements Mutable {
         }
     }
 
+    /**
+     * Call on the thread that ran the stream when the stream parks to wait for its client, after
+     * which any thread can resume it, see {@link #resume()}. The OS counts the major faults of each
+     * thread, so a stream that trusts its frames compares the faults of the thread it leaves here:
+     * a read from storage since its last check ends the trust and doubles the streak, as the check
+     * of its next frame would have; without one, the stream trusts on, and counts the faults of the
+     * thread that resumes it from there.
+     */
+    public void park() {
+        // a stream that trusts no frame reads no faults, and one that parked trusting compared them
+        if (!isTrusted || trustedCarrier == null) {
+            return;
+        }
+        if (CARRIER.get() == trustedCarrier) {
+            if (ff.getThreadMajorFaults() == trustedMajorFaults) {
+                trustedCarrier = null;
+                return;
+            }
+            // the walk of a trusted frame read from storage
+            doubleTrustStreak();
+        }
+        // a stream that moved to another carrier without parking cannot tell whether it read from storage
+        isTrusted = false;
+        trustStreak = 0;
+    }
+
+    /**
+     * Call on the thread that resumes a parked stream, before the stream reads a row. A stream that
+     * parked trusting its frames counts the major faults of this thread from here: the faults the
+     * thread took for other work, before or while the stream was parked, are not the stream's.
+     */
+    public void resume() {
+        // Only a park tells that the stream read nothing from storage on the thread it left: a
+        // stream that moved without parking checks its next frame, see adviseSmallFrame().
+        if (isTrusted && trustedCarrier == null) {
+            trustFromHere();
+        }
+    }
+
     // where the data of a row starts, from its aux entry; -1 when the entry is outside the
     // published aux extent or points outside the data extent
     private static long dataOffset(ColumnTypeDriver driver, long auxAddress, long auxSize, long pageSize, long row) {
@@ -396,7 +440,8 @@ public class QwpBackwardReadAhead implements Mutable {
     private long adviseSmallFrame() {
         if (isTrusted) {
             // The OS counts the faults of each OS thread, and a stream can move to another one: a
-            // parked stream resumes on any worker, and a query fiber on any carrier after a yield.
+            // parked stream resumes on any worker, see park() and resume(), and a query fiber on
+            // any carrier after a yield.
             if (CARRIER.get() == trustedCarrier) {
                 // Read the byte the walk reads first: when the frame is not in memory, this
                 // faults, a read from storage that the major faults of the thread count.
@@ -405,9 +450,10 @@ public class QwpBackwardReadAhead implements Mutable {
                     return 0;
                 }
                 // this frame, or the walk of an earlier one, read from storage
-                trustStreakNeeded = (int) Math.min(MAX_TRUST_STREAK, 2L * trustStreakNeeded);
+                doubleTrustStreak();
             }
-            // a stream that moved to another carrier cannot tell whether it read from storage
+            // A stream that moved to another carrier other than through park() and resume() cannot
+            // tell whether it read from storage, nor can one that went on after park() without resume().
             isTrusted = false;
             trustStreak = 0;
         }
@@ -416,15 +462,7 @@ public class QwpBackwardReadAhead implements Mutable {
         if (!isChecked || hasMissingPages) {
             trustStreak = 0;
         } else if (++trustStreak >= trustStreakNeeded) {
-            final long majorFaults = ff.getThreadMajorFaults();
-            if (majorFaults >= 0) {
-                isTrusted = true;
-                trustedCarrier = CARRIER.get();
-                trustedMajorFaults = majorFaults;
-            } else {
-                // without the thread's faults the stream cannot tell when to stop trusting
-                trustStreakNeeded = MAX_TRUST_STREAK;
-            }
+            trustFromHere();
         }
         return bytes;
     }
@@ -478,6 +516,11 @@ public class QwpBackwardReadAhead implements Mutable {
         trustStreakNeeded = TRUST_STREAK;
         coldRun = 0;
         uncheckedWindows = 0;
+    }
+
+    // a read from storage that the stream took while it trusted: it needs a streak twice as long to trust again
+    private void doubleTrustStreak() {
+        trustStreakNeeded = (int) Math.min(MAX_TRUST_STREAK, 2L * trustStreakNeeded);
     }
 
     // The lowest row r in [rowLo, maxWindowLo] from which the frame's rows [r, rowHi) take at most
@@ -545,6 +588,19 @@ public class QwpBackwardReadAhead implements Mutable {
             }
         }
         return true;
+    }
+
+    // Trusts the next small frames from the major faults the calling thread has taken so far.
+    private void trustFromHere() {
+        final long majorFaults = ff.getThreadMajorFaults();
+        isTrusted = majorFaults >= 0;
+        if (isTrusted) {
+            trustedCarrier = CARRIER.get();
+            trustedMajorFaults = majorFaults;
+        } else {
+            // without the thread's faults the stream cannot tell when to stop trusting
+            trustStreakNeeded = MAX_TRUST_STREAK;
+        }
     }
 
     // Bytes the frame's rows [rowLo, rowHi) take over all columns, as adviseRows() asks for them:

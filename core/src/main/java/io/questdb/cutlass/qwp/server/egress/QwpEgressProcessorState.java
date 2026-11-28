@@ -1213,6 +1213,9 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         } finally {
             sqlExecutionOwner.unmount();
         }
+        // Any worker can resume the stream: a backward one compares the major
+        // faults of this thread before it leaves, see QwpBackwardReadAhead.park().
+        backwardReadAhead.park();
     }
 
     public void publishSqlExecutionOwner(CharSequence query, boolean containsSecret) {
@@ -1226,6 +1229,8 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         }
         resumeStreamingTimer();
         sqlExecutionOwner.mount();
+        // before the stream reads a row on this thread, see QwpBackwardReadAhead.resume()
+        backwardReadAhead.resume();
     }
 
     /**
