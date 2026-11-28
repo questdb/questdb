@@ -21877,6 +21877,20 @@ public class CoveringIndexTest extends AbstractCairoTest {
         }
     }
 
+    private static void writeDoubleColumnFile(Path partitionDir, String columnName, double... values) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        final int dirLen = partitionDir.size();
+        try (MemoryCMARWImpl data = new MemoryCMARWImpl(
+                ff, TableUtils.dFile(partitionDir, columnName, COLUMN_NAME_TXN_NONE),
+                ff.getPageSize(), -1, MemoryTag.MMAP_DEFAULT, 0)) {
+            for (double value : values) {
+                data.putDouble(value);
+            }
+        } finally {
+            partitionDir.trimTo(dirLen);
+        }
+    }
+
     /**
      * Runs {@code query} over a table whose indexed column carries a column top, and
      * asserts that nothing mapped the INCLUDE columns through an index reader. A NULL key
@@ -21900,29 +21914,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
                 .noLeakCheck()
                 .assertsPlanContaining("CoveringIndex", "on: sym with:");
         assertSqlCursors("SELECT /*+ no_covering */" + tail, "SELECT" + tail);
-    }
-
-    private static void writeDoubleColumnFile(Path partitionDir, String columnName, double... values) {
-        final FilesFacade ff = configuration.getFilesFacade();
-        final int dirLen = partitionDir.size();
-        final long size = (long) values.length * Double.BYTES;
-        final long buf = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
-        final long fd = TableUtils.openRW(
-                ff,
-                TableUtils.dFile(partitionDir, columnName, COLUMN_NAME_TXN_NONE),
-                LOG,
-                configuration.getWriterFileOpenOpts()
-        );
-        try {
-            for (int i = 0; i < values.length; i++) {
-                Unsafe.putDouble(buf + (long) i * Double.BYTES, values[i]);
-            }
-            assertEquals(size, ff.write(fd, buf, size, 0));
-        } finally {
-            ff.close(fd);
-            Unsafe.free(buf, size, MemoryTag.NATIVE_DEFAULT);
-            partitionDir.trimTo(dirLen);
-        }
     }
 
     // 2024-01-01 predates the column, and 2024-01-02 gained it after its first row: those rows read as NULL, though

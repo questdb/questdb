@@ -281,6 +281,10 @@ public class ColumnWithoutRowsInPartitionTest extends AbstractCairoTest {
         });
     }
 
+    private static boolean isColumnFileOfOldDay(LPSZ path, String fileName) {
+        return Utf8s.containsAscii(path, OLD_DAY) && Utf8s.endsWithAscii(path, Files.SEPARATOR + fileName);
+    }
+
     private void addCoveredColumn() throws Exception {
         execute("ALTER TABLE t ADD COLUMN var_top VARCHAR");
         execute("ALTER TABLE t ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (var_top)");
@@ -354,10 +358,6 @@ public class ColumnWithoutRowsInPartitionTest extends AbstractCairoTest {
             );
         }
         drainWalQueue();
-    }
-
-    private static boolean isColumnFileOfOldDay(LPSZ path, String fileName) {
-        return Utf8s.containsAscii(path, OLD_DAY) && Utf8s.endsWithAscii(path, Files.SEPARATOR + fileName);
     }
 
     private void createTableWithTwoDays() throws Exception {
