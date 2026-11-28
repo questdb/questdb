@@ -4297,11 +4297,11 @@ public class TableReaderTest extends AbstractCairoTest {
 
     @Test
     public void testSetActiveColumnsOpenPartitionColumnsErrorPathParquet() throws Exception {
-        // Verifies that openPartitionCount stays consistent when
-        // openPartitionColumns() throws during Parquet partition open.
-        // The index key file open is the only I/O in this path that can
-        // fail, and it requires a non-null (previously created) index
-        // reader in the slot. Match both bitmap (.k) and posting (.pk)
+        // Verifies that openPartitionCount stays consistent when the index
+        // key file of a Parquet partition cannot be opened. The partition
+        // opens without its index readers, which stay closed until a lookup
+        // needs them, so the failure surfaces at the lookup, and a later
+        // lookup recovers. Match both bitmap (.k) and posting (.pk)
         // key files so the test works regardless of the default symbol
         // index type.
         AtomicInteger failCounter = new AtomicInteger();
@@ -4347,27 +4347,33 @@ public class TableReaderTest extends AbstractCairoTest {
                 reader.getIndexReader(0, symIndex, IndexReader.DIR_BACKWARD);
                 assertOpenPartitionCount(reader);
 
-                // Close the partition. The bitmap index reader is closed but
-                // the slot remains non-null, so the next openPartition0 will
-                // call indexReader.of() which does I/O.
+                // Close the partition. The index reader is closed but the
+                // slot keeps it for reuse.
                 reader.closePartitionByIndex(0);
                 assertOpenPartitionCount(reader);
 
-                // Arm the failure: next .k file open will fail.
+                // Arm the failure: next key file open will fail. The partition
+                // opens without touching the key file.
                 failCounter.set(1);
+                reader.openPartition(0);
+                Assert.assertEquals(1, failCounter.get());
+                assertOpenPartitionCount(reader);
+
+                // The lookup opens the key file and fails.
                 try {
-                    reader.openPartition(0);
+                    reader.getIndexReader(0, symIndex, IndexReader.DIR_BACKWARD);
                     Assert.fail("expected CairoException");
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "could not open");
                 }
+                Assert.assertEquals(0, failCounter.get());
 
                 // openPartitionCount must stay consistent after the failure.
                 assertOpenPartitionCount(reader);
 
                 // Disarm failure and verify recovery.
                 failCounter.set(0);
-                reader.openPartition(0);
+                Assert.assertTrue(reader.getIndexReader(0, symIndex, IndexReader.DIR_BACKWARD).isOpen());
                 assertOpenPartitionCount(reader);
             }
         });

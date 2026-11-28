@@ -2519,7 +2519,8 @@ public class TableReader implements Closeable, SymbolTableSource {
                 // are reconciled, so find the partition by its timestamp.
                 if (metadata.isColumnIndexed(columnIndex) && !hasDelta(partitionTimestamp)) {
                     final IndexReader indexReader = getReusableIndexReader(indexReaders, primaryIndex, columnIndex, false);
-                    if (indexReader != null) {
+                    // A closed reader is only kept for reuse: getIndexReader() opens it when a query needs the index.
+                    if (indexReader != null && indexReader.isOpen()) {
                         indexReader.of(configuration, path.trimTo(plen), name, columnTxn, partitionTxn, columnTop, metadata, columnVersionReader, partitionTimestamp);
                     }
                 } else {

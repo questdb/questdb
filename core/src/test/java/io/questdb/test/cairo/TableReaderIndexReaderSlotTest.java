@@ -51,6 +51,11 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class TableReaderIndexReaderSlotTest extends AbstractCairoTest {
 
     @Test
+    public void testBitmapColumnInSlotOfDroppedColumnOpensIndexOnlyWhenScanned() throws Exception {
+        testIndexOpenedOnlyByScanAfterColumnDrop("BITMAP", "s.k");
+    }
+
+    @Test
     public void testBitmapColumnTakesSlotOfBitmapColumnInOpenPartition() throws Exception {
         // s2 becomes a new column instance in the slot of s1, and takes over the reader objects s1 left there
         testIndexScansAfterDdl("BITMAP", "BITMAP", Partition.OPEN, false, "s2", "ALTER TABLE t DROP COLUMN s1");
@@ -229,7 +234,10 @@ public class TableReaderIndexReaderSlotTest extends AbstractCairoTest {
                             // the partition keeps the reader objects it closes, and opens with them again
                             reader.closePartitionByIndex(0);
                             reader.openPartition(0);
+                            // the partition opens the index files only when a lookup needs them
+                            Assert.assertFalse(column, indexReader.isOpen());
                             Assert.assertSame(column, indexReader, reader.getIndexReader(0, columnIndex, direction));
+                            Assert.assertTrue(column, indexReader.isOpen());
                         }
                     }
                 }
@@ -261,6 +269,11 @@ public class TableReaderIndexReaderSlotTest extends AbstractCairoTest {
                 "ALTER TABLE t ALTER COLUMN s1 DROP INDEX",
                 "ALTER TABLE t ALTER COLUMN s1 ADD INDEX TYPE BITMAP"
         );
+    }
+
+    @Test
+    public void testPostingColumnInSlotOfDroppedColumnOpensIndexOnlyWhenScanned() throws Exception {
+        testIndexOpenedOnlyByScanAfterColumnDrop("POSTING", "s.pk");
     }
 
     @Test
@@ -305,6 +318,70 @@ public class TableReaderIndexReaderSlotTest extends AbstractCairoTest {
             }
             assertQuery("SELECT x FROM t WHERE n = 'a'").noLeakCheck().returns("x\n2\n");
             assertQuery("SELECT x FROM t WHERE n IS NULL").noLeakCheck().returns("x\n1\n");
+        });
+    }
+
+    /**
+     * A backward index scan of x leaves its backward readers in both open partitions of a pooled reader. DROP COLUMN x
+     * makes s a new column instance in the slot of x. The reload must not open the index of s, which no query asked
+     * for, and a later index scan of s must open it with the kept reader objects.
+     */
+    private void testIndexOpenedOnlyByScanAfterColumnDrop(String indexType, String keyFileName) throws Exception {
+        final AtomicInteger keyFileOpens = new AtomicInteger();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                // the symbol map of a BITMAP column has a key file of the same name, outside the partitions
+                if (Utf8s.containsAscii(name, "2024-01-0") && Utf8s.containsAscii(name, keyFileName)) {
+                    keyFileOpens.incrementAndGet();
+                }
+                return super.openRO(name);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE t (x SYMBOL INDEX TYPE " + indexType + ", s SYMBOL INDEX TYPE " + indexType
+                    + ", ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            // x and s give 'a' the same key and other rows, so that a reader left bound to x returns the wrong rows
+            execute("""
+                    INSERT INTO t VALUES
+                        ('a', 'a', '2024-01-01T10:00:00.000000Z'),
+                        ('b', 'b', '2024-01-01T11:00:00.000000Z'),
+                        ('a', 'b', '2024-01-01T12:00:00.000000Z'),
+                        ('a', 'a', '2024-01-02T10:00:00.000000Z')
+                    """);
+            drainWalQueue();
+            assertQuery("SELECT ts, x FROM t WHERE x = 'a' ORDER BY ts DESC")
+                    .noLeakCheck()
+                    .timestampDesc("ts")
+                    .withPlanContaining("Index backward scan on: x")
+                    .returns("""
+                            ts\tx
+                            2024-01-02T10:00:00.000000Z\ta
+                            2024-01-01T12:00:00.000000Z\ta
+                            2024-01-01T10:00:00.000000Z\ta
+                            """);
+
+            execute("ALTER TABLE t DROP COLUMN x");
+            drainWalQueue();
+            keyFileOpens.set(0);
+            assertQuery("SELECT count() FROM t")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("count\n4\n");
+            Assert.assertEquals(0, keyFileOpens.get());
+
+            assertQuery("SELECT ts, s FROM t WHERE s = 'a' ORDER BY ts DESC")
+                    .noLeakCheck()
+                    .timestampDesc("ts")
+                    .withPlanContaining("Index backward scan on: s")
+                    .returns("""
+                            ts\ts
+                            2024-01-02T10:00:00.000000Z\ta
+                            2024-01-01T10:00:00.000000Z\ta
+                            """);
+            // one key file per partition
+            Assert.assertEquals(2, keyFileOpens.get());
         });
     }
 
