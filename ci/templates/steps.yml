@@ -16,11 +16,13 @@ parameters:
   - name: artifactNameSuffix
     type: string
     default: ""
-  # Main CI runs every test shard on several jobs at once (the Linux legs of one stage, or the
-  # macOS and Windows halves of the hosted pipeline). Name those jobs here, space-separated, and
-  # select-test-commit-mode.yml puts half of them on NOSYNC and half on ADAPTIVE, swapping them on
-  # the branch's next run. Empty leaves the suite default (ADAPTIVE) in place, which is what the
-  # fuzz and adaptive-soak pipelines rely on.
+  # Master CI and the macwin pipeline run every test shard on several jobs at once (the Linux
+  # legs of one stage, or the macOS and Windows halves of the hosted jobs). Name those jobs
+  # here, space-separated, and select-test-commit-mode.yml puts half of them on NOSYNC and half
+  # on ADAPTIVE, swapping them on the branch's next run. Empty leaves the suite default
+  # (ADAPTIVE) in place, as in the fuzz and adaptive-soak pipelines. The coverage legs
+  # of a PR build name no group either: they run each shard once, always on NOSYNC (see
+  # TEST_COMMIT_MODE_OPT below).
   - name: testCommitModeGroup
     type: string
     default: ""
@@ -61,10 +63,19 @@ steps:
         # Direct-to-Central path: keep historical behaviour (no connection reuse).
         echo "##vso[task.setvariable variable=MAVEN_KEEPALIVE_OPT]-Dhttp.keepAlive=false"
       fi
-      # Empty unless select-test-commit-mode.yml picks a mode for this job. Defined here because
-      # this step runs in every job, and "Run tests" would otherwise pass the undefined macro to
-      # Maven as literal text.
-      echo "##vso[task.setvariable variable=TEST_COMMIT_MODE_OPT]"
+      # The test commit mode. Defined here because this step runs in every job, and the test
+      # tasks would otherwise pass the undefined macro to Maven as literal text.
+      #   - The coverage and plain-* legs of a PR build run NOSYNC, the mode a table commits in unless it
+      #     is configured otherwise. ADAPTIVE is tested on master, where the platform legs
+      #     alternate the two modes. Fuzz test classes ignore this setting and draw their own
+      #     mode in every run.
+      #   - Empty everywhere else, which leaves the suite default (ADAPTIVE) in place.
+      # select-test-commit-mode.yml runs later and overrides this for a job in a group.
+      if [ "$(Build.Reason)" = "PullRequest" ] && [[ "$(testset)" == coverage* || "$(testset)" == plain* ]]; then
+        echo "##vso[task.setvariable variable=TEST_COMMIT_MODE_OPT]-Dquestdb.test.commit.mode=nosync"
+      else
+        echo "##vso[task.setvariable variable=TEST_COMMIT_MODE_OPT]"
+      fi
       # Empty unless the Windows-only step before the tests moves the test root. Defined here for the
       # same reason.
       echo "##vso[task.setvariable variable=TEST_TMPDIR_OPT]"
@@ -259,6 +270,46 @@ steps:
       - script: python3 .github/prepare_rust_env.py --export-cargo-install-env --match core/rust/qdbr/rust-toolchain.toml
         displayName: "Ensure Rust is installed"
         # Note, the `prepare_rust_env.py` script exports a number of variables.
+      # The legs of a PR build that changes no Rust file test against the release library, and
+      # compiling it takes about 2.5 minutes in each of them. Cache it under a hash of all that
+      # goes into it. A PR run reads the entries of its own earlier builds and of its target
+      # branch, and writes only to its own scope; an entry never changes once saved. A PR that
+      # changes Rust neither reads nor writes the cache: its legs compile the library
+      # instrumented for coverage (qdbr-coverage). The pattern matches dot directories;
+      # .cargo/config.toml is also named on its own, so that the compiler flags stay in the
+      # key if that ever changes.
+      - task: Cache@2
+        displayName: "Cache Rust library"
+        continueOnError: true
+        inputs:
+          key: '"qdbr-release" | "$(RUSTC_HOST_TRIPLE)" | "$(RUSTC_RELEASE)" | "$(LINUX_GLIBC_VERSION)" | core/rust/** | core/rust/qdbr/.cargo/config.toml | core/pom.xml'
+          path: $(Pipeline.Workspace)/qdbr-cache
+        condition: |
+          and(
+            succeeded(),
+            eq(variables['os'], 'Linux'),
+            eq(variables['SOURCE_CODE_CHANGED'], 'true'),
+            ne(variables['RUST_SOURCE_CODE_CHANGED'], 'true'),
+            ne(variables['System.PullRequest.IsFork'], 'true'),
+            or(startsWith(variables['testset'], 'coverage'), startsWith(variables['testset'], 'plain'))
+          )
+      # The folder must exist when the job ends, or the cache task fails to save it. A restored
+      # folder without the library counts as a miss.
+      - bash: |
+          mkdir -p "$(Pipeline.Workspace)/qdbr-cache"
+          if [ -s "$(Pipeline.Workspace)/qdbr-cache/libquestdbr.so" ]; then
+            echo "##vso[task.setvariable variable=RUST_NATIVE_ARGS]-DskipNative -Dqdbr.prebuilt.dir=$(Pipeline.Workspace)/qdbr-cache"
+          fi
+        displayName: "Use cached Rust library"
+        condition: |
+          and(
+            succeeded(),
+            eq(variables['os'], 'Linux'),
+            eq(variables['SOURCE_CODE_CHANGED'], 'true'),
+            ne(variables['RUST_SOURCE_CODE_CHANGED'], 'true'),
+            ne(variables['System.PullRequest.IsFork'], 'true'),
+            or(startsWith(variables['testset'], 'coverage'), startsWith(variables['testset'], 'plain'))
+          )
 
   - template: install-llvm.yml
     parameters:
@@ -360,12 +411,28 @@ steps:
     # nightly overrides it (165 / 315) for its long single-JVM passes.
     timeoutInMinutes: ${{ parameters.testTimeoutInMinutes }}
     # succeeded() explicitly: see "Compile with Maven" above.
+    # A coverage leg takes this plain run when the change needs no coverage (no main Java
+    # and no Rust file changed, e.g. a test-only change): the coverage legs are the only
+    # test legs of a PR build, so they must run the tests either way. The plain-* legs of
+    # self-hosted-cover-jobs.yml (the fuzz tests) always take it.
     condition: |
       and(
         succeeded(),
-        eq(variables['testset'], 'all'),
         eq(variables['SOURCE_CODE_CHANGED'], 'true'),
-        eq(variables['os'], 'Linux')
+        eq(variables['os'], 'Linux'),
+        or(
+          eq(variables['testset'], 'all'),
+          and(
+            startsWith(variables['testset'], 'coverage'),
+            ne(variables['System.PullRequest.IsFork'], 'true'),
+            ne(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'),
+            ne(variables['RUST_SOURCE_CODE_CHANGED'], 'true')
+          ),
+          and(
+            startsWith(variables['testset'], 'plain'),
+            ne(variables['System.PullRequest.IsFork'], 'true')
+          )
+        )
       )
   - ${{ if ne(parameters.testCommitModeGroup, '') }}:
       - template: verify-test-commit-mode.yml
@@ -388,7 +455,7 @@ steps:
       goals: "install"
       options: "-s $(MAVEN_SETTINGS_FILE) --batch-mode -pl core -am -DskipTests
         -P build-web-console
-        $(CLIENT_PROFILE) $(MAVEN_RUN_OPTS)"
+        $(CLIENT_PROFILE) $(MAVEN_RUN_OPTS) $(RUST_NATIVE_ARGS)"
       jdkVersionOption: $(jdk)
     # succeeded() explicitly: see "Compile with Maven" above.
     condition: |
@@ -401,24 +468,57 @@ steps:
             eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true')
         )
       )
+  # qdbr-coverage builds the Rust library in debug mode with coverage instrumentation, which
+  # slows every test that works in Rust. Only a PR that changes Rust reads that coverage, so
+  # every other PR keeps the release library the pre-build compiled.
+  - bash: |
+      if [ "$(RUST_SOURCE_CODE_CHANGED)" = "true" ]; then
+        echo "##vso[task.setvariable variable=COVERAGE_PROFILES]jacoco,qdbr-coverage,build-web-console"
+      else
+        echo "##vso[task.setvariable variable=COVERAGE_PROFILES]jacoco,build-web-console"
+      fi
+      # JaCoCo instruments only the classes the PR changed; instrumenting every class makes
+      # the tests up to 2.6x slower. COVERAGE_DIFF (check-changes-job.yml) lists them as
+      # +:*.Foo,+:*.Bar; the agent takes *.Foo*:*.Bar*, where the trailing * adds nested
+      # classes. +:* means a build with no PR, which measures everything; -:* means a PR that
+      # changed no Java class, which runs here only for its Rust coverage.
+      case "$COVERAGE_DIFF" in
+        '+:*' | '') INCLUDES='*' ;;
+        '-:*') INCLUDES='no.java.class.changed' ;;
+        *) INCLUDES=$(echo "$COVERAGE_DIFF" | tr -cd 'A-Za-z0-9_*.,:+' | sed -e 's/+:\([^,]*\)/\1*/g' -e 's/,/:/g') ;;
+      esac
+      echo "##vso[task.setvariable variable=COVERAGE_INCLUDES]$INCLUDES"
+    displayName: "Select coverage profiles and classes"
+    condition: startsWith(variables['testset'], 'coverage')
+    env:
+      COVERAGE_DIFF: $(COVERAGE_DIFF)
   - task: Maven@3
     displayName: "Run tests with Coverage (jemalloc)"
     inputs:
       mavenVersionOption: "$(MAVEN_VERSION_OPTION)"
       mavenDirectory: "$(build.sourcesdirectory)/maven/apache-maven-$(MAVEN_VERSION)"
-      mavenPomFile: "core/pom.xml"
+      # The root pom, not core/pom.xml: the coverage legs are the only test legs of a PR
+      # build, so linux-other also runs the client, compat and utils tests; the other legs
+      # narrow the reactor to core with TEST_REACTOR_ARGS. Only core's coverage is read:
+      # compat and utils define no jacoco profile, and nothing collects the client's
+      # jacoco.exec.
+      mavenPomFile: "pom.xml"
       mavenOptions: "-Xlog:gc -Dfile.encoding=UTF-8 $(MAVEN_OPTS)"
       goals: "test"
-      options: "-s $(MAVEN_SETTINGS_FILE) --batch-mode -Dtest.include=$(includeTests)
+      options: "-s $(MAVEN_SETTINGS_FILE) --batch-mode $(TEST_REACTOR_ARGS) -Dtest.include=$(includeTests)
         -Dtest.exclude=$(excludeTests)
         -Dout=$(Build.SourcesDirectory)/ci/qlog.conf
-        -P jacoco,qdbr-coverage,build-web-console
-        $(CLIENT_PROFILE) $(MAVEN_RUN_OPTS)"
+        -DfailIfNoTests=false
+        -Dsurefire.failIfNoSpecifiedTests=false
+        -P $(COVERAGE_PROFILES)
+        -Dcoverage.includes=$(COVERAGE_INCLUDES)
+        $(CLIENT_PROFILE) $(MAVEN_RUN_OPTS) $(RUST_NATIVE_ARGS) $(TEST_COMMIT_MODE_OPT)"
       jdkVersionOption: $(jdk)
     env:
       QDB_TEST_WINDOWS_SYMLINKS: "1"
       LD_PRELOAD: $(Build.SourcesDirectory)/core/src/main/bin/linux-x86-64/libjemalloc.so
-    timeoutInMinutes: 55
+    # Below the 80-minute job timeout of the coverage legs, less their setup and pre-build.
+    timeoutInMinutes: 70
     # succeeded() explicitly: see "Compile with Maven" above.
     condition: |
       and(
@@ -429,6 +529,25 @@ steps:
             eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'),
             eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true')
         )
+      )
+
+  # On a cache miss Maven compiled the library; put it where the cache task saves it from when
+  # the job ends. The task saves only after a job that succeeded. A failed copy must not fail
+  # a leg whose tests passed: it leaves an empty entry, which reads as a miss.
+  - bash: |
+      if [ ! -e "$(Pipeline.Workspace)/qdbr-cache/libquestdbr.so" ]; then
+        cp core/target/classes/io/questdb/bin/linux-*/libquestdbr.so "$(Pipeline.Workspace)/qdbr-cache/" \
+          || echo "##vso[task.logissue type=warning]no Rust library to cache"
+      fi
+    displayName: "Hand the Rust library to the cache"
+    condition: |
+      and(
+        succeeded(),
+        eq(variables['os'], 'Linux'),
+        eq(variables['SOURCE_CODE_CHANGED'], 'true'),
+        ne(variables['RUST_SOURCE_CODE_CHANGED'], 'true'),
+        ne(variables['System.PullRequest.IsFork'], 'true'),
+        or(startsWith(variables['testset'], 'coverage'), startsWith(variables['testset'], 'plain'))
       )
 
   - bash: |

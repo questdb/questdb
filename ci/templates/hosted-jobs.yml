@@ -121,7 +121,7 @@ jobs:
           testset: "all"
           # Exclude griffin: run in mac-griffin
           # Exclude cairo: run in mac-cairo and mac-cairo-fuzz
-          # Exclude compat/cliutil: run in Linux (JavaAndRustLint stage)
+          # Exclude compat/cliutil: run in Linux (linux-other on PRs, Other tests (B) on master)
           # Exclude pgwire: run in mac-pgwire
           excludeTests: "**/griffin/**,**/cairo/**,**/compat/**,**/cliutil/**,**/pgwire/**"
           javadoc_step: ""
@@ -266,7 +266,7 @@ jobs:
           testset: "all"
           # Exclude griffin: run in windows-griffin-base and windows-griffin-sub
           # Exclude cairo: run in windows-cairo-1, windows-cairo-2, windows-cairo-3, windows-fuzz1
-          # Exclude compat/cliutil: run in Linux (JavaAndRustLint stage)
+          # Exclude compat/cliutil: run in Linux (linux-other on PRs, Other tests (B) on master)
           # Exclude pgwire: run in windows-pgwire
           # Exclude cutlass/http, cutlass/qwp, cutlass/text: run in windows-other-2
           # Exclude Fuzz tests: run in windows-fuzz1, windows-fuzz2 and windows-fuzz3

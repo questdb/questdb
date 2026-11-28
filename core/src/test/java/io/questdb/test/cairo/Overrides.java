@@ -66,7 +66,8 @@ public class Overrides {
     /**
      * Commit mode every test runs under, unless it sets one itself. The suite runs ADAPTIVE while the shipped
      * default ({@link CommitMode#DEFAULT}) is NOSYNC, so the durable path is exercised everywhere; sweep the other
-     * way with {@code -Dquestdb.test.commit.mode=nosync}. CI ({@code ci/templates/select-test-commit-mode.yml})
+     * way with {@code -Dquestdb.test.commit.mode=nosync}. CI names the mode itself: a PR build runs NOSYNC
+     * ({@code ci/templates/steps.yml}), and on master {@code ci/templates/select-test-commit-mode.yml}
      * splits the jobs of a test shard between NOSYNC and ADAPTIVE and swaps them on the next run, so a test that
      * needs one mode pins it. A fuzz test class ignores it and draws its own mode, see {@link #getTestCommitMode()}.
      * Every path that builds a test configuration reads this: here,

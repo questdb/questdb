@@ -1,3 +1,11 @@
+# The PR pipeline. A PR build tests one platform and one JVM: the coverage legs
+# (linux-x86-64, OpenJDK) run every test, the lint stage runs the linters,
+# BuildRustLibrary checks that the Rust library compiles on both Linux architectures,
+# and TriggerEnterpriseCompile checks that Enterprise still compiles. Everything else --
+# the arm64, ZFS and GraalVM legs, macOS, Windows and the binary smoke test -- runs on
+# master every two hours, in test-master-pipeline.yml. Enterprise runs its tests against
+# OSS master in its scheduled OSS compatibility check.
+#
 # Also run in the GitHub merge queue: CI trigger on the ephemeral merge-queue branches.
 trigger:
   branches:
@@ -53,8 +61,8 @@ variables:
     value: "version"
   - name: MAVEN_VERSION_OPTION
     value: "Default"
-  # Full-reactor defaults for the self-hosted Linux jobs. The hosted mac/windows
-  # jobs run on demand in test-hosted-pipeline.yml, not here.
+  # The whole reactor by default. Only the linux-other coverage leg keeps it; the
+  # other coverage legs narrow it to core (templates/self-hosted-cover-jobs.yml).
   - name: TEST_REACTOR_ARGS
     value: ""
   - name: WEB_CONSOLE_PROFILE
@@ -66,11 +74,11 @@ stages:
     jobs:
       - template: templates/check-changes-job.yml
 
-  # Compiles the Rust library once per architecture; the self-hosted Linux legs below download
-  # it instead of compiling the crate in every leg (templates/rust-build-job.yml). dependsOn []
-  # starts it next to CheckChanges. Fork PRs run no code on the self-hosted pools, so this stage
-  # skips them like the test stages do. The coverage legs compile the crate themselves: their
-  # library is instrumented for coverage, so it cannot be this release build.
+  # Compiles the release Rust library on both Linux architectures (templates/rust-build-job.yml).
+  # Nothing in this pipeline downloads it: the coverage legs compile the crate themselves,
+  # instrumented for coverage. The stage is the PR's compile check for linux-aarch64 and for
+  # the release profile. dependsOn [] starts it next to CheckChanges. Fork PRs run no code on
+  # the self-hosted pools, so this stage skips them.
   - stage: BuildRustLibrary
     displayName: "Build Rust library"
     dependsOn: []
@@ -95,66 +103,6 @@ stages:
           libName: libquestdbr.so
           expectedArch: aarch64
 
-  - stage: SelfHostedRunGriffin
-    displayName: "SelfHosted Griffin tests"
-    # succeeded(): the legs need the Rust library BuildRustLibrary published.
-    condition: and(succeeded(), ne(variables['System.PullRequest.IsFork'], 'true'))
-    dependsOn:
-      - CheckChanges
-      - BuildRustLibrary
-    jobs:
-      - template: templates/self-hosted-jobs.yml
-    variables:
-      includeTests: "**/griffin/**"
-
-  - stage: SelfHostedRunCairoA
-    displayName: "SelfHosted Cairo tests (A)"
-    # succeeded(): the legs need the Rust library BuildRustLibrary published.
-    condition: and(succeeded(), ne(variables['System.PullRequest.IsFork'], 'true'))
-    dependsOn:
-      - CheckChanges
-      - BuildRustLibrary
-    jobs:
-      - template: templates/self-hosted-jobs.yml
-    variables:
-      includeTests: "**/cairo/*,**/cairo/fuzz/**"
-
-  - stage: SelfHostedRunCairoB
-    displayName: "SelfHosted Cairo tests (B)"
-    # succeeded(): the legs need the Rust library BuildRustLibrary published.
-    condition: and(succeeded(), ne(variables['System.PullRequest.IsFork'], 'true'))
-    dependsOn:
-      - CheckChanges
-      - BuildRustLibrary
-    jobs:
-      - template: templates/self-hosted-jobs.yml
-    variables:
-      includeTests: "**/cairo/o3/**,**/cairo/wal/**,**/cairo/mv/**,**/cairo/map/**,**/cairo/pool/**,**/cairo/view/**,**/cairo/vm/**,**/cairo/file/**,**/cairo/sql/**,**/cairo/crash/**"
-
-  - stage: SelfHostedRunOtherA
-    displayName: "SelfHosted Other tests (A)"
-    # succeeded(): the legs need the Rust library BuildRustLibrary published.
-    condition: and(succeeded(), ne(variables['System.PullRequest.IsFork'], 'true'))
-    dependsOn:
-      - CheckChanges
-      - BuildRustLibrary
-    jobs:
-      - template: templates/self-hosted-jobs.yml
-    variables:
-      includeTests: "**/cutlass/pgwire/**,**/cutlass/http/**,**/std/*,**/std/str/**,**/std/datetime/microtime/**,**/std/fastdouble/**,**/std/bytes/**,**/log/**,**/sqllogictest/*,**/network/**"
-
-  - stage: SelfHostedRunOtherB
-    displayName: "SelfHosted Other tests (B)"
-    # succeeded(): the legs need the Rust library BuildRustLibrary published.
-    condition: and(succeeded(), ne(variables['System.PullRequest.IsFork'], 'true'))
-    dependsOn:
-      - CheckChanges
-      - BuildRustLibrary
-    jobs:
-      - template: templates/self-hosted-jobs.yml
-    variables:
-      excludeTests: "**/griffin/**,**/cairo/**,**/cutlass/pgwire/**,**/cutlass/http/**,**/std/*,**/std/str/**,**/std/datetime/microtime/**,**/std/fastdouble/**,**/std/bytes/**,**/log/**,**/sqllogictest/*,**/network/**"
-
   - stage: SelfHostedRunTestsCoverageBranches
     displayName: "SelfHosted Running tests with cover"
     dependsOn:
@@ -168,6 +116,19 @@ stages:
       - CheckChanges
     jobs:
       - template: templates/aux-job.yml
+
+  # Checks that Enterprise compiles against this PR; the run reports enterprise-ci-compile.
+  # The Enterprise tests run against OSS master in Enterprise's scheduled OSS compatibility
+  # check and, on request for a PR, from test-hosted-pipeline.yml.
+  - stage: TriggerEnterpriseCompile
+    displayName: "Trigger Enterprise compile"
+    condition: and(succeeded(), eq(variables['Build.Reason'], 'PullRequest'), ne(variables['System.PullRequest.IsFork'], 'true'))
+    dependsOn:
+      - CheckChanges
+    jobs:
+      - template: templates/trigger-enterprise-job.yml
+        parameters:
+          flavour: compile
 
   - stage: CoverageReports
     displayName: "Coverage Report"
@@ -345,10 +306,15 @@ stages:
                 fi
               elif [[ "$PR_NUMBER_MACRO" =~ ^[0-9]+$ ]]; then
                 PR_NUMBER="$PR_NUMBER_MACRO"
-                # --depth=1: the two-dot git diff below compares the endpoint trees
-                # only, so the base branch's history is dead weight.
-                git fetch --recurse-submodules=no --depth=1 origin "$TARGET_BRANCH"
-                DIFF_BASE="origin/$TARGET_BRANCH"
+                # HEAD is GitHub's merge of the PR into the target branch, and its first
+                # parent is the target commit that merge was built on. Diffing against the
+                # branch tip instead would count what others merged while this build ran
+                # as this PR's lines, and JaCoCo instruments only the classes this PR
+                # changed, so those lines would all read as uncovered. cat-file reads the
+                # parent from the commit object, which a shallow checkout also has.
+                # --depth=1: the two-dot git diff below compares the endpoint trees only.
+                DIFF_BASE=$(git cat-file -p HEAD | awk '$1 == "parent" { print $2; exit }')
+                git fetch --recurse-submodules=no --depth=1 origin "$DIFF_BASE"
               else
                 echo "Neither a PR nor a merge-queue build ($BUILD_SOURCEBRANCH); skipping the diff coverage report"
                 exit 0
@@ -367,4 +333,3 @@ stages:
             env:
               BUILD_SOURCEBRANCH: $(Build.SourceBranch)
               PR_NUMBER_MACRO: $(System.PullRequest.PullRequestNumber)
-              TARGET_BRANCH: $(System.PullRequest.targetBranchName)

@@ -6,6 +6,7 @@ jobs:
     strategy:
       matrix:
         linux-griffin-root:
+          TEST_REACTOR_ARGS: "-pl core -am"
           poolName: "hetzner-incus"
           os: Linux
           jdk: "1.25"
@@ -14,6 +15,7 @@ jobs:
           javadoc_step: ""
           javadoc_profile: ""
         linux-griffin-sub:
+          TEST_REACTOR_ARGS: "-pl core -am"
           poolName: "hetzner-incus"
           os: Linux
           jdk: "1.25"
@@ -23,59 +25,79 @@ jobs:
           javadoc_step: ""
           javadoc_profile: ""
         linux-fuzz1:
+          TEST_REACTOR_ARGS: "-pl core -am"
           poolName: "hetzner-incus"
           os: Linux
           jdk: "1.25"
-          testset: "coverage-fuzz1"
+          # plain-, not coverage-: the two fuzz legs run without coverage instrumentation.
+          # Fuzz tests reach different lines on every run, so they must not count as coverage:
+          # the report would differ from build to build. They also run about twice as fast.
+          testset: "plain-fuzz1"
           includeTests: "**/cairo/fuzz/**"
           javadoc_step: ""
           javadoc_profile: ""
         linux-fuzz2:
+          TEST_REACTOR_ARGS: "-pl core -am"
           poolName: "hetzner-incus"
           os: Linux
           jdk: "1.25"
-          testset: "coverage-fuzz2"
+          testset: "plain-fuzz2"
           includeTests: "**/O3*Test**,**/**Fuzz**"
           excludeTests: "**/cairo/fuzz/**"
           javadoc_step: ""
           javadoc_profile: ""
         linux-cairo-root:
+          TEST_REACTOR_ARGS: "-pl core -am"
           poolName: "hetzner-incus"
           os: Linux
           jdk: "1.25"
           testset: "coverage-cairo-root"
-          includeTests: "**/cairo/*"
+          # Also three subpackages of cairo, which keep this leg and linux-cairo-sub at
+          # about the same length.
+          includeTests: "**/cairo/*,**/cairo/parquet/**,**/cairo/crash/**,**/cairo/lv/**"
           excludeTests: "**/O3*Test**,**/**Fuzz**"
           javadoc_step: ""
           javadoc_profile: ""
         linux-cairo-sub:
+          TEST_REACTOR_ARGS: "-pl core -am"
           poolName: "hetzner-incus"
           os: Linux
           jdk: "1.25"
           testset: "coverage-cairo-sub"
           includeTests: "**/cairo/**/*"
-          excludeTests: "**/cairo/*,**/O3*Test**,**/**Fuzz**"
+          excludeTests: "**/cairo/*,**/cairo/parquet/**,**/cairo/crash/**,**/cairo/lv/**,**/O3*Test**,**/**Fuzz**"
           javadoc_step: ""
           javadoc_profile: ""
-        linux-pgwire:
+        # The wire protocols: PGWire, and core's QWP and ILP tests, which keep linux-other
+        # shorter. The questdb/test prefix leaves the client's own qwp and line tests in
+        # linux-other.
+        linux-protocols:
+          TEST_REACTOR_ARGS: "-pl core -am"
           poolName: "hetzner-incus"
           os: Linux
           jdk: "1.25"
-          testset: "coverage-pgwire"
-          includeTests: "**/pgwire/**/*.java"
+          testset: "coverage-protocols"
+          includeTests: "**/pgwire/**/*.java,**/questdb/test/cutlass/qwp/**,**/questdb/test/cutlass/line/**"
           javadoc_step: ""
           javadoc_profile: ""
+        # The one leg that runs the whole reactor: its exclude-only pattern is where the compat
+        # and utils tests land, and most client tests. The other legs narrow the reactor to core
+        # and what it needs (-pl core -am). That still includes the client when it is built from
+        # the submodule, so the client tests their patterns match run there: its cairo tests in
+        # linux-cairo-root, which this leg excludes, and its fuzz tests in linux-fuzz2 as well.
         linux-other:
           poolName: "hetzner-incus"
           os: Linux
           jdk: "1.25"
           testset: "coverage-other"
-          excludeTests: "**/griffin/**,**/cairo/**,**/pgwire/**"
+          excludeTests: "**/griffin/**,**/cairo/**,**/pgwire/**,**/questdb/test/cutlass/qwp/**,**/questdb/test/cutlass/line/**"
           javadoc_step: ""
           javadoc_profile: ""
     pool:
       name: $(poolName)
-    timeoutInMinutes: 60
+    # 80, not 60: under coverage linux-griffin-root and linux-other take over 55 minutes
+    # (build 293582), and these legs are the only test legs of a PR build.
+    timeoutInMinutes: 80
     variables:
       SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.SOURCE_CODE_CHANGED']]
       RUST_SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.RUST_SOURCE_CODE_CHANGED']]

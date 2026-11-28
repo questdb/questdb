@@ -97,9 +97,11 @@ public class TestCommitModeSwitchTest extends AbstractCairoTest {
     }
 
     /**
-     * The suite's mode differs from the shipped one, so that the durable path is exercised everywhere while
-     * users keep the cheaper default. The two may coincide only when someone moves {@link CommitMode#DEFAULT}
-     * on purpose.
+     * The suite's default mode differs from the shipped one, so that the durable path is exercised wherever a
+     * run names no mode, while users keep the cheaper default. The two may coincide only when someone moves
+     * {@link CommitMode#DEFAULT} on purpose. CI names a mode in every job that runs this class (NOSYNC in a PR
+     * build, one of the two in a master leg), so there the suite-default half below is skipped; it is asserted
+     * by a run that names none, such as a local {@code mvn test}.
      */
     @Test
     public void testShippedDefaultIsSeparateFromTheSuiteDefault() {
@@ -119,7 +121,7 @@ public class TestCommitModeSwitchTest extends AbstractCairoTest {
                 Overrides.TEST_COMMIT_MODE_EXPLICIT
         );
         Assert.assertEquals(
-                "the suite runs adaptive so the durable path is covered by every test",
+                "the suite default is adaptive so the durable path is covered wherever no mode is named",
                 CommitMode.ADAPTIVE,
                 CommitMode.fromString(Overrides.TEST_COMMIT_MODE)
         );

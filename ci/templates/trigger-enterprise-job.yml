@@ -1,21 +1,36 @@
-# Starts the full enterprise CI run (questdb-enterprise, definition 23) for an OSS PR or
-# merge-queue build: every Enterprise test on every platform and replication store, Windows
-# included. Only the macwin pipeline (test-hosted-pipeline.yml) uses it, so an OSS PR gets an
-# enterprise run when someone comments `/azp run macwin` on it, and in the merge queue; a plain
-# push starts none. The run tests the questdb submodule at the OSS commit, with the Enterprise
-# branch named like the OSS one or else main, and reports enterprise-ci, a required check, back
-# to that commit. When an open Enterprise PR comes from that same-named branch, the run skips its
-# tests and reports enterprise-ci as passed: that Enterprise PR tests the pair itself (see the
-# tandem step in questdb-enterprise ci/templates/check-changes-job.yml).
+# Starts an enterprise CI run (questdb-enterprise, definition 23) for an OSS build. The run
+# tests the questdb submodule at the OSS commit and reports a status back to that commit.
+#
+# Flavours (the Enterprise pipeline's ossFlavour parameter):
+#   full    -- every Enterprise test on every platform and replication store, Windows
+#              included; reports enterprise-ci. The macwin pipeline
+#              (test-hosted-pipeline.yml) starts it when someone comments `/azp run macwin`
+#              on an OSS PR, and in the merge queue.
+#   compile -- only compiles Enterprise against the OSS commit; reports
+#              enterprise-ci-compile. test-pipeline.yml starts it on every PR build.
+#
+# A PR's run uses the Enterprise branch named like the OSS one, or else main. When an open
+# Enterprise PR comes from that same-named branch, the run skips its work and reports
+# success: that Enterprise PR tests the pair itself (see the tandem step in
+# questdb-enterprise ci/templates/check-changes-job.yml).
+parameters:
+  - name: flavour
+    type: string
+    default: full
+    values:
+      - full
+      - compile
+
 jobs:
   - job: TriggerEnterprise
     displayName: "Trigger Enterprise Pipeline"
     pool: hetzner-incus
     variables:
       SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.SOURCE_CODE_CHANGED']]
-    # A PR or merge-queue build triggers enterprise CI even when no source path changed:
-    # enterprise-ci (reported by the enterprise run) is a required check, so GitHub blocks a PR that
-    # never reports it from merging, and ejects a queue entry that never reports it.
+    # A PR or merge-queue build triggers enterprise CI even when no source path changed: the
+    # status the enterprise run reports (enterprise-ci, or enterprise-ci-compile for the compile
+    # flavour) can be a required check, and GitHub then blocks a PR that never reports it from
+    # merging, and ejects a queue entry that never reports it.
     condition: >-
       and(succeeded(),
       or(eq(variables['SOURCE_CODE_CHANGED'], 'true'),
@@ -62,16 +77,15 @@ jobs:
             exit 1
           fi
 
-          # Queue the enterprise run on enterprise branch $1. The pipeline's ossFlavour parameter
-          # defaults to the full run, so it is not passed.
+          # Queue the enterprise run on enterprise branch $1.
           trigger() {
             curl -s -o response.json -w "%{http_code}" -X POST \
               -H "$AUTH_HEADER" \
               -H "Content-Type: application/json" \
               "https://dev.azure.com/questdb/questdb-enterprise/_apis/pipelines/23/runs?api-version=7.0" \
-              -d "$(jq -n --arg ref "refs/heads/$1" --arg commit "$OSS_COMMIT" --arg pr "$OSS_PR_NUMBER" '
+              -d "$(jq -n --arg ref "refs/heads/$1" --arg commit "$OSS_COMMIT" --arg pr "$OSS_PR_NUMBER" --arg flavour "$FLAVOUR" '
                 {resources: {repositories: {self: {refName: $ref}}},
-                 templateParameters: {ossCommit: $commit, ossPrNumber: $pr}}')"
+                 templateParameters: {ossCommit: $commit, ossPrNumber: $pr, ossFlavour: $flavour}}')"
           }
 
           # Test against the enterprise branch named like the OSS one, if there is one. Azure
@@ -79,10 +93,12 @@ jobs:
           # access to the private enterprise repo is needed; a ref it cannot resolve means there
           # is no such branch, and the run falls back to main.
           ENT_BRANCH="${OSS_BRANCH:-main}"
-          echo "Triggering enterprise CI for commit $OSS_COMMIT (PR #$OSS_PR_NUMBER) on enterprise branch $ENT_BRANCH"
+          echo "Triggering enterprise CI ($FLAVOUR) for commit $OSS_COMMIT (PR #$OSS_PR_NUMBER) on enterprise branch $ENT_BRANCH"
           HTTP_CODE=$(trigger "$ENT_BRANCH")
-          if [ "$ENT_BRANCH" != "main" ] && grep -q "Unable to resolve the reference" response.json; then
-            echo "Enterprise repo has no branch $ENT_BRANCH; triggering on main"
+          # HTTP 400: the branch exists, but its pipeline predates this flavour (a stale
+          # same-named branch), so Azure rejects the ossFlavour value.
+          if [ "$ENT_BRANCH" != "main" ] && { [ "$HTTP_CODE" = "400" ] || grep -q "Unable to resolve the reference" response.json; }; then
+            echo "Enterprise branch $ENT_BRANCH is missing or rejected the request (HTTP $HTTP_CODE); triggering on main"
             ENT_BRANCH="main"
             HTTP_CODE=$(trigger "$ENT_BRANCH")
           fi
@@ -107,3 +123,4 @@ jobs:
           OSS_BRANCH: $(System.PullRequest.SourceBranch)
           BUILD_SOURCEBRANCH: $(Build.SourceBranch)
           BUILD_SOURCEVERSION: $(Build.SourceVersion)
+          FLAVOUR: ${{ parameters.flavour }}

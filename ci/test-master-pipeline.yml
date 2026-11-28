@@ -1,0 +1,207 @@
+# Master CI: every two hours, tests master on everything a PR build leaves out. A PR build
+# (test-pipeline.yml) tests linux-x86-64 on OpenJDK only; this pipeline runs the arm64, ZFS
+# and GraalVM legs, the macOS and Windows legs, and the binary smoke test. A break on those
+# platforms therefore reaches master and shows here, up to two hours after the merge.
+# Enterprise tests itself against OSS master in its scheduled OSS compatibility check
+# (questdb-enterprise ci/build-and-test.yaml).
+#
+# always: false starts a run only when master moved since the last green scheduled run, so
+# a red master reruns, and alerts again, every slot until someone fixes it.
+#
+# ADO setup: the definition is named Master CI and its default branch is master. It needs
+# the variables SCCACHE_AZURE_BLOB_CONTAINER and SCCACHE_AZURE_CONNECTION_STRING, as on the
+# macwin definition, access to the github-public-read variable group, and
+# BUILDS_SLACK_HOOK_URL for the alert (stage NotifyOnFailure).
+trigger: none
+
+pr: none
+
+schedules:
+  - cron: "0 */2 * * *"
+    displayName: "Two-hourly master run"
+    branches:
+      include:
+        - master
+    always: false
+
+variables:
+  # Supplies GIT_GITHUB_TOKEN, which the fetch steps feed to ci/git-auth-env.sh
+  # (as GH_TOKEN) so github.com fetches do not go out anonymously.
+  - group: github-public-read
+  - name: QDB_LOG_W_FILE_LOCATION
+    value: "$(Build.BinariesDirectory)/tests.log"
+  - name: ARCHIVED_LOGS
+    value: "$(Build.ArtifactStagingDirectory)/questdb-$(Build.SourceBranchName)-$(Build.SourceVersion)-$(System.StageAttempt)-$(Agent.OS)-$(jdk).zip"
+  - name: excludeTests
+    value: ""
+  - name: includeTests
+    value: "%regex[.*[^o].class]"
+  - name: MAVEN_CACHE_FOLDER
+    value: $(HOME)/.m2/repository
+  - name: MAVEN_OPTS
+    value: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Xmx3g -XX:+UseParallelGC"
+  # Retries a dropped connect to the single-IP Maven cache; test-pipeline.yml has the rationale.
+  - name: MAVEN_RUN_OPTS
+    value: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Dmaven.resolver.transport=wagon -Dmaven.wagon.httpconnectionManager.ttlSeconds=30 -Dmaven.wagon.http.retryHandler.count=3 -Dmaven.wagon.http.retryHandler.nonRetryableClasses=java.io.NotSerializableException "
+  # Numbers this branch's runs for templates/select-test-commit-mode.yml, which swaps every test
+  # job's commit mode from one run to the next. A rerun of failed jobs keeps the number.
+  - name: TEST_COMMIT_MODE_RUN
+    value: $[counter(variables['Build.SourceBranch'], 0)]
+  - name: MAVEN_VERSION
+    value: "version"
+  - name: MAVEN_VERSION_OPTION
+    value: "Default"
+  # Full-reactor defaults for the self-hosted Linux jobs; hosted-jobs.yml overrides
+  # them for the hosted mac/windows jobs.
+  - name: TEST_REACTOR_ARGS
+    value: ""
+  - name: WEB_CONSOLE_PROFILE
+    value: "-P build-web-console"
+
+stages:
+  - stage: CheckChanges
+    displayName: "Check Changes"
+    jobs:
+      - template: templates/check-changes-job.yml
+
+  # Compiles the Rust library once per architecture; the self-hosted Linux legs below download
+  # it instead of compiling the crate in every leg (templates/rust-build-job.yml). dependsOn []
+  # starts it next to CheckChanges.
+  - stage: BuildRustLibrary
+    displayName: "Build Rust library"
+    dependsOn: []
+    jobs:
+      - template: templates/rust-build-job.yml
+        parameters:
+          name: linux_x64
+          displayName: "linux-x86-64"
+          pool:
+            name: "hetzner-incus"
+          artifact: qdbr-native-linux-x86-64
+          libName: libquestdbr.so
+          expectedArch: x86_64
+      - template: templates/rust-build-job.yml
+        parameters:
+          name: linux_arm64
+          displayName: "linux-aarch64"
+          pool:
+            name: "hetzner-incus-arm"
+          artifact: qdbr-native-linux-aarch64
+          libName: libquestdbr.so
+          expectedArch: aarch64
+
+  - stage: SelfHostedRunGriffin
+    displayName: "SelfHosted Griffin tests"
+    dependsOn:
+      - CheckChanges
+      - BuildRustLibrary
+    jobs:
+      - template: templates/self-hosted-jobs.yml
+    variables:
+      includeTests: "**/griffin/**"
+
+  - stage: SelfHostedRunCairoA
+    displayName: "SelfHosted Cairo tests (A)"
+    dependsOn:
+      - CheckChanges
+      - BuildRustLibrary
+    jobs:
+      - template: templates/self-hosted-jobs.yml
+    variables:
+      includeTests: "**/cairo/*,**/cairo/fuzz/**"
+
+  - stage: SelfHostedRunCairoB
+    displayName: "SelfHosted Cairo tests (B)"
+    dependsOn:
+      - CheckChanges
+      - BuildRustLibrary
+    jobs:
+      - template: templates/self-hosted-jobs.yml
+    variables:
+      includeTests: "**/cairo/o3/**,**/cairo/wal/**,**/cairo/mv/**,**/cairo/map/**,**/cairo/pool/**,**/cairo/view/**,**/cairo/vm/**,**/cairo/file/**,**/cairo/sql/**,**/cairo/crash/**"
+
+  - stage: SelfHostedRunOtherA
+    displayName: "SelfHosted Other tests (A)"
+    dependsOn:
+      - CheckChanges
+      - BuildRustLibrary
+    jobs:
+      - template: templates/self-hosted-jobs.yml
+    variables:
+      includeTests: "**/cutlass/pgwire/**,**/cutlass/http/**,**/std/*,**/std/str/**,**/std/datetime/microtime/**,**/std/fastdouble/**,**/std/bytes/**,**/log/**,**/sqllogictest/*,**/network/**"
+
+  - stage: SelfHostedRunOtherB
+    displayName: "SelfHosted Other tests (B)"
+    dependsOn:
+      - CheckChanges
+      - BuildRustLibrary
+    jobs:
+      - template: templates/self-hosted-jobs.yml
+    variables:
+      excludeTests: "**/griffin/**,**/cairo/**,**/cutlass/pgwire/**,**/cutlass/http/**,**/std/*,**/std/str/**,**/std/datetime/microtime/**,**/std/fastdouble/**,**/std/bytes/**,**/log/**,**/sqllogictest/*,**/network/**"
+
+  - stage: HostedRunTestsBranches
+    displayName: "Hosted Running tests"
+    dependsOn:
+      - CheckChanges
+    # The hosted agents cannot reach the private maven.internal cache and have no HOME
+    # pipeline variable; test-hosted-pipeline.yml explains both values.
+    variables:
+      MAVEN_CACHE_FOLDER: $(Pipeline.Workspace)/.m2/repository
+      MAVEN_RUN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Daether.connector.http.retryHandler.count=8 -Daether.connector.http.retryHandler.interval=7500 -Daether.connector.http.retryHandler.intervalMax=120000"
+    jobs:
+      - template: templates/hosted-jobs.yml
+
+  # Builds the packaged distribution, starts it and runs a query, on linux-x86-64 and
+  # linux-aarch64; test-hosted-pipeline.yml explains the test.
+  - stage: BinarySmokeTest
+    displayName: "Binary smoke test"
+    dependsOn: []
+    # The Maven variables this stage has in test-hosted-pipeline.yml, where it also runs.
+    variables:
+      MAVEN_CACHE_FOLDER: $(Pipeline.Workspace)/.m2/repository
+      MAVEN_RUN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Daether.connector.http.retryHandler.count=8 -Daether.connector.http.retryHandler.interval=7500 -Daether.connector.http.retryHandler.intervalMax=120000"
+    jobs:
+      - template: templates/binary-smoke-test-jobs.yml
+
+  # Alerts the builds Slack channel when a scheduled run goes red; a run queued by hand
+  # never alerts. The webhook is the BUILDS_SLACK_HOOK_URL secret variable, set in the
+  # pipeline settings UI; until it is set, the job skips cleanly.
+  - stage: NotifyOnFailure
+    displayName: "Notify Slack on failure"
+    dependsOn:
+      - CheckChanges
+      - BuildRustLibrary
+      - SelfHostedRunGriffin
+      - SelfHostedRunCairoA
+      - SelfHostedRunCairoB
+      - SelfHostedRunOtherA
+      - SelfHostedRunOtherB
+      - HostedRunTestsBranches
+      - BinarySmokeTest
+    # not(succeeded()) rather than failed(): a timed-out job reports canceled, not failed.
+    # not(canceled()) keeps a run that someone cancelled from alerting; a timeout does not
+    # cancel the run.
+    condition: and(not(succeeded()), not(canceled()), eq(variables['Build.Reason'], 'Schedule'))
+    jobs:
+      - job: NotifyOnFailure
+        displayName: "Notify Slack on failure"
+        pool: hetzner-incus
+        steps:
+          - checkout: none
+          - bash: |
+              # While the secret variable is missing from the pipeline settings, the env
+              # mapping below passes the macro through unexpanded; skip instead of
+              # curl-ing a literal "$(...)".
+              case "$BUILDS_SLACK_HOOK_URL" in
+                '' | '$('*)
+                  echo "BUILDS_SLACK_HOOK_URL is not configured; skipping Slack alert"
+                  exit 0
+                  ;;
+              esac
+              curl -sS --fail -X POST -H 'Content-type: application/json' \
+                --data '{"text":"🚨 *master is red (OSS)*\n\nBuild: <$(System.CollectionUri)$(System.TeamProject)/_build/results?buildId=$(Build.BuildId)|#$(Build.BuildId)> (its Changes tab lists the commits since the previous run)\nCommit: <https://github.com/questdb/questdb/commits/$(Build.SourceVersion)|$(Build.SourceVersion)>"}' \
+                "$BUILDS_SLACK_HOOK_URL"
+            displayName: "Notify Slack on failure"
+            env:
+              BUILDS_SLACK_HOOK_URL: $(BUILDS_SLACK_HOOK_URL)
