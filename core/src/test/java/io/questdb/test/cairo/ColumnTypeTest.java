@@ -88,6 +88,14 @@ public class ColumnTypeTest {
     }
 
     @Test
+    public void testDecodeKnownArrayDimensionality() {
+        Assert.assertEquals(2, ColumnType.decodeKnownArrayDimensionality(ColumnType.encodeArrayType(ColumnType.DOUBLE, 2)));
+        Assert.assertEquals(-1, ColumnType.decodeKnownArrayDimensionality(ColumnType.encodeArrayTypeWithWeakDims(ColumnType.DOUBLE, true)));
+        Assert.assertEquals(-1, ColumnType.decodeKnownArrayDimensionality(ColumnType.UNDEFINED));
+        Assert.assertEquals(-1, ColumnType.decodeKnownArrayDimensionality(ColumnType.NULL));
+    }
+
+    @Test
     public void testGetDecimalTypeCombinatorics() {
         // Combinations of precision, scale -> expected type
         int[][] combinations = {

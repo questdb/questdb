@@ -275,7 +275,7 @@ public class IndexBuilder extends RebuildColumnBase {
             int covType = metadata.getColumnType(denseCovIdx);
             coveringNames.add(metadata.getColumnName(denseCovIdx));
             coveringNameTxns.add(columnVersionReader.getColumnNameTxn(partitionTimestamp, covWriterIdx));
-            coveringTops.add(columnVersionReader.getColumnDataTop(partitionTimestamp, covWriterIdx));
+            coveringTops.add(PostingIndexUtils.coveredColumnTop(columnVersionReader.getColumnTop(partitionTimestamp, covWriterIdx)));
             coveringShifts.add(ColumnType.pow2SizeOf(covType));
             coveringIndices.add(covWriterIdx);
             coveringTypes.add(covType);

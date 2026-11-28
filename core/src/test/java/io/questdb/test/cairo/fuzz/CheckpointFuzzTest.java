@@ -27,7 +27,9 @@ package io.questdb.test.cairo.fuzz;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnVersionReader;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.O3PartitionJob;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
@@ -760,6 +762,36 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
     }
 
     @Test
+    public void testCheckpointRestoreAddIndexReadsAbsentCoveredColumnAsNullOfNonWalTable() throws Exception {
+        assertCoveringIndexReadsAbsentColumnAsNull(false, CoveringIndexBuild.ADD_INDEX);
+    }
+
+    @Test
+    public void testCheckpointRestoreAddIndexReadsAbsentCoveredColumnAsNullOfWalTable() throws Exception {
+        assertCoveringIndexReadsAbsentColumnAsNull(true, CoveringIndexBuild.ADD_INDEX);
+    }
+
+    @Test
+    public void testCheckpointRestoreRebuildReadsAbsentCoveredColumnAsNullOfNonWalTable() throws Exception {
+        assertCoveringIndexReadsAbsentColumnAsNull(false, CoveringIndexBuild.RESTORE_REBUILD);
+    }
+
+    @Test
+    public void testCheckpointRestoreRebuildReadsAbsentCoveredColumnAsNullOfWalTable() throws Exception {
+        assertCoveringIndexReadsAbsentColumnAsNull(true, CoveringIndexBuild.RESTORE_REBUILD);
+    }
+
+    @Test
+    public void testCheckpointRestoreReindexReadsAbsentCoveredColumnAsNullOfNonWalTable() throws Exception {
+        assertCoveringIndexReadsAbsentColumnAsNull(false, CoveringIndexBuild.REINDEX);
+    }
+
+    @Test
+    public void testCheckpointRestoreReindexReadsAbsentCoveredColumnAsNullOfWalTable() throws Exception {
+        assertCoveringIndexReadsAbsentColumnAsNull(true, CoveringIndexBuild.REINDEX);
+    }
+
+    @Test
     public void testIndexesMatchScansDetectsLostEmptyStringKey() throws Exception {
         // The empty string is a key of its own, which prints the way NULL does: the check must hold that key against a
         // scan as well.
@@ -1415,6 +1447,141 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
         });
     }
 
+    private void assertCoveredRows(String expected) throws Exception {
+        assertQuery("SELECT ts, v_ipv4, v_long, v_double, v_bool, v_byte, v_sym, v_varchar, v_string FROM x WHERE s = 'a'")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .timestamp("ts")
+                .withPlanContaining("CoveringIndex")
+                .returns(expected);
+    }
+
+    // A partition older than a column holds none of its rows, so a covering index reads the column as NULL there,
+    // whatever files the partition directory holds under the column's name. A checkpoint copy taken while a backdated
+    // commit wrote such a partition in place holds the files the commit created there, and the column versions the
+    // restore brings back record no rows of the column in that partition.
+    private void assertCoveringIndexReadsAbsentColumnAsNull(boolean isWal, CoveringIndexBuild build) throws Exception {
+        Assume.assumeFalse(Os.isWindows());
+        // A backdated commit cuts 2024-01-01 around its rows and appends them to the files of that partition in place.
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+        setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 1);
+        assertMemoryLeak(() -> {
+            final String addIndex = "ALTER TABLE x ALTER COLUMN s ADD INDEX TYPE POSTING INCLUDE "
+                    + "(v_ipv4, v_long, v_double, v_bool, v_byte, v_sym, v_varchar, v_string)";
+            final String backdatedInsert = """
+                    INSERT INTO x (s, ts, v_ipv4, v_long, v_double, v_bool, v_byte, v_sym, v_varchar, v_string) VALUES
+                    ('a', '2024-01-01T09:00', '1.1.1.1', 1, 1.5, true, 1, 'k1', 'x1', 's1'),
+                    ('a', '2024-01-01T09:30', '2.2.2.2', 2, 2.5, true, 2, 'k2', 'x2', 's2')
+                    """;
+            final String rowsBeforeBackdatedInsert = """
+                    ts\tv_ipv4\tv_long\tv_double\tv_bool\tv_byte\tv_sym\tv_varchar\tv_string
+                    2024-01-01T00:00:00.000000Z\t\tnull\tnull\tfalse\t0\t\t\t
+                    2024-01-01T02:00:00.000000Z\t\tnull\tnull\tfalse\t0\t\t\t
+                    2024-01-01T04:00:00.000000Z\t\tnull\tnull\tfalse\t0\t\t\t
+                    2024-01-01T06:00:00.000000Z\t\tnull\tnull\tfalse\t0\t\t\t
+                    2024-01-01T08:00:00.000000Z\t\tnull\tnull\tfalse\t0\t\t\t
+                    2024-01-01T10:00:00.000000Z\t\tnull\tnull\tfalse\t0\t\t\t
+                    2024-01-01T12:00:00.000000Z\t\tnull\tnull\tfalse\t0\t\t\t
+                    2024-01-01T14:00:00.000000Z\t\tnull\tnull\tfalse\t0\t\t\t
+                    2024-01-01T16:00:00.000000Z\t\tnull\tnull\tfalse\t0\t\t\t
+                    2024-01-01T18:00:00.000000Z\t\tnull\tnull\tfalse\t0\t\t\t
+                    2024-01-01T20:00:00.000000Z\t\tnull\tnull\tfalse\t0\t\t\t
+                    2024-01-01T22:00:00.000000Z\t\tnull\tnull\tfalse\t0\t\t\t
+                    2024-01-03T00:00:00.000000Z\t\tnull\tnull\tfalse\t0\t\t\t
+                    """;
+            final String rowsAfterBackdatedInsert = """
+                    ts\tv_ipv4\tv_long\tv_double\tv_bool\tv_byte\tv_sym\tv_varchar\tv_string
+                    2024-01-01T00:00:00.000000Z\t\tnull\tnull\tfalse\t0\t\t\t
+                    2024-01-01T02:00:00.000000Z\t\tnull\tnull\tfalse\t0\t\t\t
+                    2024-01-01T04:00:00.000000Z\t\tnull\tnull\tfalse\t0\t\t\t
+                    2024-01-01T06:00:00.000000Z\t\tnull\tnull\tfalse\t0\t\t\t
+                    2024-01-01T08:00:00.000000Z\t\tnull\tnull\tfalse\t0\t\t\t
+                    2024-01-01T09:00:00.000000Z\t1.1.1.1\t1\t1.5\ttrue\t1\tk1\tx1\ts1
+                    2024-01-01T09:30:00.000000Z\t2.2.2.2\t2\t2.5\ttrue\t2\tk2\tx2\ts2
+                    2024-01-01T10:00:00.000000Z\t\tnull\tnull\tfalse\t0\t\t\t
+                    2024-01-01T12:00:00.000000Z\t\tnull\tnull\tfalse\t0\t\t\t
+                    2024-01-01T14:00:00.000000Z\t\tnull\tnull\tfalse\t0\t\t\t
+                    2024-01-01T16:00:00.000000Z\t\tnull\tnull\tfalse\t0\t\t\t
+                    2024-01-01T18:00:00.000000Z\t\tnull\tnull\tfalse\t0\t\t\t
+                    2024-01-01T20:00:00.000000Z\t\tnull\tnull\tfalse\t0\t\t\t
+                    2024-01-01T22:00:00.000000Z\t\tnull\tnull\tfalse\t0\t\t\t
+                    2024-01-03T00:00:00.000000Z\t\tnull\tnull\tfalse\t0\t\t\t
+                    """;
+
+            execute("CREATE TABLE x (s SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x SELECT 'a', timestamp_sequence('2024-01-01', 7_200_000_000L) FROM long_sequence(12)");
+            execute("INSERT INTO x VALUES ('a', '2024-01-03')");
+            drainWalQueue();
+            // Leaves 2024-01-01 composite. A non-WAL table writes backdated rows to a partition in place only when
+            // its WAL days left the partition composite.
+            execute("INSERT INTO x VALUES ('b', '2024-01-01T05:00')");
+            drainWalQueue();
+            // Added while 2024-01-03 is the last partition: 2024-01-01 holds none of these columns.
+            for (String column : new String[]{
+                    "v_ipv4 IPv4", "v_long LONG", "v_double DOUBLE", "v_bool BOOLEAN", "v_byte BYTE",
+                    "v_sym SYMBOL", "v_varchar VARCHAR", "v_string STRING"
+            }) {
+                execute("ALTER TABLE x ADD COLUMN " + column);
+            }
+            drainWalQueue();
+            if (!isWal) {
+                execute("ALTER TABLE x SET TYPE BYPASS WAL");
+                engine.releaseInactive();
+                engine.load();
+            }
+            final TableToken tableToken = engine.verifyTableName("x");
+            Assert.assertEquals(isWal, tableToken.isWal());
+            try (TableReader reader = getReader("x")) {
+                Assert.assertTrue("fixture left 2024-01-01 plain", reader.getTxFile().isPartitionComposite(0));
+            }
+            if (build != CoveringIndexBuild.ADD_INDEX) {
+                execute(addIndex);
+                drainWalQueue();
+            }
+            // A copy of every file rebuilds the indexes on restore, a hard-link copy does not.
+            final boolean isHardLinkCopy = build != CoveringIndexBuild.RESTORE_REBUILD;
+            if (isWal) {
+                // The checkpoint holds the WAL of the statements that follow, which the restore replays.
+                if (build == CoveringIndexBuild.ADD_INDEX) {
+                    execute(addIndex);
+                }
+                execute(backdatedInsert);
+                checkpointCreate(false, isHardLinkCopy);
+                drainWalQueue();
+            } else {
+                checkpointCreate(false, isHardLinkCopy);
+                execute(backdatedInsert);
+            }
+            engine.releaseAllWriters();
+            // Model a copy taken after the backdated commit: it holds the files the commit created in 2024-01-01.
+            linkToCheckpointCopy(tableToken, "2024-01-01", "v_");
+            checkpointRecover();
+
+            switch (build) {
+                case ADD_INDEX -> {
+                    if (isWal) {
+                        // The replay builds the index before it applies the backdated commit.
+                        drainWalQueue();
+                        assertNotSuspended(tableToken);
+                        assertCoveredRows(rowsAfterBackdatedInsert);
+                        return;
+                    }
+                    execute(addIndex);
+                }
+                case REINDEX -> execute("REINDEX TABLE x COLUMN s LOCK EXCLUSIVE");
+                case RESTORE_REBUILD -> {
+                }
+            }
+            assertCoveredRows(rowsBeforeBackdatedInsert);
+            if (isWal) {
+                drainWalQueue();
+                assertNotSuspended(tableToken);
+                assertCoveredRows(rowsAfterBackdatedInsert);
+            }
+        });
+    }
+
     private void assertPartitionFiles(TableToken tableToken, String partitionName, String fileNamePrefix, String expected) {
         Assert.assertEquals(expected, Arrays.toString(partitionFiles(tableToken, partitionName, fileNamePrefix)));
     }
@@ -1650,6 +1817,66 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
         }
     }
 
+    // A copy can lose any file. Removes from the checkpoint copy the posting index key file of a random POSTING column of
+    // a random native, writable partition of the table that the checkpoint holds. The restore must rebuild the index
+    // from the column data, or remove the index files of a column with no rows in the partition.
+    private void removeRandomPostingKeyFileFromCheckpointCopy(String tableName, Rnd rnd) {
+        final TableToken tableToken = engine.getTableTokenIfExists(tableName);
+        if (tableToken == null) {
+            return;
+        }
+        final FilesFacade ff = configuration.getFilesFacade();
+        final String copyRoot = configuration.getDbRoot() + TableUtils.CHECKPOINT_META_FILE_NAME;
+        final ObjList<String> keyFiles = new ObjList<>();
+        try (
+                Path path = new Path();
+                TableReaderMetadata metadata = new TableReaderMetadata(configuration);
+                TxReader txReader = new TxReader(ff);
+                ColumnVersionReader columnVersionReader = new ColumnVersionReader()
+        ) {
+            // The test configuration keeps the checkpoint inside the db root, so the copy holds its _meta, _txn and _cv
+            path.of(copyRoot).concat(TableUtils.CHECKPOINT_DIRECTORY).concat(configuration.getDbDirectory()).concat(tableToken);
+            if (!ff.exists(path.$())) {
+                path.of(copyRoot).concat(TableUtils.LEGACY_CHECKPOINT_DIRECTORY).concat(configuration.getDbDirectory()).concat(tableToken);
+                if (!ff.exists(path.$())) {
+                    return;
+                }
+            }
+            final int checkpointTableLen = path.size();
+            metadata.loadMetadata(path.concat(TableUtils.META_FILE_NAME).$());
+            txReader.ofRO(path.trimTo(checkpointTableLen).concat(TableUtils.TXN_FILE_NAME).$(), metadata.getTimestampType(), metadata.getPartitionBy());
+            TableUtils.safeReadTxn(txReader, configuration.getMillisecondClock(), configuration.getSpinLockTimeout());
+            columnVersionReader.ofRO(ff, path.trimTo(checkpointTableLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$());
+            columnVersionReader.readSafe(configuration.getMillisecondClock(), configuration.getSpinLockTimeout());
+            path.of(copyRoot).concat(tableToken);
+            final int copyTableLen = path.size();
+            for (int i = 0, n = txReader.getPartitionCount(); i < n; i++) {
+                if (txReader.isPartitionParquet(i) || txReader.isPartitionReadOnly(i)) {
+                    continue;
+                }
+                final long partitionTimestamp = txReader.getPartitionTimestampByIndex(i);
+                TableUtils.setPathForNativePartition(path.trimTo(copyTableLen), metadata.getTimestampType(), metadata.getPartitionBy(),
+                        partitionTimestamp, txReader.getPartitionNameTxn(i));
+                final int partitionLen = path.size();
+                for (int columnIndex = 0, m = metadata.getColumnCount(); columnIndex < m; columnIndex++) {
+                    if (ColumnType.isSymbol(metadata.getColumnType(columnIndex))
+                            && metadata.isColumnIndexed(columnIndex)
+                            && IndexType.isPosting(metadata.getColumnIndexType(columnIndex))) {
+                        final long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, metadata.getWriterIndex(columnIndex));
+                        if (ff.exists(PostingIndexUtils.keyFileName(path.trimTo(partitionLen), metadata.getColumnName(columnIndex), columnNameTxn))) {
+                            keyFiles.add(path.toString());
+                        }
+                    }
+                }
+            }
+        }
+        if (keyFiles.size() > 0) {
+            final String keyFile = keyFiles.getQuick(rnd.nextInt(keyFiles.size()));
+            LOG.info().$("removing posting index key file from the checkpoint copy [file=").$(keyFile).I$();
+            Assert.assertTrue(keyFile, new File(keyFile).delete());
+        }
+    }
+
     private void runEjectedWalApplyBody(Rnd rnd) throws Exception {
         fuzzer.setFuzzProbabilities(
                 0,
@@ -1761,6 +1988,7 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
                     throw new RuntimeException(ex.get());
                 }
 
+                removeRandomPostingKeyFileFromCheckpointCopy(tableNameWal, rnd);
                 // Restore snapshot here
                 checkpointRecover();
                 // Hold the indexes as the restore left them against scans that read no index: the WAL apply below
@@ -1779,6 +2007,7 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
                 }
 
                 Assert.assertFalse("table suspended", engine.getTableSequencerAPI().isSuspended(walTable));
+                fuzzer.assertIndexesMatchScans(tableNameWal);
 
                 // Write same data to non-wal table
                 fuzzer.applyNonWal(transactions, tableNameNonWal, rnd);
@@ -1790,6 +2019,17 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
                 Misc.freeObjListAndClear(transactions);
             }
         });
+    }
+
+    // The operation that builds a covering index over a partition the restored column versions record no rows of
+    // a covered column in.
+    private enum CoveringIndexBuild {
+        // ALTER TABLE ADD INDEX after the restore, or its replay from the WAL
+        ADD_INDEX,
+        // REINDEX after the restore
+        REINDEX,
+        // the restore itself, when it rebuilds the indexes
+        RESTORE_REBUILD
     }
 
     // Lists a name decomposed, an accented letter as the base letter and a combining mark, and finds a file under

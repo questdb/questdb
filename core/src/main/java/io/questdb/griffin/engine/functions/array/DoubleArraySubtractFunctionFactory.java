@@ -113,12 +113,13 @@ public class DoubleArraySubtractFunctionFactory implements FunctionFactory {
                 return arrayOut;
             }
 
-            // A previous row's ofNull() wiped arrayOut's type and shape; restore
-            // the declared array type before reusing the buffer, otherwise
-            // copyShapeFrom()/applyShape() see zero dimensions and fail when a
-            // null array row precedes a non-null one.
-            if (arrayOut.getType() != type) {
-                arrayOut.setType(type);
+            // A previous row's ofNull() wiped arrayOut's type and shape, and arguments whose
+            // dimensionality init() could not know may change it from row to row; set this row's
+            // type before reusing the buffer, otherwise copyShapeFrom()/applyShape() see the wrong
+            // dimensions.
+            final int rowType = rowType(Math.max(left.getDimCount(), right.getDimCount()));
+            if (arrayOut.getType() != rowType) {
+                arrayOut.setType(rowType);
             }
             if (left.shapeDiffers(right)) {
                 DerivedArrayView.computeBroadcastShape(left, right, arrayOut.getShape(), leftArgPos);
@@ -168,12 +169,15 @@ public class DoubleArraySubtractFunctionFactory implements FunctionFactory {
 
             // left/right argument may be a bind var, i.e. have weak dimensionality,
             // so that the number of dimensions is only available at init() time
-            final int dimsLeft = ColumnType.decodeArrayDimensionality(leftArg.getType());
-            final int dimsRight = ColumnType.decodeArrayDimensionality(rightArg.getType());
-            this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, Math.max(dimsLeft, dimsRight));
-            arrayOut.setType(type);
-
-            validateAssignedType();
+            final int dimsLeft = ColumnType.decodeKnownArrayDimensionality(leftArg.getType());
+            final int dimsRight = ColumnType.decodeKnownArrayDimensionality(rightArg.getType());
+            if (dimsLeft > 0 && dimsRight > 0) {
+                this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, Math.max(dimsLeft, dimsRight));
+                arrayOut.setType(type);
+                validateAssignedType();
+            } else {
+                this.type = ColumnType.encodeArrayTypeWithWeakDims(ColumnType.DOUBLE, true);
+            }
         }
 
         @Override

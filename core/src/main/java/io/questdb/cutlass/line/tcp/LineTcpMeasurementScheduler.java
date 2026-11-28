@@ -47,6 +47,7 @@ import io.questdb.mp.SCSequence;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.IODispatcher;
+import io.questdb.std.IntList;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -63,6 +64,7 @@ import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
 import io.questdb.tasks.TelemetryTask;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 import java.util.Arrays;
@@ -98,11 +100,15 @@ public class LineTcpMeasurementScheduler implements Closeable {
     private final ObjList<LineWalAppender> walAppenders;
     private final long writerIdleTimeout;
 
+    /**
+     * @param dispatchers one dispatcher per worker group of {@code sharedPoolNetwork}, or null for
+     *                    a scheduler whose network IO jobs need no dispatcher
+     */
     public LineTcpMeasurementScheduler(
             LineTcpReceiverConfiguration lineConfiguration,
             CairoEngine engine,
             WorkerPool sharedPoolNetwork,
-            IODispatcher<LineTcpConnectionContext> dispatcher,
+            @Nullable ObjList<IODispatcher<LineTcpConnectionContext>> dispatchers,
             WorkerPool sharedPoolWrite
     ) {
         try {
@@ -113,17 +119,33 @@ public class LineTcpMeasurementScheduler implements Closeable {
             this.clock = cairoConfiguration.getMillisecondClock();
             this.spinLockTimeoutMs = cairoConfiguration.getSpinLockTimeout();
             this.defaultColumnTypes = new DefaultColumnTypes(lineConfiguration);
-            final int networkJobCount = getJobCount(
-                    lineConfiguration.getNetworkWorkerPoolConfiguration(),
-                    sharedPoolNetwork
-            );
+            // A dedicated pool runs a network IO job on every worker. A shared pool runs at most
+            // DEFAULT_SHARED_JOB_COUNT in each worker group, on the group's first workers, so that
+            // every group's dispatcher has jobs to serve its connections.
+            final int groupCount = dispatchers != null ? dispatchers.size() : 1;
+            final boolean isDedicatedPool = lineConfiguration.getNetworkWorkerPoolConfiguration().getWorkerCount() > 0;
+            final int[] groupJobCounts = new int[groupCount];
+            // network IO job j runs on worker jobWorkers[j]
+            final IntList jobWorkers = new IntList();
+            for (int w = 0, n = sharedPoolNetwork.getWorkerCount(); w < n; w++) {
+                final int g = groupCount == 1 ? 0 : sharedPoolNetwork.getGroup(w);
+                if (isDedicatedPool || groupJobCounts[g] < DEFAULT_SHARED_JOB_COUNT) {
+                    groupJobCounts[g]++;
+                    jobWorkers.add(w);
+                }
+            }
+            final int networkJobCount = jobWorkers.size();
             this.netIoJobs = new ObjList<>(networkJobCount);
             this.tableNameSinks = new StringSink[networkJobCount];
             for (int i = 0; i < networkJobCount; i++) {
                 tableNameSinks[i] = new StringSink();
+                final int worker = jobWorkers.getQuick(i);
+                final IODispatcher<LineTcpConnectionContext> dispatcher = dispatchers != null
+                        ? dispatchers.getQuick(groupCount == 1 ? 0 : sharedPoolNetwork.getGroup(worker))
+                        : null;
                 NetworkIOJob netIoJob = createNetworkIOJob(dispatcher, i);
                 netIoJobs.add(netIoJob);
-                sharedPoolNetwork.assign(i, netIoJob);
+                sharedPoolNetwork.assign(worker, netIoJob);
                 sharedPoolNetwork.freeOnExit(netIoJob);
             }
 

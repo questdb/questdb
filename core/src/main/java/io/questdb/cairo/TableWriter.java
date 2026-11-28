@@ -9222,7 +9222,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             int covType = metadata.getColumnType(covCol);
             coveringNames.add(metadata.getColumnName(covCol));
             coveringNameTxns.add(columnVersionWriter.getColumnNameTxn(partitionTimestamp, covCol));
-            coveringTops.add(columnVersionWriter.getColumnDataTop(partitionTimestamp, covCol));
+            coveringTops.add(PostingIndexUtils.coveredColumnTop(columnVersionWriter.getColumnTop(partitionTimestamp, covCol)));
             coveringShifts.add(ColumnType.pow2SizeOf(covType));
             coveringIndices.add(covCol);
             coveringTypes.add(covType);
@@ -13748,7 +13748,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             o3SealTops.setQuick(c, columnVersionWriter.getColumnTopQuick(partitionTimestamp, covCol));
             long covColNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, covCol);
             o3SealNameTxns.setQuick(c, covColNameTxn);
-            if (columnVersionWriter.getColumnDataTop(partitionTimestamp, covCol) >= partitionRowCount) {
+            if (PostingIndexUtils.coveredColumnTop(columnVersionWriter.getColumnTop(partitionTimestamp, covCol)) >= partitionRowCount) {
                 continue;
             }
             LPSZ colFile = TableUtils.dFile(path.trimTo(pathLen), metadata.getColumnName(covCol), covColNameTxn);
@@ -16588,18 +16588,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     LOG.debug().$("all WAL rows copied to LAG [table=").$(tableToken).I$();
 
                     o3Columns = remapWalSymbols(mapDiffCursor, rowLo, rowHi, walPath);
-                    // This will copy data from mmap files to memory.
-                    // Symbols are already mapped to the correct destination.
-                    dispatchColumnTasks(
-                            o3Hi - o3Lo,
-                            IGNORE,
-                            o3Lo,
-                            walLagRowCount,
-                            1,
-                            this.cthAppendWalColumnToLastPartition
-                    );
-                    walLagRowCount += commitRowCount;
-                    addPhysicallyWrittenRows(commitRowCount);
+                    if (commitRowCount > 0) {
+                        // This will copy data from mmap files to memory.
+                        // Symbols are already mapped to the correct destination.
+                        dispatchColumnTasks(
+                                o3Hi - o3Lo,
+                                IGNORE,
+                                o3Lo,
+                                walLagRowCount,
+                                1,
+                                this.cthAppendWalColumnToLastPartition
+                        );
+                        walLagRowCount += commitRowCount;
+                        addPhysicallyWrittenRows(commitRowCount);
+                    }
                     txWriter.setLagRowCount((int) walLagRowCount);
                     txWriter.setLagOrdered(lagOrderedNew);
                     txWriter.setLagMinTimestamp(newMinLagTimestamp);
@@ -17036,6 +17038,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             boolean needsDedup = isDeduplicationEnabled();
             long minTs = segmentCopyInfo.getMinTimestamp();
             long maxTs = segmentCopyInfo.getMaxTimestamp();
+            if (totalRows == 0) {
+                o3Columns = o3MemColumns1;
+                activeColumns = o3MemColumns1;
+                txWriter.setLagMinTimestamp(minTs);
+                txWriter.setLagMaxTimestamp(maxTs);
+                return 0;
+            }
 
             LOG.debug().$("sorting [table=").$(tableToken)
                     .$(", rows=").$(segmentCopyInfo.getTotalRows())

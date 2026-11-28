@@ -132,21 +132,6 @@ public class ColumnVersionReader implements Closeable, Mutable {
         return cachedColumnVersionList;
     }
 
-    /**
-     * Returns the row at which the column's data starts in the partition: its column top, or
-     * {@link Long#MAX_VALUE} when the column does not exist in the partition. Rows below it read as NULL. The
-     * partition holds rows of the column, and has to have its file, only when this is below the partition's row
-     * count.
-     *
-     * @param partitionTimestamp timestamp of the partition
-     * @param columnIndex        column index
-     * @return column top in the partition or Long.MAX_VALUE if column does not exist in the partition
-     */
-    public long getColumnDataTop(long partitionTimestamp, int columnIndex) {
-        final long columnTop = getColumnTop(partitionTimestamp, columnIndex);
-        return columnTop > -1 ? columnTop : Long.MAX_VALUE;
-    }
-
     public long getColumnNameTxn(long partitionTimestamp, int columnIndex) {
         int versionRecordIndex = getRecordIndex(partitionTimestamp, columnIndex);
         return versionRecordIndex > -1 ? cachedColumnVersionList.getQuick(versionRecordIndex + COLUMN_NAME_TXN_OFFSET) : getDefaultColumnNameTxn(columnIndex);

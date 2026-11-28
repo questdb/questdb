@@ -1870,6 +1870,51 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
     }
 
     @Test
+    public void testReloadOnRestrictedThreadKeepsCpuDerivedDefaults() throws Exception {
+        // A worker of a network pool split by CPU socket runs reload_config() on its socket's CPUs.
+        // Restricted to one CPU, the defaults size each shared pool at 2 workers, so a difference
+        // shows from 3 CPUs on.
+        TestUtils.assumeRestrictableToOneCpu(3);
+        assertMemoryLeak(() -> {
+            try (FileWriter w = new FileWriter(serverConf)) {
+                w.write("pg.net.connection.limit=10\n");
+            }
+            try (ServerMain serverMain = new ServerMain(getBootstrap(false))) {
+                final DynamicPropServerConfiguration configuration =
+                        (DynamicPropServerConfiguration) serverMain.getConfiguration();
+                final WorkerPoolConfiguration network = configuration.getSharedWorkerPoolNetworkConfiguration();
+                final WorkerPoolConfiguration query = configuration.getSharedWorkerPoolQueryConfiguration();
+                final int networkWorkerCount = network.getWorkerCount();
+                final int networkMaxLiveCount = network.getFiberMaxLiveCount();
+                final int networkRetainedCount = network.getFiberRetainedCount();
+                final int queryWorkerCount = query.getWorkerCount();
+                final int queryMaxLiveCount = query.getFiberMaxLiveCount();
+                try (WorkerPool pool = new WorkerPool(network)) {
+                    final FiberRuntime runtime = pool.getFiberRuntime();
+                    Assert.assertEquals(networkMaxLiveCount, runtime.getMaxLiveFiberCount());
+
+                    try (FileWriter w = new FileWriter(serverConf)) {
+                        w.write("pg.net.connection.limit=11\n");
+                    }
+                    final AtomicBoolean isReloaded = new AtomicBoolean();
+                    TestUtils.runOnOneCpu(() -> isReloaded.set(configuration.reload()));
+                    Assert.assertTrue(isReloaded.get());
+                    // the reload took effect, so the values below come from the reloaded configuration
+                    Assert.assertEquals(11, configuration.getPGWireConfiguration().getLimit());
+
+                    Assert.assertEquals(networkWorkerCount, network.getWorkerCount());
+                    Assert.assertEquals(networkMaxLiveCount, network.getFiberMaxLiveCount());
+                    Assert.assertEquals(networkRetainedCount, network.getFiberRetainedCount());
+                    Assert.assertEquals(queryWorkerCount, query.getWorkerCount());
+                    Assert.assertEquals(queryMaxLiveCount, query.getFiberMaxLiveCount());
+                    Assert.assertEquals(networkMaxLiveCount, runtime.getMaxLiveFiberCount());
+                    Assert.assertEquals(networkRetainedCount, runtime.getMaxRetainedFiberCount());
+                }
+            }
+        });
+    }
+
+    @Test
     public void testRemovalOfUnsupportedPropertyWontTriggerReload() throws Exception {
         assertMemoryLeak(() -> {
             try (FileWriter w = new FileWriter(serverConf)) {
@@ -2476,16 +2521,23 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
     }
 
     private Bootstrap getBootstrap() {
+        return getBootstrap(true);
+    }
+
+    // with isSharedWorkerCountPinned false, the shared pools take their default size from the CPU count
+    private Bootstrap getBootstrap(boolean isSharedWorkerCountPinned) {
         return new Bootstrap(
-                getBootstrapConfig(),
+                getBootstrapConfig(isSharedWorkerCountPinned),
                 Bootstrap.getServerMainArgs(root)
         );
     }
 
-    private BootstrapConfiguration getBootstrapConfig() {
+    private BootstrapConfiguration getBootstrapConfig(boolean isSharedWorkerCountPinned) {
         Map<String, String> envMap = new HashMap<>();
         envMap.put(PropertyKey.METRICS_ENABLED.getEnvVarName(), "true");
-        envMap.put(PropertyKey.SHARED_WORKER_COUNT.getEnvVarName(), "1");
+        if (isSharedWorkerCountPinned) {
+            envMap.put(PropertyKey.SHARED_WORKER_COUNT.getEnvVarName(), "1");
+        }
         envMap.put(PropertyKey.WAL_APPLY_WORKER_COUNT.getEnvVarName(), "1");
         return new DefaultBootstrapConfiguration() {
             @Override
