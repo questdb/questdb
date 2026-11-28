@@ -59,6 +59,9 @@ public class HTTPSerialParquetExporter extends BaseParquetExporter {
     // Borrowed from ExportQueryProcessorState via setup methods; not owned.
     private ParquetExportMode exportMode;
     private RecordCursor fullCursor;
+    // Set while the export waits for a slow client to read. A resumed process() or the
+    // release of the connection, in clearExportResources(), ends such an export.
+    private boolean isSuspended;
     private boolean isTempTableOwned;
     private HybridColumnMaterializer materializer;
     private DirectLongList materializerColumnData;
@@ -75,20 +78,41 @@ public class HTTPSerialParquetExporter extends BaseParquetExporter {
      * Must be called when the connection drops or the state is cleared.
      */
     public void clearExportResources() {
+        final boolean isCutOff = isSuspended;
+        isSuspended = false;
         exportMode = null;
         final RecordCursor fullCursor = this.fullCursor;
         this.fullCursor = null;
         final PageFrameCursor streamingPfc = this.streamingPfc;
         this.streamingPfc = null;
-        materializer = null;
+        final HybridColumnMaterializer materializer = this.materializer;
+        this.materializer = null;
         materializerColumnData = null;
 
-        Throwable cleanupFailure = Misc.freeBestEffort(null, fullCursor);
+        // The decoded Parquet frames of the materializer charge the memory tracker of the cursor's query,
+        // and closing the cursor ends the query and returns the tracker to its pool: free them first. A
+        // failed export's writer still points at them, but only to drop its frames.
+        Throwable cleanupFailure = Misc.clearBestEffort(null, materializer);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, fullCursor);
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, streamingPfc);
         try {
             clearTempTable();
         } catch (Throwable th) {
             cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
+        }
+        if (isCutOff) {
+            // The connection went away while the export waited for the client to read. Log the
+            // end of the export, as process() does when a send finds the client gone.
+            copyExportContext.updateStatus(
+                    CopyExportRequestTask.Phase.STREAM_SENDING_DATA,
+                    CopyExportRequestTask.Status.CANCELLED,
+                    null,
+                    Numbers.INT_NULL,
+                    null,
+                    0,
+                    task.getTableName(),
+                    task.getCopyID()
+            );
         }
         CairoException.rethrowCleanupFailure(cleanupFailure);
     }
@@ -99,7 +123,7 @@ public class HTTPSerialParquetExporter extends BaseParquetExporter {
         RecordCursorFactory factory = null;
         CopyExportRequestTask.Phase phase = CopyExportRequestTask.Phase.NONE;
         CreateTableOperation createOp = null;
-        boolean isSuspended = false;
+        isSuspended = false;
         parentSqlExecutionContext.setNowAndFixClock(task.getNow(), task.getNowTimestampType());
 
         try {
@@ -288,12 +312,17 @@ public class HTTPSerialParquetExporter extends BaseParquetExporter {
 
     private void processHybridStreamExport() throws Exception {
         boolean isPageFrameBacked = exportMode == ParquetExportMode.PAGE_FRAME_BACKED;
+        final PageFrameCursor pfc = isPageFrameBacked ? streamingPfc : null;
         CopyExportRequestTask.StreamPartitionParquetExporter exporter = task.getStreamPartitionParquetExporter();
         if (circuitBreaker.checkIfTrippedOrYield()) {
             LOG.error().$("copy was cancelled [id=").$hexPadded(task.getCopyID()).$(']').$();
             throw CopyExportException.instance(CopyExportRequestTask.Phase.STREAM_SENDING_DATA, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
         }
         if (exporter.onResume()) {
+            // The client was slower than the export, which waited inside a write that flushed a row
+            // group, before drainHybridFrames() could release what the flush wrote. onResume() has
+            // finished that write.
+            releaseWrittenFrames(exporter, materializer, pfc);
             LOG.debug().$("hybrid stream export progress (resume) [id=").$hexPadded(task.getCopyID())
                     .$(", exported totalRows=").$(exporter.getTotalRows())
                     .$(']').$();
@@ -304,7 +333,7 @@ public class HTTPSerialParquetExporter extends BaseParquetExporter {
         long batchSize = task.getRowGroupSize() > 0 ? task.getRowGroupSize() : 100_000;
         final long totalRows = drainHybridFrames(
                 exporter, materializer, materializerColumnData,
-                isPageFrameBacked ? streamingPfc : null,
+                pfc,
                 isPageFrameBacked ? null : fullCursor,
                 batchSize, CopyExportRequestTask.Phase.STREAM_SENDING_DATA
         );

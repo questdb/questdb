@@ -673,8 +673,6 @@ public class SQLSerialParquetExporter extends BaseParquetExporter implements Clo
         streamColumnData.clear();
         boolean streamSuccess = false;
         long fd = -1;
-        PageFrameCursor pfc = null;
-        RecordCursor cursor = null;
         try {
             fd = ff.openRW(tempPath.$(), configuration.getWriterFileOpenOpts());
             if (fd < 0) {
@@ -690,90 +688,104 @@ public class SQLSerialParquetExporter extends BaseParquetExporter implements Clo
             writeCallback.of(ff, fd);
             task.setWriteCallback(writeCallback);
 
-            for (int recompiles = 0; ; recompiles++) {
-                // Unwrap QueryProgress so that its register/unregister lifecycle
-                // does not null the circuit breaker's cancelledFlag when cursors close.
-                // The outer COPY command handles query registration and cancellation.
-                final RecordCursorFactory factory = ParquetExportMode.unwrapFactory(task.getSelectFactory());
-                try {
-                    // A snapshot with custom (Delta) frames has no zero-copy page frames, see openPageFrameCursor(),
-                    // so a zero-copy mode streams the plan's cursor instead.
-                    switch (mode) {
-                        case DIRECT_PAGE_FRAME -> {
-                            pfc = openPageFrameCursor(factory);
-                            if (pfc == null) {
-                                mode = ParquetExportMode.CURSOR_BASED;
-                                cursor = factory.getCursor(sqlExecutionContext);
+            PageFrameCursor pfc = null;
+            RecordCursor cursor = null;
+            try {
+                for (int recompiles = 0; ; recompiles++) {
+                    // Unwrap QueryProgress so that its register/unregister lifecycle
+                    // does not null the circuit breaker's cancelledFlag when cursors close.
+                    // The outer COPY command handles query registration and cancellation.
+                    final RecordCursorFactory factory = ParquetExportMode.unwrapFactory(task.getSelectFactory());
+                    try {
+                        // A snapshot with custom (Delta) frames has no zero-copy page frames, see openPageFrameCursor(),
+                        // so a zero-copy mode streams the plan's cursor instead.
+                        switch (mode) {
+                            case DIRECT_PAGE_FRAME -> {
+                                pfc = openPageFrameCursor(factory);
+                                if (pfc == null) {
+                                    mode = ParquetExportMode.CURSOR_BASED;
+                                    cursor = factory.getCursor(sqlExecutionContext);
+                                }
                             }
-                        }
-                        case PAGE_FRAME_BACKED -> {
-                            // Safe cast: determineExportMode() returns PAGE_FRAME_BACKED only for a
-                            // VirtualRecordCursorFactory.
-                            final VirtualRecordCursorFactory vf = (VirtualRecordCursorFactory) factory;
-                            pfc = openPageFrameCursor(vf.getBaseFactory());
-                            if (pfc == null) {
-                                mode = ParquetExportMode.CURSOR_BASED;
-                                cursor = factory.getCursor(sqlExecutionContext);
-                            } else {
-                                pfc.setScanProfile(ReaderScanProfile.SEQUENTIAL_EVICT);
-                                // Function.init() opens the projection's sub-queries, whose plans can be stale as well.
-                                streamBuffers.setUpPageFrameBacked(vf, pfc, sqlExecutionContext);
+                            case PAGE_FRAME_BACKED -> {
+                                // Safe cast: determineExportMode() returns PAGE_FRAME_BACKED only for a
+                                // VirtualRecordCursorFactory.
+                                final VirtualRecordCursorFactory vf = (VirtualRecordCursorFactory) factory;
+                                pfc = openPageFrameCursor(vf.getBaseFactory());
+                                if (pfc == null) {
+                                    mode = ParquetExportMode.CURSOR_BASED;
+                                    cursor = factory.getCursor(sqlExecutionContext);
+                                } else {
+                                    pfc.setScanProfile(ReaderScanProfile.SEQUENTIAL_EVICT);
+                                    // Function.init() opens the projection's sub-queries, whose plans can be stale as well.
+                                    streamBuffers.setUpPageFrameBacked(vf, pfc, sqlExecutionContext);
+                                }
                             }
+                            case CURSOR_BASED -> cursor = factory.getCursor(sqlExecutionContext);
+                            default -> throw new UnsupportedOperationException("unexpected mode: " + mode);
                         }
-                        case CURSOR_BASED -> cursor = factory.getCursor(sqlExecutionContext);
-                        default -> throw new UnsupportedOperationException("unexpected mode: " + mode);
-                    }
-                    break;
-                } catch (TableReferenceOutOfDateException e) {
-                    pfc = Misc.free(pfc);
-                    cursor = Misc.free(cursor);
-                    // setUpPageFrameBacked() appends buffers, which a second set-up would index from 0 again.
-                    streamBuffers.clear();
-                    if (recompiles >= configuration.getMaxSqlRecompileAttempts()) {
-                        throw e;
-                    }
-                    LOG.info().$("recompiling stale export select [id=").$hexPadded(task.getCopyID())
-                            .$(", msg=").$safe(e.getFlyweightMessage()).I$();
-                    mode = recompileSelect();
-                    if (mode == ParquetExportMode.TEMP_TABLE) {
-                        return mode;
+                        break;
+                    } catch (TableReferenceOutOfDateException e) {
+                        pfc = Misc.free(pfc);
+                        cursor = Misc.free(cursor);
+                        // setUpPageFrameBacked() appends buffers, which a second set-up would index from 0 again.
+                        streamBuffers.clear();
+                        if (recompiles >= configuration.getMaxSqlRecompileAttempts()) {
+                            throw e;
+                        }
+                        LOG.info().$("recompiling stale export select [id=").$hexPadded(task.getCopyID())
+                                .$(", msg=").$safe(e.getFlyweightMessage()).I$();
+                        mode = recompileSelect();
+                        if (mode == ParquetExportMode.TEMP_TABLE) {
+                            return mode;
+                        }
                     }
                 }
-            }
 
-            final RecordCursorFactory baseFactory = ParquetExportMode.unwrapFactory(task.getSelectFactory());
-            switch (mode) {
-                case DIRECT_PAGE_FRAME -> {
-                    pfc.setScanProfile(ReaderScanProfile.SEQUENTIAL_EVICT);
-                    RecordMetadata meta = baseFactory.getMetadata();
-                    int colCount = meta.getColumnCount();
-                    if (identityColumnMap.size() != colCount) {
-                        identityColumnMap.setPos(colCount);
-                        for (int i = 0; i < colCount; i++) {
-                            identityColumnMap.setQuick(i, i);
+                final RecordCursorFactory baseFactory = ParquetExportMode.unwrapFactory(task.getSelectFactory());
+                switch (mode) {
+                    case DIRECT_PAGE_FRAME -> {
+                        pfc.setScanProfile(ReaderScanProfile.SEQUENTIAL_EVICT);
+                        RecordMetadata meta = baseFactory.getMetadata();
+                        int colCount = meta.getColumnCount();
+                        if (identityColumnMap.size() != colCount) {
+                            identityColumnMap.setPos(colCount);
+                            for (int i = 0; i < colCount; i++) {
+                                identityColumnMap.setQuick(i, i);
+                            }
                         }
+                        exporter.setUp(meta, pfc, identityColumnMap);
+
+                        PageFrame frame;
+                        long previousRowsWritten = exporter.getRowsWrittenToRowGroups();
+                        while ((frame = pfc.next()) != null) {
+                            if (circuitBreaker.checkIfTrippedOrYield()) {
+                                throw CopyExportException.instance(phase, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
+                            }
+                            exporter.writePageFrame(pfc, frame);
+                            long currentRowsWritten = exporter.getRowsWrittenToRowGroups();
+                            if (currentRowsWritten > previousRowsWritten) {
+                                pfc.releaseOpenPartitions();
+                                previousRowsWritten = currentRowsWritten;
+                            }
+                        }
+
+                        exporter.finishExport();
+                        numOfFiles = 1;
                     }
-                    exporter.setUp(meta, pfc, identityColumnMap);
-
-                    PageFrame frame;
-                    long previousRowsWritten = exporter.getRowsWrittenToRowGroups();
-                    while ((frame = pfc.next()) != null) {
-                        if (circuitBreaker.checkIfTrippedOrYield()) {
-                            throw CopyExportException.instance(phase, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
-                        }
-                        exporter.writePageFrame(pfc, frame);
-                        long currentRowsWritten = exporter.getRowsWrittenToRowGroups();
-                        if (currentRowsWritten > previousRowsWritten) {
-                            pfc.releaseOpenPartitions();
-                            previousRowsWritten = currentRowsWritten;
-                        }
-                    }
-
-                    exporter.finishExport();
-                    numOfFiles = 1;
+                    case PAGE_FRAME_BACKED, CURSOR_BASED ->
+                            processHybridExport(baseFactory, mode, pfc, cursor, exporter, phase);
                 }
-                case PAGE_FRAME_BACKED, CURSOR_BASED ->
-                        processHybridExport(baseFactory, mode, pfc, cursor, exporter, phase);
+            } finally {
+                // The decoded Parquet frames charge the export's memory tracker, which the job
+                // recycles once the export ends: free them first, so a cursor that fails to close
+                // cannot leave them charged. A failed export's writer still points at them, but
+                // only to drop its frames. The cursors close before the export counts as a
+                // success, so a close failure fails the export and removes its temp file.
+                Throwable cleanupFailure = Misc.clearBestEffort(null, streamBuffers);
+                cleanupFailure = Misc.freeBestEffort(cleanupFailure, pfc);
+                cleanupFailure = Misc.freeBestEffort(cleanupFailure, cursor);
+                CairoException.rethrowCleanupFailure(cleanupFailure);
             }
             streamSuccess = true;
         } catch (CopyExportException e) {
@@ -785,8 +797,6 @@ public class SQLSerialParquetExporter extends BaseParquetExporter implements Clo
         } catch (Throwable e) {
             throw CopyExportException.instance(phase, e.getMessage(), -1);
         } finally {
-            Misc.free(pfc);
-            Misc.free(cursor);
             if (fd > -1) {
                 ff.close(fd);
             }

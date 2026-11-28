@@ -293,22 +293,42 @@ public class PartitionEncoder {
             long rowCount
     ) throws CairoException;
 
+    /**
+     * Decodes a row group of a locally mapped Parquet file and queues it for the streaming writer.
+     *
+     * @param parquetColumnsPtr  address of one int per writer column: the index of the file column
+     *                           that holds the writer column's data, or -1 for a column the file
+     *                           lacks, which the writer writes as NULL
+     * @param parquetColumnCount the number of ints at {@code parquetColumnsPtr}, the writer's column count
+     */
     public static native long writeStreamingParquetChunkFromRowGroup(
             long writerPtr,
             long allocatorPtr,
             long columnDataPtr,
             long sourceParquetAddr,
             long sourceParquetSize,
+            long parquetColumnsPtr,
+            int parquetColumnCount,
             int rowGroupIndex,
             int rowGroupLo,
             int rowGroupHi
     ) throws CairoException;
 
+    /**
+     * Queues a row group the caller decoded for the streaming writer, copying the decoded buffers.
+     *
+     * @param rowGroupBuffersPtr the buffers of the file columns of the {@code parquetColumnsPtr}
+     *                           entries other than -1, decoded in writer column order
+     * @param parquetColumnsPtr  as for {@link #writeStreamingParquetChunkFromRowGroup}
+     * @param parquetColumnCount as for {@link #writeStreamingParquetChunkFromRowGroup}
+     */
     public static native long writeStreamingParquetChunkFromRowGroupBuffers(
             long writerPtr,
             long allocatorPtr,
             long symbolDataPtr,
             long rowGroupBuffersPtr,
+            long parquetColumnsPtr,
+            int parquetColumnCount,
             int rowCount
     ) throws CairoException;
 

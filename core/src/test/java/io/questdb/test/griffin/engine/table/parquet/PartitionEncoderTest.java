@@ -24,15 +24,22 @@
 
 package io.questdb.test.griffin.engine.table.parquet;
 
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableReader;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.engine.table.parquet.ParquetEncoding;
 import io.questdb.griffin.engine.table.parquet.ParquetVersion;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
+import io.questdb.std.DirectIntList;
+import io.questdb.std.DirectLongList;
 import io.questdb.std.Files;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Unsafe;
+import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestTimestampType;
@@ -556,6 +563,58 @@ public class PartitionEncoderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testStreamingRowGroupChunkRejectsInvalidParquetColumns() throws Exception {
+        // The streaming writer decodes a row group's file columns by the list the caller passes,
+        // one per writer column; a broken list fails the call instead of reading past it.
+        assertMemoryLeak(() -> {
+            try (
+                    DirectUtf8Sink columnNames = new DirectUtf8Sink(16);
+                    DirectLongList columnMetadata = new DirectLongList(3, MemoryTag.NATIVE_DEFAULT);
+                    DirectIntList parquetColumns = new DirectIntList(2, MemoryTag.NATIVE_DEFAULT)
+            ) {
+                columnNames.put("a");
+                columnMetadata.add(1);
+                columnMetadata.add(ColumnType.INT);
+                columnMetadata.add(0);
+                final long allocator = Unsafe.getNativeAllocator(MemoryTag.NATIVE_PARQUET_EXPORTER);
+                final long writer = PartitionEncoder.createStreamingParquetWriter(
+                        allocator,
+                        1,
+                        columnNames.ptr(),
+                        (int) columnNames.size(),
+                        columnMetadata.getAddress(),
+                        -1,
+                        false,
+                        ParquetCompression.packCompressionCodecLevel(ParquetCompression.COMPRESSION_UNCOMPRESSED, 0),
+                        true,
+                        false,
+                        100,
+                        1024 * 1024,
+                        ParquetVersion.PARQUET_VERSION_V1,
+                        0,
+                        0,
+                        0,
+                        0.0,
+                        false
+                );
+                try {
+                    // The lists are checked before the source file or buffers they describe.
+                    assertStreamingChunkFails(writer, allocator, 0, 1, "parquet columns pointer is null");
+                    parquetColumns.add(0);
+                    parquetColumns.add(0);
+                    assertStreamingChunkFails(writer, allocator, parquetColumns.getAddress(), 2, "parquet column count 2 does not match encoder column count 1");
+                    assertStreamingChunkFails(writer, allocator, parquetColumns.getAddress(), -1, "parquet column count must not be negative: -1");
+                    parquetColumns.clear();
+                    parquetColumns.add(-2);
+                    assertStreamingChunkFails(writer, allocator, parquetColumns.getAddress(), 1, "invalid parquet column index -2, column index: 0");
+                } finally {
+                    PartitionEncoder.closeStreamingParquetWriter(writer);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testUuid() throws Exception {
         assertMemoryLeak(() -> {
             final long rows = 1;
@@ -576,5 +635,22 @@ public class PartitionEncoderTest extends AbstractCairoTest {
                 LOG.info().$("Took: ").$((System.nanoTime() - start) / 1_000_000).$("ms").$();
             }
         });
+    }
+
+    private static void assertStreamingChunkFails(long writer, long allocator, long parquetColumnsPtr, int parquetColumnCount, String expectedMessage) {
+        try {
+            PartitionEncoder.writeStreamingParquetChunkFromRowGroup(writer, allocator, 0, 1, 1, parquetColumnsPtr, parquetColumnCount, 0, 0, 1);
+            Assert.fail("the row group chunk must be refused");
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), expectedMessage);
+            TestUtils.assertContains(e.getFlyweightMessage(), "error in writeStreamingParquetChunkFromRowGroup");
+        }
+        try {
+            PartitionEncoder.writeStreamingParquetChunkFromRowGroupBuffers(writer, allocator, 0, 1, parquetColumnsPtr, parquetColumnCount, 1);
+            Assert.fail("the row group buffers chunk must be refused");
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), expectedMessage);
+            TestUtils.assertContains(e.getFlyweightMessage(), "error in writeStreamingParquetChunkFromRowGroupBuffers");
+        }
     }
 }

@@ -798,7 +798,12 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                 parquetEncodingConfig = augMeta.getParquetEncodingConfig();
             } else {
                 columnType = metadata.getColumnType(i);
-                if (ColumnType.isNull(columnType)) {
+                if (ColumnType.isNull(columnType) && tableKind == TableUtils.TABLE_KIND_TEMP_PARQUET_EXPORT) {
+                    // A Parquet export writes a bare NULL as a STRING column of NULLs, as its other
+                    // modes do, see HybridColumnMaterializer. The row copier leaves the column out,
+                    // and the writer fills it with NULL.
+                    columnType = ColumnType.STRING;
+                } else if (ColumnType.isNull(columnType)) {
                     throw SqlException
                             .$(0, "cannot create NULL-type column, please use type cast, e.g. ")
                             .put(columnName).put("::").put("type");

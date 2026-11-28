@@ -135,11 +135,16 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                 // filter that hides expired rows lives in the parser, so a table-reader export would write
                 // out rows the table itself no longer returns. Composite pieces and Delta runs require a
                 // logical scan rather than a flat base-file export, so they need the SELECT path as well.
-                // Re-partitioning needs the SELECT path too.
-                final boolean mayHaveExpiryPolicy = executionContext.getCairoEngine()
+                // Re-partitioning needs the SELECT path too. A view has no table reader at all: it exports
+                // the rows its query returns, as COPY (SELECT * FROM view) does.
+                final boolean isView = tableToken.isView();
+                final boolean mayHaveExpiryPolicy = !isView && executionContext.getCairoEngine()
                         .getMetadataCache().mayTableHaveExpiryPolicy(tableToken);
-                final boolean isLogicalScanRequired = isLogicalScanRequired(executionContext, tableToken);
-                if (partitionBy != -1 || mayHaveExpiryPolicy || isLogicalScanRequired) {
+                final boolean isLogicalScanRequired = !isView && isLogicalScanRequired(executionContext, tableToken);
+                if (isView) {
+                    // Quoted for the same reason as below.
+                    resolvedSelectText = RowExpiryUtil.quoteIdentifier(sourceTableName);
+                } else if (partitionBy != -1 || mayHaveExpiryPolicy || isLogicalScanRequired) {
                     try (TableMetadata meta = executionContext.getCairoEngine().getTableMetadata(tableToken)) {
                         final int tablePartitionBy = meta.getPartitionBy();
                         final String expiryPredicate = meta.getExpiryPredicate();

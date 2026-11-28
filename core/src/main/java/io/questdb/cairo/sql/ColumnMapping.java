@@ -39,6 +39,9 @@ import io.questdb.std.Mutable;
  * columns (ALTER COLUMN TYPE), it points to the original column index before any conversions.
  * Parquet files store data under the original writer index as field_id, so a single direct
  * lookup always finds the column regardless of how many type conversions happened.
+ * <p>
+ * For an external file, read by read_parquet(), the writer indexes are the positions of the
+ * columns in the file.
  */
 public class ColumnMapping implements Mutable {
     private final IntList data = new IntList();

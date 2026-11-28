@@ -24,6 +24,8 @@
 
 package io.questdb.test.cairo.sql;
 
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.sql.ColumnMapping;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameCursor;
@@ -33,7 +35,10 @@ import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.PartitionFrameCursorFactory;
+import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.StaticSymbolTable;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.MemoryTag;
@@ -42,12 +47,15 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Test;
 
 /**
  * The pool's projection: an owner that reads only some columns of every Parquet frame binds them
  * with the query, and the pool decodes no other column of a Parquet frame until the query ends.
+ * The pool's column resolution: each query column decodes the file column that its frame cursor
+ * maps it to, and query columns of one file column share its decoded buffer.
  */
 public class PageFrameMemoryPoolTest extends AbstractCairoTest {
     // The table's first two days, 1_000 rows each, are a Parquet row group each, and its third is native.
@@ -94,6 +102,45 @@ public class PageFrameMemoryPoolTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConvertedColumnSharedByTwoQueryColumns() throws Exception {
+        // ALTER COLUMN TYPE leaves the Parquet days of pt with b in its old type, which the pool decodes and
+        // converts on read. b and b2 read the same file column; tw is the native twin.
+        for (String[] conversion : new String[][]{{"INT", "VARCHAR"}, {"VARCHAR", "INT"}, {"SYMBOL", "INT"}, {"INT", "LONG"}}) {
+            final String sourceType = conversion[0];
+            final String targetType = conversion[1];
+            assertMemoryLeak(() -> {
+                for (String table : new String[]{"pt", "tw"}) {
+                    execute("CREATE TABLE " + table + " (v LONG, b " + sourceType + ", ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                    execute("INSERT INTO " + table + " SELECT x, CASE WHEN x % 4 = 0 THEN NULL ELSE x % 5 END::" + sourceType
+                            + ", timestamp_sequence('2024-01-01', 21_600_000_000) FROM long_sequence(16)");
+                }
+                drainWalQueue();
+                execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-03'");
+                for (String table : new String[]{"pt", "tw"}) {
+                    execute("ALTER TABLE " + table + " ALTER COLUMN b TYPE " + targetType);
+                }
+                drainWalQueue();
+                assertQuery("SELECT name, isParquet FROM table_partitions('pt')")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                name\tisParquet
+                                2024-01-01\ttrue
+                                2024-01-02\ttrue
+                                2024-01-03\tfalse
+                                2024-01-04\tfalse
+                                """);
+                final String query = "SELECT b, b2, count() c FROM (SELECT b, b b2 FROM %s) ORDER BY b";
+                assertSqlCursors(query.replace("%s", "tw"), query.replace("%s", "pt"));
+                execute("DROP TABLE pt");
+                execute("DROP TABLE tw");
+                drainWalQueue();
+            });
+        }
+    }
+
+    @Test
     public void testNullProjectionDecodesEveryColumn() throws Exception {
         assertMemoryLeak(() -> {
             createTable();
@@ -109,6 +156,29 @@ public class PageFrameMemoryPoolTest extends AbstractCairoTest {
                 record.of(frameCursor);
                 assertFrames(pool, record, addressCache, frameCount, null);
                 Assert.assertEquals(fullBytes, pool.getCachedBytes());
+            }
+        });
+    }
+
+    @Test
+    public void testPartitionColumnIdsOtherThanPositions() throws Exception {
+        // The Parquet days of tp, converted after DROP COLUMN b, hold c, of writer index 2, at position 1:
+        // the pool finds a column of a table partition by its writer index. c and c2 read the same file
+        // column; tw is the native twin.
+        assertMemoryLeak(() -> {
+            for (String table : new String[]{"tp", "tw"}) {
+                execute("CREATE TABLE " + table + " (a INT, b LONG, c INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+                execute("INSERT INTO " + table + " SELECT x::INT, x * 10, (x * 100)::INT, timestamp_sequence('2024-01-01', 21_600_000_000)"
+                        + " FROM long_sequence(16)");
+                execute("ALTER TABLE " + table + " DROP COLUMN b");
+            }
+            execute("ALTER TABLE tp CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-03'");
+            for (String query : new String[]{
+                    "SELECT c, a FROM %s",
+                    "SELECT sum(c) s1, sum(c2) s2, sum(a) s3 FROM (SELECT c, c c2, a FROM %s)",
+                    "SELECT c, c2, count() n FROM (SELECT c, c c2 FROM %s) ORDER BY c"
+            }) {
+                assertSqlCursors(query.replace("%s", "tw"), query.replace("%s", "tp"));
             }
         });
     }
@@ -253,6 +323,39 @@ public class PageFrameMemoryPoolTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testSharedParquetColumnReadAsTwoTypes() throws Exception {
+        // A frame cursor whose column mapping gives b, a DOUBLE, the writer index of a, an INT, asks the pool to
+        // read one decoded file column as two types. The pool refuses, and serves the next query.
+        assertMemoryLeak(() -> {
+            createTable();
+            try (RecordCursorFactory factory = select("t");
+                 PageFrameCursor frameCursor = factory.getPageFrameCursor(sqlExecutionContext, PartitionFrameCursorFactory.ORDER_ASC);
+                 PageFrameAddressCache addressCache = new PageFrameAddressCache();
+                 PageFrameMemoryPool pool = new PageFrameMemoryPool(configuration)) {
+                loadFrames(factory, new RemappedPageFrameCursor(frameCursor, B, A), addressCache);
+                Assert.assertEquals(PartitionFormat.PARQUET, addressCache.getFrameFormat(0));
+                pool.of(addressCache);
+                try {
+                    pool.navigateTo(0);
+                    Assert.fail("the pool must not read one decoded column as two types");
+                } catch (CairoException e) {
+                    TestUtils.assertEquals(
+                            "parquet column requested as two types [parquetColumn=0, type=INT, otherType=DOUBLE]",
+                            e.getFlyweightMessage()
+                    );
+                }
+
+                frameCursor.toTop();
+                loadFrames(factory, frameCursor, addressCache);
+                pool.of(addressCache);
+                final PageFrameMemory frameMemory = pool.navigateTo(0);
+                Assert.assertEquals(1, Unsafe.getInt(frameMemory.getPageAddress(A)));
+                Assert.assertEquals(0.5, Unsafe.getDouble(frameMemory.getPageAddress(B)), 0);
+            }
+        });
+    }
+
     // Reads every row of every frame through the record path, which binds the record to each frame,
     // and checks every column: a column outside the projection reads as NULL on a Parquet frame.
     private static void assertFrames(
@@ -338,5 +441,75 @@ public class PageFrameMemoryPoolTest extends AbstractCairoTest {
             addressCache.add(frameCount++, frame);
         }
         return frameCount;
+    }
+
+    // Reports the writer index of one column of its base cursor for another column.
+    private static class RemappedPageFrameCursor implements PageFrameCursor {
+        private final PageFrameCursor base;
+        private final ColumnMapping columnMapping = new ColumnMapping();
+
+        RemappedPageFrameCursor(PageFrameCursor base, int columnIndex, int columnIndexOfWriterIndex) {
+            this.base = base;
+            final ColumnMapping baseMapping = base.getColumnMapping();
+            for (int i = 0, n = baseMapping.getColumnCount(); i < n; i++) {
+                final int writerIndex = baseMapping.getWriterIndex(i == columnIndex ? columnIndexOfWriterIndex : i);
+                columnMapping.addColumn(baseMapping.getColumnIndex(i), writerIndex, writerIndex);
+            }
+        }
+
+        @Override
+        public void calculateSize(RecordCursor.Counter counter) {
+            base.calculateSize(counter);
+        }
+
+        @Override
+        public void close() {
+            // the test closes the base cursor
+        }
+
+        @Override
+        public ColumnMapping getColumnMapping() {
+            return columnMapping;
+        }
+
+        @Override
+        public long getRemainingRowsInInterval() {
+            return base.getRemainingRowsInInterval();
+        }
+
+        @Override
+        public StaticSymbolTable getSymbolTable(int columnIndex) {
+            return base.getSymbolTable(columnIndex);
+        }
+
+        @Override
+        public boolean isExternal() {
+            return base.isExternal();
+        }
+
+        @Override
+        public SymbolTable newSymbolTable(int columnIndex) {
+            return base.newSymbolTable(columnIndex);
+        }
+
+        @Override
+        public @Nullable PageFrame next(long skipTarget) {
+            return base.next(skipTarget);
+        }
+
+        @Override
+        public long size() {
+            return base.size();
+        }
+
+        @Override
+        public boolean supportsSizeCalculation() {
+            return base.supportsSizeCalculation();
+        }
+
+        @Override
+        public void toTop() {
+            base.toTop();
+        }
     }
 }

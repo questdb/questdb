@@ -36,6 +36,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
+import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -50,17 +51,22 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.columns.ColumnFunction;
 import io.questdb.griffin.engine.functions.columns.SymbolColumn;
+import io.questdb.griffin.engine.functions.constants.NullConstant;
 import io.questdb.griffin.engine.functions.memoization.MemoizerFunction;
 import io.questdb.griffin.engine.groupby.MapSymbolColumn;
 import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
+import io.questdb.griffin.engine.table.parquet.ParquetDecoder;
+import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
 import io.questdb.std.BoolList;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
+import io.questdb.std.DirectIntList;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
@@ -75,6 +81,10 @@ import static io.questdb.cairo.SymbolMapWriter.HEADER_SIZE;
  * Pass-through columns (simple column references) use page frame pointers directly (zero-copy).
  * Computed columns (expressions) are evaluated row-by-row and written to allocated buffers.
  * <p>
+ * A page frame of a Parquet partition, or of {@code read_parquet()}, has no page addresses: its
+ * row group is decoded into {@link RowGroupBuffers} in the native column layout, and the frame
+ * is then read like a native one.
+ * <p>
  * Also supports cursor-based mode (no page frame backing) where all columns are materialized
  * from a RecordCursor. A SYMBOL column whose cursor passes a table column's symbol keys through
  * stays SYMBOL there: its buffer collects the keys, which the encoder resolves through the
@@ -82,6 +92,23 @@ import static io.questdb.cairo.SymbolMapWriter.HEADER_SIZE;
  */
 public class HybridColumnMaterializer implements Mutable, QuietCloseable {
     private static final long DEFAULT_PAGE_SIZE = 1024 * 1024L;
+    // Test-only observability for the reuse of decode buffers: decodeParquetFrame() counts the
+    // RowGroupBuffers it allocates when decodeBufferPool has none to reuse. The export frees the
+    // native memory of every buffer it releases and reuses the objects, so the count is the most
+    // decoded frames an export holds at once. Tests read it on the thread that ran the export and
+    // assert on deltas.
+    private static long decodeBufferAllocationCount;
+
+    /**
+     * Returns the number of decode buffers that materializers allocated since class load. The
+     * counter is monotonic: capture it before an export and assert on the delta afterwards.
+     *
+     * @return count of decode buffer allocations
+     */
+    @TestOnly
+    public static long getDecodeBufferAllocationCountForTesting() {
+        return decodeBufferAllocationCount;
+    }
 
     private static void addColumnData(DirectLongList columnData, MemoryCARWImpl dataBuf, MemoryCARWImpl auxBuf, int columnType) {
         columnData.add(0L); // no col top
@@ -163,8 +190,11 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
                 && outputColumnType == toExportColumnType(outputColumnType);
     }
 
+    // A bare NULL has no column type of its own: it exports as a STRING column of NULLs, the
+    // type /exec reports for it. An export through a temp table does the same, see
+    // CreateTableOperationImpl.
     private static int toExportColumnType(int columnType) {
-        if (ColumnType.isSymbol(columnType)) {
+        if (ColumnType.isSymbol(columnType) || ColumnType.isNull(columnType)) {
             return ColumnType.STRING;
         }
         if (columnType == ColumnType.VARCHAR_SLICE) {
@@ -184,7 +214,7 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
     private final IntList computedBufferIdx = new IntList();
     // Dense array of output column indices that are computed (not pass-through)
     private final IntList computedColumnIndices = new IntList();
-    // Pre-computed per-column: Function instances (page-frame path only)
+    // Pre-computed per-column: Function instances, NullConstant.NULL for a NULL-typed one (page-frame path only)
     private final ObjList<Function> computedFunctions = new ObjList<>();
     // Pre-computed per-column: isSymbol(srcType) && outputType == STRING (page-frame path only)
     private final BoolList computedIsSymbolToString = new BoolList();
@@ -197,15 +227,29 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
     private final ObjList<SymbolMapReader> cursorSymbolMaps = new ObjList<>();
     // Per computed col: data memory
     private final ObjList<MemoryCARWImpl> dataBuffers = new ObjList<>();
+    // Reuse pool for RowGroupBuffers released by releasePinnedBuffers() and releaseFrameBuffers(),
+    // which free their native memory: decodeParquetFrame() reopens a pooled buffer for the next frame
+    private final ObjList<RowGroupBuffers> decodeBufferPool = new ObjList<>();
+    // Per Parquet frame: the [parquetIdx, columnType] pairs of the base columns the file holds
+    private final DirectIntList decodeColumns = new DirectIntList(16, MemoryTag.NATIVE_PARQUET_EXPORTER, true);
+    // Per Parquet frame: the file column of each base column, see ParquetExportColumnResolver
+    private final DirectIntList decodeParquetColumns = new DirectIntList(16, MemoryTag.NATIVE_PARQUET_EXPORTER, true);
     private final Decimal128 decimal128A = new Decimal128();
     private final Decimal256 decimal256A = new Decimal256();
     private final HybridSymbolTableSource hybridSymbolTableSource = new HybridSymbolTableSource();
     private final ReusablePageFrameMemory pageFrameMemory = new ReusablePageFrameMemory();
     private final PageFrameMemoryRecord pageFrameRecord = new PageFrameMemoryRecord();
+    private final ParquetExportColumnResolver parquetColumnResolver = new ParquetExportColumnResolver();
     // Buffers that Rust still references (pending_partitions). Freed after row group flush.
     private final ObjList<MemoryCARWImpl> pinnedAuxBuffers = new ObjList<>();
     private final ObjList<MemoryCARWImpl> pinnedDataBuffers = new ObjList<>();
+    private final ObjList<RowGroupBuffers> pinnedDecodeBuffers = new ObjList<>();
+    private RecordMetadata baseMetadata;
     private int computedCount;
+    // The decoded row group of the current Parquet frame; pinned when the next frame starts, unless
+    // releaseFrameBuffers() returned it
+    private @Nullable RowGroupBuffers decodeBuffers;
+    private @Nullable MemoryTracker decodeMemoryTracker;
     private VirtualFunctionRecord functionRecord;
     private ObjList<Function> functions;
     private int outputColumnCount;
@@ -264,7 +308,14 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
     public long buildColumnDataFromPageFrame(PageFrameCursor cursor, PageFrame frame, DirectLongList columnData) {
         CopyExportRequestTask.checkRawPageFrame(frame);
         final long frameRowCount = frame.getPartitionHi() - frame.getPartitionLo();
-        populatePageFrameRecord(frame);
+        pinDecodeBuffers();
+        if (frame.getFormat() == PartitionFormat.PARQUET) {
+            decodeParquetFrame(cursor, frame);
+        } else {
+            pageFrameMemory.of(frame);
+        }
+        pageFrameRecord.init(pageFrameMemory);
+        pageFrameRecord.setRowIndex(0);
         materializeComputedColumns(frameRowCount);
 
         columnData.clear();
@@ -273,22 +324,23 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
             final int adjustedType = adjustedMetadata.getColumnType(i);
 
             if (baseColIdx >= 0) {
-                // Pass-through column: read directly from page frame.
+                // Pass-through column: read directly from page frame, or from the decoded row
+                // group of a Parquet frame.
                 // Var-size columns may have an empty .d file when all values are inlined into
                 // the aux vector (see FwdTableReaderPageFrameCursor for the producer contract);
                 // use the aux address as the column-top detector to avoid materialising live
                 // rows as NULL.
-                final long pageAddress = frame.getPageAddress(baseColIdx);
+                final long pageAddress = pageFrameMemory.getPageAddress(baseColIdx);
                 final long localColTop;
                 if (ColumnType.isVarSize(adjustedType)) {
-                    localColTop = frame.getAuxPageAddress(baseColIdx) > 0 ? 0 : frameRowCount;
+                    localColTop = pageFrameMemory.getAuxPageAddress(baseColIdx) > 0 ? 0 : frameRowCount;
                 } else {
                     localColTop = pageAddress > 0 ? 0 : frameRowCount;
                 }
 
                 columnData.add(localColTop);
                 columnData.add(pageAddress);
-                columnData.add(frame.getPageSize(baseColIdx));
+                columnData.add(pageFrameMemory.getPageSize(baseColIdx));
                 if (ColumnType.isSymbol(adjustedType)) {
                     SymbolMapReader symbolMapReader = (SymbolMapReader) cursor.getSymbolTable(baseColIdx);
                     final MemoryR symbolValuesMem = symbolMapReader.getSymbolValuesColumn();
@@ -298,8 +350,8 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
                     columnData.add(symbolOffsetsMem.addressOf(HEADER_SIZE));
                     columnData.add(symbolMapReader.getSymbolCount());
                 } else {
-                    columnData.add(frame.getAuxPageAddress(baseColIdx));
-                    columnData.add(frame.getAuxPageSize(baseColIdx));
+                    columnData.add(pageFrameMemory.getAuxPageAddress(baseColIdx));
+                    columnData.add(pageFrameMemory.getAuxPageSize(baseColIdx));
                     columnData.add(0L);
                     columnData.add(0L);
                 }
@@ -322,11 +374,18 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
      */
     @Override
     public void clear() {
+        pinDecodeBuffers();
         releasePinnedBuffers();
         for (int i = 0, n = bufferPool.size(); i < n; i++) {
             Misc.free(bufferPool.getQuick(i));
         }
         bufferPool.clear();
+        // Closing the decode buffers credits the memory tracker before its owner recycles it.
+        Misc.freeObjListAndClear(decodeBufferPool);
+        Misc.free(decodeColumns);
+        Misc.free(decodeParquetColumns);
+        decodeMemoryTracker = null;
+        baseMetadata = null;
         for (int i = 0, n = dataBuffers.size(); i < n; i++) {
             Misc.free(dataBuffers.getQuick(i));
         }
@@ -376,6 +435,19 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
     }
 
     /**
+     * Returns the current frame's buffers for the next frame to reuse: the decoded row group, freed,
+     * to the pool, and the computed values, truncated in place. Call it once the writer holds none of
+     * the frame's rows.
+     */
+    public void releaseFrameBuffers() {
+        if (decodeBuffers != null) {
+            releaseDecodeBuffers(decodeBuffers);
+            decodeBuffers = null;
+        }
+        truncateComputedBuffers();
+    }
+
+    /**
      * Frees all pinned buffers that were being held for Rust's pending_partitions.
      * Call after a row group flush when all pinned partitions have been drained.
      */
@@ -384,6 +456,10 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
             bufferPool.add(pinnedDataBuffers.getQuick(i));
         }
         pinnedDataBuffers.clear();
+        for (int i = 0, n = pinnedDecodeBuffers.size(); i < n; i++) {
+            releaseDecodeBuffers(pinnedDecodeBuffers.getQuick(i));
+        }
+        pinnedDecodeBuffers.clear();
         for (int i = 0, n = pinnedAuxBuffers.size(); i < n; i++) {
             MemoryCARWImpl buf = pinnedAuxBuffers.getQuick(i);
             if (buf != null) {
@@ -506,6 +582,8 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
         this.functions = vf.getFunctions();
         RecordMetadata outputMeta = vf.getMetadata();
         RecordMetadata baseMeta = vf.getBaseFactory().getMetadata();
+        this.baseMetadata = baseMeta;
+        this.decodeMemoryTracker = ctx.getMemoryTracker();
         this.outputColumnCount = outputMeta.getColumnCount();
         this.baseColumnMap.setPos(outputColumnCount);
         this.computedBufferIdx.setPos(outputColumnCount);
@@ -573,7 +651,11 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
         for (int k = 0; k < computedCount; k++) {
             int i = computedColumnIndices.getQuick(k);
             Function func = functions.getQuick(i);
-            computedFunctions.setQuick(k, func);
+            // A NULL-typed function, such as a CASE whose branches are all NULL, holds no value and
+            // need not implement getters: NullCaseFunction throws. Read its column through
+            // NullConstant, which returns the NULL of any type, as
+            // SqlCodeGenerator.generateCastFunctions() does for a NULL-typed column.
+            computedFunctions.setQuick(k, ColumnType.isNull(func.getType()) ? NullConstant.NULL : func);
             computedIsSymbolToString.setQuick(k, ColumnType.isSymbol(func.getType())
                     && computedOutputTypes.getQuick(k) == ColumnType.STRING);
         }
@@ -649,6 +731,47 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
         }
     }
 
+    // Decodes the row group of a Parquet frame into fresh buffers and points pageFrameMemory at
+    // them. The encoder reads the pass-through columns from these buffers, so they stay pinned
+    // until the writer has written their last row.
+    private void decodeParquetFrame(PageFrameCursor cursor, PageFrame frame) {
+        final ParquetDecoder decoder = frame.getParquetDecoder();
+        decodeParquetColumns.reopen();
+        decodeParquetColumns.clear();
+        parquetColumnResolver.resolve(cursor, baseMetadata, decoder, decodeParquetColumns);
+        decodeColumns.reopen();
+        decodeColumns.clear();
+        for (int i = 0, n = (int) decodeParquetColumns.size(); i < n; i++) {
+            final int parquetColumn = decodeParquetColumns.get(i);
+            if (parquetColumn != ParquetExportColumnResolver.ABSENT) {
+                // The query's column type, not the file's: read_parquet() reads a SYMBOL
+                // column of a QuestDB file as VARCHAR. Materialized column types only (never
+                // VARCHAR_SLICE): the buffers hold the native layout and outlive the decode
+                // resource, released below.
+                decodeColumns.add(parquetColumn);
+                decodeColumns.add(baseMetadata.getColumnType(i));
+            }
+        }
+        RowGroupBuffers buffers = decodeBufferPool.size() > 0 ? decodeBufferPool.popLast() : null;
+        if (buffers == null) {
+            buffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_EXPORTER, true);
+            decodeBufferAllocationCount++;
+            // The tracker binds at allocation, so set it before reopen().
+            buffers.setMemoryTracker(decodeMemoryTracker);
+        }
+        decodeBuffers = buffers;
+        buffers.reopen();
+        decoder.decodeRowGroup(
+                buffers,
+                decodeColumns,
+                frame.getParquetRowGroup(),
+                frame.getParquetRowGroupLo(),
+                frame.getParquetRowGroupHi()
+        );
+        decoder.releaseDecodeResource(decoder.takeDecodeResource());
+        pageFrameMemory.of(buffers, decodeParquetColumns, frame.getPartitionLo());
+    }
+
     private void materializeComputedColumns(long frameRowCount) {
         resetBuffers();
         for (long row = 0; row < frameRowCount; row++) {
@@ -679,23 +802,34 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
         return new MemoryCARWImpl(DEFAULT_PAGE_SIZE, Integer.MAX_VALUE, MemoryTag.NATIVE_PARQUET_EXPORTER);
     }
 
-    private void populatePageFrameRecord(PageFrame frame) {
-        pageFrameMemory.of(frame);
-        pageFrameRecord.init(pageFrameMemory);
-        pageFrameRecord.setRowIndex(0);
+    private void pinDecodeBuffers() {
+        if (decodeBuffers != null) {
+            pinnedDecodeBuffers.add(decodeBuffers);
+            decodeBuffers = null;
+        }
+    }
+
+    // Frees the native memory of a decoded row group that the writer no longer reads, and pools the
+    // object for a later frame. A buffer would otherwise keep the capacity of the largest row group
+    // it decoded, charged to the query's memory tracker, whatever frame it holds next.
+    private void releaseDecodeBuffers(RowGroupBuffers buffers) {
+        buffers.close();
+        decodeBufferPool.add(buffers);
     }
 
     private void resetBuffers() {
-        // Check if any buffer has data that Rust may still reference.
-        boolean hasData = false;
+        // Check if any buffer holds rows that Rust may still reference. A VARCHAR value of at most
+        // 9 bytes, a NULL VARCHAR and a NULL array take bytes in the aux buffer alone.
+        boolean hasRows = false;
         for (int i = 0; i < computedCount; i++) {
-            if (dataBuffers.getQuick(i).getAppendOffset() > 0) {
-                hasData = true;
+            final MemoryCARWImpl auxBuf = auxBuffers.getQuick(i);
+            if (dataBuffers.getQuick(i).getAppendOffset() > 0 || (auxBuf != null && auxBuf.getAppendOffset() > 0)) {
+                hasRows = true;
                 break;
             }
         }
 
-        if (hasData) {
+        if (hasRows) {
             // Pin current buffers (Rust still references them via pending_partitions)
             // and allocate fresh ones for the next frame.
             for (int i = 0; i < computedCount; i++) {
@@ -713,13 +847,7 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
             }
         } else {
             // First call or empty buffers: truncate in place.
-            for (int i = 0; i < computedCount; i++) {
-                dataBuffers.getQuick(i).truncate();
-                MemoryCARWImpl auxBuf = auxBuffers.getQuick(i);
-                if (auxBuf != null) {
-                    auxBuf.truncate();
-                }
-            }
+            truncateComputedBuffers();
         }
 
         // Write the zero offset of the first string in a STRING data column.
@@ -728,6 +856,16 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
         for (int k = 0; k < computedCount; k++) {
             if (ColumnType.tagOf(computedOutputTypes.getQuick(k)) == ColumnType.STRING) {
                 auxBuffers.getQuick(computedBufferIdx.getQuick(computedColumnIndices.getQuick(k))).putLong(0);
+            }
+        }
+    }
+
+    private void truncateComputedBuffers() {
+        for (int i = 0; i < computedCount; i++) {
+            dataBuffers.getQuick(i).truncate();
+            MemoryCARWImpl auxBuf = auxBuffers.getQuick(i);
+            if (auxBuf != null) {
+                auxBuf.truncate();
             }
         }
     }
@@ -752,6 +890,9 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
                 CharSequence sym = record.getSymA(col);
                 StringTypeDriver.appendValue(auxBuf, dataBuf, sym);
             }
+            // Exported as STRING. A row that a sort copies keeps no bytes for a NULL column, and
+            // a getter would read the next column: write NULL without reading.
+            case ColumnType.NULL -> StringTypeDriver.INSTANCE.appendNull(auxBuf, dataBuf);
             case ColumnType.LONG256 -> {
                 Long256 val = record.getLong256A(col);
                 dataBuf.putLong256(val);

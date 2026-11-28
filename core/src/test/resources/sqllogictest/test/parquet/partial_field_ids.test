@@ -1,0 +1,276 @@
+# name: test/parquet/partial_field_ids.test
+# description: read_parquet() of files with field ids on some columns only
+# group: [parquet]
+
+require parquet
+
+# DuckDB 1.5.4 wrote the files, each with a column whose field id is the position of another column:
+#
+#   COPY (SELECT 1::INT a, 2::INT b UNION ALL SELECT 3, 4)
+#     TO 'partial_field_ids.parquet' (FORMAT PARQUET, FIELD_IDS {b: 0});
+#   COPY (SELECT 1::INT a, 2::INT b UNION ALL SELECT 3, 4)
+#     TO 'negative_field_id.parquet' (FORMAT PARQUET, FIELD_IDS {a: -3, b: 0});
+#   COPY (SELECT (i * 10)::BIGINT b, i::INT a FROM range(10) t(i))
+#     TO 'partial_field_ids_widths.parquet' (FORMAT PARQUET, FIELD_IDS {a: 0});
+#   COPY (SELECT (i * 10)::BIGINT b, i::INT a FROM range(10) t(i))
+#     TO 'repeated_field_ids.parquet' (FORMAT PARQUET, FIELD_IDS {b: 5, a: 6});
+#   COPY (SELECT i::INT a, ('v' || i)::VARCHAR b FROM range(10) t(i))
+#     TO 'partial_field_ids_varchar.parquet' (FORMAT PARQUET, FIELD_IDS {b: 0});
+#   COPY (SELECT 1::INT a, 2::INT b WHERE false)
+#     TO 'partial_field_ids_empty.parquet' (FORMAT PARQUET, FIELD_IDS {b: 0});
+#   COPY (
+#     SELECT
+#       CASE WHEN i % 7 = 0 THEN NULL ELSE i * 10 END::BIGINT b,
+#       CASE WHEN i % 5 = 0 THEN NULL ELSE i END::INT a,
+#       CASE WHEN i % 3 = 0 THEN NULL ELSE 'v' || i END::VARCHAR s,
+#       (TIMESTAMP '2024-01-01' + i * INTERVAL 1 SECOND) ts,
+#       i % 2 = 0 f,
+#       i / 4.0 d,
+#       NULL::INT n,
+#       (i % 100)::INT k
+#     FROM range(2500) t(i)
+#   ) TO 'partial_field_ids_row_groups.parquet' (FORMAT PARQUET, FIELD_IDS {a: 0, ts: 2, d: 4, k: 6}, ROW_GROUP_SIZE 1000);
+#   COPY (
+#     SELECT
+#       CASE WHEN i = 2 THEN NULL ELSE [i * 1.5, -i - 0.25] END::DOUBLE[] arr,
+#       CASE WHEN i = 3 THEN NULL ELSE i * 100 - 150 END::INT x,
+#       CASE WHEN i = 4 THEN NULL WHEN i = 3 THEN '-9999999999999999999999999999.9999999999'::DECIMAL(38, 10)
+#         ELSE (i * 1234567890.0123456789 - 1)::DECIMAL(38, 10) END d,
+#       CASE WHEN i = 0 THEN NULL ELSE i * 10000000000 - 1 END::BIGINT y,
+#       CASE WHEN i = 1 THEN NULL ELSE ('11111111-2222-3333-4444-55555555555' || i)::UUID END u,
+#       (i * 1000 - 2000)::SMALLINT s
+#     FROM range(5) t(i)
+#   ) TO 'partial_field_ids_types.parquet' (FORMAT PARQUET, FIELD_IDS {x: 0, y: 2, s: 4});
+#
+# DuckDB refuses a repeated id in FIELD_IDS, so the field id of a in repeated_field_ids.parquet was
+# patched from 6 to 5 in the footer; DuckDB reads the file. It writes the 2_500 rows of
+# partial_field_ids_row_groups.parquet in row groups of 2_048 and 452 rows.
+#
+# read_parquet() finds a column by its name. The expected rows are DuckDB's, printed the way QuestDB
+# prints them; the comments note where QuestDB differs from DuckDB.
+
+# a: no field id, b: field id 0
+query II
+SELECT * FROM read_parquet('data/parquet-testing/partial_field_ids.parquet')
+----
+1	2
+3	4
+
+query II
+SELECT b, a FROM read_parquet('data/parquet-testing/partial_field_ids.parquet')
+----
+2	1
+4	3
+
+query I
+SELECT a FROM read_parquet('data/parquet-testing/partial_field_ids.parquet')
+----
+1
+3
+
+query I
+SELECT b FROM read_parquet('data/parquet-testing/partial_field_ids.parquet')
+----
+2
+4
+
+query III
+SELECT a, a a2, b FROM read_parquet('data/parquet-testing/partial_field_ids.parquet')
+----
+1	1	2
+3	3	4
+
+query II
+SELECT a, b FROM read_parquet('data/parquet-testing/partial_field_ids.parquet') WHERE a > 1
+----
+3	4
+
+query II
+SELECT sum(a), sum(b) FROM read_parquet('data/parquet-testing/partial_field_ids.parquet')
+----
+4	6
+
+# a: field id -3, b: field id 0
+query II
+SELECT * FROM read_parquet('data/parquet-testing/negative_field_id.parquet')
+----
+1	2
+3	4
+
+query II
+SELECT b, a FROM read_parquet('data/parquet-testing/negative_field_id.parquet')
+----
+2	1
+4	3
+
+query II
+SELECT sum(a), sum(b) FROM read_parquet('data/parquet-testing/negative_field_id.parquet')
+----
+4	6
+
+# BIGINT b: no field id, INT a: field id 0
+query II
+SELECT * FROM read_parquet('data/parquet-testing/partial_field_ids_widths.parquet')
+----
+0	0
+10	1
+20	2
+30	3
+40	4
+50	5
+60	6
+70	7
+80	8
+90	9
+
+query II
+SELECT a, b FROM read_parquet('data/parquet-testing/partial_field_ids_widths.parquet')
+----
+0	0
+1	10
+2	20
+3	30
+4	40
+5	50
+6	60
+7	70
+8	80
+9	90
+
+query IIII
+SELECT sum(b), min(b), max(b), sum(a) FROM read_parquet('data/parquet-testing/partial_field_ids_widths.parquet')
+----
+450	0	90	45
+
+query II
+SELECT a, b FROM read_parquet('data/parquet-testing/partial_field_ids_widths.parquet') WHERE a > 4
+----
+5	50
+6	60
+7	70
+8	80
+9	90
+
+# QuestDB's window sum() returns DOUBLE, DuckDB's returns an integer.
+query IIR
+SELECT a, b, sum(b) OVER (ORDER BY a) FROM read_parquet('data/parquet-testing/partial_field_ids_widths.parquet')
+----
+0	0	0.000000
+1	10	10.000000
+2	20	30.000000
+3	30	60.000000
+4	40	100.000000
+5	50	150.000000
+6	60	210.000000
+7	70	280.000000
+8	80	360.000000
+9	90	450.000000
+
+# BIGINT b and INT a: both field id 5
+query II
+SELECT * FROM read_parquet('data/parquet-testing/repeated_field_ids.parquet')
+----
+0	0
+10	1
+20	2
+30	3
+40	4
+50	5
+60	6
+70	7
+80	8
+90	9
+
+query II
+SELECT a, b FROM read_parquet('data/parquet-testing/repeated_field_ids.parquet')
+----
+0	0
+1	10
+2	20
+3	30
+4	40
+5	50
+6	60
+7	70
+8	80
+9	90
+
+# INT a: no field id, VARCHAR b: field id 0
+query IT
+SELECT * FROM read_parquet('data/parquet-testing/partial_field_ids_varchar.parquet')
+----
+0	v0
+1	v1
+2	v2
+3	v3
+4	v4
+5	v5
+6	v6
+7	v7
+8	v8
+9	v9
+
+query TI
+SELECT b, a FROM read_parquet('data/parquet-testing/partial_field_ids_varchar.parquet')
+----
+v0	0
+v1	1
+v2	2
+v3	3
+v4	4
+v5	5
+v6	6
+v7	7
+v8	8
+v9	9
+
+query IITT
+SELECT count(), sum(a), min(b), max(b) FROM read_parquet('data/parquet-testing/partial_field_ids_varchar.parquet')
+----
+10	45	v0	v9
+
+# INT a: no field id, INT b: field id 0, no row group
+query II
+SELECT b, a FROM read_parquet('data/parquet-testing/partial_field_ids_empty.parquet')
+----
+
+query II
+SELECT count(), sum(a) FROM read_parquet('data/parquet-testing/partial_field_ids_empty.parquet')
+----
+0	NULL
+
+# b, s, f and n: no field id; a, ts, d and k: field ids 0, 2, 4 and 6. The test runner prints a DOUBLE
+# of 1e5 or more in exponent notation: 7.809375e+5 is DuckDB's 780937.5.
+query IIIIIIRTTII
+SELECT count(), count(b), count(a), count(s), count(n), sum(b), sum(a), sum(d), min(ts), max(ts), sum(k) FROM read_parquet('data/parquet-testing/partial_field_ids_row_groups.parquet')
+----
+2500	2142	2000	1666	0	26764290	2500000	7.809375e+5	2024-01-01 00:00:00	2024-01-01 00:41:39	123750
+
+query I
+SELECT count() FROM read_parquet('data/parquet-testing/partial_field_ids_row_groups.parquet') WHERE f
+----
+1250
+
+# The rows around the end of the first row group. QuestDB's LIMIT 2046, 2050 is DuckDB's LIMIT 4 OFFSET 2046.
+query IITTTRII
+SELECT * FROM read_parquet('data/parquet-testing/partial_field_ids_row_groups.parquet') LIMIT 2046, 2050
+----
+20460	2046	NULL	2024-01-01 00:34:06	true	511.500000	NULL	46
+20470	2047	v2047	2024-01-01 00:34:07	false	511.750000	NULL	47
+20480	2048	v2048	2024-01-01 00:34:08	true	512.000000	NULL	48
+20490	2049	NULL	2024-01-01 00:34:09	false	512.250000	NULL	49
+
+# The last rows. QuestDB's LIMIT -2 is the last two rows.
+query IITTTRII
+SELECT * FROM read_parquet('data/parquet-testing/partial_field_ids_row_groups.parquet') LIMIT -2
+----
+24980	2498	v2498	2024-01-01 00:41:38	true	624.500000	NULL	98
+NULL	2499	NULL	2024-01-01 00:41:39	false	624.750000	NULL	99
+
+query IIIIII
+SELECT k, count(), count(a), sum(a), sum(b), count(s) FROM read_parquet('data/parquet-testing/partial_field_ids_row_groups.parquet') WHERE k IN (0, 1, 49, 99) GROUP BY k ORDER BY k
+----
+0	25	0	NULL	258000	16
+1	25	25	30025	246210	17
+49	25	25	31225	268290	17
+99	25	25	32475	266790	16
