@@ -46,6 +46,22 @@ public interface WorkerPoolConfiguration {
         return Math.min(getFiberMaxLiveCount(), Math.max(16, 2 * getWorkerCount()));
     }
 
+    /**
+     * The number of groups the pool's workers split into, in contiguous blocks. A server on the
+     * pool gives each group a dispatcher of its own.
+     */
+    default int getGroupCount() {
+        return 1;
+    }
+
+    /**
+     * Per group, the CPUs its workers may run on, or null to leave placement to
+     * {@link #getWorkerAffinity()}.
+     */
+    default @Nullable int[][] getGroupCpus() {
+        return null;
+    }
+
     default Metrics getMetrics() {
         return Metrics.ENABLED;
     }

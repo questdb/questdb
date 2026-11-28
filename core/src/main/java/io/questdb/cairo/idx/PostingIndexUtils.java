@@ -454,6 +454,19 @@ public final class PostingIndexUtils {
     }
 
     /**
+     * The column top a covering index uses for a covered column: every row below it reads as NULL.
+     * {@code columnTop} is the column's top in the partition as
+     * {@link io.questdb.cairo.ColumnVersionReader#getColumnTop(long, int)} returns it, -1 for a column the
+     * partition holds no rows of. Such a column is NULL in every row, whatever files the partition directory
+     * holds under its name: a checkpoint copy taken during an in-place write can hold the file that write
+     * created there, which the restored column versions know nothing of. The returned top lies above every
+     * row, so the index never reads that file.
+     */
+    public static long coveredColumnTop(long columnTop) {
+        return columnTop > -1 ? columnTop : Long.MAX_VALUE;
+    }
+
+    /**
      * Decodes all values for a key from delta-encoded data.
      * Allocates temporary arrays per call — use the overload with DecodeContext
      * on hot paths to avoid allocations.

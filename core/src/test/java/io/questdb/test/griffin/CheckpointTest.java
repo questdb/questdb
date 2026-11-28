@@ -147,11 +147,18 @@ import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.PropertyKey.*;
 
 public class CheckpointTest extends AbstractCairoTest {
+    // The rows that the composite restore tests write with q = 'k'
+    private static final String ROWS_OF_K = """
+            v\tts
+            900001\t2024-01-01T05:00:30.000000Z
+            900002\t2024-01-01T05:01:30.000000Z
+            """;
     private static final TestFilesFacade testFilesFacade = new TestFilesFacade();
     private static Path path;
     private static Rnd rnd;
@@ -2784,8 +2791,8 @@ public class CheckpointTest extends AbstractCairoTest {
             setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 512);
             setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 50);
 
-            createCompositeIndexedDay("ci_indexed", ", INDEX(s CAPACITY 8)");
-            createCompositeIndexedDay("ci_plain", "");
+            createCompositeIndexedDay("ci_indexed", ", INDEX(s CAPACITY 8)", true);
+            createCompositeIndexedDay("ci_plain", "", true);
 
             // The fixture is only worth anything while the day's files really do reach past its
             // live rows - that gap is exactly what the rebuild used to leave unindexed.
@@ -3002,10 +3009,178 @@ public class CheckpointTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCheckpointRestoreDoesNotReadGeometryOfCompositePartitionForColumnTopBelowLiveRows() throws Exception {
+        // A column that starts below the live rows of a partition has rows there whatever the geometry says. The
+        // restore reads the geometry of a COMPOSITE partition only for a column at or past its live rows: a read per
+        // partition and POSTING column would make restore time grow with both.
+        assertMemoryLeak(() -> {
+            createCompositeIndexedDay("t", ", INDEX(s TYPE POSTING)", false);
+            final TableToken token = engine.verifyTableName("t");
+            try (TableReader reader = engine.getReader(token)) {
+                final TxReader txFile = reader.getTxFile();
+                final TableReaderMetadata metadata = reader.getMetadata();
+                final long columnTopOfS = reader.getColumnVersionReader().getColumnTop(
+                        txFile.getPartitionTimestampByIndex(0),
+                        metadata.getWriterIndex(metadata.getColumnIndex("s"))
+                );
+                Assert.assertTrue(txFile.isPartitionComposite(0));
+                Assert.assertEquals("setup: s must start at the first row of the day", 0, columnTopOfS);
+            }
+            engine.clear();
+            final AtomicInteger geometryReadOpens = new AtomicInteger();
+            final AtomicInteger keyFileReadOpens = new AtomicInteger();
+            final FilesFacade countingFacade = new TestFilesFacadeImpl() {
+                @Override
+                public long openRO(LPSZ name) {
+                    if (Utf8s.containsAscii(name, Files.SEPARATOR + "_geometry")) {
+                        geometryReadOpens.incrementAndGet();
+                    } else if (Utf8s.containsAscii(name, Files.SEPARATOR + "s.pk")) {
+                        keyFileReadOpens.incrementAndGet();
+                    }
+                    return super.openRO(name);
+                }
+            };
+            final CairoConfiguration countingConfig = new CairoConfigurationWrapper(configuration) {
+                @Override
+                public @NotNull FilesFacade getFilesFacade() {
+                    return countingFacade;
+                }
+            };
+            restoreTableFiles(countingConfig, token);
+            // The restore read the head of the index of s in the day, and nothing of the day's geometry
+            Assert.assertEquals(1, keyFileReadOpens.get());
+            Assert.assertEquals(0, geometryReadOpens.get());
+            // v 800001..800010 and 810001..810010
+            assertQuery("SELECT count(), sum(v) FROM t WHERE s = 'kz'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("Index forward scan on: s")
+                    .returns("count\tsum\n20\t16100110\n");
+        });
+    }
+
+    @Test
     public void testCheckpointRestoreFailsOnCorruptPostingKeyFile() throws Exception {
         // The head check reads what it can and leaves every unreadable .pk to the writer, which names the problem
         testCheckpointRestoreCorruptPostingKeyFile(100, "Index file too short");
         testCheckpointRestoreCorruptPostingKeyFile(-1, "Unsupported Posting index version");
+    }
+
+    @Test
+    public void testCheckpointRestoreFailsToReadGeometryOfCompositePartition() throws Exception {
+        // Column q starts past the live rows of the COMPOSITE day, so the restore reads the day's geometry to learn
+        // whether q has file rows there. The read fails after PartitionGeometryFile allocated its buffer, so a geometry
+        // left open would leak it. The repeated restore must rebuild the index the copy lost.
+        assertMemoryLeak(() -> {
+            createCompositeIndexedDay("t", "", false);
+            execute("ALTER TABLE t ADD COLUMN q SYMBOL INDEX TYPE POSTING");
+            drainWalQueue();
+            insertRowsOfQ();
+            final TableToken token = engine.verifyTableName("t");
+            final CompositeDayLayout day = readCompositeDayLayout(token);
+            assertColumnPastLiveRows(day);
+            engine.clear();
+            final String[] keyFiles = listFiles(day.dir(), "q.pk");
+            Assert.assertEquals(1, keyFiles.length);
+            Assert.assertTrue(new File(day.dir(), keyFiles[0]).delete());
+            final String[] valueFiles = listFiles(day.dir(), "q.pv");
+            final AtomicLong geometryFd = new AtomicLong(-1);
+            final AtomicInteger failures = new AtomicInteger();
+            final FilesFacade failingFacade = new TestFilesFacadeImpl() {
+                @Override
+                public long openRO(LPSZ name) {
+                    final long fd = super.openRO(name);
+                    if (Utf8s.containsAscii(name, Files.SEPARATOR + "_geometry")) {
+                        geometryFd.set(fd);
+                    }
+                    return fd;
+                }
+
+                @Override
+                public long read(long fd, long buf, long size, long offset) {
+                    if (fd == geometryFd.get()) {
+                        failures.incrementAndGet();
+                        return -1;
+                    }
+                    return super.read(fd, buf, size, offset);
+                }
+            };
+            final CairoConfiguration failingConfig = new CairoConfigurationWrapper(configuration) {
+                @Override
+                public @NotNull FilesFacade getFilesFacade() {
+                    return failingFacade;
+                }
+            };
+            try {
+                restoreTableFiles(failingConfig, token);
+                Assert.fail("expected the restore to fail");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "could not read partition geometry header");
+                TestUtils.assertContains(e.getFlyweightMessage(), "2024-01-01");
+            }
+            Assert.assertEquals(1, failures.get());
+            // Neither a key file nor the marker of a rebuild: the restore failed before it chose what to do
+            Assert.assertArrayEquals(new String[0], listFiles(day.dir(), "q.pk"));
+            Assert.assertArrayEquals(valueFiles, listFiles(day.dir(), "q.pv"));
+
+            restoreTableFiles(configuration, token);
+            Assert.assertArrayEquals(keyFiles, listFiles(day.dir(), "q.pk"));
+            assertQuery("SELECT v, ts FROM t WHERE q = 'k'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .withPlanContaining("Index forward scan on: q")
+                    .returns(ROWS_OF_K);
+            execute("INSERT INTO t (v, s, ts, q) VALUES (900_010, 'k1', '2024-01-01T06:00:30', 'k')");
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
+            assertQuery("SELECT v, ts FROM t WHERE q = 'k'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(ROWS_OF_K + "900010\t2024-01-01T06:00:30.000000Z\n");
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoreRemovesPostingIndexOfColumnWithNoRows() throws Exception {
+        // The first write of a column into a partition creates its .pk anew. The copy can catch it empty or before
+        // its header is written, and the column has nothing to index either way.
+        testCheckpointRestoreRemovesPostingIndexOfColumnWithNoRows(0, false);
+        testCheckpointRestoreRemovesPostingIndexOfColumnWithNoRows(100, false);
+        testCheckpointRestoreRemovesPostingIndexOfColumnWithNoRows(16_384, false);
+        // A readable .pk goes too, and so does the marker of an interrupted rebuild
+        testCheckpointRestoreRemovesPostingIndexOfColumnWithNoRows(-1, false);
+        testCheckpointRestoreRemovesPostingIndexOfColumnWithNoRows(-1, true);
+    }
+
+    @Test
+    public void testCheckpointRestoreRemovesPostingIndexOfColumnWithNoRowsFailsToRemoveKeyFile() throws Exception {
+        testCheckpointRestoreRemovesPostingIndexOfColumnWithNoRowsFailure(".pk", "could not remove file");
+    }
+
+    @Test
+    public void testCheckpointRestoreRemovesPostingIndexOfColumnWithNoRowsFailsToRemoveValueFile() throws Exception {
+        testCheckpointRestoreRemovesPostingIndexOfColumnWithNoRowsFailure(".pv", "could not remove posting index files of a column with no rows");
+    }
+
+    @Test
+    public void testCheckpointRestoreRemovesPostingIndexOfCompositeColumnWithNoRows() throws Exception {
+        testCheckpointRestoreRemovesPostingIndexOfCompositeColumnWithNoRows("POSTING", false);
+    }
+
+    @Test
+    public void testCheckpointRestoreRemovesPostingIndexOfCompositeColumnWithNoRowsOfOlderDay() throws Exception {
+        testCheckpointRestoreRemovesPostingIndexOfCompositeColumnWithNoRows("POSTING", true);
+    }
+
+    @Test
+    public void testCheckpointRestoreRemovesPostingIndexOfCompositeColumnWithNoRowsPostingDelta() throws Exception {
+        testCheckpointRestoreRemovesPostingIndexOfCompositeColumnWithNoRows("POSTING DELTA", false);
+    }
+
+    @Test
+    public void testCheckpointRestoreRemovesPostingIndexOfCompositeColumnWithNoRowsPostingEf() throws Exception {
+        testCheckpointRestoreRemovesPostingIndexOfCompositeColumnWithNoRows("POSTING EF", false);
     }
 
     @Test
@@ -3038,8 +3213,8 @@ public class CheckpointTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 512);
             setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 50);
-            createCompositeIndexedDay("ci_indexed", ", INDEX(s TYPE POSTING)");
-            createCompositeIndexedDay("ci_plain", "");
+            createCompositeIndexedDay("ci_indexed", ", INDEX(s TYPE POSTING)", true);
+            createCompositeIndexedDay("ci_plain", "", true);
             final TableToken token = engine.verifyTableName("ci_indexed");
             final File partDir;
             try (TableReader reader = engine.getReader(token); Path partitionPath = new Path().of(configuration.getDbRoot()).concat(token)) {
@@ -3064,6 +3239,166 @@ public class CheckpointTest extends AbstractCairoTest {
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
             TestUtils.assertSqlCursors(engine, sqlExecutionContext,
                     "SELECT v, ts FROM ci_plain WHERE s = 'kz'", "SELECT v, ts FROM ci_indexed WHERE s = 'kz'", LOG);
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoreRebuildsCoveringIndexMissingKeyFileOfColumnPastLiveRows() throws Exception {
+        // The rebuild writes the covering sidecars of q over the file rows [top, E) of the COMPOSITE day too
+        assertMemoryLeak(() -> {
+            createCompositeIndexedDay("t", "", false);
+            execute("ALTER TABLE t ADD COLUMN q SYMBOL");
+            drainWalQueue();
+            execute("ALTER TABLE t ALTER COLUMN q ADD INDEX TYPE POSTING INCLUDE (v)");
+            drainWalQueue();
+            insertRowsOfQ();
+            final TableToken token = engine.verifyTableName("t");
+            final CompositeDayLayout day = readCompositeDayLayout(token);
+            assertColumnPastLiveRows(day);
+            engine.clear();
+            final String[] keyFiles = listFiles(day.dir(), "q.pk");
+            Assert.assertEquals(1, keyFiles.length);
+            Assert.assertTrue(new File(day.dir(), keyFiles[0]).delete());
+            restoreTableFiles(configuration, token);
+            Assert.assertArrayEquals(keyFiles, listFiles(day.dir(), "q.pk"));
+            assertQuery("SELECT v FROM t WHERE q = 'k'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("CoveringIndex on: q")
+                    .returns("""
+                            v
+                            900001
+                            900002
+                            """);
+            execute("INSERT INTO t (v, s, ts, q) VALUES (900_010, 'k1', '2024-01-01T06:00:30', 'k')");
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
+            assertQuery("SELECT v FROM t WHERE q = 'k'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("CoveringIndex on: q")
+                    .returns("""
+                            v
+                            900001
+                            900002
+                            900010
+                            """);
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoreRebuildsPostingIndexMissingKeyFileOfColumnPastLiveRows() throws Exception {
+        testCheckpointRestoreRebuildsPostingIndexMissingKeyFileOfColumnPastLiveRows("POSTING", false);
+    }
+
+    @Test
+    public void testCheckpointRestoreRebuildsPostingIndexMissingKeyFileOfColumnPastLiveRowsOfOlderDay() throws Exception {
+        testCheckpointRestoreRebuildsPostingIndexMissingKeyFileOfColumnPastLiveRows("POSTING", true);
+    }
+
+    @Test
+    public void testCheckpointRestoreRebuildsPostingIndexMissingKeyFileOfColumnPastLiveRowsPostingDelta() throws Exception {
+        testCheckpointRestoreRebuildsPostingIndexMissingKeyFileOfColumnPastLiveRows("POSTING DELTA", false);
+    }
+
+    @Test
+    public void testCheckpointRestoreRebuildsPostingIndexMissingKeyFileOfColumnPastLiveRowsPostingEf() throws Exception {
+        testCheckpointRestoreRebuildsPostingIndexMissingKeyFileOfColumnPastLiveRows("POSTING EF", false);
+    }
+
+    @Test
+    public void testCheckpointRestoreRebuildsPostingIndexMissingKeyFileOfColumnWithOneRowPastLiveRows() throws Exception {
+        // The one row of q is the last file row of the COMPOSITE day
+        assertMemoryLeak(() -> {
+            createCompositeIndexedDay("t", "", false);
+            execute("ALTER TABLE t ADD COLUMN q SYMBOL INDEX TYPE POSTING");
+            drainWalQueue();
+            execute("INSERT INTO t (v, s, ts, q) VALUES (900_001, 'k1', '2024-01-01T05:00:30', 'k')");
+            drainWalQueue();
+            final TableToken token = engine.verifyTableName("t");
+            final CompositeDayLayout day = readCompositeDayLayout(token);
+            Assert.assertTrue(day.toString(), day.isComposite());
+            Assert.assertTrue("setup: q must start at or past the live rows, " + day, day.columnTopOfQ() >= day.liveRows());
+            Assert.assertEquals("setup: q must have one file row in the day, " + day, day.e() - 1, day.columnTopOfQ());
+            engine.clear();
+            final String[] keyFiles = listFiles(day.dir(), "q.pk");
+            Assert.assertEquals(1, keyFiles.length);
+            Assert.assertTrue(new File(day.dir(), keyFiles[0]).delete());
+            restoreTableFiles(configuration, token);
+            Assert.assertArrayEquals(keyFiles, listFiles(day.dir(), "q.pk"));
+            assertQuery("SELECT v, ts FROM t WHERE q = 'k'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .withPlanContaining("Index forward scan on: q")
+                    .returns("""
+                            v\tts
+                            900001\t2024-01-01T05:00:30.000000Z
+                            """);
+            // v 1..240, 800001..800010 and 810001..810010
+            assertQuery("SELECT count(), sum(v) FROM t WHERE q IS NULL")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\tsum\n260\t16129030\n");
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoreRebuildsPostingIndexMissingKeyFileOfColumnWithOnlyDeadRows() throws Exception {
+        // A write inside the rows of q moves them to a split partition, and leaves the COMPOSITE day with only dead
+        // file rows of q, past every live piece. The next O3 write into the day opens the index of q there.
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 512);
+            setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 50);
+            createCompositeIndexedDay("t", "", false);
+            replaceRangeOfCompositeDay("t");
+            drainWalQueue();
+            execute("ALTER TABLE t ADD COLUMN q SYMBOL INDEX TYPE POSTING");
+            drainWalQueue();
+            insertRowsOfQ();
+            execute("INSERT INTO t (v, s, ts, q) VALUES (900_004, 'k2', '2024-01-01T05:01:00', 'k')");
+            drainWalQueue();
+            final TableToken token = engine.verifyTableName("t");
+            final CompositeDayLayout day = readCompositeDayLayout(token);
+            assertColumnPastLiveRows(day);
+            Assert.assertTrue("setup: no live piece may reach the rows of q, " + day, day.liveFileExtent() <= day.columnTopOfQ());
+            engine.clear();
+            final String[] keyFiles = listFiles(day.dir(), "q.pk");
+            Assert.assertEquals(1, keyFiles.length);
+            Assert.assertTrue(new File(day.dir(), keyFiles[0]).delete());
+            restoreTableFiles(configuration, token);
+            Assert.assertArrayEquals(keyFiles, listFiles(day.dir(), "q.pk"));
+            assertQuery("SELECT v, ts FROM t WHERE q = 'k'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .withPlanContaining("Index forward scan on: q")
+                    .returns("""
+                            v\tts
+                            900001\t2024-01-01T05:00:30.000000Z
+                            900004\t2024-01-01T05:01:00.000000Z
+                            900002\t2024-01-01T05:01:30.000000Z
+                            """);
+            // v 1..60 and 181..240 outlive the replaced range, which holds 830000..830002
+            assertQuery("SELECT count(), sum(v) FROM t WHERE q IS NULL")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\tsum\n123\t2504463\n");
+            execute("INSERT INTO t (v, s, ts, q) VALUES (900_020, 'k1', '2024-01-01T00:30:30', 'k')");
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
+            assertQuery("SELECT v, ts FROM t WHERE q = 'k'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            v\tts
+                            900020\t2024-01-01T00:30:30.000000Z
+                            900001\t2024-01-01T05:00:30.000000Z
+                            900004\t2024-01-01T05:01:00.000000Z
+                            900002\t2024-01-01T05:01:30.000000Z
+                            """);
         });
     }
 
@@ -3170,8 +3505,8 @@ public class CheckpointTest extends AbstractCairoTest {
             setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 512);
             setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 50);
 
-            createCompositeIndexedDay("ci_indexed", ", INDEX(s TYPE POSTING)");
-            createCompositeIndexedDay("ci_plain", "");
+            createCompositeIndexedDay("ci_indexed", ", INDEX(s TYPE POSTING)", true);
+            createCompositeIndexedDay("ci_plain", "", true);
 
             final TableToken token = engine.verifyTableName("ci_indexed");
             final String dayDir;
@@ -6848,25 +7183,48 @@ public class CheckpointTest extends AbstractCairoTest {
         });
     }
 
+    // Column q of the COMPOSITE day starts at or past its live rows, and has file rows below E: rows the live row
+    // count alone does not show
+    private static void assertColumnPastLiveRows(CompositeDayLayout day) {
+        Assert.assertTrue(day.toString(), day.isComposite());
+        Assert.assertTrue("setup: q must start at or past the live rows, " + day, day.columnTopOfQ() >= day.liveRows());
+        Assert.assertTrue("setup: q must have file rows in the day, " + day, day.columnTopOfQ() < day.e());
+    }
+
     /**
      * A day of one row a minute, then two backdated strides rewritten at the shared files' tail. The
      * strides carry a key of their own, 'kz', and land at :30 seconds so no two 'kz' rows share a
      * timestamp. Same shape as {@code CompositeIndexedAsOfJoinTest.createCompositeQuotes}: the day ends
      * up several pieces over one set of column files, with the relocated pieces above the live rows.
+     * Without {@code hasLaterDay}, 2024-01-01 stays the last partition, and the strides are still O3
+     * into it.
      */
-    private static void createCompositeIndexedDay(String table, String index) throws Exception {
+    private static void createCompositeIndexedDay(String table, String index, boolean hasLaterDay) throws Exception {
         execute("CREATE TABLE " + table + " AS (" +
                 " SELECT x::INT v, ('k' || ((x % 2) + 1))::SYMBOL s," +
                 " timestamp_sequence('2024-01-01', 60_000_000L) ts" +
                 " FROM long_sequence(240))" + index + " TIMESTAMP(ts) PARTITION BY DAY WAL");
-        // A later day, so 2024-01-01 is never the active partition and the batches below are O3.
-        execute("INSERT INTO " + table + " VALUES (90_000, 'k1', '2024-01-03T00:00:00.000000Z')");
-        drainWalQueue();
+        if (hasLaterDay) {
+            // A later day, so 2024-01-01 is never the active partition and the batches below are O3.
+            execute("INSERT INTO " + table + " VALUES (90_000, 'k1', '2024-01-03T00:00:00.000000Z')");
+            drainWalQueue();
+        }
         execute("INSERT INTO " + table + " SELECT x::INT + 800_000, 'kz'," +
                 " timestamp_sequence('2024-01-01T02:00:30', 60_000_000L) FROM long_sequence(10)");
         drainWalQueue();
         execute("INSERT INTO " + table + " SELECT x::INT + 810_000, 'kz'," +
                 " timestamp_sequence('2024-01-01T01:00:30', 60_000_000L) FROM long_sequence(10)");
+        drainWalQueue();
+    }
+
+    // Rows of table t past every other row of 2024-01-01: two of key 'k' and one of key 'j'
+    private static void insertRowsOfQ() throws Exception {
+        execute("""
+                INSERT INTO t (v, s, ts, q) VALUES
+                (900_001, 'k1', '2024-01-01T05:00:30', 'k'),
+                (900_002, 'k2', '2024-01-01T05:01:30', 'k'),
+                (900_003, 'k1', '2024-01-01T05:02:30', 'j')
+                """);
         drainWalQueue();
     }
 
@@ -6883,8 +7241,34 @@ public class CheckpointTest extends AbstractCairoTest {
         }
     }
 
+    private static String[] listFiles(File partitionDir, String prefix) {
+        final String[] names = partitionDir.list((_, name) -> name.startsWith(prefix));
+        Assert.assertNotNull(names);
+        Arrays.sort(names);
+        return names;
+    }
+
     private static void removePostingValueFiles(File partitionDir) throws IOException {
         Assert.assertTrue("partition must have a posting value file", removeFiles(partitionDir, "s.pv.") > 0);
+    }
+
+    // The first partition of the table and the top of its column q there, a file row
+    private static CompositeDayLayout readCompositeDayLayout(TableToken token) {
+        try (TableReader reader = engine.getReader(token); Path partitionPath = new Path().of(configuration.getDbRoot()).concat(token)) {
+            final TxReader txFile = reader.getTxFile();
+            final TableReaderMetadata metadata = reader.getMetadata();
+            final long partitionTimestamp = txFile.getPartitionTimestampByIndex(0);
+            TableUtils.setPathForNativePartition(partitionPath, metadata.getTimestampType(), PartitionBy.DAY,
+                    partitionTimestamp, txFile.getPartitionNameTxn(0));
+            return new CompositeDayLayout(
+                    txFile.isPartitionComposite(0),
+                    txFile.getPartitionSize(0),
+                    reader.getGeometry().getLiveFileExtent(0),
+                    reader.getGeometry().getE(0),
+                    reader.getColumnVersionReader().getColumnTop(partitionTimestamp, metadata.getWriterIndex(metadata.getColumnIndex("q"))),
+                    new File(partitionPath.toString())
+            );
+        }
     }
 
     // Returns the head entry txn, its generation count and the txn of its last generation
@@ -6915,6 +7299,15 @@ public class CheckpointTest extends AbstractCairoTest {
                 row.append();
             }
             ww.commitWithParams(lo, MicrosTimestampDriver.floor("2024-01-01T03:00:00.000000Z"), WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE);
+        }
+    }
+
+    private static void restoreTableFiles(CairoConfiguration restoreConfiguration, TableToken token) {
+        try (
+                Path tablePath = new Path().of(configuration.getDbRoot()).concat(token).slash();
+                TableSnapshotRestore restoreAgent = new TableSnapshotRestore(restoreConfiguration)
+        ) {
+            restoreAgent.rebuildTableFiles(tablePath, new AtomicInteger(), false);
         }
     }
 
@@ -6997,6 +7390,216 @@ public class CheckpointTest extends AbstractCairoTest {
                 }
             }
             execute("DROP TABLE t");
+        });
+    }
+
+    // q is added after the rows of both partitions, so it has no rows in either; only the active partition
+    // 2024-01-02 has index files for it
+    private File createTableWithEmptyPostingColumn(boolean hasRebuildMarker) throws Exception {
+        execute("CREATE TABLE t (s SYMBOL, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("INSERT INTO t VALUES ('a', 1, '2024-01-01'), ('b', 2, '2024-01-02')");
+        execute("ALTER TABLE t ADD COLUMN q SYMBOL INDEX TYPE POSTING");
+        engine.clear();
+        final File partDir = new File(new File(configuration.getDbRoot(), engine.verifyTableName("t").getDirName()), "2024-01-02");
+        final String[] keyFiles = listFiles(partDir, "q.pk");
+        Assert.assertEquals(1, keyFiles.length);
+        Assert.assertTrue("setup: q must have a value file", listFiles(partDir, "q.pv").length > 0);
+        if (hasRebuildMarker) {
+            // An earlier restore that stopped inside a rebuild of the index leaves its marker
+            Assert.assertTrue(new File(partDir, keyFiles[0] + ".rebuild").createNewFile());
+        }
+        return partDir;
+    }
+
+    private void assertEmptyPostingColumnRestored(File partDir) throws Exception {
+        Assert.assertArrayEquals(new String[0], listFiles(partDir, "q.p"));
+        execute("INSERT INTO t VALUES ('c', 3, '2024-01-02T01:00:00', 'k')");
+        assertQuery("SELECT v, ts FROM t WHERE q = 'k'")
+                .timestamp("ts")
+                .withPlanContaining("on: q")
+                .returns("""
+                        v\tts
+                        3\t2024-01-02T01:00:00.000000Z
+                        """);
+        assertQuery("SELECT v FROM t WHERE q IS NULL")
+                .returns("v\n1\n2\n");
+        execute("DROP TABLE t");
+    }
+
+    private void testCheckpointRestoreRemovesPostingIndexOfColumnWithNoRows(long keyFileLength, boolean hasRebuildMarker) throws Exception {
+        assertMemoryLeak(() -> {
+            final File partDir = createTableWithEmptyPostingColumn(hasRebuildMarker);
+            if (keyFileLength >= 0) {
+                // Zero bytes after the length cut: no header
+                try (java.io.RandomAccessFile file = new java.io.RandomAccessFile(new File(partDir, listFiles(partDir, "q.pk")[0]), "rw")) {
+                    file.setLength(0);
+                    file.setLength(keyFileLength);
+                }
+            }
+            final TableToken token = engine.verifyTableName("t");
+            try (
+                    Path tablePath = new Path().of(configuration.getDbRoot()).concat(token).slash();
+                    TableSnapshotRestore restoreAgent = new TableSnapshotRestore(configuration)
+            ) {
+                restoreAgent.rebuildTableFiles(tablePath, new AtomicInteger(), false);
+            }
+            assertEmptyPostingColumnRestored(partDir);
+        });
+    }
+
+    // The first restore fails to remove a file whose name ends in failingSuffix; the repeated restore removes it
+    private void testCheckpointRestoreRemovesPostingIndexOfColumnWithNoRowsFailure(
+            String failingSuffix,
+            String expectedError
+    ) throws Exception {
+        assertMemoryLeak(() -> {
+            final File partDir = createTableWithEmptyPostingColumn(true);
+            final String[] keyAndMarkerFiles = listFiles(partDir, "q.pk");
+            final AtomicInteger failures = new AtomicInteger();
+            final FilesFacade failingFacade = new TestFilesFacadeImpl() {
+                @Override
+                public boolean removeQuiet(LPSZ name) {
+                    if (Utf8s.containsAscii(name, Files.SEPARATOR + "q" + failingSuffix)) {
+                        failures.incrementAndGet();
+                        return false;
+                    }
+                    return super.removeQuiet(name);
+                }
+            };
+            final CairoConfiguration failingConfig = new CairoConfigurationWrapper(configuration) {
+                @Override
+                public @NotNull FilesFacade getFilesFacade() {
+                    return failingFacade;
+                }
+            };
+            final TableToken token = engine.verifyTableName("t");
+            try (
+                    Path tablePath = new Path().of(configuration.getDbRoot()).concat(token).slash();
+                    TableSnapshotRestore restoreAgent = new TableSnapshotRestore(failingConfig)
+            ) {
+                try {
+                    restoreAgent.rebuildTableFiles(tablePath, new AtomicInteger(), false);
+                    Assert.fail("expected the restore to fail");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), expectedError);
+                    TestUtils.assertContains(e.getFlyweightMessage(), "2024-01-02");
+                }
+            }
+            Assert.assertEquals(1, failures.get());
+            // The .pk and the marker go last, so the repeated restore finds the column again
+            Assert.assertArrayEquals(keyAndMarkerFiles, listFiles(partDir, "q.pk"));
+
+            try (
+                    Path tablePath = new Path().of(configuration.getDbRoot()).concat(token).slash();
+                    TableSnapshotRestore restoreAgent = new TableSnapshotRestore(configuration)
+            ) {
+                restoreAgent.rebuildTableFiles(tablePath, new AtomicInteger(), false);
+            }
+            assertEmptyPostingColumnRestored(partDir);
+        });
+    }
+
+    // Column q of the COMPOSITE day starts at the day's file extent E: ADD COLUMN sets that top, as does the first
+    // O3 write of q into the day when the day is not the last partition. The rows of q then sit at file rows past
+    // the live row count, and the copy lost the .pk of q. The last of them holds NULL, so the rebuild must index
+    // key 0 past the top too.
+    private void testCheckpointRestoreRebuildsPostingIndexMissingKeyFileOfColumnPastLiveRows(String indexType, boolean hasLaterDay) throws Exception {
+        assertMemoryLeak(() -> {
+            createCompositeIndexedDay("t", "", hasLaterDay);
+            execute("ALTER TABLE t ADD COLUMN q SYMBOL INDEX TYPE " + indexType);
+            drainWalQueue();
+            execute("""
+                    INSERT INTO t (v, s, ts, q) VALUES
+                    (900_001, 'k1', '2024-01-01T05:00:30', 'k'),
+                    (900_002, 'k2', '2024-01-01T05:01:30', 'k'),
+                    (900_003, 'k1', '2024-01-01T05:02:30', 'j'),
+                    (900_004, 'k2', '2024-01-01T05:03:30', NULL)
+                    """);
+            drainWalQueue();
+            final TableToken token = engine.verifyTableName("t");
+            final CompositeDayLayout day = readCompositeDayLayout(token);
+            assertColumnPastLiveRows(day);
+            engine.clear();
+            final String[] keyFiles = listFiles(day.dir(), "q.pk");
+            Assert.assertEquals(1, keyFiles.length);
+            Assert.assertTrue(new File(day.dir(), keyFiles[0]).delete());
+            restoreTableFiles(configuration, token);
+            Assert.assertArrayEquals(keyFiles, listFiles(day.dir(), "q.pk"));
+            assertQuery("SELECT v, ts FROM t WHERE q = 'k'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .withPlanContaining("Index forward scan on: q")
+                    .returns(ROWS_OF_K);
+            assertQuery("SELECT v, ts FROM t WHERE q = 'j'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .withPlanContaining("Index forward scan on: q")
+                    .returns("""
+                            v\tts
+                            900003\t2024-01-01T05:02:30.000000Z
+                            """);
+            // v 1..240, 800001..800010 and 810001..810010 below the top, 900004 past it, and 90000 on the later day
+            assertQuery("SELECT count(), sum(v) FROM t WHERE q IS NULL")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("Index forward scan on: q")
+                    .returns(hasLaterDay ? "count\tsum\n262\t17119034\n" : "count\tsum\n261\t17029034\n");
+            execute("INSERT INTO t (v, s, ts, q) VALUES (900_010, 'k1', '2024-01-01T06:00:30', 'k')");
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
+            assertQuery("SELECT v, ts FROM t WHERE q = 'k'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(ROWS_OF_K + "900010\t2024-01-01T06:00:30.000000Z\n");
+        });
+    }
+
+    // Column q, added to the COMPOSITE last day, starts at the day's file extent E and has no rows there, yet ADD
+    // COLUMN created its index files. The copy caught its .pk before the header was written. With hasLaterDay, a
+    // row of 2024-01-03 makes the write after the restore O3 into the day.
+    private void testCheckpointRestoreRemovesPostingIndexOfCompositeColumnWithNoRows(String indexType, boolean hasLaterDay) throws Exception {
+        assertMemoryLeak(() -> {
+            createCompositeIndexedDay("t", "", false);
+            execute("ALTER TABLE t ADD COLUMN q SYMBOL INDEX TYPE " + indexType);
+            drainWalQueue();
+            if (hasLaterDay) {
+                execute("INSERT INTO t (v, s, ts, q) VALUES (90_000, 'k1', '2024-01-03T00:00:00.000000Z', 'x')");
+                drainWalQueue();
+            }
+            final TableToken token = engine.verifyTableName("t");
+            final CompositeDayLayout day = readCompositeDayLayout(token);
+            Assert.assertTrue(day.toString(), day.isComposite());
+            Assert.assertTrue("setup: q must start past the live rows, " + day, day.columnTopOfQ() > day.liveRows());
+            Assert.assertEquals("setup: q must have no file rows in the day, " + day, day.e(), day.columnTopOfQ());
+            engine.clear();
+            final String[] keyFiles = listFiles(day.dir(), "q.pk");
+            Assert.assertEquals(1, keyFiles.length);
+            Assert.assertTrue("setup: q must have a value file", listFiles(day.dir(), "q.pv").length > 0);
+            try (java.io.RandomAccessFile file = new java.io.RandomAccessFile(new File(day.dir(), keyFiles[0]), "rw")) {
+                file.setLength(0);
+            }
+            restoreTableFiles(configuration, token);
+            Assert.assertArrayEquals(new String[0], listFiles(day.dir(), "q.p"));
+            // v 1..240, 800001..800010 and 810001..810010
+            final String nullCountAndSum = "count\tsum\n260\t16129030\n";
+            assertQuery("SELECT count(), sum(v) FROM t WHERE q IS NULL")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(nullCountAndSum);
+            insertRowsOfQ();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
+            assertQuery("SELECT v, ts FROM t WHERE q = 'k'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .withPlanContaining("Index forward scan on: q")
+                    .returns(ROWS_OF_K);
+            assertQuery("SELECT count(), sum(v) FROM t WHERE q IS NULL")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(nullCountAndSum);
         });
     }
 
@@ -7508,6 +8111,12 @@ public class CheckpointTest extends AbstractCairoTest {
     }
 
     private record CheckpointReleaseEvent(long timestampMicros, CharSequenceLongHashMap tableDirNamesToSeqTxn) {
+    }
+
+    // A partition: its live row count, the furthest file row a live piece reaches (liveFileExtent), the furthest file
+    // row it ever held (e), the file row where its column q starts, and its directory
+    private record CompositeDayLayout(boolean isComposite, long liveRows, long liveFileExtent, long e,
+                                      long columnTopOfQ, File dir) {
     }
 
     /**

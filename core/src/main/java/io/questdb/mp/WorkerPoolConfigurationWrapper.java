@@ -69,6 +69,16 @@ public class WorkerPoolConfigurationWrapper implements DynamicFiberWorkerPoolCon
     }
 
     @Override
+    public int getGroupCount() {
+        return getDelegate().getGroupCount();
+    }
+
+    @Override
+    public int[][] getGroupCpus() {
+        return getDelegate().getGroupCpus();
+    }
+
+    @Override
     public Metrics getMetrics() {
         return getDelegate().getMetrics();
     }

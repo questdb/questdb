@@ -105,6 +105,12 @@ public class LevelTwoPriceArrayFunctionFactory implements FunctionFactory {
             if (pricesArr.isNull() || sizesArr.isNull()) {
                 return Double.NaN;
             }
+            if (sizesArr.getDimCount() != 1) {
+                throw CairoException.nonCritical().position(sizesArgPos).put("not a one-dimensional array");
+            }
+            if (pricesArr.getDimCount() != 1) {
+                throw CairoException.nonCritical().position(pricesArgPos).put("not a one-dimensional array");
+            }
             final int len = pricesArr.getDimLen(0);
             if (sizesArr.getDimLen(0) != len) {
                 throw CairoException.nonCritical().position(sizesArgPos)
@@ -115,9 +121,11 @@ public class LevelTwoPriceArrayFunctionFactory implements FunctionFactory {
             double rt = t; // reduced target
             double pp; // partial price
 
+            final int sizesStride = sizesArr.getStride(0);
+            final int pricesStride = pricesArr.getStride(0);
             for (int i = 0; i < len; i++) {
-                final double size = sizesArr.getDouble(i);
-                final double price = pricesArr.getDouble(i);
+                final double size = sizesArr.getDouble(i * sizesStride);
+                final double price = pricesArr.getDouble(i * pricesStride);
 
                 // add size to acc
                 ta += size;
@@ -154,10 +162,10 @@ public class LevelTwoPriceArrayFunctionFactory implements FunctionFactory {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             TernaryFunction.super.init(symbolTableSource, executionContext);
-            if (ColumnType.decodeArrayDimensionality(sizesArg.getType()) != 1) {
+            if (ColumnType.decodeKnownArrayDimensionality(sizesArg.getType()) > 1) {
                 throw SqlException.$(sizesArgPos, "not a one-dimensional array");
             }
-            if (ColumnType.decodeArrayDimensionality(pricesArg.getType()) != 1) {
+            if (ColumnType.decodeKnownArrayDimensionality(pricesArg.getType()) > 1) {
                 throw SqlException.$(pricesArgPos, "not a one-dimensional array");
             }
         }
