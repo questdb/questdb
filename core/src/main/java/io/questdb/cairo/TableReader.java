@@ -1469,6 +1469,8 @@ public class TableReader implements Closeable, SymbolTableSource {
                 closePartitionColumns(fromBase);
                 openPartitionInfo.setQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_SIZE, -1);
                 Misc.freeObjListIfCloseable(toColumns);
+                // copyColumns() moved these readers out of the indexes list, so nothing else frees them
+                Misc.freeObjList(toIndexReaders, th);
                 throw th;
             } finally {
                 path.trimTo(rootLen);

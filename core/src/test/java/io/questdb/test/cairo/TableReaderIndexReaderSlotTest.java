@@ -31,6 +31,7 @@ import io.questdb.cairo.idx.IndexBwdNullReader;
 import io.questdb.cairo.idx.IndexFwdNullReader;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.RowCursor;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8s;
@@ -183,6 +184,65 @@ public class TableReaderIndexReaderSlotTest extends AbstractCairoTest {
                     Assert.assertSame(indexReader, reader.getIndexReader(0, s, direction));
                 }
             }
+        });
+    }
+
+    @Test
+    public void testFailedReloadThatResizesColumnListFreesMovedIndexReaders() throws Exception {
+        final AtomicInteger failCounter = new AtomicInteger();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                if (
+                        failCounter.get() > 0
+                                && Utf8s.containsAscii(name, "2024-01-01")
+                                && Utf8s.containsAscii(name, Files.SEPARATOR + "r.d")
+                                && failCounter.decrementAndGet() >= 0
+                ) {
+                    return -1;
+                }
+                return super.openRO(name);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            execute("""
+                    CREATE TABLE t (
+                        x LONG,
+                        s1 SYMBOL INDEX TYPE BITMAP,
+                        s2 SYMBOL INDEX TYPE BITMAP,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t VALUES
+                        (1, 'a', 'a', '2024-01-01T10:00:00.000000Z'),
+                        (2, 'b', 'b', '2024-01-01T11:00:00.000000Z')
+                    """);
+            // the pooled reader keeps open index readers of both columns, in both directions
+            try (TableReader reader = getReader("t")) {
+                reader.openPartition(0);
+                for (String column : new String[]{"s1", "s2"}) {
+                    final int columnIndex = reader.getMetadata().getColumnIndex(column);
+                    Assert.assertTrue(reader.getIndexReader(0, columnIndex, IndexReader.DIR_FORWARD).isOpen());
+                    Assert.assertTrue(reader.getIndexReader(0, columnIndex, IndexReader.DIR_BACKWARD).isOpen());
+                }
+            }
+
+            // r becomes a new column instance, and the column count grows from 4 to 10, past a power of two, so the
+            // reload moves the columns and index readers of the open partition into new lists
+            execute("ALTER TABLE t RENAME COLUMN s2 TO r");
+            execute("ALTER TABLE t ADD COLUMN i1 INT, i2 INT, i3 INT, i4 INT, i5 INT, i6 INT");
+
+            // the open of r fails after the readers of s1 moved; the reload must free them
+            failCounter.set(1);
+            assertExceptionNoLeakCheck("SELECT ts FROM t WHERE r = 'a'", -1, "could not open");
+            Assert.assertEquals(0, failCounter.get());
+
+            assertQuery("SELECT ts, s1, r FROM t WHERE s1 = 'a'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .withPlanContaining("Index forward scan on: s1")
+                    .returns("ts\ts1\tr\n2024-01-01T10:00:00.000000Z\ta\ta\n");
         });
     }
 
