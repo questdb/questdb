@@ -111,6 +111,7 @@ import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Before;
 
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.IdentityHashMap;
@@ -125,6 +126,28 @@ import java.util.function.Supplier;
 import static io.questdb.cairo.wal.WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
 
 public class FuzzRunner {
+    // How applyNonWal() recovers from a planted allocate() failure, see setIoFailuresOnAllocate().
+    // ABANDON_ROW leaves the failed row in progress for the newRow() of the next row to cancel, as CSV import does after
+    // a failed append() and ILP UDP after a line it cannot put, writes the row again and goes on with the transaction.
+    public static final int IO_FAILURE_RECOVERY_ABANDON_ROW = 3;
+    // CANCEL_ROW cancels the failed row, as ILP TCP, CSV import with SKIP_ROW and INSERT do, writes the row again and
+    // goes on with the transaction.
+    public static final int IO_FAILURE_RECOVERY_CANCEL_ROW = 2;
+    // POOL returns the writer to the pool, which rolls it back or, when that fails, closes it, and runs the transaction
+    // again. It is the recovery from a failure that distressed the writer.
+    public static final int IO_FAILURE_RECOVERY_POOL = 0;
+    // ROLLBACK cancels the failed row and rolls the writer back, as CSV import with SKIP_ALL does, and runs the
+    // transaction again.
+    public static final int IO_FAILURE_RECOVERY_ROLLBACK = 1;
+    // Where a planted allocate() failure lands, see ioFailureShapeOf(). OTHER is outside the row of an insert: a commit
+    // or another operation, after which applyNonWal() runs the transaction again.
+    public static final int IO_FAILURE_SHAPE_OTHER = 0;
+    // the partition switch of newRow(): the files of the new partition
+    public static final int IO_FAILURE_SHAPE_PARTITION_SWITCH = 2;
+    // a put of a value into a column file or a symbol map, or a NULL that append() writes
+    public static final int IO_FAILURE_SHAPE_ROW_VALUE = 3;
+    // the designated timestamp, which newRow() writes first
+    public static final int IO_FAILURE_SHAPE_TIMESTAMP = 1;
     public final static int MAX_WAL_APPLY_TIME_PER_TABLE_CEIL = 250;
     public static final String TXN_ZERO_SYMBOL_COLUMN = "sym0";
     protected static final Log LOG = LogFactory.getLog(AbstractFuzzTest.class);
@@ -161,6 +184,9 @@ public class FuzzRunner {
     private static final long ROW_ID_PARTITION_SIZE = Rows.toLocalRowID(-1L);
     private static final int SNAPSHOT_SAMPLE_ROWS = 16;
     private static final int SNAPSHOT_TAIL_ROWS = 16;
+    private static final String TABLE_WRITER_CLASS_NAME = TableWriter.class.getName();
+    // the class of the row that TableWriter.newRow() returns
+    private static final String TABLE_WRITER_ROW_CLASS_NAME = TableWriter.class.getName() + "$RowImpl";
     // the rows that applyNonWal() left in progress, see setAbandonedRowsEnabled()
     private final ObjList<AbandonedRow> abandonedRows = new ObjList<>();
     private final TableSequencerAPI.TableSequencerCallback checkNoSuspendedTablesRef;
@@ -197,13 +223,19 @@ public class FuzzRunner {
     private int fuzzRowCount;
     private boolean hasApplySeeds;
     private boolean hasPoolColumnPurgeJob;
+    // an insert of the transaction that applyNonWal() runs had the pending failure of the row path armed, and one
+    // of them counted it down, see applyInsertArmed()
+    private boolean hasRowFailureCountedDown;
     private int ioFailureCount;
     private int ioFailureCreatedCount;
-    // the file whose allocate() calls the planted IO failures fail, see setIoFailureOnAllocate(); null for any file
+    // the file whose allocate() calls the share ioFailureFileNameShare of the planted IO failures fail, see
+    // setIoFailuresOnAllocate()
     private String ioFailureFileName;
-    // picks the recovery of applyNonWal() from a planted IO failure, see setIoFailureRecoveryRnd(); null keeps the
-    // pool recovery
-    private Rnd ioFailureRecoveryRnd;
+    private double ioFailureFileNameShare;
+    // places the allocate() failures of applyNonWal() and picks their recoveries, see setIoFailuresOnAllocate()
+    private Rnd ioFailureRnd;
+    // the planted failures that fired and that the engine handled itself, so that no call of applyNonWal() threw
+    private int ioFailuresAbsorbed;
     private int ioFailuresObserved;
     private boolean isAbandonedRowsEnabled;
     private boolean isIoFailureOnAllocate;
@@ -211,6 +243,7 @@ public class FuzzRunner {
     private boolean isNoSentinelWideningChecked;
     private boolean isO3;
     private boolean isPartitionByPinned;
+    private boolean isRowFailureArmed;
     private boolean isScanningTablesDuringParallelApply;
     private double notSetProb;
     private double nullSetProb;
@@ -221,11 +254,20 @@ public class FuzzRunner {
     private double partitionDropProb;
     private double partitionToNativeProb;
     private double partitionToParquetProb;
+    // the recovery that applyInsert() picked for the failure it rethrows to applyNonWal(), or -1, and where the failure
+    // landed
+    private int pendingIoFailureRecovery = -1;
+    private int pendingIoFailureShape;
+    // ff.failureGenerated() when applyNonWal() last accounted for a planted failure
+    private int plantedFailuresSeen;
     // The chance that a WAL commit or rollback goes through WalWriter.prepareCommit(); 0 keeps the plain path.
     private double preparedCommitProb;
     private double queryProb;
     private double replaceInsertProb;
     private double rollbackProb;
+    // the allocate() calls of the inserts of applyNonWal() left before a planted failure fires, or 0, see
+    // plantAllocateFailure()
+    private int rowFailureCountdown;
     private long s0;
     private long s1;
     private double setParquetEncodingProb;
@@ -428,7 +470,11 @@ public class FuzzRunner {
         ) {
             int transactionSize = transactions.size();
             Rnd rnd = newApplyRnd();
-            int failuresObserved = 0;
+            plantedFailuresSeen = 0;
+            rowFailureCountdown = 0;
+            isRowFailureArmed = false;
+            hasRowFailureCountedDown = false;
+            pendingIoFailureRecovery = -1;
             for (int i = 0; i < transactionSize; i++) {
                 if (writer == null) {
                     // A prior transaction's IO-failure recovery could not re-acquire the writer: a re-armed
@@ -438,13 +484,16 @@ public class FuzzRunner {
                     // throws from here.
                     writer = TestUtils.getWriter(engine, tableName);
                 }
-                if (ioFailureCreatedCount < ioFailureCount && failuresObserved == ff.failureGenerated()) {
-                    // Maybe it's time to plant an IO failure
-                    int nextFailureInTransactions = (transactions.size() - i) / (ioFailureCount - ioFailureCreatedCount);
-                    if (nextFailureInTransactions == 0 || rnd.nextInt(nextFailureInTransactions) == 0) {
-                        ff.setAllocateOnly(isIoFailureOnAllocate, ioFailureFileName);
-                        ff.setToFailAfter(rnd.nextInt((int) (writer.getColumnCount() * 1.5)));
-                        ioFailureCreatedCount++;
+                if (ioFailureCreatedCount < ioFailureCount && plantedFailuresSeen == ff.failureGenerated()) {
+                    if (isIoFailureOnAllocate) {
+                        plantAllocateFailure(writer, transactionSize - i);
+                    } else {
+                        // Maybe it's time to plant an IO failure
+                        int nextFailureInTransactions = (transactions.size() - i) / (ioFailureCount - ioFailureCreatedCount);
+                        if (nextFailureInTransactions == 0 || rnd.nextInt(nextFailureInTransactions) == 0) {
+                            ff.setToFailAfter(rnd.nextInt((int) (writer.getColumnCount() * 1.5)));
+                            ioFailureCreatedCount++;
+                        }
                     }
                 }
 
@@ -473,6 +522,10 @@ public class FuzzRunner {
                                 }
                                 continue;
                             }
+                        }
+                        if (isIoFailureOnAllocate && operation instanceof FuzzInsertOperation insertOperation) {
+                            applyInsert(insertOperation, writerCopy, transaction.getNoCommitIntervals(), rnd);
+                            continue;
                         }
                         // Non-wal tables don't support replace range commits
                         // we simulate it by excluding from the commit all the rows that will be replaced
@@ -505,24 +558,38 @@ public class FuzzRunner {
                 } catch (CairoException | CairoError e) {
                     boolean housekeeping = (e instanceof CairoException) && ((CairoException) e).isHousekeeping();
                     int failures = ff.failureGenerated();
-                    if (failures > failuresObserved) {
-                        failuresObserved = failures;
+                    if (failures > plantedFailuresSeen) {
+                        plantedFailuresSeen = failures;
                         ioFailuresObserved++;
                         LOG.info().$("expected IO failure observed: ").$((Throwable) e).$();
-                        final boolean isWriterKeptMode = ioFailureRecoveryRnd != null && ioFailureRecoveryRnd.nextBoolean();
+                        final int shape;
+                        final int recovery;
+                        if (pendingIoFailureRecovery != -1) {
+                            // applyInsert() checked the writer after the failure and picked the recovery
+                            shape = pendingIoFailureShape;
+                            recovery = pendingIoFailureRecovery;
+                            pendingIoFailureRecovery = -1;
+                        } else {
+                            shape = IO_FAILURE_SHAPE_OTHER;
+                            recovery = isIoFailureOnAllocate && ioFailureRnd.nextBoolean() ? IO_FAILURE_RECOVERY_ROLLBACK : IO_FAILURE_RECOVERY_POOL;
+                        }
                         boolean isWriterKept = false;
                         // a transaction that reopens the writer or recreates the table leaves no writer to keep
-                        if (isWriterKeptMode && writer != null && writer == writerCopy && !writer.isDistressed()
+                        if (recovery == IO_FAILURE_RECOVERY_ROLLBACK && writer != null && writer == writerCopy && !writer.isDistressed()
                                 && !(transaction.operationList.size() > 0 && transaction.operationList.getQuick(0) instanceof FuzzDropCreateTableOperation)) {
                             try {
                                 writer.rollback();
                                 isWriterKept = true;
                             } catch (CairoException | CairoError rollbackFailure) {
-                                // rollback() distresses a writer that a failed put left with a row in progress
+                                if (shape != IO_FAILURE_SHAPE_OTHER) {
+                                    // applyInsert() cancelled the failed row, and nothing else of the transaction failed
+                                    throw new AssertionError(ioFailureContext(shape, recovery) + ": rollback failed", rollbackFailure);
+                                }
+                                // e.g. a commit that failed part way
                                 LOG.info().$("kept writer could not roll back: ").$((Throwable) rollbackFailure).$();
                             }
                         }
-                        ioFailureRecoveries.add(new IoFailureRecovery(ff.getFailureStack(), isWriterKeptMode, isWriterKept));
+                        ioFailureRecoveries.add(new IoFailureRecovery(ff.getFailureStack(), shape, recovery, isWriterKept));
                         if (!isWriterKept) {
                             writer = Misc.free(writer);
                         }
@@ -561,8 +628,8 @@ public class FuzzRunner {
                     purgeAndReloadReaders(reloadRnd, rdr1, rdr2, purgeJob, columnPurgeJob, reloadProbability);
                 } catch (CairoException | CairoError e) {
                     int failures = ff.failureGenerated();
-                    if (failures > failuresObserved) {
-                        failuresObserved = failures;
+                    if (failures > plantedFailuresSeen) {
+                        plantedFailuresSeen = failures;
                         ioFailuresObserved++;
                         LOG.info().$("expected IO failure observed: ").$((Throwable) e).$();
                         readerSnapshots.remove(rdr1);
@@ -578,9 +645,35 @@ public class FuzzRunner {
                         throw e;
                     }
                 }
+
+                if (isIoFailureOnAllocate && ff.failureGenerated() > plantedFailuresSeen) {
+                    // The engine handled the failure itself, as it does for a _meta.swp file that it cannot create:
+                    // it tries the next name. Account for the failure, so that the next one is planted. A failure in
+                    // the row of an insert must not go unnoticed: the row would lose a value.
+                    final int shape = ioFailureShapeOf(ff.getFailureStack());
+                    if (shape != IO_FAILURE_SHAPE_OTHER) {
+                        throw new AssertionError(ioFailureContext(shape, -1) + ": no call threw");
+                    }
+                    LOG.info().$("absorbed IO failure [stack=").$(Arrays.toString(ff.getFailureStack())).I$();
+                    plantedFailuresSeen = ff.failureGenerated();
+                    ioFailuresAbsorbed++;
+                }
+                if (rowFailureCountdown > 0 && isRowFailureArmed && !hasRowFailureCountedDown) {
+                    // The inserts of the transaction allocated nothing: out-of-order rows go to memory, and the O3
+                    // commit writes the files. The failure counts every allocate() call from now on.
+                    ff.setToFailAfter(rowFailureCountdown);
+                    rowFailureCountdown = 0;
+                }
+                isRowFailureArmed = false;
+                hasRowFailureCountedDown = false;
             }
             runColumnPurgeJob(columnPurgeJob);
         } finally {
+            if (isIoFailureOnAllocate) {
+                logIoFailureRecoveries();
+            }
+            rowFailureCountdown = 0;
+            pendingIoFailureRecovery = -1;
             // Don't mess simulating failures anymore, we are done here.
             ff.clearFailures();
             Misc.free(rdr1);
@@ -933,6 +1026,14 @@ public class FuzzRunner {
 
     public ObjList<IoFailureRecovery> getIoFailureRecoveries() {
         return ioFailureRecoveries;
+    }
+
+    /**
+     * The IO failures that applyNonWal() planted that fired and that the engine handled itself, see
+     * {@link #setIoFailuresOnAllocate}.
+     */
+    public int getIoFailuresAbsorbed() {
+        return ioFailuresAbsorbed;
     }
 
     /**
@@ -1333,24 +1434,23 @@ public class FuzzRunner {
     }
 
     /**
-     * When true, the IO failures that applyNonWal() plants fail allocate() calls only: the allocation of disk space
-     * for the next page of a column file, or for the files that a partition switch opens. With a file name, only
-     * the allocate() calls of the files of that name, e.g. ts.d for the designated timestamp column.
+     * Makes the IO failures that applyNonWal() plants fail allocate() calls only: the allocation of disk space for
+     * the next page of a column file or of a symbol map, or for the files that a partition switch opens.
+     * <p>
+     * Two in three failures count the allocate() calls of inserts only, so that they land in the row of an insert:
+     * in its designated timestamp, its partition switch or a value. The others count every allocate() call, those of
+     * commits included. With a file name, the share fileNameShare of the failures, from 0 to 1, count the allocate()
+     * calls of the files of that name only, e.g. ts.d for the designated timestamp column, whose page switches are
+     * few among those of all columns. After a failure in a row, applyNonWal() checks the writer: a failed designated
+     * timestamp or value leaves it usable and as before the row, a failed partition switch distresses it. Then it
+     * recovers as the users of the writer do, see IO_FAILURE_RECOVERY_*, and checks the writer again. ioFailureRnd
+     * places the failures and picks the recoveries, and the apply draws nothing more from its own Rnd.
      */
-    public void setIoFailureOnAllocate(boolean isIoFailureOnAllocate, @Nullable String ioFailureFileName) {
-        this.isIoFailureOnAllocate = isIoFailureOnAllocate;
-        this.ioFailureFileName = ioFailureFileName;
-    }
-
-    /**
-     * With a Rnd, applyNonWal() draws from it, for each planted IO failure it observes, how it recovers: it keeps
-     * the writer, as ILP and CSV import keep the writer after a failed row, or it returns the writer to the pool.
-     * A kept writer is rolled back, unless the failure distressed it, and retries the transaction; a distressed
-     * writer, or one whose rollback fails, goes back to the pool, which closes it. Without a Rnd, the default,
-     * the writer always goes back to the pool, and the run draws nothing more from the Rnd of the apply.
-     */
-    public void setIoFailureRecoveryRnd(Rnd ioFailureRecoveryRnd) {
-        this.ioFailureRecoveryRnd = ioFailureRecoveryRnd;
+    public void setIoFailuresOnAllocate(Rnd ioFailureRnd, @Nullable String fileName, double fileNameShare) {
+        this.isIoFailureOnAllocate = true;
+        this.ioFailureRnd = ioFailureRnd;
+        this.ioFailureFileName = fileName;
+        this.ioFailureFileNameShare = fileNameShare;
     }
 
     /**
@@ -1472,6 +1572,13 @@ public class FuzzRunner {
         this.ff = new FailureFileFacade(engine.getConfiguration().getFilesFacade());
     }
 
+    // the rows of the writer, those of its transaction and its max timestamp are as before the failed row
+    private static void assertRowState(String context, TableWriter writer, long rowCount, long uncommittedRowCount, long maxTimestamp) {
+        Assert.assertEquals(context + ": rows", rowCount, writer.size());
+        Assert.assertEquals(context + ": uncommitted rows", uncommittedRowCount, writer.getUncommittedRowCount());
+        Assert.assertEquals(context + ": max timestamp", maxTimestamp, writer.getMaxTimestamp());
+    }
+
     // the first line that differs between two printed results, with the header line
     private static String firstDifference(String before, String after) {
         final String[] beforeLines = before.split("\n", -1);
@@ -1490,6 +1597,52 @@ public class FuzzRunner {
     // Tables with different designated timestamp types need separate source tables
     private static String getDataTempTableName(int timestampType) {
         return timestampType == ColumnType.TIMESTAMP_NANO ? "data_temp_ns" : "data_temp";
+    }
+
+    // what an assertion about a planted IO failure prints: where it landed and the recovery, -1 for none yet
+    private static String ioFailureContext(int shape, int recovery) {
+        return "IO failure [at=" + ioFailureShapeName(shape) + ", recovery=" + ioFailureRecoveryName(recovery) + ']';
+    }
+
+    private static String ioFailureRecoveryName(int recovery) {
+        return switch (recovery) {
+            case IO_FAILURE_RECOVERY_POOL -> "pool";
+            case IO_FAILURE_RECOVERY_ROLLBACK -> "rollback";
+            case IO_FAILURE_RECOVERY_CANCEL_ROW -> "cancel_row";
+            case IO_FAILURE_RECOVERY_ABANDON_ROW -> "abandon_row";
+            default -> "none";
+        };
+    }
+
+    private static String ioFailureShapeName(int shape) {
+        return switch (shape) {
+            case IO_FAILURE_SHAPE_TIMESTAMP -> "timestamp";
+            case IO_FAILURE_SHAPE_PARTITION_SWITCH -> "partition_switch";
+            case IO_FAILURE_SHAPE_ROW_VALUE -> "row_value";
+            default -> "other";
+        };
+    }
+
+    // Where a planted allocate() failure landed, by the stack of the call it failed. The designated timestamp and the
+    // partition switch are steps of newRow(); a value, or a NULL that append() writes, is a step of the row it started.
+    private static int ioFailureShapeOf(StackTraceElement[] failureStack) {
+        if (failureStack != null) {
+            for (StackTraceElement frame : failureStack) {
+                if (TABLE_WRITER_CLASS_NAME.equals(frame.getClassName())) {
+                    switch (frame.getMethodName()) {
+                        case "updateMaxTimestamp":
+                            return IO_FAILURE_SHAPE_TIMESTAMP;
+                        case "switchPartition":
+                            return IO_FAILURE_SHAPE_PARTITION_SWITCH;
+                        default:
+                            break;
+                    }
+                } else if (TABLE_WRITER_ROW_CLASS_NAME.equals(frame.getClassName())) {
+                    return IO_FAILURE_SHAPE_ROW_VALUE;
+                }
+            }
+        }
+        return IO_FAILURE_SHAPE_OTHER;
     }
 
     // the text printSql() shows for a NULL of the type
@@ -1608,6 +1761,105 @@ public class FuzzRunner {
             Assert.assertEquals("expected 0 errors in partition mutation control", 0, engine.getPartitionOverwriteControl().getErrorCount());
         } finally {
             Misc.freeObjListAndClear(transactions);
+        }
+    }
+
+    // Applies an insert of applyNonWal(), with the planted failure armed for its allocate() calls when one of the row
+    // path is pending. When a planted failure fires in its row, checks the writer, then recovers as drawn: with
+    // CANCEL_ROW and ABANDON_ROW, writes the row again and returns, so that the transaction goes on; with ROLLBACK and
+    // POOL, or when the failure distressed the writer, rethrows, so that applyNonWal() runs the transaction again.
+    private void applyInsert(FuzzInsertOperation insertOperation, TableWriter writer, LongList excludedTsIntervals, Rnd rnd) {
+        final long rowCountBefore = writer.size();
+        final long uncommittedRowCountBefore = writer.getUncommittedRowCount();
+        final long maxTimestampBefore = writer.getMaxTimestamp();
+        try {
+            applyInsertArmed(insertOperation, writer, excludedTsIntervals, rnd);
+        } catch (CairoException | CairoError e) {
+            if (ff.failureGenerated() == plantedFailuresSeen) {
+                throw e;
+            }
+            final int shape = ioFailureShapeOf(ff.getFailureStack());
+            final TableWriter.Row failedRow = insertOperation.takeFailedRow();
+            final String failure = ioFailureContext(shape, -1);
+            switch (shape) {
+                case IO_FAILURE_SHAPE_TIMESTAMP -> {
+                    // newRow() takes back the row whose designated timestamp it could not write
+                    Assert.assertNull(failure, failedRow);
+                    Assert.assertFalse(failure, writer.isDistressed());
+                    assertRowState(failure, writer, rowCountBefore, uncommittedRowCountBefore, maxTimestampBefore);
+                }
+                case IO_FAILURE_SHAPE_PARTITION_SWITCH -> {
+                    // the writer must not commit what a switch that failed part way left
+                    Assert.assertNull(failure, failedRow);
+                    Assert.assertTrue(failure, writer.isDistressed());
+                }
+                case IO_FAILURE_SHAPE_ROW_VALUE -> {
+                    Assert.assertNotNull(failure, failedRow);
+                    Assert.assertFalse(failure, writer.isDistressed());
+                }
+                default -> {
+                    // no expectation, e.g. the first row of an empty table, which opens its partition
+                }
+            }
+            final int recovery;
+            if (writer.isDistressed()) {
+                recovery = IO_FAILURE_RECOVERY_POOL;
+            } else if (shape == IO_FAILURE_SHAPE_OTHER) {
+                recovery = ioFailureRnd.nextBoolean() ? IO_FAILURE_RECOVERY_ROLLBACK : IO_FAILURE_RECOVERY_POOL;
+            } else {
+                recovery = ioFailureRnd.nextInt(4);
+            }
+            final String context = ioFailureContext(shape, recovery);
+            if (failedRow != null && (recovery == IO_FAILURE_RECOVERY_CANCEL_ROW || recovery == IO_FAILURE_RECOVERY_ROLLBACK)) {
+                // As ILP TCP, CSV import and INSERT do, right after the failed put, when the disk is still full: the
+                // cancel must need no disk space, so it must map no page that the files lack.
+                ff.setDiskFullOnCurrentThread(true);
+                try {
+                    failedRow.cancel();
+                } catch (Throwable th) {
+                    throw new AssertionError(context + ": cancel failed on a full disk", th);
+                } finally {
+                    ff.setDiskFullOnCurrentThread(false);
+                }
+                Assert.assertFalse(context, writer.isDistressed());
+                assertRowState(context, writer, rowCountBefore, uncommittedRowCountBefore, maxTimestampBefore);
+            }
+            if (recovery == IO_FAILURE_RECOVERY_POOL || recovery == IO_FAILURE_RECOVERY_ROLLBACK) {
+                pendingIoFailureShape = shape;
+                pendingIoFailureRecovery = recovery;
+                throw e;
+            }
+            plantedFailuresSeen = ff.failureGenerated();
+            ioFailuresObserved++;
+            LOG.info().$("expected IO failure observed, the transaction goes on [recovery=").$(context)
+                    .$(", ex=").$((Throwable) e).I$();
+            // The planted failure fires once, so the row goes in now. With ABANDON_ROW, the newRow() of the row cancels
+            // the failed row first.
+            final int appendedRowCount = insertOperation.applyRow(rnd, writer, excludedTsIntervals) == FuzzInsertOperation.ROW_APPENDED ? 1 : 0;
+            Assert.assertFalse(context, writer.isDistressed());
+            Assert.assertEquals(context + ": rows", rowCountBefore + appendedRowCount, writer.size());
+            Assert.assertEquals(context + ": uncommitted rows", uncommittedRowCountBefore + appendedRowCount, writer.getUncommittedRowCount());
+            ioFailureRecoveries.add(new IoFailureRecovery(ff.getFailureStack(), shape, recovery, true));
+        }
+    }
+
+    // applies the insert with the pending failure of the row path armed for the allocate() calls of this thread, the
+    // only calls that count it down: those of commits and of other operations do not
+    private void applyInsertArmed(FuzzInsertOperation insertOperation, TableWriter writer, LongList excludedTsIntervals, Rnd rnd) {
+        if (rowFailureCountdown == 0) {
+            insertOperation.applyRow(rnd, writer, excludedTsIntervals);
+            return;
+        }
+        ff.setToFailAfterOnCurrentThread(rowFailureCountdown);
+        isRowFailureArmed = true;
+        try {
+            insertOperation.applyRow(rnd, writer, excludedTsIntervals);
+        } finally {
+            final int callsLeft = Math.max(ff.getOsCallsCount(), 0);
+            hasRowFailureCountedDown |= callsLeft < rowFailureCountdown;
+            rowFailureCountdown = callsLeft;
+            // disarmed: the count goes below zero, which never fires
+            ff.setToFailAfterOnCurrentThread(0);
         }
     }
 
@@ -2788,6 +3040,54 @@ public class FuzzRunner {
         return getReader(tableName);
     }
 
+    // the planted failures of applyNonWal() by where they landed and how it recovered, see setIoFailuresOnAllocate()
+    private void logIoFailureRecoveries() {
+        final StringSink summary = new StringSink();
+        for (int shape = IO_FAILURE_SHAPE_OTHER; shape <= IO_FAILURE_SHAPE_ROW_VALUE; shape++) {
+            for (int recovery = IO_FAILURE_RECOVERY_POOL; recovery <= IO_FAILURE_RECOVERY_ABANDON_ROW; recovery++) {
+                int count = 0;
+                for (int i = 0, n = ioFailureRecoveries.size(); i < n; i++) {
+                    final IoFailureRecovery ioFailureRecovery = ioFailureRecoveries.getQuick(i);
+                    if (ioFailureRecovery.shape == shape && ioFailureRecovery.recovery == recovery) {
+                        count++;
+                    }
+                }
+                if (count > 0) {
+                    if (summary.length() > 0) {
+                        summary.put(' ');
+                    }
+                    summary.put(ioFailureShapeName(shape)).put('/').put(ioFailureRecoveryName(recovery)).put('=').put(count);
+                }
+            }
+        }
+        LOG.info().$("planted IO failures [observed=").$(ioFailuresObserved)
+                .$(", absorbed=").$(ioFailuresAbsorbed)
+                .$(", recoveries=").$(summary)
+                .I$();
+    }
+
+    // Plants the next allocate() failure of applyNonWal(), unless one is pending, at a pace that spreads the failures
+    // left over the transactions left. Two in three count only the allocate() calls of inserts, see applyInsertArmed(),
+    // the others every allocate() call.
+    private void plantAllocateFailure(TableWriter writer, int transactionsLeft) {
+        if (rowFailureCountdown > 0 || ff.isArmed()) {
+            return;
+        }
+        final int nextFailureInTransactions = transactionsLeft / (ioFailureCount - ioFailureCreatedCount);
+        if (nextFailureInTransactions == 0 || ioFailureRnd.nextInt(nextFailureInTransactions) == 0) {
+            // the files of one name make a few allocate() calls per transaction, those of all columns about one each
+            final String fileName = ioFailureFileName != null && ioFailureRnd.nextDouble() < ioFailureFileNameShare ? ioFailureFileName : null;
+            final int callCount = 1 + ioFailureRnd.nextInt(fileName != null ? 3 : Math.max(1, (int) (writer.getColumnCount() * 1.5)));
+            ff.setAllocateOnly(true, fileName);
+            if (ioFailureRnd.nextInt(3) > 0) {
+                rowFailureCountdown = callCount;
+            } else {
+                ff.setToFailAfter(callCount);
+            }
+            ioFailureCreatedCount++;
+        }
+    }
+
     private String printReaderRows(TableReader reader, LongList rowIds) {
         final StringSink rows = new StringSink();
         final TestTableReaderRecord record = new TestTableReaderRecord();
@@ -3550,18 +3850,22 @@ public class FuzzRunner {
     }
 
     /**
-     * A planted IO failure that applyNonWal() observed: the stack of the call it failed, and how the apply recovered.
+     * A planted IO failure that applyNonWal() observed: the stack of the call it failed, where it landed, and how the
+     * apply recovered, see {@link #setIoFailuresOnAllocate}.
      */
     public static class IoFailureRecovery {
         public final StackTraceElement[] failureStack;
-        // the apply kept the writer: the failure did not distress it, and the rollback succeeded
+        // the writer went on: with the transaction after CANCEL_ROW or ABANDON_ROW, or with its next try after ROLLBACK
         public final boolean isWriterKept;
-        // the apply picked to keep the writer, see setIoFailureRecoveryRnd()
-        public final boolean isWriterKeptMode;
+        // IO_FAILURE_RECOVERY_*
+        public final int recovery;
+        // IO_FAILURE_SHAPE_*
+        public final int shape;
 
-        IoFailureRecovery(StackTraceElement[] failureStack, boolean isWriterKeptMode, boolean isWriterKept) {
+        IoFailureRecovery(StackTraceElement[] failureStack, int shape, int recovery, boolean isWriterKept) {
             this.failureStack = failureStack;
-            this.isWriterKeptMode = isWriterKeptMode;
+            this.shape = shape;
+            this.recovery = recovery;
             this.isWriterKept = isWriterKept;
         }
     }

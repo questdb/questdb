@@ -733,9 +733,13 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     @Test
     public void testNonWalIoFailuresAtPageSwitches() throws Exception {
         // Column files grow by pages of the smallest size, and the IO failures planted in the non-WAL apply fail
-        // allocate() calls, so they land on page switches of column files, the designated timestamp included, and
-        // on partition switches. After a failure, the apply keeps the writer, as ILP and CSV import do, or returns
-        // it to the pool. The non-WAL table must still match the WAL tables.
+        // allocate() calls. Two in three count the calls of inserts only, so that they land in the row of an insert:
+        // on a page switch of a column file, the designated timestamp's first, or on the files of a new partition.
+        // After each failure, the apply checks the writer and recovers as a user of the writer does: it cancels the
+        // failed row, as ILP TCP, CSV import and INSERT do, or leaves it for the next row to cancel, as CSV import
+        // after a failed append() and ILP UDP do, then writes the row again and goes on with the transaction; or it
+        // rolls the writer back, or returns it to the pool, and runs the transaction again. Then it checks the writer
+        // again, and the non-WAL table must still match the WAL tables.
         Rnd rnd = generateRandom(LOG);
         setTestParams(rnd);
         // after setTestParams(), which can set the test up again
@@ -762,15 +766,16 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 0.0,
                 0.0
         );
-        // In-order transactions append their rows through newRow(), out-of-order ones through the O3 commit. Without
-        // type changes, the no-sentinel setting only makes the generator write in order.
-        final boolean isInOrder = rnd.nextBoolean();
+        // Three in four runs write in order, through newRow(), whose files the failures hit. Out-of-order rows go to
+        // memory, so the failures of the other runs hit the O3 commit. Without type changes, the no-sentinel setting
+        // only makes the generator write in order.
+        final boolean isInOrder = rnd.nextInt(4) > 0;
         fuzzer.setNoSentinelTypeChangeEnabled(isInOrder);
         fuzzer.setFuzzCounts(!isInOrder && rnd.nextBoolean(), 50_000, 50, 20, 10, 1000, 100, 3 + rnd.nextInt(8), -1, 5 + rnd.nextInt(6));
-        // a third of the runs fail the designated timestamp column only, the first value of each row
-        fuzzer.setIoFailureOnAllocate(true, rnd.nextInt(3) == 0 ? "ts.d" : null);
-        fuzzer.setIoFailureRecoveryRnd(new Rnd(rnd.nextLong(), rnd.nextLong()));
+        // a third of the failures fail the designated timestamp column only, the first value of each row
+        fuzzer.setIoFailuresOnAllocate(new Rnd(rnd.nextLong(), rnd.nextLong()), "ts.d", 1.0 / 3);
         runFuzz(rnd);
+        Assert.assertTrue("no planted IO failure fired", fuzzer.getIoFailuresObserved() > 0);
     }
 
     @Test

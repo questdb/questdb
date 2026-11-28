@@ -42,8 +42,14 @@ import io.questdb.std.CarrierLocal;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.AbstractTest;
 import io.questdb.test.cairo.TestRecord;
+import org.jetbrains.annotations.Nullable;
 
 public class FuzzInsertOperation implements FuzzTransactionOperation, QuietCloseable {
+    // what applyRow() did with the row
+    public static final int ROW_ABANDONED = 3;
+    public static final int ROW_APPENDED = 0;
+    public static final int ROW_CANCELLED = 1;
+    public static final int ROW_SKIPPED = 2;
     public final static int[] SUPPORTED_COLUMN_TYPES = new int[]{
             ColumnType.INT,
             ColumnType.LONG,
@@ -86,6 +92,8 @@ public class FuzzInsertOperation implements FuzzTransactionOperation, QuietClose
     private final double strLen;
     private final String[] symbols;
     private final long timestamp;
+    // the row that the last apply left in progress when a put or append() threw, see takeFailedRow()
+    private TableWriter.Row failedRow;
 
     public FuzzInsertOperation(
             long seed1,
@@ -120,7 +128,7 @@ public class FuzzInsertOperation implements FuzzTransactionOperation, QuietClose
 
     @Override
     public boolean apply(Rnd rnd, CairoEngine engine, TableWriterAPI tableWriter, int virtualTimestampIndex, LongList excludedTsIntervals) {
-        applyRow(rnd, tableWriter, virtualTimestampIndex, excludedTsIntervals, false);
+        applyRow0(rnd, tableWriter, virtualTimestampIndex, excludedTsIntervals, false);
         return false;
     }
 
@@ -132,11 +140,24 @@ public class FuzzInsertOperation implements FuzzTransactionOperation, QuietClose
      * @return true when the row stays in progress
      */
     public boolean applyAbandoningCancelledRow(Rnd rnd, TableWriter writer, LongList excludedTsIntervals) {
-        return applyRow(rnd, writer, -1, excludedTsIntervals, true);
+        return applyRow0(rnd, writer, -1, excludedTsIntervals, true) == ROW_ABANDONED;
+    }
+
+    /**
+     * Applies the operation to the writer of a non-WAL table, as {@link #apply} does, and tells what it did with the
+     * row. When a put or append() throws, the row stays in progress, neither appended nor cancelled, and
+     * {@link #takeFailedRow()} returns it, so that the caller can recover as a user of the writer does.
+     *
+     * @return {@link #ROW_APPENDED}, {@link #ROW_CANCELLED}, or {@link #ROW_SKIPPED} for a timestamp in an excluded
+     * interval
+     */
+    public int applyRow(Rnd rnd, TableWriter writer, LongList excludedTsIntervals) {
+        return applyRow0(rnd, writer, -1, excludedTsIntervals, false);
     }
 
     @Override
     public void close() {
+        failedRow = null;
     }
 
     public double getNullSet() {
@@ -155,10 +176,21 @@ public class FuzzInsertOperation implements FuzzTransactionOperation, QuietClose
         return timestamp;
     }
 
-    // returns true when the row stays in progress
-    private boolean applyRow(Rnd rnd, TableWriterAPI tableWriter, int virtualTimestampIndex, LongList excludedTsIntervals, boolean isCancelledRowAbandoned) {
+    /**
+     * The row that the last apply left in progress when a put or append() threw, or null when it threw none, or
+     * when newRow() threw: a failed newRow() leaves no row. Forgets the row.
+     */
+    @Nullable
+    public TableWriter.Row takeFailedRow() {
+        final TableWriter.Row row = failedRow;
+        failedRow = null;
+        return row;
+    }
+
+    private int applyRow0(Rnd rnd, TableWriterAPI tableWriter, int virtualTimestampIndex, LongList excludedTsIntervals, boolean isCancelledRowAbandoned) {
+        failedRow = null;
         if (excludedTsIntervals != null && IntervalUtils.isInIntervals(excludedTsIntervals, timestamp)) {
-            return false;
+            return ROW_SKIPPED;
         }
 
         rnd.reset(this.s1, this.s0);
@@ -170,7 +202,25 @@ public class FuzzInsertOperation implements FuzzTransactionOperation, QuietClose
         final TestRecord.ArrayBinarySequence binarySequence = tlBinSeq.get();
         final Utf8StringSink utf8StringSink = tlUtf8.get();
 
-        TableWriter.Row row = tableWriter.newRow(timestamp);
+        final TableWriter.Row row = tableWriter.newRow(timestamp);
+        try {
+            return applyRowValues(rnd, row, metadata, tempList, binarySequence, utf8StringSink, virtualTimestampIndex, isCancelledRowAbandoned);
+        } catch (Throwable th) {
+            failedRow = row;
+            throw th;
+        }
+    }
+
+    private int applyRowValues(
+            Rnd rnd,
+            TableWriter.Row row,
+            RecordMetadata metadata,
+            IntList tempList,
+            TestRecord.ArrayBinarySequence binarySequence,
+            Utf8StringSink utf8StringSink,
+            int virtualTimestampIndex,
+            boolean isCancelledRowAbandoned
+    ) {
         // this is hack for populating a table without designated timestamp
         if (virtualTimestampIndex != -1) {
             row.putTimestamp(virtualTimestampIndex, timestamp);
@@ -206,13 +256,13 @@ public class FuzzInsertOperation implements FuzzTransactionOperation, QuietClose
 
         if (columnCount < metadata.getColumnCount()) {
             if (isCancelledRowAbandoned) {
-                return true;
+                return ROW_ABANDONED;
             }
             row.cancel();
-        } else {
-            row.append();
+            return ROW_CANCELLED;
         }
-        return false;
+        row.append();
+        return ROW_APPENDED;
     }
 
     private int nextVariableColumnLen(Rnd rnd) {

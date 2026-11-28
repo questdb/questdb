@@ -36,7 +36,6 @@ import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.griffin.SqlException;
-import io.questdb.std.Files;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
@@ -54,6 +53,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.io.File;
+import java.util.Arrays;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -73,40 +73,17 @@ public class FuzzRunnerTest extends AbstractCairoTest {
     // Ample budget: a couple of 100ms backoffs recover well within it even under a slow sleep, so the
     // retry-then-succeed tests never flake on timing.
     private static final long AMPLE_RETRY_TIMEOUT_MILLIS = 10_000;
-    // the seeds of the runs of testIoFailureShapesInNewRow(), which stops once it has seen every shape
+    // The seeds of the runs of testIoFailureShapesAndRecoveries(), which stops once it has seen every shape. The first
+    // run takes every shape with every recovery. It fails when any one of these fixes is reverted: the page limits that
+    // a failed page switch clears, the designated timestamp that newRow() writes before txWriter counts it, the take
+    // back of a row whose designated timestamp failed, the cancel that maps no page, and the cancel by newRow() of a
+    // row that its caller left unfinished. The other runs back it up in pairs.
     private static final long[][] IO_FAILURE_SHAPE_SEEDS = {
-            {2002783120652701L, 5309033439831L},
-            {2256845828445918L, 2802754416809L},
-            {7671341247540589L, 1560157888921L},
-            {1843931136871022L, 5089747908747L},
-            {6422501460899537L, 8381094320374L},
-            {5046113542687712L, 5894498626988L},
-            {8829960785319307L, 3808074611645L},
-            {4806572383388538L, 5889134147702L},
-            {2939371675451696L, 2796741992313L},
-            {4422080015937809L, 7314017318807L},
-            {4098079514682387L, 5654042565123L},
-            {1391369476535679L, 9081967657936L},
-            {2124334546861701L, 2384605262099L},
-            {3640715768301809L, 7364547568321L},
-            {2731982401558975L, 2222796825072L},
-            {6956127698920857L, 7683402910416L},
-            {5083956746635065L, 3862015161409L},
-            {4199992743603720L, 2256913741227L},
-            {6719374341079667L, 5306688806356L},
-            {5163666552602351L, 5747568610807L},
-            {9335182856808166L, 4863567680057L},
-            {3920881349386543L, 1986880405049L},
-            {8402136600241401L, 8057986127868L},
-            {1596172675394206L, 4737973078743L},
-            {5496674660209685L, 3514526621865L},
-            {2257679231070174L, 8535883414905L},
-            {6256000149370997L, 7366856944791L},
-            {9983109725153208L, 3435235880944L},
-            {5445194555510952L, 3689120466741L},
-            {2440989992472004L, 7769141307920L},
-            {6367284829900066L, 9237730615193L},
-            {3264536664246697L, 3017435138489L},
+            {7000021L, 49000133L},
+            {20000060L, 140000380L},
+            {23000069L, 161000437L},
+            {6000018L, 42000114L},
+            {5000015L, 35000095L},
     };
     // Deliberately small: testReadTimeoutRethrownAfterDeadline spends the whole budget, so it must stay
     // sub-second.
@@ -521,31 +498,35 @@ public class FuzzRunnerTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testIoFailureShapesInNewRow() throws Exception {
-        // With column files that grow by pages of the smallest size, the IO failures that the fuzz plants in the
-        // non-WAL apply land in TableWriter.newRow(): on the page switch of the designated timestamp column, which
-        // updateMaxTimestamp() writes first, and on a partition switch; and in the put of a column value. The apply
-        // keeps the writer after some of them, as ILP and CSV import do. A failed timestamp write leaves the writer
-        // usable, so its rollback succeeds and the writer stays; a failed switch distresses it, and a failed put
-        // leaves a row in progress, which the rollback distresses it for, so the pool closes both.
-        setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, Files.PAGE_SIZE);
-        int timestampFailures = 0;
-        int switchFailures = 0;
-        int putFailures = 0;
-        for (int i = 0; i < IO_FAILURE_SHAPE_SEEDS.length && (timestampFailures == 0 || switchFailures == 0 || putFailures == 0); i++) {
+    public void testIoFailureShapesAndRecoveries() throws Exception {
+        // The allocate() failures that the fuzz plants in the non-WAL apply land in the rows of inserts: in the
+        // designated timestamp, which newRow() writes first, in the partition switch of newRow(), and in a value. The
+        // apply checks the writer after each failure, recovers as the users of the writer do, and checks it again;
+        // runFuzz() then compares the table with the WAL tables. The runs must take every recovery after a failed
+        // designated timestamp and after a failed value, and fail a partition switch, after which only the pool is
+        // left. A failed designated timestamp leaves no row, so cancelling the row and abandoning it are the same.
+        // Column files and symbol maps grow by 64 KiB, a multiple of the page of every OS, so that a seed repeats its
+        // run on every OS.
+        final long pageSize = 64 * 1024;
+        setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, pageSize);
+        setProperty(PropertyKey.CAIRO_WRITER_MISC_APPEND_PAGE_SIZE, pageSize);
+        setProperty(PropertyKey.CAIRO_SYMBOL_TABLE_MIN_ALLOCATION_PAGE_SIZE, pageSize);
+        // by shape and recovery, see FuzzRunner.IO_FAILURE_SHAPE_* and FuzzRunner.IO_FAILURE_RECOVERY_*
+        final int[][] counts = new int[4][4];
+        for (int i = 0; i < IO_FAILURE_SHAPE_SEEDS.length && !hasEveryIoFailureShape(counts); i++) {
             final long[] seeds = IO_FAILURE_SHAPE_SEEDS[i];
             final FuzzRunner runner = newRunner();
-            runner.setFuzzCounts(false, 200_000, 20, 10, 10, 20, 100, 10, -1, 10);
+            // two partitions, which take several pages of each column file
+            runner.setFuzzCounts(false, 100_000, 50, 10, 10, 20, 100, 2, -1, 25);
             runner.setFuzzProbabilities(
                     0.0, 0.01, 0.01, 0.05, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
             );
             // in-order transactions, which append through newRow() rather than the O3 commit
             runner.setNoSentinelTypeChangeEnabled(true);
-            // the even runs fail the allocate() calls of the designated timestamp column ts only: its page switches,
-            // which a row writes first, and its first page in a new partition
-            runner.setIoFailureOnAllocate(true, i % 2 == 0 ? "ts.d" : null);
-            runner.setIoFailureRecoveryRnd(new Rnd(seeds[1], seeds[0]));
-            // the seeds were found on DAY partitions, from before the fuzz picked the partitioning
+            // as in WalWriterFuzzTest#testNonWalIoFailuresAtPageSwitches, a third of the failures fail the allocate()
+            // calls of the designated timestamp column ts only: its page switches, which a row writes first, and its
+            // first page in a new partition
+            runner.setIoFailuresOnAllocate(new Rnd(seeds[1], seeds[0]), "ts.d", 1.0 / 3);
             runner.setPartitionBy(PartitionBy.DAY);
             final String tableName = "io_failure_shapes_" + i;
             // the seeds of the run, its schema and its apply, so the run repeats
@@ -554,28 +535,23 @@ public class FuzzRunnerTest extends AbstractCairoTest {
             final ObjList<FuzzRunner.IoFailureRecovery> recoveries = runner.getIoFailureRecoveries();
             for (int j = 0, n = recoveries.size(); j < n; j++) {
                 final FuzzRunner.IoFailureRecovery recovery = recoveries.getQuick(j);
-                if (!recovery.isWriterKeptMode) {
-                    continue;
+                if (recovery.shape != FuzzRunner.IO_FAILURE_SHAPE_OTHER) {
+                    // after a failure in a row, the writer goes on unless it goes back to the pool
+                    Assert.assertEquals(recovery.recovery != FuzzRunner.IO_FAILURE_RECOVERY_POOL, recovery.isWriterKept);
                 }
-                if (hasFrame(recovery.failureStack, "io.questdb.cairo.TableWriter", "updateMaxTimestamp")) {
-                    Assert.assertTrue(recovery.isWriterKept);
-                    timestampFailures++;
-                } else if (hasFrame(recovery.failureStack, "io.questdb.cairo.TableWriter", "switchPartition")) {
-                    Assert.assertFalse(recovery.isWriterKept);
-                    switchFailures++;
-                } else if (hasFrame(recovery.failureStack, "io.questdb.cairo.TableWriter$RowImpl", "put")) {
-                    Assert.assertFalse(recovery.isWriterKept);
-                    putFailures++;
-                }
+                counts[recovery.shape][recovery.recovery]++;
             }
         }
-        LOG.info().$("IO failure shapes with the writer kept [timestamp=").$(timestampFailures)
-                .$(", switch=").$(switchFailures)
-                .$(", put=").$(putFailures)
+        LOG.info().$("IO failure shapes and recoveries [timestamp=").$(Arrays.toString(counts[FuzzRunner.IO_FAILURE_SHAPE_TIMESTAMP]))
+                .$(", partitionSwitch=").$(Arrays.toString(counts[FuzzRunner.IO_FAILURE_SHAPE_PARTITION_SWITCH]))
+                .$(", rowValue=").$(Arrays.toString(counts[FuzzRunner.IO_FAILURE_SHAPE_ROW_VALUE]))
+                .$(", other=").$(Arrays.toString(counts[FuzzRunner.IO_FAILURE_SHAPE_OTHER]))
                 .I$();
-        Assert.assertTrue(timestampFailures > 0);
-        Assert.assertTrue(switchFailures > 0);
-        Assert.assertTrue(putFailures > 0);
+        Assert.assertTrue(hasEveryIoFailureShape(counts));
+        // the writer is distressed, see FuzzRunner.applyInsert()
+        Assert.assertEquals(0, counts[FuzzRunner.IO_FAILURE_SHAPE_PARTITION_SWITCH][FuzzRunner.IO_FAILURE_RECOVERY_ROLLBACK]
+                + counts[FuzzRunner.IO_FAILURE_SHAPE_PARTITION_SWITCH][FuzzRunner.IO_FAILURE_RECOVERY_CANCEL_ROW]
+                + counts[FuzzRunner.IO_FAILURE_SHAPE_PARTITION_SWITCH][FuzzRunner.IO_FAILURE_RECOVERY_ABANDON_ROW]);
     }
 
     @Test
@@ -840,13 +816,19 @@ public class FuzzRunnerTest extends AbstractCairoTest {
     }
 
     // whether the stack has a frame of the method of the class, or of a method whose name starts with it
-    private static boolean hasFrame(StackTraceElement[] stack, String className, String methodNamePrefix) {
-        for (StackTraceElement frame : stack) {
-            if (frame.getClassName().equals(className) && frame.getMethodName().startsWith(methodNamePrefix)) {
-                return true;
-            }
-        }
-        return false;
+    // the runs of testIoFailureShapesAndRecoveries() took every recovery after a failed designated timestamp and a
+    // failed value, and failed a partition switch
+    private static boolean hasEveryIoFailureShape(int[][] counts) {
+        final int[] timestamp = counts[FuzzRunner.IO_FAILURE_SHAPE_TIMESTAMP];
+        final int[] rowValue = counts[FuzzRunner.IO_FAILURE_SHAPE_ROW_VALUE];
+        return timestamp[FuzzRunner.IO_FAILURE_RECOVERY_POOL] > 0
+                && timestamp[FuzzRunner.IO_FAILURE_RECOVERY_ROLLBACK] > 0
+                && timestamp[FuzzRunner.IO_FAILURE_RECOVERY_CANCEL_ROW] + timestamp[FuzzRunner.IO_FAILURE_RECOVERY_ABANDON_ROW] > 0
+                && rowValue[FuzzRunner.IO_FAILURE_RECOVERY_POOL] > 0
+                && rowValue[FuzzRunner.IO_FAILURE_RECOVERY_ROLLBACK] > 0
+                && rowValue[FuzzRunner.IO_FAILURE_RECOVERY_CANCEL_ROW] > 0
+                && rowValue[FuzzRunner.IO_FAILURE_RECOVERY_ABANDON_ROW] > 0
+                && counts[FuzzRunner.IO_FAILURE_SHAPE_PARTITION_SWITCH][FuzzRunner.IO_FAILURE_RECOVERY_POOL] > 0;
     }
 
     private void createTableWithAddedColumn(String tableName, boolean isWal) throws Exception {

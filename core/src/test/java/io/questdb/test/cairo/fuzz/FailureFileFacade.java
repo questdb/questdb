@@ -58,6 +58,8 @@ public class FailureFileFacade implements FilesFacade {
     private volatile Thread armingThread;
     // Mode 3: name of an unexpected thread that touched the armed facade, or null.
     private volatile String contaminatingThreadName;
+    // the thread whose allocate() calls all fail, as on a full disk, see setDiskFullOnCurrentThread(), or null
+    private volatile Thread diskFullThread;
     private final AtomicInteger failureGenerated = new AtomicInteger();
     // the stack of the call that the last planted failure failed, or null
     private volatile StackTraceElement[] failureStack;
@@ -78,7 +80,7 @@ public class FailureFileFacade implements FilesFacade {
 
     @Override
     public boolean allocate(long fd, long size) {
-        if (checkForAllocateFailure(fd)) {
+        if (isDiskFull() || checkForAllocateFailure(fd)) {
             return false;
         }
         return ff.allocate(fd, size);
@@ -86,7 +88,7 @@ public class FailureFileFacade implements FilesFacade {
 
     @Override
     public boolean allocate(long fd, long allocatedSize, long size) {
-        if (checkForAllocateFailure(fd)) {
+        if (isDiskFull() || checkForAllocateFailure(fd)) {
             return false;
         }
         return ff.allocate(fd, allocatedSize, size);
@@ -115,6 +117,7 @@ public class FailureFileFacade implements FilesFacade {
         armingThread = null;
         queryWorkerNamePrefix = null;
         contaminatingThreadName = null;
+        diskFullThread = null;
     }
 
     @Override
@@ -648,6 +651,14 @@ public class FailureFileFacade implements FilesFacade {
         this.isDetachCopied = isDetachCopied;
     }
 
+    /**
+     * While on, every allocate() call of the calling thread fails, as on a full disk, apart from the planted failures:
+     * it counts as none of them and does not count one down. Off by default and after {@link #clearFailures()}.
+     */
+    public void setDiskFullOnCurrentThread(boolean isDiskFull) {
+        diskFullThread = isDiskFull ? Thread.currentThread() : null;
+    }
+
     public void setToFailAfter(int ioFailureCallCount) {
         // Default (unscoped): any thread's op counts and fires. Arm only when not
         // already armed so a pending fault is not reset by a concurrent caller.
@@ -790,6 +801,11 @@ public class FailureFileFacade implements FilesFacade {
             failureGenerated.incrementAndGet();
         }
         return fail;
+    }
+
+    private boolean isDiskFull() {
+        final Thread thread = diskFullThread;
+        return thread != null && thread == Thread.currentThread();
     }
 
     /**
