@@ -51,6 +51,7 @@ import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
 import io.questdb.cairo.TableUtils;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * UnnestSource implementation for JSON arrays. Wraps a VARCHAR-producing
@@ -113,6 +114,8 @@ public class JsonUnnestSource implements UnnestSource, QuietCloseable {
     private long descsPtr;
     private DirectUtf8Sequence jsonSeq;
     private DirectUtf8Sink jsonSink;
+    // the documents that init() handed to simdjson, see getNativeParseCount()
+    private long nativeParseCount;
 
     public JsonUnnestSource(
             Function function,
@@ -255,6 +258,15 @@ public class JsonUnnestSource implements UnnestSource, QuietCloseable {
         return getLong0(sourceCol, elementIndex);
     }
 
+    /**
+     * Returns the documents that init() handed to simdjson, counting a document twice when it parsed it
+     * again into a larger results buffer.
+     */
+    @TestOnly
+    public long getNativeParseCount() {
+        return nativeParseCount;
+    }
+
     @Override
     public short getShort(int sourceCol, int elementIndex) {
         // 0 is the correct NULL sentinel for SHORT in QuestDB
@@ -352,7 +364,7 @@ public class JsonUnnestSource implements UnnestSource, QuietCloseable {
     @Override
     public int init(Record baseRecord) {
         Utf8Sequence json = function.getVarcharA(baseRecord);
-        if (json == null || json.size() == 0) {
+        if (json == null || json.size() == 0 || opensWithEmptyArray(json)) {
             this.jsonSeq = null;
             this.currentElementCount = 0;
             return 0;
@@ -365,6 +377,7 @@ public class JsonUnnestSource implements UnnestSource, QuietCloseable {
         stringBuf.clear();
         NativeByteSink nativeSink = stringBuf.borrowDirectByteSink();
         try {
+            nativeParseCount++;
             int len = parser.queryAndExtractArray(
                     jsonSeq,
                     result,
@@ -405,6 +418,7 @@ public class JsonUnnestSource implements UnnestSource, QuietCloseable {
                 nativeSink.close();
                 stringBuf.clear();
                 nativeSink = stringBuf.borrowDirectByteSink();
+                nativeParseCount++;
                 parser.extractAllArrayElements(
                         jsonSeq, isObjectArray, descsPtr, bulkResultsPtr,
                         columnCount, len, nativeSink.ptr()
@@ -415,6 +429,34 @@ public class JsonUnnestSource implements UnnestSource, QuietCloseable {
         } finally {
             nativeSink.close();
         }
+    }
+
+    // Returns true when the document opens with an empty array: '[' and ']' with only JSON whitespace before
+    // and between them. queryAndExtractArray() returns no element for such a document, whatever follows the
+    // ']': simdjson counts no element in the empty array, or rejects the document for its trailing content,
+    // which returns no element either. init() skips the native parse for such a document: a negative LIMIT
+    // ahead of UNNEST reads back through every empty array, see UnnestRecordCursorFactory.getFanOut(), and
+    // the parse costs many times this check. A document that opens with a UTF-8 BOM fails the check, and
+    // simdjson, which skips the BOM, parses it.
+    private static boolean opensWithEmptyArray(Utf8Sequence json) {
+        final int size = json.size();
+        int i = skipJsonWhitespace(json, 0, size);
+        if (i == size || json.byteAt(i) != '[') {
+            return false;
+        }
+        i = skipJsonWhitespace(json, i + 1, size);
+        return i < size && json.byteAt(i) == ']';
+    }
+
+    // the JSON whitespace that simdjson skips between tokens: space, tab, line feed and carriage return
+    private static int skipJsonWhitespace(Utf8Sequence json, int i, int size) {
+        for (; i < size; i++) {
+            final byte b = json.byteAt(i);
+            if (b != ' ' && b != '\n' && b != '\r' && b != '\t') {
+                break;
+            }
+        }
+        return i;
     }
 
     private long bulkResultBase(int sourceCol, int elementIndex) {

@@ -24,11 +24,17 @@
 
 package io.questdb.test.griffin.unnest;
 
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.join.JsonUnnestSource;
+import io.questdb.std.IntIntHashMap;
+import io.questdb.std.ObjList;
+import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -1244,6 +1250,100 @@ public class JsonUnnestTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("val\n");
+        });
+    }
+
+    @Test
+    public void testEmptyArrayShortcutAgreesWithSimdjson() throws Exception {
+        // JsonUnnestSource.init() unnests a document that opens with an empty array, '[' and ']' with only JSON
+        // whitespace before and between them, into no row without a native parse. simdjson skips a UTF-8 BOM,
+        // which the shortcut does not, so the same document behind a BOM goes to simdjson, the oracle here: it
+        // finds no element in any document that opens with an empty array, whatever follows the array. A
+        // character that JSON does not count as whitespace makes simdjson parse the document both ways.
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        final ObjList<String> emptyArrays = new ObjList<>();
+        final String[] tails = {
+                "", "x", "]", "]]]", "[1]", " [1, 2]", ",1]", "\"open", "{\"a\":1}", "null", "\uD83D\uDE00",
+                "[".repeat(100), "]".repeat(100)
+        };
+        for (String tail : tails) {
+            emptyArrays.add("[]" + tail);
+            emptyArrays.add(" \n[\t\r ]" + tail);
+        }
+        for (int i = 0; i < 1_000; i++) {
+            final StringBuilder doc = new StringBuilder();
+            appendRandom(rnd, doc, " \t\n\r", 3);
+            doc.append('[');
+            appendRandom(rnd, doc, " \t\n\r", 3);
+            doc.append(']');
+            appendRandom(rnd, doc, " \t\n\r[]{},:\"\\1ax\u000b\f\u00e9", 12);
+            emptyArrays.add(doc.toString());
+        }
+        final String[] lookalikes = {
+                "[\u000b]", "[\f]", "[\u00a0]", "[\u2028]", "[\u0000]", "\u000b[]", "\f[]", "\u00a0[]",
+                "[ 1]", "[\n\"\"]", "[[]]", "[ {} ]", "[null]"
+        };
+        // documents with elements, which simdjson finds behind a BOM too
+        final String[] withElements = {"[1, 2]", " [ 3 ] ", "[[], []]"};
+        final int[] elementCounts = {2, 1, 2};
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (id INT, payload VARCHAR)");
+            final StringBuilder insert = new StringBuilder("INSERT INTO t VALUES ");
+            int id = 0;
+            for (int i = 0, n = emptyArrays.size(); i < n; i++) {
+                appendRow(insert, id++, emptyArrays.getQuick(i));
+            }
+            for (String doc : lookalikes) {
+                appendRow(insert, id++, doc);
+            }
+            for (String doc : withElements) {
+                appendRow(insert, id++, doc);
+            }
+            execute(insert);
+            final IntIntHashMap rowCounts = countRows("t.payload");
+            final IntIntHashMap simdjsonRowCounts = countRows("('\uFEFF' || t.payload)::VARCHAR");
+            id = 0;
+            for (int i = 0, n = emptyArrays.size(); i < n; i++, id++) {
+                Assert.assertEquals(emptyArrays.getQuick(i), 0, rowCount(simdjsonRowCounts, id));
+                Assert.assertEquals(emptyArrays.getQuick(i), 0, rowCount(rowCounts, id));
+            }
+            for (String doc : lookalikes) {
+                Assert.assertEquals(doc, rowCount(simdjsonRowCounts, id), rowCount(rowCounts, id));
+                id++;
+            }
+            for (int i = 0; i < withElements.length; i++, id++) {
+                Assert.assertEquals(withElements[i], elementCounts[i], rowCount(simdjsonRowCounts, id));
+                Assert.assertEquals(withElements[i], elementCounts[i], rowCount(rowCounts, id));
+            }
+        });
+    }
+
+    @Test
+    public void testEmptyArrayWithWhitespaceReturnsNoRows() throws Exception {
+        // A document that opens with an empty array unnests into no row, whatever JSON whitespace it holds and
+        // whatever follows the array. Rows 6 and 8 hold more bytes than an inlined VARCHAR.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (id INT, payload VARCHAR)");
+            execute("""
+                    INSERT INTO t VALUES
+                    (1, '[ ]'),
+                    (2, ' [\t\n\r] '),
+                    (3, '[]x'),
+                    (4, '[1, 2]'),
+                    (5, '[] [1, 2]'),
+                    (6, '[                    ]'),
+                    (7, '[ 3 ]'),
+                    (8, '[] and more bytes than an inlined VARCHAR holds')
+                    """);
+            assertQuery("SELECT t.id, u.val FROM t, UNNEST(t.payload COLUMNS(val INT)) u")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            id\tval
+                            4\t1
+                            4\t2
+                            7\t3
+                            """);
         });
     }
 
@@ -3963,5 +4063,38 @@ public class JsonUnnestTest extends AbstractCairoTest {
                             30.0\t3
                             """);
         });
+    }
+
+    private static void appendRandom(Rnd rnd, StringBuilder sb, String chars, int maxLength) {
+        for (int i = 0, n = rnd.nextInt(maxLength + 1); i < n; i++) {
+            sb.append(chars.charAt(rnd.nextInt(chars.length())));
+        }
+    }
+
+    private static void appendRow(StringBuilder insert, int id, String doc) {
+        if (id > 0) {
+            insert.append(", ");
+        }
+        insert.append('(').append(id).append(", '").append(doc.replace("'", "''")).append("')");
+    }
+
+    // the rows that UNNEST returns for the payload of each row of t, by id, see rowCount()
+    private static IntIntHashMap countRows(String unnestExpression) throws SqlException {
+        final IntIntHashMap rowCounts = new IntIntHashMap();
+        final String sql = "SELECT t.id, count() FROM t, UNNEST(" + unnestExpression + " COLUMNS(v VARCHAR)) u"
+                + " GROUP BY t.id";
+        try (RecordCursorFactory factory = select(sql); RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            final Record record = cursor.getRecord();
+            while (cursor.hasNext()) {
+                rowCounts.put(record.getInt(0), (int) record.getLong(1));
+            }
+        }
+        return rowCounts;
+    }
+
+    // GROUP BY returns no row for a payload that unnests into no row
+    private static int rowCount(IntIntHashMap rowCounts, int id) {
+        final int keyIndex = rowCounts.keyIndex(id);
+        return keyIndex < 0 ? rowCounts.valueAt(keyIndex) : 0;
     }
 }

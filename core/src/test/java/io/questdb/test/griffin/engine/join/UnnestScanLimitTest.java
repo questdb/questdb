@@ -313,6 +313,34 @@ public class UnnestScanLimitTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testJsonEmptyArrays() throws Exception {
+        // The scan reads back through the documents that open with an empty array, which unnest into no row
+        // whatever whitespace they hold and whatever follows the array, see JsonUnnestSource.init(). Rows 5 and 6
+        // hold more bytes than an inlined VARCHAR, and row 8 holds an element but fails the filter, so the query
+        // returns 1 1, 1 2 and 3 3. Native and Parquet partitions hand the documents over as different views.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tw (id INT, x INT, j VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO tw VALUES
+                    (1, 2, '[1, 2]', '2024-01-05T01:00:00.000000Z'),
+                    (2, 3, '[ ]', '2024-01-05T02:00:00.000000Z'),
+                    (3, 4, '[3]', '2024-01-06T01:00:00.000000Z'),
+                    (4, 5, ' [\t\n\r] ', '2024-01-06T02:00:00.000000Z'),
+                    (5, 6, '[] and more bytes than an inlined VARCHAR holds', '2024-01-07T01:00:00.000000Z'),
+                    (6, 7, '[                    ]', '2024-01-07T02:00:00.000000Z'),
+                    (7, 8, '[]]', '2024-01-07T03:00:00.000000Z'),
+                    (8, 0, '[8]', '2024-01-07T04:00:00.000000Z')
+                    """);
+            final String sql = "SELECT t.id, u.v FROM tw t, UNNEST(t.j COLUMNS(v INT)) u WHERE t.x > 1";
+            assertJsonEmptyArrayLimits(sql);
+            execute("ALTER TABLE tw CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-07'");
+            assertJsonEmptyArrayLimits(sql);
+            execute("ALTER TABLE tw CONVERT PARTITION TO PARQUET WHERE ts >= '2024-01-07'");
+            assertJsonEmptyArrayLimits(sql);
+        });
+    }
+
+    @Test
     public void testLatestOnScanTakesNoLimit() throws Exception {
         // LATEST ON reads every row of the filter below it, a bind variable residual of a sub-query here, so
         // the filter takes neither a LIMIT nor a fan-out limit. x differs in every row of ta, so every row is
@@ -707,6 +735,16 @@ public class UnnestScanLimitTest extends AbstractCairoTest {
                 .sizeMayVary()
                 .withPlanContaining("fan-out limit:", "Row backward scan")
                 .returns(expected);
+    }
+
+    // tw of testJsonEmptyArrays() unnests into 1 1, 1 2 and 3 3
+    private void assertJsonEmptyArrayLimits(String sql) throws Exception {
+        final String header = "id\tv\n";
+        assertFanOutLimit(sql + " LIMIT -1", header + "3\t3\n");
+        assertFanOutLimit(sql + " LIMIT -2", header + "1\t2\n3\t3\n");
+        assertFanOutLimit(sql + " LIMIT -3", header + "1\t1\n1\t2\n3\t3\n");
+        assertFanOutLimit(sql + " LIMIT -4", header + "1\t1\n1\t2\n3\t3\n");
+        assertRowsWithHeader(sql + " LIMIT 2", header + "1\t1\n1\t2\n");
     }
 
     private void assertLimits(String sql) throws Exception {

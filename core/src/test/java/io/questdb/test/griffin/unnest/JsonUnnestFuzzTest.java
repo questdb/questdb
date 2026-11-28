@@ -40,6 +40,7 @@ import org.junit.Test;
  */
 public class JsonUnnestFuzzTest extends AbstractCairoTest {
     private static final int ITERATIONS = 100;
+    private static final String JSON_WHITESPACE = " \t\n\r";
     private Rnd rnd;
 
     @Override
@@ -172,18 +173,24 @@ public class JsonUnnestFuzzTest extends AbstractCairoTest {
                     }
                     int arrLen = rnd.nextInt(20);
                     StringBuilder arrLiteral = new StringBuilder("ARRAY[");
-                    StringBuilder jsonArray = new StringBuilder("[");
+                    StringBuilder jsonArray = new StringBuilder();
+                    appendJsonWhitespace(jsonArray);
+                    jsonArray.append('[');
                     for (int j = 0; j < arrLen; j++) {
+                        appendJsonWhitespace(jsonArray);
                         if (j > 0) {
                             arrLiteral.append(", ");
                             jsonArray.append(',');
+                            appendJsonWhitespace(jsonArray);
                         }
                         double val = rnd.nextInt(10_000) / 100.0;
                         arrLiteral.append(val);
                         jsonArray.append(val);
                     }
+                    appendJsonWhitespace(jsonArray);
                     arrLiteral.append(']');
                     jsonArray.append(']');
+                    appendJsonWhitespace(jsonArray);
                     if (arrLen == 0) {
                         arrLiteral.append("::DOUBLE[]");
                     }
@@ -238,18 +245,24 @@ public class JsonUnnestFuzzTest extends AbstractCairoTest {
                     }
                     int arrLen = rnd.nextInt(20);
                     StringBuilder arrLiteral = new StringBuilder("ARRAY[");
-                    StringBuilder jsonArray = new StringBuilder("[");
+                    StringBuilder jsonArray = new StringBuilder();
+                    appendJsonWhitespace(jsonArray);
+                    jsonArray.append('[');
                     for (int j = 0; j < arrLen; j++) {
+                        appendJsonWhitespace(jsonArray);
                         if (j > 0) {
                             arrLiteral.append(", ");
                             jsonArray.append(',');
+                            appendJsonWhitespace(jsonArray);
                         }
                         double val = rnd.nextInt(10_000) / 100.0;
                         arrLiteral.append(val);
                         jsonArray.append(val);
                     }
+                    appendJsonWhitespace(jsonArray);
                     arrLiteral.append(']');
                     jsonArray.append(']');
+                    appendJsonWhitespace(jsonArray);
                     if (arrLen == 0) {
                         arrLiteral.append("::DOUBLE[]");
                     }
@@ -283,5 +296,15 @@ public class JsonUnnestFuzzTest extends AbstractCairoTest {
                 );
             }
         });
+    }
+
+    // JSON whitespace changes no element of an array; around and inside an empty array, it leaves the document to
+    // the shortcut of JsonUnnestSource.init(), and anywhere else to simdjson
+    private void appendJsonWhitespace(StringBuilder json) {
+        if (rnd.nextInt(3) == 0) {
+            for (int i = 0, n = 1 + rnd.nextInt(3); i < n; i++) {
+                json.append(JSON_WHITESPACE.charAt(rnd.nextInt(JSON_WHITESPACE.length())));
+            }
+        }
     }
 }
