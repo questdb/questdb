@@ -440,24 +440,12 @@ public class TableReader implements Closeable, SymbolTableSource {
         final long partitionTimestamp = txFile.getPartitionTimestampByIndex(partitionIndex);
         final long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, metadata.getWriterIndex(columnIndex));
         final long partitionTxn = txFile.getPartitionNameTxn(partitionIndex);
-        IndexReader indexReader = getIndexReaderIfExists(partitionIndex, columnIndex, direction);
-        if (indexReader != null && isStandInNullReader(indexReader) != (columns.getQuick(index) instanceof NullMemoryCMR)) {
-            // The partition gained the column since this reader was cached (an O3 insert
-            // rewrites a partition that predated it), or lost it again. The two reader
-            // kinds are not interchangeable and of() cannot turn one into the other: a
-            // stand-in null reader would keep answering the NULL key with EVERY row of a
-            // partition that now holds real values, and a real reader would open an index
-            // file the writer never created. Drop it and build the right one.
-            // Only the gaining direction has a known producer -- an in-place O3 grow keeps
-            // the partition open across the reload. Every operation that takes the column
-            // away from a partition (DETACH plus ATTACH of a directory without it, a
-            // partition rewrite) changes the partition name txn, and the reload closes the
-            // partition, which drops this cache with it. The losing half is kept for
-            // symmetry: it costs one comparison and the wrong reader here is silent.
-            final int indexSlot = direction == IndexReader.DIR_BACKWARD ? index : index + 1;
-            Misc.free(indexes.getAndSetQuick(indexSlot, null));
-            indexReader = null;
-        }
+        final IndexReader indexReader = getReusableIndexReader(
+                indexes,
+                direction == IndexReader.DIR_BACKWARD ? index : index + 1,
+                columnIndex,
+                columns.getQuick(index) instanceof NullMemoryCMR
+        );
         if (indexReader != null) {
             // Single choke point for refreshing the scoreboard pin on cached
             // readers. TableReader.txn advances through several paths
@@ -490,13 +478,6 @@ public class TableReader implements Closeable, SymbolTableSource {
             return indexReader;
         }
         return createIndexReaderAt(index, columnBase, columnIndex, columnNameTxn, direction, partitionTxn);
-    }
-
-    public IndexReader getIndexReaderIfExists(int partitionIndex, int columnIndex, int direction) {
-        final int columnBase = getColumnBase(partitionIndex);
-        final int index = getPrimaryColumnIndex(columnBase, columnIndex);
-        final int indexIndex = direction == IndexReader.DIR_BACKWARD ? index : index + 1;
-        return indexes.getQuick(indexIndex);
     }
 
     public long getLogicalPartitionRowCount(int partitionIndex, long baseRows) {
@@ -1488,6 +1469,8 @@ public class TableReader implements Closeable, SymbolTableSource {
                 closePartitionColumns(fromBase);
                 openPartitionInfo.setQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_SIZE, -1);
                 Misc.freeObjListIfCloseable(toColumns);
+                // copyColumns() moved these readers out of the indexes list, so nothing else frees them
+                Misc.freeObjList(toIndexReaders, th);
                 throw th;
             } finally {
                 path.trimTo(rootLen);
@@ -1573,16 +1556,6 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     private void freeIndexCache() {
         Misc.freeObjList(indexes);
-    }
-
-    /**
-     * Frees the index readers of a column and empties their slots, so that the next index lookup creates them
-     * afresh for the column's current index type.
-     */
-    private void freeIndexReaders(int base, int columnIndex) {
-        final int index = getPrimaryColumnIndex(base, columnIndex);
-        Misc.free(indexes.getAndSetQuick(index, null));
-        Misc.free(indexes.getAndSetQuick(index + 1, null));
     }
 
     private void freeParquetPartitions() {
@@ -1696,6 +1669,27 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     private long getPartitionTimestamp(int partitionIndex) {
         return openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE);
+    }
+
+    /**
+     * Returns the index reader cached in {@code slot} if the column that holds the slot now can reuse it. Otherwise
+     * frees the reader, empties the slot and returns null, and the caller builds the right reader.
+     * <p>
+     * A cached reader can outlive its column: {@link #closeIndexReader} closes the readers of a closed partition or
+     * column and keeps the objects, and a metadata reload moves the slots of open partitions only. A column dropped,
+     * or an index type or column type changed, while a partition is closed leaves the slot with a reader built for
+     * another column or index type. of() rebinds a closed reader to any column, but cannot change its kind: BITMAP
+     * and POSTING readers open different files, and a stand-in null reader would answer the NULL key with every row
+     * of a partition that now holds real values. So the reader must be the kind {@link #createIndexReaderAt} would
+     * build now. A slot serves one direction for good, so only the kind can be wrong.
+     */
+    private IndexReader getReusableIndexReader(ObjList<IndexReader> indexReaders, int slot, int columnIndex, boolean isColumnAbsent) {
+        final IndexReader reader = indexReaders.getQuick(slot);
+        if (reader == null || (isColumnAbsent ? isStandInNullReader(reader) : IndexFactory.isReaderOf(metadata.getColumnIndexType(columnIndex), reader))) {
+            return reader;
+        }
+        Misc.free(indexReaders.getAndSetQuick(slot, null));
+        return null;
     }
 
     /**
@@ -2526,8 +2520,9 @@ public class TableReader implements Closeable, SymbolTableSource {
                 // which the catalog removes once their base retires. A metadata reload runs before the partitions
                 // are reconciled, so find the partition by its timestamp.
                 if (metadata.isColumnIndexed(columnIndex) && !hasDelta(partitionTimestamp)) {
-                    IndexReader indexReader = indexReaders.getQuick(primaryIndex);
-                    if (indexReader != null) {
+                    final IndexReader indexReader = getReusableIndexReader(indexReaders, primaryIndex, columnIndex, false);
+                    // A closed reader is only kept for reuse: getIndexReader() opens it when a query needs the index.
+                    if (indexReader != null && indexReader.isOpen()) {
                         indexReader.of(configuration, path.trimTo(plen), name, columnTxn, partitionTxn, columnTop, metadata, columnVersionReader, partitionTimestamp);
                     }
                 } else {
@@ -2791,10 +2786,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                             } else if (copyFrom > -1) {
                                 copyColumns(base, copyFrom, columns, columnTops, indexes, base, i);
                             } else if (copyFrom != Integer.MIN_VALUE) {
-                                // New instance. The slot's index readers belong to the column that held it before,
-                                // which may have had another index type: reloadColumnAt() would reopen them for this
-                                // column with the wrong kind of reader.
-                                freeIndexReaders(base, i);
+                                // new instance
                                 reloadColumnAt(
                                         partitionIndex,
                                         path,

@@ -84,6 +84,19 @@ public final class IndexFactory {
         }
     }
 
+    /**
+     * Whether {@code reader} is the kind of reader that {@link #createReader} builds for {@code indexType}. All
+     * POSTING encodings share one kind. No reader is the reader of a column without an index.
+     */
+    public static boolean isReaderOf(byte indexType, IndexReader reader) {
+        return switch (indexType) {
+            case IndexType.BITMAP -> reader instanceof AbstractBitmapIndexReader;
+            case IndexType.POSTING, IndexType.POSTING_DELTA, IndexType.POSTING_EF ->
+                    reader instanceof AbstractPostingIndexReader;
+            default -> false;
+        };
+    }
+
     public static LPSZ keyFileName(byte indexType, Path path, CharSequence columnName, long columnNameTxn) {
         return switch (indexType) {
             case IndexType.BITMAP -> BitmapIndexUtils.keyFileName(path, columnName, columnNameTxn);
