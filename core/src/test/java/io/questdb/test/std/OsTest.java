@@ -24,12 +24,22 @@
 
 package io.questdb.test.std;
 
+import io.questdb.mp.CarrierIdentity;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
+import io.questdb.std.Unsafe;
+import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Assume;
+import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.TemporaryFolder;
 
+import java.io.File;
+import java.io.FileOutputStream;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -40,6 +50,8 @@ import java.util.concurrent.atomic.AtomicReference;
 import static org.junit.Assert.assertTrue;
 
 public class OsTest {
+    @Rule
+    public final TemporaryFolder temporaryFolder = new TemporaryFolder();
 
     @Test
     public void rustSmokeTest() {
@@ -101,6 +113,71 @@ public class OsTest {
     @Test
     public void testGetRss() {
         Assert.assertNotEquals(0, Os.getRss());
+    }
+
+    @Test
+    public void testGetThreadMajorFaults() throws Exception {
+        // Linux counts the major faults of each thread: a read through a mapping of a page that
+        // is not in memory waits for storage, and counts on the reading thread, whether a worker
+        // thread, which binds as a carrier, see CarrierIdentity, or a thread that does not.
+        if (!Os.isLinux()) {
+            Assert.assertEquals(-1, Os.getThreadMajorFaults());
+            Assert.assertEquals(-1, FilesFacadeImpl.INSTANCE.getThreadMajorFaults());
+            return;
+        }
+        Assert.assertTrue(Os.getThreadMajorFaults() >= 0);
+        final File file = temporaryFolder.newFile();
+        // a page for each reader, far enough apart that the read-around of a fault on one does not reach the other
+        final int fileSize = 4 * 1024 * 1024;
+        final long[] pages = {0, fileSize / 2};
+        try (FileOutputStream out = new FileOutputStream(file)) {
+            out.write(new byte[fileSize]);
+            out.getFD().sync();
+        }
+        try (Path path = new Path().of(file.getAbsolutePath())) {
+            final long fd = Files.openRO(path.$());
+            try {
+                // POSIX_FADV_DONTNEED on Linux: drop the file's clean pages from memory
+                Files.fadvise(fd, 0, fileSize, 4);
+                final long address = Files.mmap(fd, fileSize, 0, Files.MAP_RO, MemoryTag.MMAP_DEFAULT);
+                try {
+                    // a file system that keeps the pages, such as tmpfs, never reads from storage
+                    for (long page : pages) {
+                        Assume.assumeFalse("the file system keeps the pages in memory", Files.isPageCacheResident(address + page, Files.PAGE_SIZE));
+                    }
+                    for (int i = 0; i < pages.length; i++) {
+                        final boolean isCarrier = i == 1;
+                        final long pageAddress = address + pages[i];
+                        final long[] faults = new long[2];
+                        final byte[] values = new byte[1];
+                        final Thread reader = new Thread(() -> {
+                            if (isCarrier) {
+                                CarrierIdentity.bind();
+                            }
+                            try {
+                                faults[0] = Os.getThreadMajorFaults();
+                                values[0] = Unsafe.getByte(pageAddress);
+                                // the files facade asks the OS
+                                faults[1] = FilesFacadeImpl.INSTANCE.getThreadMajorFaults();
+                            } finally {
+                                if (isCarrier) {
+                                    CarrierIdentity.unbind();
+                                }
+                            }
+                        });
+                        reader.start();
+                        reader.join();
+                        Assert.assertEquals(0, values[0]);
+                        Assert.assertTrue(faults[0] >= 0);
+                        Assert.assertTrue("carrier=" + isCarrier + ", before=" + faults[0] + ", after=" + faults[1], faults[1] > faults[0]);
+                    }
+                } finally {
+                    Files.munmap(address, fileSize, MemoryTag.MMAP_DEFAULT);
+                }
+            } finally {
+                Files.close(fd);
+            }
+        }
     }
 
     /**

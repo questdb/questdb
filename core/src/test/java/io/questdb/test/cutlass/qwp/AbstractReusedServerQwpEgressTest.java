@@ -24,6 +24,7 @@
 
 package io.questdb.test.cutlass.qwp;
 
+import io.questdb.Bootstrap;
 import io.questdb.PropertyKey;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -32,10 +33,15 @@ import io.questdb.std.Chars;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractBootstrapTest;
+import io.questdb.test.QueryAssertion;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Before;
-import org.junit.BeforeClass;
+import org.junit.ClassRule;
+import org.junit.Rule;
+import org.junit.rules.TestRule;
+
+import java.util.function.Supplier;
 
 import static io.questdb.PropertyKey.HTTP_MIN_ENABLED;
 import static io.questdb.PropertyKey.LINE_TCP_ENABLED;
@@ -47,27 +53,29 @@ import static io.questdb.PropertyKey.PG_ENABLED;
  * try-with-resources so per-test FD/native-memory checks apply and a failing test cannot poison
  * the next one with leftover server state.
  * <p>
- * The base class only sets up the on-disk configuration and the per-class fragmentation chunk
- * sizes used by {@link #startEgressServer()}; the dummy server config skips the PGWire, ILP and
- * HTTP-min listeners that egress tests never touch. Tests that need a different config call
+ * The base class only sets up the on-disk configuration and the fragmentation chunk sizes of
+ * each test, used by {@link #startEgressServer()}; the dummy server config skips the PGWire, ILP
+ * and HTTP-min listeners that egress tests never touch. Tests that need a different config call
  * {@link #startServerWithRetry(String...)} directly with their own env vars.
+ * <p>
+ * Subclasses draw their own random choices from {@link #random}, the Rnd that draws the chunks,
+ * not from a Rnd of their own. A test then logs one pair of seeds, which {@code -Dfuzz.s0} and
+ * {@code -Dfuzz.s1} pass back to replay every draw of a failing run. The override seeds every Rnd
+ * alike, so it cannot replay a run that drew from two Rnds, and {@link OneSeedPairCheck} fails a
+ * test or a test class that seeds another one. A subclass that needs another Rnd seeds it from
+ * {@link #random}, through {@link TestUtils#generateRandom(Log, long, long)}.
  */
 public abstract class AbstractReusedServerQwpEgressTest extends AbstractBootstrapTest {
 
+    @ClassRule
+    public static final TestRule oneSeedPairClassCheck = OneSeedPairCheck.CLASS_RULE;
     private static final Log LOG = LogFactory.getLog(AbstractReusedServerQwpEgressTest.class);
-    protected static int recvChunk;
-    protected static int sendChunk;
-
-    @BeforeClass
-    public static void setUpEgressConfiguration() {
-        // One fragmentation chunk pair per class - tests boot a fresh server each, but
-        // re-randomising inside every test would make the seed log noisy without adding
-        // coverage. Per-class variation still exercises the fragmentation paths across
-        // the suite, and the seed is logged for deterministic replay.
-        Rnd rnd = TestUtils.generateRandom(LOG);
-        recvChunk = 1 + rnd.nextInt(500);
-        sendChunk = 1 + rnd.nextInt(500);
-    }
+    @Rule
+    public final OneSeedPairCheck oneSeedPairCheck = new OneSeedPairCheck(LOG);
+    // draws the chunks, then every random choice the test makes
+    protected Rnd random;
+    protected int recvChunk;
+    protected int sendChunk;
 
     @Override
     @Before
@@ -89,12 +97,42 @@ public abstract class AbstractReusedServerQwpEgressTest extends AbstractBootstra
         }
     }
 
+    @Before
+    public void setUpRandom() {
+        // A fresh chunk pair for each test, from the Rnd the test draws its data from, so the
+        // one pair of seeds a test logs replays both.
+        random = oneSeedPairCheck.getRandom();
+        // recvChunk drives the incremental request parser, which is offset sensitive, and
+        // requests are small -- keep the 1-byte draw.
+        recvChunk = 1 + random.nextInt(500);
+        // sendChunk is floored, as in AbstractQwpBootstrapTest. HttpResponseSink#sendBuffer
+        // ships at most sendChunk bytes per event-loop pass and parks in between, so a 1-byte
+        // draw costs a dispatcher round trip per byte. A test that streams ~1 MB then takes tens
+        // of seconds instead of under one, and can overrun the 60 s query.timeout on a slow CI
+        // agent. The floor still splits every batch, and the send resume path only advances a
+        // byte pointer, so a finer split adds no coverage. Tests that need a 1-byte split pin
+        // sendChunk themselves.
+        sendChunk = 64 + random.nextInt(437);
+    }
+
     /**
-     * Convenience: boot a server with the per-class fragmentation chunk sizes. Most egress tests
+     * Starts a {@link QueryAssertion} on the engine and SQL execution context of
+     * {@code serverMain}. It skips the leak check: the running server allocates on its own
+     * threads, and each test checks for leaks around the whole server instead.
+     */
+    protected QueryAssertion assertQuery(TestServerMain serverMain, CharSequence query) {
+        return assertQuery(query)
+                .withEngine(serverMain.getEngine())
+                .withContext(serverMain.getSqlExecutionContext())
+                .noLeakCheck();
+    }
+
+    /**
+     * Convenience: boot a server with the fragmentation chunk sizes of the test. Most egress tests
      * use this; tests that need extra env vars call {@link #startServerWithRetry(String...)}
      * directly.
      */
-    protected static TestServerMain startEgressServer() {
+    protected TestServerMain startEgressServer() {
         return startServerWithRetry(
                 PropertyKey.DEBUG_HTTP_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(),
                 Integer.toString(recvChunk),
@@ -109,12 +147,22 @@ public abstract class AbstractReusedServerQwpEgressTest extends AbstractBootstra
      * same ports closed can hit EADDRINUSE. Back off and retry until the port frees.
      */
     protected static TestServerMain startServerWithRetry(String... envs) {
-        NetworkError lastError = null;
+        return startServerWithRetry(() -> startWithEnvVariables(envs));
+    }
+
+    /**
+     * As {@link #startServerWithRetry(String...)}, for a server that {@code start} builds and
+     * starts itself. On failure {@code start} must close the half-started server before throwing.
+     */
+    protected static TestServerMain startServerWithRetry(Supplier<TestServerMain> start) {
+        Throwable lastError = null;
         for (int attempt = 0; attempt < 100; attempt++) {
             try {
-                return startWithEnvVariables(envs);
-            } catch (NetworkError e) {
-                // startWithEnvVariables already closed the half-started server before rethrowing.
+                return start.get();
+            } catch (NetworkError | Bootstrap.BootstrapException e) {
+                // The lifecycle reports a listener that failed to bind as a startup failure
+                // of its component, so the bind error can arrive wrapped in either. start
+                // already closed the half-started server before rethrowing.
                 if (e.getMessage() == null || !Chars.contains(e.getMessage(), "could not bind socket")) {
                     throw e;
                 }
@@ -123,6 +171,9 @@ public abstract class AbstractReusedServerQwpEgressTest extends AbstractBootstra
                 Os.sleep(100);
             }
         }
-        throw lastError;
+        if (lastError instanceof Bootstrap.BootstrapException e) {
+            throw e;
+        }
+        throw (NetworkError) lastError;
     }
 }

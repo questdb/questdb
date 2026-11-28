@@ -499,6 +499,11 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         }
 
         @Override
+        public void releaseConsumedFrames() {
+            baseCursor.releaseConsumedFrames();
+        }
+
+        @Override
         public void releaseOpenPartitions() {
             baseCursor.releaseOpenPartitions();
         }

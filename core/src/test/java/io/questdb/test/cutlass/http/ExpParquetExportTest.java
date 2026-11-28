@@ -43,6 +43,7 @@ import io.questdb.cutlass.parquet.CopyExportRequestTask;
 import io.questdb.cutlass.parquet.ParquetExportMode;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.table.CoveringIndexRecordCursorFactory;
 import io.questdb.griffin.engine.table.parquet.ParquetEncoding;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Files;
@@ -838,7 +839,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                             var sink = new DirectUtf8Sink(16_384)
                     ) {
                         exportParquet(httpClient, sink, query);
-                        assertParquetMatchesQuery(engine, sqlExecutionContext, sink, query, "binary_settings.parquet");
+                        assertParquetMatchesQuery(engine, sqlExecutionContext, sink, query, "binary_settings.parquet", "ts");
                     }
                     final String parquetPath = root + "/export/binary_settings.parquet";
                     final FilesFacade ff = engine.getConfiguration().getFilesFacade();
@@ -1336,6 +1337,8 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                             "SELECT * FROM hsym ORDER BY v DESC"
                     };
                     final int[][] keptColumns = {{0}, {2}, {}, {0, 1}, {0, 1}, {0, 1}};
+                    // the designated timestamp of each file: the sorts by other columns drop it
+                    final String[] timestamps = {null, "ts", "ts", null, null, null};
                     for (String query : queries) {
                         assertExportMode(engine, sqlExecutionContext, query, ParquetExportMode.CURSOR_BASED);
                     }
@@ -1355,7 +1358,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                             sink.clear();
                             httpClient.reqToSink(req, sink, null, null, null, null);
                             final String fileName = "cursor_symbol_" + i + ".parquet";
-                            assertParquetMatchesQuery(engine, sqlExecutionContext, sink, queries[index], fileName);
+                            assertParquetMatchesQuery(engine, sqlExecutionContext, sink, queries[index], fileName, timestamps[index]);
                             if (keptColumns[index].length > 0) {
                                 ParquetTestUtils.assertColumnTypes(root + "/export/" + fileName, ff, ColumnType.SYMBOL, keptColumns[index]);
                             }
@@ -1388,7 +1391,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                             DirectUtf8Sink sink = new DirectUtf8Sink(16_384)
                     ) {
                         exportParquet(httpClient, sink, query);
-                        assertParquetMatchesQuery(engine, sqlExecutionContext, sink, query, "after_drop.parquet");
+                        assertParquetMatchesQuery(engine, sqlExecutionContext, sink, query, "after_drop.parquet", null);
                         ParquetTestUtils.assertColumnTypes(root + "/export/after_drop.parquet", engine.getConfiguration().getFilesFacade(), ColumnType.SYMBOL, 0, 1);
                     }
                 }));
@@ -1410,19 +1413,19 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     ) {
                         httpClient.setKeepConnection(true);
                         exportParquet(httpClient, sink, query);
-                        assertParquetMatchesQuery(engine, sqlExecutionContext, sink, query, "before_truncate.parquet");
+                        assertParquetMatchesQuery(engine, sqlExecutionContext, sink, query, "before_truncate.parquet", null);
                         assertReadParquet(engine, sqlExecutionContext, "before_truncate.parquet", "sym\tv\na\t1\nb\t2\n");
                         ParquetTestUtils.assertColumnTypes(root + "/export/before_truncate.parquet", ff, ColumnType.SYMBOL, 0);
 
                         engine.execute("TRUNCATE TABLE tsym", sqlExecutionContext);
                         exportParquet(httpClient, sink, query);
-                        assertParquetMatchesQuery(engine, sqlExecutionContext, sink, query, "after_truncate.parquet");
+                        assertParquetMatchesQuery(engine, sqlExecutionContext, sink, query, "after_truncate.parquet", null);
                         assertReadParquet(engine, sqlExecutionContext, "after_truncate.parquet", "sym\tv\n");
                         ParquetTestUtils.assertColumnTypes(root + "/export/after_truncate.parquet", ff, ColumnType.SYMBOL, 0);
 
                         engine.execute("INSERT INTO tsym VALUES ('c', 3, '2024-01-02T00:00:00.000000Z'), ('a', 4, '2024-01-02T01:00:00.000000Z')", sqlExecutionContext);
                         exportParquet(httpClient, sink, query);
-                        assertParquetMatchesQuery(engine, sqlExecutionContext, sink, query, "after_insert.parquet");
+                        assertParquetMatchesQuery(engine, sqlExecutionContext, sink, query, "after_insert.parquet", null);
                         assertReadParquet(engine, sqlExecutionContext, "after_insert.parquet", "sym\tv\nc\t3\na\t4\n");
                         ParquetTestUtils.assertColumnTypes(root + "/export/after_insert.parquet", ff, ColumnType.SYMBOL, 0);
                     }
@@ -1495,7 +1498,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                         req.query("rmode", "nodelay");
                         testHttpClient.reqToSink(req, sink, null, null, null, null);
 
-                        assertParquetMatchesQuery(engine, sqlExecutionContext, sink, query, filename);
+                        assertParquetMatchesQuery(engine, sqlExecutionContext, sink, query, filename, null);
                         ParquetTestUtils.assertColumnsUseDictionaryEncoding(
                                 root + "/export/" + filename,
                                 engine.getConfiguration().getFilesFacade(),
@@ -1780,6 +1783,144 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testParquetExportMultiKeyCoveringScanAcrossManyFrames() throws Exception {
+        // The multi-key covering merge fills each frame into buffers of its own, and the export
+        // frees the frames before the current one after each row group it writes. With frames
+        // of 7 rows, row groups of 1, 3, 7, 10 and 1_000 rows end inside, on and past frame
+        // edges, and the forced fragmentation suspends the export mid-stream. The no_covering
+        // query reads the column files instead of the index sidecar.
+        CoveringIndexRecordCursorFactory.setMaxRowsPerFrameForTesting(7);
+        try {
+            getExportTesterPageFrame()
+                    .run((engine, sqlExecutionContext) -> {
+                        engine.execute("""
+                                CREATE TABLE cov_mk (
+                                    ts TIMESTAMP,
+                                    sym SYMBOL INDEX TYPE POSTING INCLUDE (b, i, l, d, vc, s, sy, u, arr, bin),
+                                    b BOOLEAN, i INT, l LONG, d DOUBLE, vc VARCHAR, s STRING, sy SYMBOL, u UUID, arr DOUBLE[], bin BINARY
+                                ) TIMESTAMP(ts) PARTITION BY DAY
+                                """, sqlExecutionContext);
+                        engine.execute("""
+                                INSERT INTO cov_mk SELECT
+                                    (x * 600_000_000L)::TIMESTAMP,
+                                    CASE x % 3 WHEN 0 THEN 'A' WHEN 1 THEN 'B' ELSE 'C' END,
+                                    x % 2 = 0,
+                                    CASE WHEN x % 10 = 0 THEN NULL ELSE x::INT END,
+                                    x * 1_000_003,
+                                    CASE WHEN x % 11 = 0 THEN NULL ELSE x / 7.0 END,
+                                    CASE WHEN x % 7 = 0 THEN NULL ELSE 'varchar value ' || x END,
+                                    CASE WHEN x % 5 = 0 THEN NULL ELSE 'string ' || x END,
+                                    rnd_symbol('x', 'y', 'z', NULL),
+                                    rnd_uuid4(),
+                                    CASE WHEN x % 13 = 0 THEN NULL ELSE ARRAY[x::DOUBLE, -x::DOUBLE] END,
+                                    rnd_bin(1, 32, 1)
+                                FROM long_sequence(600)
+                                """, sqlExecutionContext);
+                        final String[] selects = {
+                                // DIRECT_PAGE_FRAME: the encoder reads the covering frames as they are
+                                "ts, sym, b, i, l, d, vc, s, sy, u, arr, bin FROM cov_mk WHERE sym IN ('A', 'C')",
+                                // PAGE_FRAME_BACKED: a computed column next to columns read from the frames
+                                "l + 1 lp, vc, s, arr, bin, ts FROM cov_mk WHERE sym IN ('A', 'C')",
+                        };
+                        try (
+                                TestHttpClient testHttpClient = new TestHttpClient();
+                                var sink = new DirectUtf8Sink(16_384)
+                        ) {
+                            testHttpClient.setKeepConnection(true);
+                            int fileIdx = 0;
+                            for (String select : selects) {
+                                assertQuery("SELECT " + select)
+                                        .withEngine(engine)
+                                        .withContext(sqlExecutionContext)
+                                        .noLeakCheck()
+                                        .assertsPlanContaining("CoveringIndex on: sym");
+                                for (int rowGroupSize : new int[]{1, 3, 7, 10, 1_000}) {
+                                    HttpClient.Request req = testHttpClient.getHttpClient().newRequest("localhost", 9001);
+                                    req.GET().url("/exp");
+                                    req.query("query", "SELECT " + select);
+                                    req.query("fmt", "parquet");
+                                    req.query("row_group_size", String.valueOf(rowGroupSize));
+                                    sink.clear();
+                                    testHttpClient.reqToSink(req, sink, null, null, null, null);
+                                    assertParquetMatchesQuery(
+                                            engine,
+                                            sqlExecutionContext,
+                                            sink,
+                                            "SELECT /*+ no_covering */ " + select,
+                                            "cov_mk_" + fileIdx++ + ".parquet",
+                                            "ts"
+                                    );
+                                }
+                            }
+                        }
+                    });
+        } finally {
+            CoveringIndexRecordCursorFactory.setMaxRowsPerFrameForTesting(-1);
+        }
+    }
+
+    @Test
+    public void testParquetExportMultiKeyCoveringScanStaysUnderQueryMemoryLimit() throws Exception {
+        // The merge fills each frame into buffers of its own: 4096 rows of price, dbl and the
+        // symbol key. Sending at most 1 KiB at a time suspends the export at every row group it
+        // writes; each time it resumes, the export frees the frames before the current one, so
+        // it holds two frames at a time through the 40 frames of the result, under a query memory
+        // limit of three and a half. Keeping every frame until the export ends would breach the
+        // limit at the fourth.
+        final long frameBytes = 4_096L * (Long.BYTES + Double.BYTES + Integer.BYTES);
+        CoveringIndexRecordCursorFactory.setMaxRowsPerFrameForTesting(1_000);
+        try {
+            new HttpQueryTestBuilder()
+                    .withTempFolder(root)
+                    .withWorkerCount(1)
+                    .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                    .withTelemetry(false)
+                    .withSendBufferSize(4096)
+                    .withForceSendFragmentationChunkSize(1024)
+                    .withCopyExportRoot(root + "/export")
+                    .withCopyInputRoot(root + "/export")
+                    .withQueryMemoryLimitBytes(3 * frameBytes + frameBytes / 2)
+                    .run((engine, sqlExecutionContext) -> {
+                        engine.execute("CREATE TABLE tm (sym SYMBOL INDEX TYPE POSTING INCLUDE (price, dbl), price LONG, dbl DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", sqlExecutionContext);
+                        // 60_000 rows a second apart, all in one day partition; x % 3 picks the key
+                        engine.execute("INSERT INTO tm SELECT CASE x % 3 WHEN 0 THEN 'A' WHEN 1 THEN 'B' ELSE 'C' END, x, x / 2.0, (x * 1_000_000L)::TIMESTAMP FROM long_sequence(60_000)", sqlExecutionContext);
+                        final String[] selects = {
+                                // DIRECT_PAGE_FRAME
+                                "price, dbl FROM tm WHERE sym IN ('A', 'C')",
+                                // PAGE_FRAME_BACKED: a computed column next to columns read from the frames
+                                "price + 1 p1, dbl FROM tm WHERE sym IN ('A', 'C')",
+                                // CURSOR_BASED: a single-key scan exports through its record cursor and
+                                // has no page frames to free when it resumes
+                                "price, dbl FROM tm WHERE sym = 'A'",
+                        };
+                        try (
+                                TestHttpClient testHttpClient = new TestHttpClient();
+                                var sink = new DirectUtf8Sink(16_384)
+                        ) {
+                            testHttpClient.setKeepConnection(true);
+                            for (int s = 0; s < selects.length; s++) {
+                                assertQuery("SELECT " + selects[s])
+                                        .withEngine(engine)
+                                        .withContext(sqlExecutionContext)
+                                        .noLeakCheck()
+                                        .assertsPlanContaining("CoveringIndex on: sym with: price, dbl");
+                                HttpClient.Request req = testHttpClient.getHttpClient().newRequest("localhost", 9001);
+                                req.GET().url("/exp");
+                                req.query("query", "SELECT " + selects[s]);
+                                req.query("fmt", "parquet");
+                                req.query("row_group_size", "1000");
+                                sink.clear();
+                                testHttpClient.reqToSink(req, sink, null, null, null, null);
+                                assertParquetMatchesQuery(engine, sqlExecutionContext, sink, "SELECT /*+ no_covering */ " + selects[s], "tm_frames_" + s + ".parquet", null);
+                            }
+                        }
+                    });
+        } finally {
+            CoveringIndexRecordCursorFactory.setMaxRowsPerFrameForTesting(-1);
+        }
+    }
+
+    @Test
     public void testParquetExportMultipleOptions() throws Exception {
         getExportTester()
                 .run((engine, sqlExecutionContext) -> {
@@ -1833,7 +1974,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     ) {
                         final String query = "SELECT * FROM big WHERE ts >= '2024-01-01T23:59:00'";
                         exportParquet(httpClient, sink, query);
-                        assertParquetMatchesQuery(engine, sqlExecutionContext, sink, query.replace("big", "nbig"), "after_disconnect.parquet");
+                        assertParquetMatchesQuery(engine, sqlExecutionContext, sink, query.replace("big", "nbig"), "after_disconnect.parquet", "ts");
                     }
                     // the export released its reader of the table
                     engine.execute("DROP TABLE big", sqlExecutionContext);
@@ -1875,7 +2016,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                                 // stale, and writes the rows of the new definition only once it compiled the query
                                 // again.
                                 exportParquet(httpClient, sink, query);
-                                assertParquetMatchesQuery(engine, sqlExecutionContext, sink, definitions[i][0], fileName);
+                                assertParquetMatchesQuery(engine, sqlExecutionContext, sink, definitions[i][0], fileName, definitions[i][1]);
                                 assertReadParquetTimestamp(engine, sqlExecutionContext, fileName, definitions[i][1]);
                             } catch (AssertionError e) {
                                 throw new AssertionError(definitions[i][0], e);
@@ -1883,14 +2024,14 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                         }
 
                         exportParquet(httpClient, sink, projectionQuery);
-                        assertParquetMatchesQuery(engine, sqlExecutionContext, sink, projectionQuery, "projection_before.parquet");
+                        assertParquetMatchesQuery(engine, sqlExecutionContext, sink, projectionQuery, "projection_before.parquet", null);
                         engine.execute("ALTER TABLE nr ADD COLUMN extra INT", sqlExecutionContext);
                         try (RecordCursorFactory factory = engine.select(projectionQuery, sqlExecutionContext)) {
                             Assert.assertEquals(ParquetExportMode.PAGE_FRAME_BACKED, ParquetExportMode.determineExportMode(factory, false, sqlExecutionContext));
                             Assert.assertEquals(ParquetExportMode.CURSOR_BASED, ParquetExportMode.determineRecompiledExportMode(factory, sqlExecutionContext));
                         }
                         exportParquet(httpClient, sink, projectionQuery);
-                        assertParquetMatchesQuery(engine, sqlExecutionContext, sink, projectionQuery, "projection_after.parquet");
+                        assertParquetMatchesQuery(engine, sqlExecutionContext, sink, projectionQuery, "projection_after.parquet", null);
                         assertReadParquetTimestamp(engine, sqlExecutionContext, "projection_after.parquet", null);
                     }
                 });
@@ -1922,7 +2063,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                             engine.execute("CREATE VIEW " + viewName + " AS (" + definitions[i][0] + ")", sqlExecutionContext);
                             assertExportMode(engine, sqlExecutionContext, query, ParquetExportMode.CURSOR_BASED);
                             exportParquet(httpClient, sink, query);
-                            assertParquetMatchesQuery(engine, sqlExecutionContext, sink, definitions[i][0], "temp_table_before_" + i + ".parquet");
+                            assertParquetMatchesQuery(engine, sqlExecutionContext, sink, definitions[i][0], "temp_table_before_" + i + ".parquet", "ts");
 
                             engine.execute("CREATE OR REPLACE VIEW " + viewName + " AS (" + definitions[i][1] + ")", sqlExecutionContext);
                             // the mode /exp gives the plan it compiles again
@@ -1934,7 +2075,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                             }
                             final String fileName = "temp_table_after_" + i + ".parquet";
                             exportParquet(httpClient, sink, query);
-                            assertParquetMatchesQuery(engine, sqlExecutionContext, sink, definitions[i][1], fileName);
+                            assertParquetMatchesQuery(engine, sqlExecutionContext, sink, definitions[i][1], fileName, definitions[i][2]);
                             assertReadParquetTimestamp(engine, sqlExecutionContext, fileName, definitions[i][2]);
                         } catch (AssertionError e) {
                             throw new AssertionError(definitions[i][0] + " -> " + definitions[i][1], e);
@@ -1969,7 +2110,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                             try {
                                 assertExportMode(engine, sqlExecutionContext, shapes[i][0], ParquetExportMode.TEMP_TABLE);
                                 exportParquet(httpClient, sink, shapes[i][0]);
-                                assertParquetMatchesQuery(engine, sqlExecutionContext, sink, shapes[i][1], fileName);
+                                assertParquetMatchesQuery(engine, sqlExecutionContext, sink, shapes[i][1], fileName, shapes[i][2]);
                                 assertReadParquetTimestamp(engine, sqlExecutionContext, fileName, shapes[i][2]);
                             } catch (AssertionError e) {
                                 throw new AssertionError(shapes[i][0], e);
@@ -2012,7 +2153,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                             try {
                                 assertExportMode(engine, sqlExecutionContext, shapes[i][0], ParquetExportMode.CURSOR_BASED);
                                 exportParquet(httpClient, sink, shapes[i][0]);
-                                assertParquetMatchesQuery(engine, sqlExecutionContext, sink, shapes[i][1], fileName);
+                                assertParquetMatchesQuery(engine, sqlExecutionContext, sink, shapes[i][1], fileName, shapes[i][2]);
                                 assertReadParquetTimestamp(engine, sqlExecutionContext, fileName, shapes[i][2]);
                             } catch (AssertionError e) {
                                 throw new AssertionError(shapes[i][0], e);
@@ -2121,7 +2262,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                         req.query("rmode", "nodelay");
                         testHttpClient.reqToSink(req, sink, null, null, null, null);
 
-                        assertParquetMatchesQuery(engine, sqlExecutionContext, sink, query, filename);
+                        assertParquetMatchesQuery(engine, sqlExecutionContext, sink, query, filename, "ts");
                         ParquetTestUtils.assertColumnsUseDictionaryEncoding(
                                 root + "/export/" + filename,
                                 engine.getConfiguration().getFilesFacade(),
@@ -2378,7 +2519,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                         req.query("row_group_size", "50");
                         sink.clear();
                         httpClient.reqToSink(req, sink, null, null, null, null);
-                        assertParquetMatchesQuery(engine, sqlExecutionContext, sink, query, "recomp_first.parquet");
+                        assertParquetMatchesQuery(engine, sqlExecutionContext, sink, query, "recomp_first.parquet", null);
 
                         // ALTER TABLE to change the schema version, making the cached factory stale.
                         engine.execute("ALTER TABLE recomp_desc ADD COLUMN extra_col INT", sqlExecutionContext);
@@ -2395,7 +2536,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                         req.query("row_group_size", "50");
                         sink.clear();
                         httpClient.reqToSink(req, sink, null, null, null, null);
-                        assertParquetMatchesQuery(engine, sqlExecutionContext, sink, query, "recomp_second.parquet");
+                        assertParquetMatchesQuery(engine, sqlExecutionContext, sink, query, "recomp_second.parquet", null);
                     }
                 });
     }
@@ -2553,11 +2694,12 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     final String singleKeyQuery = "SELECT timestamp, open, high, low, close, symbol FROM deriv " +
                             "WHERE symbol = 'S3'";
                     final String[] verifyQueries = {query, singleKeyQuery};
-                    final StringSink planSink = new StringSink();
                     for (String verifyQuery : verifyQueries) {
-                        planSink.clear();
-                        TestUtils.printSql(engine, sqlExecutionContext, "EXPLAIN " + verifyQuery, planSink);
-                        TestUtils.assertContains(planSink, "CoveringIndex on: symbol");
+                        assertQuery(verifyQuery)
+                                .withEngine(engine)
+                                .withContext(sqlExecutionContext)
+                                .noLeakCheck()
+                                .assertsPlanContaining("CoveringIndex on: symbol");
                     }
                     try (
                             TestHttpClient testHttpClient = new TestHttpClient();
@@ -2575,7 +2717,8 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                                     sqlExecutionContext,
                                     sink,
                                     verifyQueries[i],
-                                    "posting_covering_verify_" + i + ".parquet"
+                                    "posting_covering_verify_" + i + ".parquet",
+                                    "timestamp"
                             );
                         }
                     }
@@ -2619,15 +2762,18 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                             // multi-key var-size covered column -> DIRECT_PAGE_FRAME (eager merge)
                             "SELECT timestamp, symbol, note FROM deriv WHERE symbol IN ('S1', 'S3')",
                     };
+                    // the designated timestamp read_parquet() reports for each export
+                    final String[] timestamps = {null, "timestamp", null, "timestamp"};
                     try (
                             TestHttpClient testHttpClient = new TestHttpClient();
                             DirectUtf8Sink sink = new DirectUtf8Sink(1 << 20)
                     ) {
-                        final StringSink planSink = new StringSink();
                         for (int i = 0; i < queries.length; i++) {
-                            planSink.clear();
-                            TestUtils.printSql(engine, sqlExecutionContext, "EXPLAIN " + queries[i], planSink);
-                            TestUtils.assertContains(planSink, "CoveringIndex on: symbol");
+                            assertQuery(queries[i])
+                                    .withEngine(engine)
+                                    .withContext(sqlExecutionContext)
+                                    .noLeakCheck()
+                                    .assertsPlanContaining("CoveringIndex on: symbol");
 
                             HttpClient.Request req = testHttpClient.getHttpClient().newRequest("localhost", 9001);
                             req.GET().url("/exp")
@@ -2640,7 +2786,8 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                                     sqlExecutionContext,
                                     sink,
                                     queries[i],
-                                    "covering_shape_" + i + ".parquet"
+                                    "covering_shape_" + i + ".parquet",
+                                    timestamps[i]
                             );
                         }
                     }
@@ -2673,7 +2820,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                         // The second request is served from the connection's select cache.
                         for (int i = 0; i < 2; i++) {
                             exportParquet(httpClient, sink, query);
-                            assertParquetMatchesQuery(engine, sqlExecutionContext, sink, query, "recreated_before_" + i + ".parquet");
+                            assertParquetMatchesQuery(engine, sqlExecutionContext, sink, query, "recreated_before_" + i + ".parquet", "ts");
                         }
 
                         engine.execute("DROP VIEW recreated_v", sqlExecutionContext);
@@ -2683,7 +2830,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                         );
 
                         exportParquet(httpClient, sink, query);
-                        assertParquetMatchesQuery(engine, sqlExecutionContext, sink, query, "recreated_after.parquet");
+                        assertParquetMatchesQuery(engine, sqlExecutionContext, sink, query, "recreated_after.parquet", "ts");
                     }
                 });
     }
@@ -2886,7 +3033,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                             var sink = new DirectUtf8Sink(16_384)
                     ) {
                         exportParquet(httpClient, sink, query);
-                        assertParquetMatchesQuery(engine, sqlExecutionContext, sink, query, "ty.parquet");
+                        assertParquetMatchesQuery(engine, sqlExecutionContext, sink, query, "ty.parquet", "ts");
                     }
                     ParquetTestUtils.assertColumnsUseParquetSettingPerType(
                             root + "/export/ty.parquet",
@@ -2969,7 +3116,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                             var sink = new DirectUtf8Sink(16_384)
                     ) {
                         exportParquet(httpClient, sink, query);
-                        assertParquetMatchesQuery(engine, sqlExecutionContext, sink, query, "converted_view.parquet");
+                        assertParquetMatchesQuery(engine, sqlExecutionContext, sink, query, "converted_view.parquet", "ts");
                         assertQuery("SELECT * FROM read_parquet('converted_view.parquet')")
                                 .withEngine(engine)
                                 .withContext(sqlExecutionContext)
@@ -3032,7 +3179,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                                 var sink = new DirectUtf8Sink(16_384)
                         ) {
                             exportParquet(httpClient, sink, query);
-                            assertParquetMatchesQuery(engine, sqlExecutionContext, sink, query, fileName);
+                            assertParquetMatchesQuery(engine, sqlExecutionContext, sink, query, fileName, timestampColumns[i]);
                         }
                         assertReadParquetTimestamp(engine, sqlExecutionContext, fileName, timestampColumns[i]);
                         final String parquetPath = root + "/export/" + fileName;
@@ -3300,12 +3447,17 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     Files.close(fd);
                 }
 
-                String selectFromParquet = "read_parquet('" + filename + "')";
-                var expectedSink = new StringSink();
-                var actualSink = new StringSink();
-                TestUtils.printSql(engine, sqlExecutionContext, query, expectedSink);
-                TestUtils.printSql(engine, sqlExecutionContext, selectFromParquet, actualSink);
-                TestUtils.assertEquals(expectedSink, actualSink);
+                final StringSink expected = new StringSink();
+                TestUtils.printSql(engine, sqlExecutionContext, query, expected);
+                // The queries differ in their designated timestamps, so the assertion takes the
+                // one read_parquet() reports and checks that the rows follow it.
+                assertQuery("read_parquet('" + filename + "')")
+                        .withEngine(engine)
+                        .withContext(sqlExecutionContext)
+                        .noLeakCheck()
+                        .expectSize()
+                        .inferTimestamp()
+                        .returns(expected);
             }
         }
     }
@@ -3391,12 +3543,21 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
         });
     }
 
+    /**
+     * Writes {@code parquetData} to {@code filename} and asserts that {@code read_parquet()} of
+     * the file returns the rows of {@code query}: the exported query, or a variant of it that
+     * reads the table another way. {@code timestamp} names the designated timestamp
+     * {@code read_parquet()} reports, or is null when it reports none. The export keeps the
+     * designated timestamp of an ascending query, and {@code read_parquet()} reports none for a
+     * descending one.
+     */
     private void assertParquetMatchesQuery(
             CairoEngine engine,
             SqlExecutionContext sqlExecutionContext,
             DirectUtf8Sink parquetData,
             String query,
-            String filename
+            String filename,
+            @Nullable String timestamp
     ) throws Exception {
         int bytesReceived = parquetData.size();
         Path path = Path.getThreadLocal(root);
@@ -3411,12 +3572,15 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
             Files.close(fd);
         }
 
-        String selectFromParquet = "read_parquet('" + filename + "')";
-        var expectedSink = new StringSink();
-        var actualSink = new StringSink();
-        TestUtils.printSql(engine, sqlExecutionContext, query, expectedSink);
-        TestUtils.printSql(engine, sqlExecutionContext, selectFromParquet, actualSink);
-        TestUtils.assertEquals(expectedSink, actualSink);
+        final StringSink expected = new StringSink();
+        TestUtils.printSql(engine, sqlExecutionContext, query, expected);
+        assertQuery("read_parquet('" + filename + "')")
+                .withEngine(engine)
+                .withContext(sqlExecutionContext)
+                .noLeakCheck()
+                .expectSize()
+                .timestamp(timestamp)
+                .returns(expected);
     }
 
     private void assertReadParquet(

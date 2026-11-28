@@ -265,6 +265,7 @@ public class QwpEgressUpgradeProcessorResumeSendTest extends AbstractCairoTest {
                             1,
                             factory,
                             cursor,
+                            false,
                             null,
                             2,
                             0,

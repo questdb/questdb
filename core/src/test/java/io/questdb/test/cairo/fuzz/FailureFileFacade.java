@@ -314,6 +314,11 @@ public class FailureFileFacade implements FilesFacade {
     }
 
     @Override
+    public long getThreadMajorFaults() {
+        return ff.getThreadMajorFaults();
+    }
+
+    @Override
     public int hardLink(LPSZ src, LPSZ hardLink) {
         return ff.hardLink(src, hardLink);
     }
@@ -351,6 +356,16 @@ public class FailureFileFacade implements FilesFacade {
     @Override
     public boolean isDirOrSoftLinkDirNoDots(Path path, int rootLen, long pUtf8NameZ, int type, MutableUtf8Sink nameSink) {
         return ff.isDirOrSoftLinkDirNoDots(path, rootLen, pUtf8NameZ, type, nameSink);
+    }
+
+    @Override
+    public boolean isMadviseWillNeedSupported() {
+        return ff.isMadviseWillNeedSupported();
+    }
+
+    @Override
+    public boolean isPageCacheResident(long address, long len) {
+        return ff.isPageCacheResident(address, len);
     }
 
     @Override
@@ -392,6 +407,11 @@ public class FailureFileFacade implements FilesFacade {
     @Override
     public void madvise(long address, long len, int advise) {
         ff.madvise(address, len, advise);
+    }
+
+    @Override
+    public int madviseWillNeed(long address, long len) {
+        return ff.madviseWillNeed(address, len);
     }
 
     @Override
@@ -663,6 +683,11 @@ public class FailureFileFacade implements FilesFacade {
             return false;
         }
         return ff.touch(path);
+    }
+
+    @Override
+    public long touchPages(long address, long len) {
+        return ff.touchPages(address, len);
     }
 
     @Override

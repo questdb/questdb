@@ -25,19 +25,24 @@
 package io.questdb.test;
 
 import io.questdb.Bootstrap;
+import io.questdb.DynamicPropServerConfiguration;
+import io.questdb.FactoryProviderFactoryImpl;
 import io.questdb.PropBootstrapConfiguration;
 import io.questdb.PropServerConfiguration;
 import io.questdb.PropertyKey;
+import io.questdb.ServerConfiguration;
 import io.questdb.test.cairo.Overrides;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableToken;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.BeforeClass;
@@ -91,7 +96,18 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
         return startWithEnvVariables(root, envs);
     }
 
+    /**
+     * As {@link #startWithEnvVariables(String...)}, on the given files facade.
+     */
+    public static TestServerMain startWithEnvVariables(FilesFacade ff, String... envs) {
+        return startWithEnvVariables(root, ff, envs);
+    }
+
     public static TestServerMain startWithEnvVariables(CharSequence root, String... envs) {
+        return startWithEnvVariables(root, null, envs);
+    }
+
+    private static TestServerMain startWithEnvVariables(CharSequence root, @Nullable FilesFacade ff, String... envs) {
         assert envs.length % 2 == 0;
 
         Map<String, String> envMap = new HashMap<>();
@@ -102,7 +118,7 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
                     : "QuestDB property path passed as env var; use PropertyKey.getEnvVarName(): " + envs[i];
             envMap.put(envs[i], envs[i + 1]);
         }
-        TestServerMain serverMain = new TestServerMain(newBootstrapWithEnvVariables(root, envMap));
+        TestServerMain serverMain = new TestServerMain(newBootstrapWithEnvVariables(root, envMap, ff));
         try {
             serverMain.start();
             return serverMain;
@@ -331,6 +347,14 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
 
     @NotNull
     protected static Bootstrap newBootstrapWithEnvVariables(CharSequence root, Map<String, String> envs) {
+        return newBootstrapWithEnvVariables(root, envs, null);
+    }
+
+    /**
+     * As {@link #newBootstrapWithEnvVariables(CharSequence, Map)}, on the given files facade,
+     * or on the default one when {@code ff} is null.
+     */
+    protected static Bootstrap newBootstrapWithEnvVariables(CharSequence root, Map<String, String> envs, @Nullable FilesFacade ff) {
         Map<String, String> env = new HashMap<>(System.getenv());
         env.putAll(envs);
         env.put(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED.getEnvVarName(), "false");
@@ -339,6 +363,24 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
                     @Override
                     public Map<String, String> getEnv() {
                         return env;
+                    }
+
+                    @Override
+                    public ServerConfiguration getServerConfiguration(Bootstrap bootstrap) throws Exception {
+                        if (ff == null) {
+                            return super.getServerConfiguration(bootstrap);
+                        }
+                        // as PropBootstrapConfiguration, on the given facade
+                        return new DynamicPropServerConfiguration(
+                                bootstrap.getRootDirectory(),
+                                bootstrap.loadProperties(),
+                                getEnv(),
+                                bootstrap.getLog(),
+                                bootstrap.getBuildInformation(),
+                                ff,
+                                bootstrap.getMicrosecondClock(),
+                                FactoryProviderFactoryImpl.INSTANCE
+                        );
                     }
                 },
                 getServerMainArgs(root)

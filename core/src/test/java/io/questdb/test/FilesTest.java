@@ -30,6 +30,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogError;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.CarrierIdentity;
 import io.questdb.std.Chars;
 import io.questdb.std.FdCache;
 import io.questdb.std.Files;
@@ -42,6 +43,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -1128,6 +1130,68 @@ public class FilesTest {
     }
 
     @Test
+    public void testIsPageCacheResident() throws Exception {
+        // mincore(2) reports which pages of a mapping are in memory: those a read brought in,
+        // not those that nothing read. Only Linux asks; elsewhere no range is in memory.
+        assertMemoryLeak(() -> {
+            // a sparse file: nothing of it is in memory until something reads it
+            final long fileSize = 64 * 1024 * 1024;
+            final long readSize = 4 * 1024 * 1024;
+            final File temp = temporaryFolder.newFile();
+            try (Path path = new Path().of(temp.getAbsolutePath())) {
+                final long fdrw = Files.openRW(path.$());
+                try {
+                    Assert.assertTrue(Files.truncate(fdrw, fileSize));
+                } finally {
+                    Files.close(fdrw);
+                }
+                final long fd = Files.openRO(path.$());
+                try {
+                    final long address = Files.mmap(fd, fileSize, 0, Files.MAP_RO, MemoryTag.MMAP_DEFAULT);
+                    try {
+                        final boolean isLinux = Os.isLinux();
+                        final long pageSize = Files.PAGE_SIZE;
+                        Assert.assertFalse(Files.isPageCacheResident(address, pageSize));
+                        long sink = 0;
+                        for (long p = 0; p < readSize; p += pageSize) {
+                            sink += Unsafe.getByte(address + p);
+                        }
+                        Assert.assertEquals(0, sink);
+                        // 1,024 pages of 4 KiB: more than one mincore(2) call reports on
+                        Assert.assertEquals(isLinux, Files.isPageCacheResident(address, readSize));
+                        Assert.assertEquals(isLinux, FilesFacadeImpl.INSTANCE.isPageCacheResident(address, readSize));
+                        // a range inside a page
+                        Assert.assertEquals(isLinux, Files.isPageCacheResident(address + 100, 10));
+                        // a worker thread, which binds as a carrier, see CarrierIdentity, gets the same answers
+                        runOnCarrier(() -> {
+                            Assert.assertEquals(isLinux, Files.isPageCacheResident(address, readSize));
+                            Assert.assertEquals(isLinux, FilesFacadeImpl.INSTANCE.isPageCacheResident(address, readSize));
+                            Assert.assertFalse(Files.isPageCacheResident(address + fileSize - readSize, readSize));
+                            Assert.assertFalse(Files.isPageCacheResident(address, fileSize));
+                        });
+                        // The far end of the file, which nothing read: the fault read-around that
+                        // brought the first 4 MiB in reaches no further than a few hundred KiB past them.
+                        Assert.assertFalse(Files.isPageCacheResident(address + fileSize - readSize, readSize));
+                        Assert.assertFalse(Files.isPageCacheResident(address + fileSize - 1, 1));
+                        // a range in memory at its start only: a later mincore(2) call finds the gap
+                        Assert.assertFalse(Files.isPageCacheResident(address, fileSize));
+                        Assert.assertFalse(FilesFacadeImpl.INSTANCE.isPageCacheResident(address, fileSize));
+                        // nothing to report on
+                        Assert.assertFalse(Files.isPageCacheResident(address, 0));
+                        Assert.assertFalse(Files.isPageCacheResident(address, -1));
+                        // mincore(2) fails on a range that nothing maps
+                        Assert.assertFalse(Files.isPageCacheResident(0, pageSize));
+                    } finally {
+                        Files.munmap(address, fileSize, MemoryTag.MMAP_DEFAULT);
+                    }
+                } finally {
+                    Files.close(fd);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testLastModified() throws Exception {
         LogFactory.getLog(FilesTest.class); // so that it is not accounted in assertMemoryLeak
         assertMemoryLeak(() -> {
@@ -1188,6 +1252,71 @@ public class FilesTest {
     public void testLongFd2() {
         long unuqFd = Numbers.encodeLowHighInts(Integer.MAX_VALUE, 1000);
         Assert.assertTrue(unuqFd > 0);
+    }
+
+    @Test
+    public void testMadviseWillNeedCountsOnlyAcceptedRequests() {
+        // no mapping holds the first page of the address space, so madvise(2) fails the
+        // request with ENOMEM, and madviseWillNeed() does not count it. Other platforms
+        // send nothing.
+        final int errnoNoMemory = 12;
+        Assert.assertEquals(0, Files.madviseWillNeed(0, Files.PAGE_SIZE));
+        if (Os.isLinux()) {
+            Assert.assertEquals(errnoNoMemory, Os.errno());
+        }
+        Assert.assertEquals(0, FilesFacadeImpl.INSTANCE.madviseWillNeed(0, Files.PAGE_SIZE));
+    }
+
+    @Test
+    public void testMadviseWillNeedSplitsTheRangeIntoRequests() throws Exception {
+        // Linux reads at most its readahead size of one MADV_WILLNEED request and drops the
+        // rest, so madviseWillNeed() sends a range as page-aligned requests of at most
+        // 128 KiB, and counts the ones the kernel accepts. Other platforms send nothing.
+        assertMemoryLeak(() -> {
+            final long fileSize = 1024 * 1024;
+            final File temp = temporaryFolder.newFile();
+            try (Path path = new Path().of(temp.getAbsolutePath())) {
+                final long fdrw = Files.openRW(path.$());
+                try {
+                    Assert.assertTrue(Files.allocate(fdrw, fileSize));
+                } finally {
+                    Files.close(fdrw);
+                }
+                final long fd = Files.openRO(path.$());
+                try {
+                    final long address = Files.mmap(fd, fileSize, 0, Files.MAP_RO, MemoryTag.MMAP_DEFAULT);
+                    try {
+                        final boolean isLinux = Os.isLinux();
+                        Assert.assertEquals(isLinux, Files.isMadviseWillNeedSupported());
+                        Assert.assertEquals(isLinux, FilesFacadeImpl.INSTANCE.isMadviseWillNeedSupported());
+                        final long requestSize = 128 * 1024;
+                        Assert.assertEquals(requestSize, Files.MADV_WILLNEED_REQUEST_SIZE);
+                        // the whole file
+                        Assert.assertEquals(isLinux ? 8 : 0, Files.madviseWillNeed(address, fileSize));
+                        Assert.assertEquals(isLinux ? 8 : 0, FilesFacadeImpl.INSTANCE.madviseWillNeed(address, fileSize));
+                        // a range that ends inside a request takes a request for its tail:
+                        // 100 + 300 KiB from the start of the mapping
+                        Assert.assertEquals(isLinux ? 3 : 0, Files.madviseWillNeed(address + 100, 300 * 1024));
+                        // madvise(2) rejects a start that is not page-aligned, so the requests of a
+                        // range that starts inside a page start at that page: 256 KiB from 100 bytes
+                        // into the page end 100 bytes past the second request and take a third
+                        Assert.assertEquals(isLinux ? 3 : 0, Files.madviseWillNeed(address + 100, 2 * requestSize));
+                        // a range that ends on a request boundary
+                        Assert.assertEquals(isLinux ? 2 : 0, Files.madviseWillNeed(address, 2 * requestSize));
+                        Assert.assertEquals(isLinux ? 1 : 0, Files.madviseWillNeed(address + fileSize - 1, 1));
+                        // nothing to ask for
+                        Assert.assertEquals(0, Files.madviseWillNeed(address, 0));
+                        Assert.assertEquals(0, Files.madviseWillNeed(address, -1));
+                        // the advice changes nothing the mapping reads
+                        Assert.assertEquals(0, Unsafe.getByte(address + fileSize - 1));
+                    } finally {
+                        Files.munmap(address, fileSize, MemoryTag.MMAP_DEFAULT);
+                    }
+                } finally {
+                    Files.close(fd);
+                }
+            }
+        });
     }
 
     @Test
@@ -1869,6 +1998,53 @@ public class FilesTest {
     }
 
     @Test
+    public void testTouchPagesLoadsEveryOsPage() throws Exception {
+        // touchPages() loads a byte of every OS page a range touches, and no page outside it.
+        // Files.PAGE_SIZE is the OS page on POSIX, but on Windows it is the 64 KiB allocation
+        // granularity, sixteen 4 KiB pages: a read that steps by it would load one page in
+        // sixteen.
+        assertMemoryLeak(() -> {
+            final long osPageSize = Os.isWindows() ? 4_096 : Files.PAGE_SIZE;
+            final int pageCount = 20;
+            // pages [0, pageCount + 2] from a page boundary, and the slack to find the boundary
+            final long allocSize = (pageCount + 4) * osPageSize;
+            final long alloc = Unsafe.malloc(allocSize, MemoryTag.NATIVE_DEFAULT);
+            try {
+                final long base = (alloc + osPageSize - 1) & -osPageSize;
+                // every byte of page p holds p + 1, so the sum of the loads names the pages they hit
+                for (int p = 0; p <= pageCount + 2; p++) {
+                    Vect.memset(base + p * osPageSize, osPageSize, p + 1);
+                }
+                // the ranges start in page 1, so a load below them would hit page 0
+                final long lo = base + osPageSize;
+                final long size = pageCount * osPageSize;
+                // pages [1, pageCount], a stride each
+                long strides = 0;
+                for (int p = 1; p <= pageCount; p++) {
+                    strides += p + 1;
+                }
+                // a range from a page boundary: the last byte loads the last page again
+                Assert.assertEquals(strides + pageCount + 1, Files.touchPages(lo, size));
+                Assert.assertEquals(strides + pageCount + 1, FilesFacadeImpl.INSTANCE.touchPages(lo, size));
+                // a range from the middle of a page: the strides load pages [1, pageCount], and the
+                // last byte page pageCount + 1, which no stride reaches
+                Assert.assertEquals(strides + pageCount + 2, Files.touchPages(lo + osPageSize / 2, size));
+                // a range that ends one byte into page pageCount + 1: a stride and the last byte load it
+                Assert.assertEquals(strides + 2L * (pageCount + 2), Files.touchPages(lo, size + 1));
+                // a range inside a page: its first byte and its last
+                Assert.assertEquals(2 * 3, Files.touchPages(lo + osPageSize + 100, 10));
+                Assert.assertEquals(2 * 2, Files.touchPages(lo, 1));
+                // nothing to load, not even from an address that maps nothing
+                Assert.assertEquals(0, Files.touchPages(lo, 0));
+                Assert.assertEquals(0, Files.touchPages(0, 0));
+                Assert.assertEquals(0, Files.touchPages(0, -1));
+            } finally {
+                Unsafe.free(alloc, allocSize, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
     public void testTruncate() throws Exception {
         assertMemoryLeak(() -> {
             File temp = temporaryFolder.newFile();
@@ -2137,6 +2313,26 @@ public class FilesTest {
                 .redirectOutput(ProcessBuilder.Redirect.DISCARD)
                 .start()
                 .waitFor();
+    }
+
+    // runs the code on a thread that binds as a carrier, see CarrierIdentity, as a worker thread does
+    private static void runOnCarrier(Runnable code) throws InterruptedException {
+        final AtomicReference<Throwable> failure = new AtomicReference<>();
+        final Thread carrier = new Thread(() -> {
+            CarrierIdentity.bind();
+            try {
+                code.run();
+            } catch (Throwable th) {
+                failure.set(th);
+            } finally {
+                CarrierIdentity.unbind();
+            }
+        });
+        carrier.start();
+        carrier.join();
+        if (failure.get() != null) {
+            throw new AssertionError(failure.get());
+        }
     }
 
     private static void testAllocateConcurrent0(FilesFacade ff, String pathName, int index, AtomicInteger errors) {

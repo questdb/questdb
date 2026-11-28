@@ -436,8 +436,9 @@ public class QwpEgressPageFrameTest extends AbstractQwpBootstrapTest {
     }
 
     /**
-     * A backward scan reverses BYTE, SHORT and CHAR columns eight bytes at a
-     * time and copies the rows below the last full word one by one. Batches of
+     * A backward scan reverses BYTE, SHORT and CHAR columns a word at a time,
+     * four words per step, and copies the rows below the last full word one by
+     * one. Batches of
      * 1 to 17 rows cut the frames into slices of every length from 1 to 17, so
      * every remainder of a word comes up for each type, in both directions.
      * Neighboring rows differ in every byte of each value, so a value or a byte
@@ -559,8 +560,8 @@ public class QwpEgressPageFrameTest extends AbstractQwpBootstrapTest {
         // A page-frame stream fills a batch slice by slice and takes no slice of more
         // rows than the batch still takes, so every batch, forwards and backwards,
         // carries the client's max_batch_rows until the rows run out. The rows the
-        // batch still takes also size a backward scan's read-ahead, see
-        // QwpEgressPageFramePrefetchTest.
+        // first batch takes also bound a backward scan's read-ahead, see
+        // QwpBackwardReadAheadTest.
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startFragmented(SMALL_PAGE_FRAME_ENV)) {
                 serverMain.execute("CREATE TABLE cap(x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");

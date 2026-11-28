@@ -32,7 +32,6 @@ import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
-import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
@@ -77,13 +76,9 @@ import java.util.concurrent.atomic.AtomicLong;
 public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware {
 
     /**
-     * Most rows a descending page-frame stream reads ahead at a time, see
-     * {@link #pageFramePrefetchLo}. At 8 bytes a row, 512 KiB of each column.
-     */
-    public static final long PAGE_FRAME_PREFETCH_ROWS = 65_536;
-    /**
-     * Most rows {@link #appendPageFrameSlice} appends at a time, so that the
-     * stream can check the batch's SYMBOL dictionary size between slices.
+     * Most rows a page-frame stream copies into the batch at a time, so that it
+     * can check the batch's SYMBOL dictionary size between slices. A backward
+     * stream also reads ahead and checks the circuit breaker before each slice.
      */
     public static final int PAGE_FRAME_SLICE_ROWS = 1_024;
     private static final Log LOG = LogFactory.getLog(QwpEgressProcessorState.class);
@@ -96,6 +91,8 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     public static volatile int defaultMaxDictEntriesOverrideForTest = -1;
     @TestOnly
     public static volatile int defaultMaxDictHeapBytesOverrideForTest = -1;
+    // Reads the frames of a backward stream ahead of the walk down; bound in beginStreamingPageFrame.
+    private final QwpBackwardReadAhead backwardReadAhead;
     private final QwpResultBatchBuffer batchBuffer = new QwpResultBatchBuffer();
     private final BindVariableServiceImpl bindVariableService;
     private final CairoConfiguration cairoConfiguration;
@@ -151,9 +148,8 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     // Whether the current query's filter is JIT-compiled, for QUERY_FLAG_STATS.
     // Kept and cleared with the per-query details below.
     private boolean isQueryJitCompiled;
-    // The page-frame stream emits its rows last to first: a backward scan hands
-    // out its frames last first, and each frame's rows are stored ascending.
-    private boolean isStreamingPageFrameDescending;
+    // True while a page-frame stream reads its frames backward; see beginStreamingPageFrame.
+    private boolean isStreamingPageFrameBackward;
     // Effective per-batch row cap for this connection: the minimum of the
     // server's hard cap ({@code QwpEgressUpgradeProcessor.MAX_ROWS_PER_BATCH})
     // and any client-requested limit sent via {@code X-QWP-Max-Batch-Rows} or
@@ -293,24 +289,18 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     // PageFrame streaming state. streamingPageFrameCursor is the per-query cursor
     // (freed on endStreaming). streamingPageFrameIndex counts frames consumed since
     // the query started - used to key PageFrameAddressCache entries. row/rowHi track
-    // the unconsumed rows of the current frame; when row == rowHi we advance to the
-    // next frame or finish. An ascending stream consumes from row up, a descending
-    // one (a backward scan, see isStreamingPageFrameDescending) from rowHi down.
+    // the iteration position inside the current frame: row counts the rows already
+    // emitted from it, rowHi is its row count; when row == rowHi we advance to the
+    // next frame or finish. A forward scan emits a frame's rows from its first row
+    // up, a backward scan from its last row down, so row counts from that end.
     // The currently-loaded page frame. Kept around across batch boundaries so
-    // callers can emit column-at-a-time over the slice [streamingPageFrameRow,
-    // streamingPageFrameRowHi). Cleared on {@link #endStreaming}.
+    // callers can emit column-at-a-time over the rows it has left. Cleared on
+    // {@link #endStreaming}.
     private PageFrame streamingCurrentPageFrame;
     private RecordCursor streamingCursor;
     private RecordCursorFactory streamingFactory;
     private PageFrameCursor streamingPageFrameCursor;
     private int streamingPageFrameIndex;
-    // A descending stream has read ahead the column pages of the current frame's
-    // rows from this one up, see appendPageFrameSlice.
-    private long streamingPageFramePrefetchLo;
-    // Pages and rows a descending stream has read ahead since the query started.
-    // The rows size the next read-ahead chunk, see pageFramePrefetchLo.
-    private long streamingPageFramePrefetchedPages;
-    private long streamingPageFramePrefetchedRows;
     private long streamingPageFrameRow;
     private long streamingPageFrameRowHi;
     private boolean streamingFactoryCacheable;
@@ -354,30 +344,13 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     public QwpEgressProcessorState(CairoConfiguration cairoConfiguration, NanosecondClock nanosecondClock) {
         this.cairoConfiguration = cairoConfiguration;
         this.nanosecondClock = nanosecondClock;
+        this.backwardReadAhead = new QwpBackwardReadAhead(cairoConfiguration.getFilesFacade());
         this.bindVariableService = new BindVariableServiceImpl(cairoConfiguration);
         // Pick up any test-only default overrides active at construction time
         // so tests that need tiny soft caps don't have to reach into every
         // per-connection state instance.
         this.maxDictEntriesOverride = defaultMaxDictEntriesOverrideForTest;
         this.maxDictHeapBytesOverride = defaultMaxDictHeapBytesOverrideForTest;
-    }
-
-    /**
-     * Returns the first row of the next read-ahead chunk of a descending
-     * page-frame stream. The chunk reaches below {@code prefetchedLo}, the lowest
-     * row of the frame read ahead so far, by the rows the batch still takes,
-     * {@code batchRows}, or by the rows the stream has read ahead since the query
-     * started, {@code prefetchedRows}, whichever is more, up to
-     * {@link #PAGE_FRAME_PREFETCH_ROWS}. The first batch thus reads ahead only its
-     * own rows, however wide they are, and the chunks after it double, so the
-     * read-ahead never gets much further ahead of the copy than one batch or the
-     * rows the stream has taken. The chunk reaches at least {@code sliceLo}, the
-     * lowest row of the slice about to be copied, and stops at the frame's first
-     * row. Exposed for unit tests.
-     */
-    public static long pageFramePrefetchLo(long prefetchedLo, long sliceLo, long prefetchedRows, long batchRows) {
-        final long chunkRows = Math.min(PAGE_FRAME_PREFETCH_ROWS, Math.max(prefetchedRows, batchRows));
-        return Math.max(0, Math.min(sliceLo, prefetchedLo - chunkRows));
     }
 
     /**
@@ -422,14 +395,25 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
      * frame if it still has unconsumed rows, or pulls the next frame from the
      * cursor and returns it. Returns {@code null} when the cursor is drained.
      * <p>
-     * After a non-null return, callers append the frame's rows with
-     * {@link #appendPageFrameSlice}, or read {@link #getStreamingPageFrameRow}
-     * / {@link #getStreamingPageFrameRowHi} for the unconsumed-row range and
-     * call {@link #consumePageFrameRows} after emitting rows from that slice.
+     * After a non-null return, callers may read {@link #getStreamingPageFrameRow}
+     * (rows emitted from the frame so far) and {@link #getStreamingPageFrameRowHi}
+     * (its row count) and call {@link #consumePageFrameRows} after emitting rows.
+     * The unconsumed rows are {@code [row, rowHi)} of the frame on a forward scan
+     * and {@code [0, rowHi - row)} on a backward one, see
+     * {@link #isStreamingPageFrameBackward}.
+     * <p>
+     * Used by the columnar emit path in
+     * {@link io.questdb.cutlass.qwp.codec.QwpResultBatchBuffer#appendPageFrame}.
      */
     public PageFrame advanceToPageFrame() {
         // Skip zero-row frames (iteratively, to keep the stack bounded).
         while (streamingPageFrameRow >= streamingPageFrameRowHi) {
+            if (streamingPageFrameIndex > 0) {
+                // Every row of the frames returned so far sits in a batch, which copied it,
+                // and the stream never goes back to them, so the cursor may free their
+                // memory before it builds the next frame.
+                streamingPageFrameCursor.releaseConsumedFrames();
+            }
             PageFrame frame = streamingPageFrameCursor.next();
             if (frame == null) {
                 streamingCurrentPageFrame = null;
@@ -440,55 +424,12 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
             streamingCurrentPageFrame = frame;
             streamingPageFrameRow = 0;
             streamingPageFrameRowHi = frame.getPartitionHi() - frame.getPartitionLo();
-            streamingPageFramePrefetchLo = streamingPageFrameRowHi;
             streamingPageFrameIndex++;
+            if (isStreamingPageFrameBackward) {
+                backwardReadAhead.ofFrame(frame, streamingPageFrameRowHi);
+            }
         }
         return streamingCurrentPageFrame;
-    }
-
-    /**
-     * Appends the next slice of the current page frame to the batch buffer and
-     * consumes it: at most {@link #PAGE_FRAME_SLICE_ROWS} rows, and no more than
-     * the batch still takes. Call after {@link #advanceToPageFrame} returns the
-     * frame.
-     * <p>
-     * An ascending stream takes the slice from the bottom of the frame's
-     * unconsumed rows. A descending one takes it from the top and appends it
-     * last row first. Before it copies rows of a base-only NATIVE frame that are
-     * not read ahead yet, it reads ahead the column pages of a chunk of rows from
-     * those down, in ascending address order, see
-     * {@link QwpResultBatchBuffer#touchPageFrameRows}: copying column data that
-     * is not in the page cache downwards would fault it in one page at a time.
-     * The chunks start at the rows the batch takes and grow with the stream, up
-     * to {@link #PAGE_FRAME_PREFETCH_ROWS} rows, see {@link #pageFramePrefetchLo}.
-     * A custom (Delta) frame has no raw page addresses to read ahead: the memory
-     * pool materializes its rows, see {@link PageFrameCursor#hasCustomFrames}.
-     *
-     * @param batchRows the rows the batch still takes, which also size the
-     *                  read-ahead of a descending stream
-     * @return rows appended
-     */
-    public int appendPageFrameSlice(int batchRows) {
-        final long lo = streamingPageFrameRow;
-        final long hi = streamingPageFrameRowHi;
-        final int sliceRows = (int) Math.min(Math.min(batchRows, PAGE_FRAME_SLICE_ROWS), hi - lo);
-        final PageFrame frame = streamingCurrentPageFrame;
-        if (isStreamingPageFrameDescending) {
-            final long sliceLo = hi - sliceRows;
-            if (sliceLo < streamingPageFramePrefetchLo
-                    && frame.getFormat() == PartitionFormat.NATIVE
-                    && frame.getPartitionFrameState() == 0) {
-                final long prefetchLo = pageFramePrefetchLo(streamingPageFramePrefetchLo, sliceLo, streamingPageFramePrefetchedRows, batchRows);
-                streamingPageFramePrefetchedPages += batchBuffer.touchPageFrameRows(frame, prefetchLo, streamingPageFramePrefetchLo);
-                streamingPageFramePrefetchedRows += streamingPageFramePrefetchLo - prefetchLo;
-                streamingPageFramePrefetchLo = prefetchLo;
-            }
-            batchBuffer.appendPageFrame(frame, pageFrameMemoryRecord, sliceLo, hi, true);
-        } else {
-            batchBuffer.appendPageFrame(frame, pageFrameMemoryRecord, lo, lo + sliceRows, false);
-        }
-        consumePageFrameRows(sliceRows);
-        return sliceRows;
     }
 
     /**
@@ -574,11 +515,20 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
      * {@link PageFrameMemoryRecord}) on first call and rebinds them to the new
      * query. The cursor is owned by the state from this point on and is freed by
      * {@link #endStreaming}.
+     * <p>
+     * The factory's page frames must carry their column data, see
+     * {@link RecordCursorFactory#producesMaterializedPageFrames()}: the columnar emit
+     * path reads the frames' page addresses directly.
+     * <p>
+     * {@code isBackward} tells the state that {@code pageFrameCursor} scans
+     * backward: it hands out frames newest first, and the stream must emit each
+     * frame's rows from its last row down.
      */
     public void beginStreamingPageFrame(
             long requestId,
             RecordCursorFactory factory,
             PageFrameCursor pageFrameCursor,
+            boolean isBackward,
             @Nullable MemoryTracker memoryTracker,
             int columnCount,
             long initialCredit,
@@ -586,29 +536,7 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
             short compiledQueryType,
             boolean queryCacheable
     ) {
-        beginStreamingPageFrame(requestId, factory, pageFrameCursor, memoryTracker, columnCount, initialCredit, sqlText,
-                compiledQueryType, queryCacheable, false);
-    }
-
-    /**
-     * As {@link #beginStreamingPageFrame(long, RecordCursorFactory, PageFrameCursor, MemoryTracker, int, long, CharSequence, short, boolean)},
-     * for a cursor whose frames stream in {@code isDescending} order: a backward
-     * scan hands out its frames last first, and each frame's rows, stored
-     * ascending, stream last to first, from the top of the unconsumed range down.
-     * See {@link #consumePageFrameRows}.
-     */
-    public void beginStreamingPageFrame(
-            long requestId,
-            RecordCursorFactory factory,
-            PageFrameCursor pageFrameCursor,
-            @Nullable MemoryTracker memoryTracker,
-            int columnCount,
-            long initialCredit,
-            CharSequence sqlText,
-            short compiledQueryType,
-            boolean queryCacheable,
-            boolean isDescending
-    ) {
+        assert factory.producesMaterializedPageFrames() : "page-frame streaming over metadata-only page frames";
         if (streamingActive) {
             endStreaming();
         }
@@ -634,12 +562,14 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         this.streamingRowsEmitted = 0;
         this.streamingFactoryCacheable = compiledQueryType == CompiledQuery.SELECT && queryCacheable;
         this.streamingPageFrameIndex = 0;
-        this.streamingPageFramePrefetchLo = 0;
-        this.streamingPageFramePrefetchedPages = 0;
-        this.streamingPageFramePrefetchedRows = 0;
         this.streamingPageFrameRow = 0;
         this.streamingPageFrameRowHi = 0;
-        this.isStreamingPageFrameDescending = isDescending;
+        this.isStreamingPageFrameBackward = isBackward;
+        if (isBackward) {
+            backwardReadAhead.of(factory.getMetadata());
+        } else {
+            backwardReadAhead.clear();
+        }
         this.streamingSqlText = sqlText != null ? Chars.toString(sqlText) : null;
         this.streamingActive = true;
         batchBuffer.resetForNewQuery();
@@ -793,19 +723,12 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
 
     /**
      * Called by the columnar emit path after it processes a slice of the
-     * current page frame. Narrows the frame's unconsumed range
-     * [{@link #getStreamingPageFrameRow}, {@link #getStreamingPageFrameRowHi})
-     * by {@code rows}: from its bottom for an ascending stream, from its top for
-     * a descending one, which emits each slice last row first. The next call to
+     * current page frame. Advances the in-frame row cursor; the next call to
      * {@link #advanceToPageFrame} returns the same frame if rows remain, or
      * pulls the next frame when the cursor is exhausted.
      */
     public void consumePageFrameRows(int rows) {
-        if (isStreamingPageFrameDescending) {
-            streamingPageFrameRowHi -= rows;
-        } else {
-            streamingPageFrameRow += rows;
-        }
+        streamingPageFrameRow += rows;
     }
 
     /**
@@ -853,6 +776,7 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     public void endStreaming(@Nullable AssociativeCache<RecordCursorFactory> selectCache) {
         streamingActive = false;
         streamingCurrentPageFrame = null;
+        backwardReadAhead.clear();
         final RecordCursor streamingCursor = this.streamingCursor;
         this.streamingCursor = null;
         final PageFrameCursor streamingPageFrameCursor = this.streamingPageFrameCursor;
@@ -902,9 +826,9 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         streamingCreditSuspended = false;
         streamingFactoryCacheable = false;
         streamingPageFrameIndex = 0;
-        streamingPageFramePrefetchLo = 0;
         streamingPageFrameRow = 0;
         streamingPageFrameRowHi = 0;
+        isStreamingPageFrameBackward = false;
         this.streamingSqlText = null;
         boolean isOwnerEnded = false;
         try {
@@ -926,6 +850,14 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
             }
         }
         CairoException.rethrowCleanupFailure(cleanupFailure);
+    }
+
+    /**
+     * The read-ahead of a backward page-frame stream, bound to the frame
+     * {@link #advanceToPageFrame} returned last.
+     */
+    public QwpBackwardReadAhead getBackwardReadAhead() {
+        return backwardReadAhead;
     }
 
     public QwpResultBatchBuffer getBatchBuffer() {
@@ -1058,24 +990,6 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         return pageFrameMemoryRecord;
     }
 
-    /**
-     * OS pages a descending page-frame stream read ahead since the query
-     * started, see {@link #appendPageFrameSlice}.
-     */
-    @TestOnly
-    public long getStreamingPageFramePrefetchedPages() {
-        return streamingPageFramePrefetchedPages;
-    }
-
-    /**
-     * Rows whose column pages a descending page-frame stream read ahead since
-     * the query started, see {@link #appendPageFrameSlice}.
-     */
-    @TestOnly
-    public long getStreamingPageFramePrefetchedRows() {
-        return streamingPageFramePrefetchedRows;
-    }
-
     public long getStreamingPageFrameRow() {
         return streamingPageFrameRow;
     }
@@ -1203,6 +1117,14 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         return streamingPageFrameCursor != null;
     }
 
+    /**
+     * True if the active page-frame stream scans backward, see
+     * {@link #beginStreamingPageFrame}. False for a forward or record-cursor stream.
+     */
+    public boolean isStreamingPageFrameBackward() {
+        return isStreamingPageFrameBackward;
+    }
+
     public boolean isWsHandshakeSent() {
         return wsHandshakeSent;
     }
@@ -1291,6 +1213,9 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         } finally {
             sqlExecutionOwner.unmount();
         }
+        // Any worker can resume the stream: a backward one compares the major
+        // faults of this thread before it leaves, see QwpBackwardReadAhead.park().
+        backwardReadAhead.park();
     }
 
     public void publishSqlExecutionOwner(CharSequence query, boolean containsSecret) {
@@ -1304,6 +1229,8 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         }
         resumeStreamingTimer();
         sqlExecutionOwner.mount();
+        // before the stream reads a row on this thread, see QwpBackwardReadAhead.resume()
+        backwardReadAhead.resume();
     }
 
     /**

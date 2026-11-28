@@ -56,12 +56,6 @@ import io.questdb.std.str.Utf8Sequence;
  * </ul>
  * The null bitmap is stored at {@link #nullBitmapAddr} and is grown the first time any null
  * is seen in the batch.
- * <p>
- * The bulk appends of page-frame columns come in pairs: {@code appendColumnX} copies
- * rows in storage order, and {@code appendColumnXReversed} copies them last to first,
- * for backward scans. The pairs are separate methods, so the forward copies, which
- * every forward scan runs, keep their constant per-row offsets and a JIT profile of
- * their own.
  */
 final class QwpColumnScratch implements QuietCloseable {
 
@@ -212,6 +206,72 @@ final class QwpColumnScratch implements QuietCloseable {
             }
         }
         return pos;
+    }
+
+    /**
+     * Writes the {@code n} bytes at {@code src} to {@code dst} last byte first, a word at a
+     * time and four words per step, so the four load-reverse-store chains overlap. Load and
+     * store share the platform byte order, so reversing the bytes of each word reverses the
+     * bytes in memory on either endianness.
+     */
+    private static void reverseCopyBytes(long src, long dst, int n) {
+        int i = 0;
+        long s = src + n;
+        for (; i + 32 <= n; i += 32) {
+            s -= 32;
+            final long w3 = Unsafe.getLong(s + 24);
+            final long w2 = Unsafe.getLong(s + 16);
+            final long w1 = Unsafe.getLong(s + 8);
+            final long w0 = Unsafe.getLong(s);
+            Unsafe.putLong(dst + i, Long.reverseBytes(w3));
+            Unsafe.putLong(dst + i + 8, Long.reverseBytes(w2));
+            Unsafe.putLong(dst + i + 16, Long.reverseBytes(w1));
+            Unsafe.putLong(dst + i + 24, Long.reverseBytes(w0));
+        }
+        for (; i + 8 <= n; i += 8) {
+            s -= 8;
+            Unsafe.putLong(dst + i, Long.reverseBytes(Unsafe.getLong(s)));
+        }
+        for (; i < n; i++) {
+            Unsafe.putByte(dst + i, Unsafe.getByte(src + n - 1 - i));
+        }
+    }
+
+    /**
+     * Writes the {@code n} 2-byte values at {@code src} to {@code dst} last value first,
+     * four values per word and four words per step, like {@link #reverseCopyBytes}.
+     */
+    private static void reverseCopyShorts(long src, long dst, int n) {
+        int i = 0;
+        long s = src + 2L * n;
+        for (; i + 16 <= n; i += 16) {
+            s -= 32;
+            final long w3 = Unsafe.getLong(s + 24);
+            final long w2 = Unsafe.getLong(s + 16);
+            final long w1 = Unsafe.getLong(s + 8);
+            final long w0 = Unsafe.getLong(s);
+            final long d = dst + 2L * i;
+            Unsafe.putLong(d, reverseShorts(w3));
+            Unsafe.putLong(d + 8, reverseShorts(w2));
+            Unsafe.putLong(d + 16, reverseShorts(w1));
+            Unsafe.putLong(d + 24, reverseShorts(w0));
+        }
+        for (; i + 4 <= n; i += 4) {
+            s -= 8;
+            Unsafe.putLong(dst + 2L * i, reverseShorts(Unsafe.getLong(s)));
+        }
+        for (; i < n; i++) {
+            Unsafe.putShort(dst + 2L * i, Unsafe.getShort(src + 2L * (n - 1 - i)));
+        }
+    }
+
+    /**
+     * Reverses the order of the four 16-bit values in {@code word} and keeps each value's
+     * own bytes: swaps the two 32-bit halves, then the two 16-bit values inside each half.
+     */
+    private static long reverseShorts(long word) {
+        final long v = Long.rotateLeft(word, 32);
+        return ((v >>> 16) & 0x0000_FFFF_0000_FFFFL) | ((v & 0x0000_FFFF_0000_FFFFL) << 16);
     }
 
     /**
@@ -386,11 +446,11 @@ final class QwpColumnScratch implements QuietCloseable {
     }
 
     /**
-     * As {@link #appendColumnBoolean}, with the rows appended last to first:
-     * the byte at {@code srcAddr + n - 1} goes first, the one at
-     * {@code srcAddr} last.
+     * Backward twin of {@link #appendColumnBoolean}: appends the {@code n} rows at
+     * {@code srcAddr} last row first. Every {@code *Bwd} method below mirrors the forward
+     * method above it and differs only in walking the source from its last row down.
      */
-    void appendColumnBooleanReversed(long srcAddr, int n) {
+    void appendColumnBooleanBwd(long srcAddr, int n) {
         int startBit = nonNullCount;
         int bytesNeeded = (startBit + n + 7) >>> 3;
         ensureValuesCapacity(bytesNeeded);
@@ -399,8 +459,6 @@ final class QwpColumnScratch implements QuietCloseable {
             int bitIdx = startBit + i;
             long byteAddr = valuesAddr + (bitIdx >>> 3);
             if ((bitIdx & 7) == 0) {
-                // First bit in a new byte: zero it before OR-ing. Matches the
-                // single-row appendBool convention.
                 Unsafe.putByte(byteAddr, (byte) 0);
             }
             if (Unsafe.getByte(src) != 0) {
@@ -477,12 +535,7 @@ final class QwpColumnScratch implements QuietCloseable {
         rowCount += n;
     }
 
-    /**
-     * As {@link #appendColumnDouble8}, with the rows appended last to first:
-     * the value at {@code srcAddr + (n - 1) * 8} goes first, the one at
-     * {@code srcAddr} last.
-     */
-    void appendColumnDouble8Reversed(long srcAddr, int n) {
+    void appendColumnDouble8Bwd(long srcAddr, int n) {
         int startRow = rowCount;
         ensureNullBitmapCapacity(startRow + n);
         ensureValuesCapacity(valuesPos + n * 8);
@@ -519,43 +572,14 @@ final class QwpColumnScratch implements QuietCloseable {
         rowCount += n;
     }
 
-    /**
-     * As {@link #appendColumnFixedNoNull}, with the rows appended last to
-     * first: the value at {@code srcAddr + (n - 1) * typeSize} goes first, the
-     * one at {@code srcAddr} last. Reverses eight bytes, eight BYTE or four
-     * SHORT / CHAR values, per step, from the top of the rows down, and copies
-     * the rows below the last full word one by one.
-     */
-    void appendColumnFixedNoNullReversed(long srcAddr, int n, int typeSize) {
+    void appendColumnFixedNoNullBwd(long srcAddr, int n, int typeSize) {
         int bytes = n * typeSize;
         ensureValuesCapacity(valuesPos + bytes);
-        final long dst = valuesAddr + valuesPos;
-        // the bytes of the rows not copied yet are [srcAddr, src)
-        long src = srcAddr + bytes;
-        int written = 0;
-        if (typeSize == Short.BYTES) {
-            for (; written <= bytes - Long.BYTES; written += Long.BYTES) {
-                src -= Long.BYTES;
-                // the word holds four values, lowest address in the low bits:
-                // swapping its halves and then the two values of each half
-                // turns it end to end
-                final long v = Long.rotateLeft(Unsafe.getLong(src), 32);
-                Unsafe.putLong(dst + written, ((v >>> 16) & 0x0000_FFFF_0000_FFFFL) | ((v & 0x0000_FFFF_0000_FFFFL) << 16));
-            }
-            for (; written < bytes; written += Short.BYTES) {
-                src -= Short.BYTES;
-                Unsafe.putShort(dst + written, Unsafe.getShort(src));
-            }
+        if (typeSize == 2) {
+            reverseCopyShorts(srcAddr, valuesAddr + valuesPos, n);
         } else {
-            assert typeSize == Byte.BYTES : "unsupported no-null type size: " + typeSize;
-            for (; written <= bytes - Long.BYTES; written += Long.BYTES) {
-                src -= Long.BYTES;
-                Unsafe.putLong(dst + written, Long.reverseBytes(Unsafe.getLong(src)));
-            }
-            for (; written < bytes; written++) {
-                src--;
-                Unsafe.putByte(dst + written, Unsafe.getByte(src));
-            }
+            assert typeSize == 1 : "unsupported fixed width: " + typeSize;
+            reverseCopyBytes(srcAddr, valuesAddr + valuesPos, n);
         }
         valuesPos += bytes;
         nonNullCount += n;
@@ -609,12 +633,7 @@ final class QwpColumnScratch implements QuietCloseable {
         rowCount += n;
     }
 
-    /**
-     * As {@link #appendColumnFloat4}, with the rows appended last to first:
-     * the value at {@code srcAddr + (n - 1) * 4} goes first, the one at
-     * {@code srcAddr} last.
-     */
-    void appendColumnFloat4Reversed(long srcAddr, int n) {
+    void appendColumnFloat4Bwd(long srcAddr, int n) {
         int startRow = rowCount;
         ensureNullBitmapCapacity(startRow + n);
         ensureValuesCapacity(valuesPos + n * 4);
@@ -665,12 +684,7 @@ final class QwpColumnScratch implements QuietCloseable {
         rowCount += n;
     }
 
-    /**
-     * As {@link #appendColumnInt4WithSentinel}, with the rows appended last to
-     * first: the value at {@code srcAddr + (n - 1) * 4} goes first, the one at
-     * {@code srcAddr} last.
-     */
-    void appendColumnInt4WithSentinelReversed(long srcAddr, int n, int sentinel) {
+    void appendColumnInt4WithSentinelBwd(long srcAddr, int n, int sentinel) {
         int startRow = rowCount;
         ensureNullBitmapCapacity(startRow + n);
         ensureValuesCapacity(valuesPos + n * 4);
@@ -721,12 +735,7 @@ final class QwpColumnScratch implements QuietCloseable {
         rowCount += n;
     }
 
-    /**
-     * As {@link #appendColumnLong8WithSentinel}, with the rows appended last to
-     * first: the value at {@code srcAddr + (n - 1) * 8} goes first, the one at
-     * {@code srcAddr} last.
-     */
-    void appendColumnLong8WithSentinelReversed(long srcAddr, int n) {
+    void appendColumnLong8WithSentinelBwd(long srcAddr, int n) {
         int startRow = rowCount;
         ensureNullBitmapCapacity(startRow + n);
         ensureValuesCapacity(valuesPos + n * 8);
@@ -796,16 +805,10 @@ final class QwpColumnScratch implements QuietCloseable {
         rowCount += n;
     }
 
-    /**
-     * As {@link #appendColumnSymbolKeys}, with the rows appended last to first:
-     * the key at {@code srcAddr + (n - 1) * 4} goes first, the one at
-     * {@code srcAddr} last.
-     */
-    void appendColumnSymbolKeysReversed(long srcAddr, int n, SymbolTable st, QwpEgressConnSymbolDict dict) {
+    void appendColumnSymbolKeysBwd(long srcAddr, int n, SymbolTable st, QwpEgressConnSymbolDict dict) {
         int startRow = rowCount;
         ensureNullBitmapCapacity(startRow + n);
         ensureSymbolIdsCapacity(4 * (nonNullCount + n));
-        // Pre-grow cum-bytes buffer too, mirroring the symbolIds pre-grow.
         int cumNeeded = 4 * (nonNullCount + n + 1);
         if (symbolBytesCumCapacity < cumNeeded) {
             int newCap = Math.max(symbolBytesCumCapacity * 2, Math.max(INITIAL_BYTES, cumNeeded));

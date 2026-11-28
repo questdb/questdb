@@ -27,9 +27,6 @@ package io.questdb.test.cutlass.qwp;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatch;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatchHandler;
 import io.questdb.client.cutlass.qwp.client.QwpQueryClient;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
-import io.questdb.std.Rnd;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -48,15 +45,12 @@ import org.junit.Test;
 public class QwpEgressBindFuzzTest extends AbstractQwpBootstrapTest {
 
     private static final int ITERATIONS_PER_TEST = 25;
-    private static final Log LOG = LogFactory.getLog(QwpEgressBindFuzzTest.class);
-    private Rnd random;
 
     @Before
     public void setUp() {
         super.setUp();
         TestUtils.unchecked(() -> createDummyConfiguration());
         dbPath.parent().$();
-        random = TestUtils.generateRandom(LOG);
     }
 
     @Test

@@ -26,6 +26,7 @@ package io.questdb.std;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.log.Log;
+import io.questdb.std.ex.FatalError;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.MutableUtf8Sink;
 import io.questdb.std.str.Path;
@@ -36,6 +37,12 @@ import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.File;
+import java.lang.foreign.Arena;
+import java.lang.foreign.FunctionDescriptor;
+import java.lang.foreign.Linker;
+import java.lang.foreign.MemorySegment;
+import java.lang.foreign.ValueLayout;
+import java.lang.invoke.MethodHandle;
 import java.net.URL;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
@@ -51,6 +58,11 @@ public final class Files {
     public static final int FILES_RENAME_ERR_EXDEV = 1;
     public static final int FILES_RENAME_ERR_OTHER = 2;
     public static final int FILES_RENAME_OK = 0;
+    // Largest single request madviseWillNeed() sends. Linux reads at most max(read_ahead_kb,
+    // max_sectors_kb) of one MADV_WILLNEED request and drops the rest without an error, so a
+    // larger range goes out in pieces of the kernel's default readahead size, which every
+    // device honours in full.
+    public static final long MADV_WILLNEED_REQUEST_SIZE = 128 * 1024;
     public static final int MAP_RO = 1;
     public static final int MAP_RW = 2;
     public static final int NFS_MAGIC = 0x6969;
@@ -76,6 +88,12 @@ public final class Files {
     public static final int TMPFS_MAGIC = 0x01021994;
     public static final Charset UTF_8;
     public static final int WINDOWS_ERROR_FILE_EXISTS = 0x50;
+    // MADV_WILLNEED in the Linux UAPI (include/uapi/asm-generic/mman-common.h), the same on every
+    // architecture QuestDB ships. libquestdb has no getter for it; madvise0 passes it through.
+    private static final int MADV_WILLNEED_LINUX = 3;
+    // The OS page, the unit the OS reads a mapping in. PAGE_SIZE aligns where a mapping starts:
+    // on Windows it is the 64 KiB allocation granularity, sixteen 4 KiB pages.
+    private static final long OS_PAGE_SIZE = Unsafe.getUnsafe().pageSize();
     private static final int VIRTIO_FS_MAGIC = 0x6a656a63;
     private static final FdCache fdCache = new FdCache();
     private static final MmapCache mmapCache = MmapCache.INSTANCE;
@@ -458,6 +476,27 @@ public final class Files {
     }
 
     /**
+     * Whether {@link #madviseWillNeed} makes the OS read the advised pages. Only on Linux:
+     * libquestdb binds madvise on no other platform, and the MADV_WILLNEED of FreeBSD maps
+     * only pages already in memory.
+     */
+    public static boolean isMadviseWillNeedSupported() {
+        return Os.isLinux();
+    }
+
+    /**
+     * Whether every page of {@code [address, address + len)}, a range of a mapping, is in
+     * memory, as mincore(2) reports it: for a file mapping, whether reading the range reads
+     * nothing from storage. Returns false for an empty range, when mincore(2) fails, and on
+     * every platform but Linux, the only one where {@link #madviseWillNeed} reads ahead.
+     * Linux takes the mmap lock of the process for the check, so the check waits while other
+     * threads map, remap or unmap memory.
+     */
+    public static boolean isPageCacheResident(long address, long len) {
+        return len > 0 && isMadviseWillNeedSupported() && Mincore.isResident(address, len);
+    }
+
+    /**
      * Whether {@link #findPathOfFd(long)} and {@link #findPathOfMapping(long)} can name a file on this OS: Linux,
      * macOS and Windows can, FreeBSD cannot.
      */
@@ -489,7 +528,35 @@ public final class Files {
         }
     }
 
-    public static native void madvise0(long address, long len, int advise);
+    // madvise(2), which libquestdb binds on Linux only: returns 0 on success, or -1 with
+    // errno set when the kernel rejects the advice
+    public static native int madvise0(long address, long len, int advise);
+
+    /**
+     * Asks the kernel to read the file pages behind {@code [address, address + len)} of a
+     * mapping into the page cache, and returns without waiting for them. Unlike
+     * {@link #madvise}, this changes no state of the mapping, so it applies to mappings that
+     * other readers share as well. Linux caps each request, see
+     * {@link #MADV_WILLNEED_REQUEST_SIZE}, so the range goes out as page-aligned requests of at
+     * most that size. Returns how many of them the kernel accepted: none for an empty range,
+     * or where {@link #isMadviseWillNeedSupported()} is false. A request the kernel rejects,
+     * such as one over memory that no mapping holds, does not count.
+     */
+    public static int madviseWillNeed(long address, long len) {
+        if (len <= 0 || !isMadviseWillNeedSupported()) {
+            return 0;
+        }
+        final long hi = address + len;
+        // the request size is a multiple of the page size, so every request starts page-aligned
+        final long requestSize = Math.max(MADV_WILLNEED_REQUEST_SIZE, PAGE_SIZE);
+        int acceptedRequests = 0;
+        for (long lo = address & -PAGE_SIZE; lo < hi; lo += requestSize) {
+            if (madvise0(lo, Math.min(requestSize, hi - lo), MADV_WILLNEED_LINUX) == 0) {
+                acceptedRequests++;
+            }
+        }
+        return acceptedRequests;
+    }
 
     public static int mkdir(LPSZ path, int mode) {
         return mkdir(path.ptr(), mode);
@@ -727,6 +794,27 @@ public final class Files {
             close(fd);
         }
         return result;
+    }
+
+    /**
+     * Reads {@code [address, address + len)}, a range of a mapping, into memory before it
+     * returns: loads a byte of every OS page the range touches, first page to last, so the OS
+     * reads the pages that are not in memory as it reads a file forward, in large requests.
+     * Loads nothing outside the range, and nothing when {@code len} is not positive. Returns
+     * the sum of the bytes it loaded: a caller that keeps the sum stops the JIT from dropping
+     * the loads.
+     */
+    public static long touchPages(long address, long len) {
+        if (len <= 0) {
+            return 0;
+        }
+        long sum = 0;
+        final long hi = address + len;
+        for (long p = address; p < hi; p += OS_PAGE_SIZE) {
+            sum += Unsafe.getByte(p);
+        }
+        // the last byte can sit on the page past the last stride when address is not page-aligned
+        return sum + Unsafe.getByte(hi - 1);
     }
 
     public static boolean truncate(long fd, long size) {
@@ -1013,6 +1101,72 @@ public final class Files {
      */
     static int rmdir(Path path, boolean haltOnFail, Log log) {
         return rmdir(path, haltOnFail, 0, RMDIR_MAX_DEPTH, log);
+    }
+
+    /**
+     * mincore(2) from the C library, bound on first use. Only Linux calls it.
+     */
+    private static final class Mincore {
+        // pages one call reports on: the vector holds a byte a page
+        private static final int CHUNK_PAGES = 512;
+        // int mincore(void *addr, size_t length, unsigned char *vec). The address goes as a
+        // long, which the 64-bit ABIs QuestDB runs on pass the same way as a pointer, so the
+        // call allocates no segment for it. Linux takes the mmap lock of the process for each
+        // call, so the call sleeps while other threads map, remap or unmap memory. The binding
+        // takes no critical option, not even critical(false), see Os.SLEEP_MILLIS: the VM
+        // reaches a safepoint without waiting for the call. Only a critical downcall can fill
+        // a heap array, so the vector is native memory.
+        private static final MethodHandle MINCORE;
+        // One vector per carrier, the OS thread that makes the call, see CarrierLocal. Query
+        // fibers call isResident(), and a ThreadLocal is unsafe there: compiled code can carry
+        // the Thread of the carrier a fiber yielded on over to the one it resumes on, see
+        // CARRIER_LOCAL.md. isResident() fills and reads the vector within one call, which
+        // cannot yield, so no two calls use it at once. The GC frees a vector once no carrier
+        // holds it.
+        private static final CarrierLocal<MemorySegment> VECTOR = new CarrierLocal<>(
+                () -> Arena.ofAuto().allocate(CHUNK_PAGES)
+        );
+
+        static boolean isResident(long address, long len) {
+            final MemorySegment vector = VECTOR.get();
+            long lo = address & -PAGE_SIZE;
+            long pages = (address + len - lo + PAGE_SIZE - 1) / PAGE_SIZE;
+            while (pages > 0) {
+                final long n = Math.min(pages, CHUNK_PAGES);
+                if (mincore(lo, n * PAGE_SIZE, vector) != 0) {
+                    return false;
+                }
+                for (long i = 0; i < n; i++) {
+                    // the low bit of a page's byte tells whether the page is in memory
+                    if ((vector.get(ValueLayout.JAVA_BYTE, i) & 1) == 0) {
+                        return false;
+                    }
+                }
+                lo += n * PAGE_SIZE;
+                pages -= n;
+            }
+            return true;
+        }
+
+        private static int mincore(long address, long len, MemorySegment vector) {
+            try {
+                return (int) MINCORE.invokeExact(address, len, vector);
+            } catch (RuntimeException | Error e) {
+                throw e;
+            } catch (Throwable t) {
+                // unreachable: everything an int(long, long, MemorySegment) downcall can throw is a RuntimeException or Error
+                throw new AssertionError(t);
+            }
+        }
+
+        static {
+            final Linker linker = Linker.nativeLinker();
+            MINCORE = linker.downcallHandle(
+                    linker.defaultLookup().find("mincore").orElseThrow(
+                            () -> new FatalError("Internal error: symbol mincore not found in the C library")),
+                    FunctionDescriptor.of(ValueLayout.JAVA_INT, ValueLayout.JAVA_LONG, ValueLayout.JAVA_LONG, ValueLayout.ADDRESS)
+            );
+        }
     }
 
     static {

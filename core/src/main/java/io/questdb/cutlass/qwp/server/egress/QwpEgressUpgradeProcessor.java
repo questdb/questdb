@@ -411,15 +411,17 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
     /**
      * Returns the order to ask {@code factory} for page frames in, or
      * {@link #NO_PAGE_FRAMES} when the query streams through its RecordCursor:
-     * a factory without page frames does, and so does a query with a row window,
-     * which needs the RecordCursor's {@code skipRows} and {@code size}. A
-     * backward scan asks for {@link PartitionFrameCursorFactory#ORDER_DESC}
-     * frames, which come last first; {@link QwpResultBatchBuffer#appendPageFrame}
-     * then appends each frame's rows, stored ascending, last to first. Exposed
-     * for unit tests.
+     * a factory without page frames does, and so does one whose page frames do
+     * not carry their column data, see
+     * {@link RecordCursorFactory#producesMaterializedPageFrames()}, and a query
+     * with a row window, which needs the RecordCursor's {@code skipRows} and
+     * {@code size}. A backward scan asks for
+     * {@link PartitionFrameCursorFactory#ORDER_DESC} frames, which come last
+     * first; {@link QwpResultBatchBuffer#appendPageFrameBackward} then appends
+     * each frame's rows, stored ascending, last to first. Exposed for unit tests.
      */
     public static int pageFrameOrder(RecordCursorFactory factory, boolean hasRowWindow) {
-        if (hasRowWindow || !factory.supportsPageFrameCursor()) {
+        if (hasRowWindow || !factory.supportsPageFrameCursor() || !factory.producesMaterializedPageFrames()) {
             return NO_PAGE_FRAMES;
         }
         return factory.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_BACKWARD
@@ -1465,7 +1467,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         RecordCursorFactory factory = null;
         RecordCursor cursor = null;
         PageFrameCursor pageFrameCursor = null;
-        boolean isPageFrameDescending = false;
+        boolean isPageFrameBackward = false;
         try {
             // Seed requestId before decoding so a decode failure (e.g. a malformed
             // query_flags trailer) still reports the right id instead of 0.
@@ -1576,21 +1578,26 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                         state.beginSqlExecutionOwner(decoder.sql, sqlCtx, compiledQueryType);
                     }
                     // Acquire the cursor inside the retry loop so a stale SELECT factory
-                    // can be recompiled. Prefer the PageFrameCursor fast path
-                    // when the factory supports it: it hands us flat column addresses
-                    // per frame and lets the SYMBOL fast path resolve dict keys via
-                    // PageFrameMemoryRecord.getInt. Factories that don't support it
-                    // (filtered/joined/grouped queries) keep the existing RecordCursor
-                    // path without change.
+                    // can be recompiled. Prefer the PageFrameCursor fast path when the
+                    // factory supports it and its frames carry their column data: the
+                    // columnar emit reads each frame's page addresses directly, and the
+                    // SYMBOL fast path resolves dict keys via PageFrameMemoryRecord.getInt.
+                    // A single-key covering index scan (sym = 'x') supports page frames
+                    // but produces them metadata-only: its covered columns exist only once
+                    // the engine's parallel decode has drained the frame cursor, frozen the
+                    // posting readers and decoded each frame on a worker. Its RecordCursor
+                    // reads the same values from the index sidecar row by row, as fast,
+                    // without buffering a decoded frame. Factories that don't support page
+                    // frames (filtered/joined/grouped queries) keep the RecordCursor path
+                    // without change. A backward scan takes its frames newest first, and
+                    // the stream reads each one from its last row down.
                     int forcedStalePlanRecompiles = DEBUG_FORCE_STALE_PLAN_RECOMPILES;
                     if (forcedStalePlanRecompiles > 0) {
                         DEBUG_FORCE_STALE_PLAN_RECOMPILES = forcedStalePlanRecompiles - 1;
                         throw TableReferenceOutOfDateException.of("qwp_debug_stale_plan");
                     }
-                    // A backward scan's frames come last first, and streamResults
-                    // reads each one's rows last first too.
                     final int pageFrameOrder = pageFrameOrder(factory, hasRowWindow);
-                    isPageFrameDescending = pageFrameOrder == PartitionFrameCursorFactory.ORDER_DESC;
+                    isPageFrameBackward = pageFrameOrder == PartitionFrameCursorFactory.ORDER_DESC;
                     if (pageFrameOrder != NO_PAGE_FRAMES) {
                         pageFrameCursor = factory.getPageFrameCursor(sqlCtx, pageFrameOrder);
                     }
@@ -1634,13 +1641,17 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             if (pageFrameCursor != null) {
                 // SEQUENTIAL_CACHED hints the kernel to read ahead and to drop
                 // page cache after streaming, so a 10M-row scan doesn't evict
-                // the server's working set. Unlike SEQUENTIAL_EVICT (used by
-                // the parquet exporter), the partition stays mapped on pool
-                // return so the next QWP query reuses the FdCache.
+                // the server's working set: Linux gives the pages read through
+                // a MADV_SEQUENTIAL mapping no recency, so reclaim takes them
+                // first. Unlike SEQUENTIAL_EVICT (used by the parquet exporter),
+                // the partition stays mapped on pool return so the next QWP
+                // query reuses the FdCache. A backward scan needs the hint as
+                // much as a forward one, but the hint's readahead only runs
+                // forward, so it reads its frames ahead itself, see
+                // QwpBackwardReadAhead.
                 pageFrameCursor.setScanProfile(ReaderScanProfile.SEQUENTIAL_CACHED);
-                state.beginStreamingPageFrame(requestId, factory, pageFrameCursor, sqlCtx.getMemoryTracker(),
-                        columnCount, decoder.initialCredit, cacheKey, compiledQueryType, queryCacheable,
-                        isPageFrameDescending);
+                state.beginStreamingPageFrame(requestId, factory, pageFrameCursor, isPageFrameBackward,
+                        sqlCtx.getMemoryTracker(), columnCount, decoder.initialCredit, cacheKey, compiledQueryType, queryCacheable);
             } else {
                 state.beginStreaming(requestId, factory, cursor,
                         columnCount, decoder.initialCredit, cacheKey, compiledQueryType, queryCacheable);
@@ -2296,6 +2307,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         // everything else comes through the RecordCursor path. Both feed the same
         // batchBuffer; the only difference is how we walk rows.
         final boolean isPageFrame = state.isStreamingPageFrame();
+        final boolean isPageFrameBackward = isPageFrame && state.isStreamingPageFrameBackward();
         final RecordCursor cursor = isPageFrame ? null : state.getStreamingCursor();
         final NetworkSqlExecutionCircuitBreaker circuitBreaker = context.getOrCreateCircuitBreaker(engine);
 
@@ -2382,14 +2394,43 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             final int dictBudgetWireBytes = (bufSize * 6) / 10;
             boolean isCursorExhausted;
             boolean dictCapHit = false;
+            // The first batch of a query (batch_seq == 0) carries the schema inline;
+            // continuation batches carry rows only.
+            final boolean isFirstBatch = state.getStreamingBatchSeq() == 0;
             if (isPageFrame) {
                 // Slices of at most PAGE_FRAME_SLICE_ROWS rows, with a check of the
-                // dictionary size after each. A descending stream takes each slice
-                // from the top of the frame's unconsumed rows and appends it last row
-                // first. The rows the batch still takes size its read-ahead.
+                // dictionary size after each.
                 PageFrame frame = null;
                 while (rowsToAdd > 0 && (frame = state.advanceToPageFrame()) != null) {
-                    rowsToAdd -= state.appendPageFrameSlice(rowsToAdd);
+                    final long rowsEmitted = state.getStreamingPageFrameRow();
+                    final long frameRows = state.getStreamingPageFrameRowHi();
+                    final int sliceRows = (int) Math.min(
+                            Math.min(rowsToAdd, frameRows - rowsEmitted),
+                            QwpEgressProcessorState.PAGE_FRAME_SLICE_ROWS
+                    );
+                    // A backward frame goes out last row first: the next slice is the
+                    // top of the rows it has left, appended in reverse.
+                    final long lo = isPageFrameBackward ? frameRows - rowsEmitted - sliceRows : rowsEmitted;
+                    if (isPageFrameBackward) {
+                        // Where the OS does not read advised pages, advise() reads the next
+                        // window of rows itself and waits for storage, and a batch can take
+                        // several such reads: check the breaker, for the query timeout, a
+                        // cancelled query and a dropped connection, before each slice, so the
+                        // stream stops between windows, not at the end of the batch.
+                        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+                        // Readahead only follows forward access: have this slice and the rows
+                        // below it on their way into memory before the walk down reads them.
+                        // The first batch goes out as soon as its own rows are in memory, so it
+                        // tells the read-ahead the lowest row of the frame it can take; later
+                        // batches let windows span batches, which reads in larger requests.
+                        final long batchLo = isFirstBatch ? Math.max(0, lo + sliceRows - rowsToAdd) : 0;
+                        metrics.markReadAhead(state.getBackwardReadAhead().advise(lo, batchLo));
+                        batchBuffer.appendPageFrameBackward(frame, state.getStreamingPageFrameMemoryRecord(), lo, lo + sliceRows);
+                    } else {
+                        batchBuffer.appendPageFrame(frame, state.getStreamingPageFrameMemoryRecord(), lo, lo + sliceRows);
+                    }
+                    state.consumePageFrameRows(sliceRows);
+                    rowsToAdd -= sliceRows;
                     if (batchBuffer.currentBatchDeltaWireBytes() > dictBudgetWireBytes) {
                         dictCapHit = true;
                         break;
@@ -2420,9 +2461,6 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                 state.computeQueryRowCount(isCursorExhausted, circuitBreaker);
             }
             int rowsBuffered = batchBuffer.getRowCount();
-            // The first batch of a query (batch_seq == 0) carries the schema inline;
-            // continuation batches carry rows only.
-            boolean isFirstBatch = state.getStreamingBatchSeq() == 0;
             // Empty trailing batch AND we've already shipped at least one RESULT_BATCH on
             // this query -- skip straight to RESULT_END. The getStreamingBatchSeq() > 0
             // guard is load-bearing: without it, an empty cursor would take this shortcut

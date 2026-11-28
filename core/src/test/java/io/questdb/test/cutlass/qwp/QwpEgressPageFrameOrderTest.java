@@ -40,6 +40,35 @@ import org.junit.Test;
 public class QwpEgressPageFrameOrderTest extends AbstractCairoTest {
 
     @Test
+    public void testCoveringIndexScanPageFrameOrder() throws Exception {
+        // Both covering index scans support page frames. The multi-key scan fills its
+        // frames with the covered columns, so it keeps the page-frame path. The single-key
+        // scan hands out frames that carry no column data until the engine decodes them,
+        // so it streams through its RecordCursor, which reads the index sidecar.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE c (s SYMBOL INDEX TYPE POSTING INCLUDE (x), x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO c SELECT 's' || (x % 3), x, (x * 3_600_000_000L)::TIMESTAMP FROM long_sequence(100)");
+            // {sql, page-frame order without a row window}
+            final Object[][] cases = {
+                    {"SELECT x FROM c WHERE s = 's1'", QwpEgressUpgradeProcessor.NO_PAGE_FRAMES},
+                    {"SELECT x FROM c WHERE s IN ('s1', 's2')", PartitionFrameCursorFactory.ORDER_ASC},
+            };
+            for (Object[] c : cases) {
+                final String sql = (String) c[0];
+                assertQuery(sql)
+                        .noLeakCheck()
+                        .assertsPlanContaining("CoveringIndex on: s with: x");
+                try (RecordCursorFactory factory = select(sql)) {
+                    Assert.assertTrue(sql, factory.supportsPageFrameCursor());
+                    Assert.assertEquals(sql, (int) c[1], QwpEgressUpgradeProcessor.pageFrameOrder(factory, false));
+                    Assert.assertEquals(sql, QwpEgressUpgradeProcessor.NO_PAGE_FRAMES,
+                            QwpEgressUpgradeProcessor.pageFrameOrder(factory, true));
+                }
+            }
+        });
+    }
+
+    @Test
     public void testPageFrameOrder() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (x LONG, s SYMBOL, v VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");

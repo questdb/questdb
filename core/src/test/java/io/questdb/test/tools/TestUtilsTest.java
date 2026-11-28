@@ -38,10 +38,13 @@ import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
+import org.junit.ComparisonFailure;
 import org.junit.Test;
 
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -116,6 +119,91 @@ public final class TestUtilsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAssertEventuallyRethrowsLastFailureWhenTimeIsUp() {
+        // the first retry comes 10ms after the first attempt, well inside the 1s budget
+        final int[] attempts = {0};
+        final AssertionError error = Assert.assertThrows(
+                AssertionError.class,
+                () -> TestUtils.assertEventually(() -> {
+                    throw new AssertionError("attempt " + ++attempts[0]);
+                }, 1, Set.of(AssertionError.class))
+        );
+        Assert.assertTrue("attempts: " + attempts[0], attempts[0] > 1);
+        Assert.assertEquals("attempt " + attempts[0], error.getMessage());
+    }
+
+    @Test
+    public void testAssertEventuallyRethrowsUnlistedFailureAtOnce() {
+        // an AssertionError retries only when the caller lists it
+        final int[] attempts = {0};
+        final AssertionError error = Assert.assertThrows(
+                AssertionError.class,
+                () -> TestUtils.assertEventually(() -> {
+                    attempts[0]++;
+                    throw new AssertionError("unlisted error");
+                }, 5, Set.of(SqlException.class))
+        );
+        Assert.assertEquals("unlisted error", error.getMessage());
+        Assert.assertEquals(1, attempts[0]);
+
+        attempts[0] = 0;
+        final IllegalStateException exception = Assert.assertThrows(
+                IllegalStateException.class,
+                () -> TestUtils.assertEventually(() -> {
+                    attempts[0]++;
+                    throw new IllegalStateException("unlisted exception");
+                }, 5, Set.of(AssertionError.class, SqlException.class))
+        );
+        Assert.assertEquals("unlisted exception", exception.getMessage());
+        Assert.assertEquals(1, attempts[0]);
+    }
+
+    @Test
+    public void testAssertEventuallyRetriesListedTypes() throws Exception {
+        // AssertionError is an Error, not an Exception, and a listed one retries all the same.
+        // So does a subclass of a listed type: Assert.assertEquals() fails two strings with a
+        // ComparisonFailure.
+        final int[] attempts = {0};
+        TestUtils.assertEventually(() -> {
+            switch (++attempts[0]) {
+                case 1 -> throw new AssertionError("not yet");
+                case 2 -> throw new ComparisonFailure("not yet", "finished", "running");
+                case 3 -> throw SqlException.$(0, "not yet");
+                default -> {
+                }
+            }
+        }, 5, Set.of(AssertionError.class, SqlException.class));
+        Assert.assertEquals(4, attempts[0]);
+    }
+
+    @Test
+    public void testAssertEventuallyWithTypesRetriesAssertionError() throws Exception {
+        // the overload without a timeout retries AssertionError on top of the types the caller
+        // lists, and leaves the caller's set as it was
+        final Set<Class<?>> types = new HashSet<>(Set.of(SqlException.class));
+        final int[] attempts = {0};
+        TestUtils.assertEventually(() -> {
+            switch (++attempts[0]) {
+                case 1 -> throw new AssertionError("not yet");
+                case 2 -> throw SqlException.$(0, "not yet");
+                default -> {
+                }
+            }
+        }, types);
+        Assert.assertEquals(3, attempts[0]);
+        Assert.assertEquals(Set.of(SqlException.class), types);
+
+        // so a set the caller cannot modify works as well
+        attempts[0] = 0;
+        TestUtils.assertEventually(() -> {
+            if (++attempts[0] == 1) {
+                throw new AssertionError("not yet");
+            }
+        }, Set.of(SqlException.class));
+        Assert.assertEquals(2, attempts[0]);
+    }
+
+    @Test
     public void testAssertReverseLinesEqual() {
         Assert.assertThrows(AssertionError.class, () -> {
             TestUtils.assertReverseLinesEqual(null, "123\n456\n789\n", "123\n456\n789\n");
@@ -124,6 +212,57 @@ public final class TestUtilsTest extends AbstractCairoTest {
         TestUtils.assertReverseLinesEqual(null, "123\n456\n789\n", "789\n456\n123\n");
         TestUtils.assertReverseLinesEqual(null, "1234\n56\n789\n", "789\n56\n1234\n");
         TestUtils.assertReverseLinesEqual(null, "1234\n", "1234\n");
+    }
+
+    @Test
+    public void testGenerateRandomCountsTheRndsItSeedsForEachNest() {
+        // generateRandom(Log) counts the Rnds it seeds from the clock or from -Dfuzz.s0 and
+        // -Dfuzz.s1 for the nest of the class that calls it: a lambda or a class nested in this
+        // one counts for this one, and a Rnd that TestUtils seeds for its own use counts for
+        // TestUtils. A Rnd of the caller's seeds replays as it is and does not count, nor does a
+        // Rnd an invalid override keeps from being made.
+        final long count = TestUtils.getGeneratedRandomCount(TestUtilsTest.class);
+        final long testUtilsCount = TestUtils.getGeneratedRandomCount(TestUtils.class);
+        TestUtils.generateRandom(null);
+        Assert.assertEquals(count + 1, TestUtils.getGeneratedRandomCount(TestUtilsTest.class));
+        final Runnable seedInLambda = () -> TestUtils.generateRandom(null);
+        seedInLambda.run();
+        Assert.assertEquals(count + 2, TestUtils.getGeneratedRandomCount(TestUtilsTest.class));
+        class Nested {
+            void seed() {
+                TestUtils.generateRandom(null);
+            }
+        }
+        new Nested().seed();
+        Assert.assertEquals(count + 3, TestUtils.getGeneratedRandomCount(TestUtilsTest.class));
+        Assert.assertEquals(count + 3, TestUtils.getGeneratedRandomCount(Nested.class));
+
+        TestUtils.isWal();
+        Assert.assertEquals(testUtilsCount + 1, TestUtils.getGeneratedRandomCount(TestUtils.class));
+        Assert.assertEquals(count + 3, TestUtils.getGeneratedRandomCount(TestUtilsTest.class));
+
+        TestUtils.generateRandom(null, 42, 4_242);
+        Assert.assertEquals(count + 3, TestUtils.getGeneratedRandomCount(TestUtilsTest.class));
+
+        final String s0 = System.getProperty("fuzz.s0");
+        System.setProperty("fuzz.s0", "not a seed");
+        try {
+            final IllegalArgumentException e = Assert.assertThrows(
+                    IllegalArgumentException.class,
+                    () -> TestUtils.generateRandom(null)
+            );
+            Assert.assertEquals("invalid seed override [fuzz.s0=not a seed]", e.getMessage());
+        } finally {
+            if (s0 != null) {
+                System.setProperty("fuzz.s0", s0);
+            } else {
+                System.clearProperty("fuzz.s0");
+            }
+        }
+        Assert.assertEquals(count + 3, TestUtils.getGeneratedRandomCount(TestUtilsTest.class));
+
+        TestUtils.generateRandom(null);
+        Assert.assertEquals(count + 4, TestUtils.getGeneratedRandomCount(TestUtilsTest.class));
     }
 
     @Test
