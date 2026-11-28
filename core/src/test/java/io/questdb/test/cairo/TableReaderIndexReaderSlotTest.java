@@ -91,7 +91,10 @@ public class TableReaderIndexReaderSlotTest extends AbstractCairoTest {
                     """);
             drainWalQueue();
 
-            // the pooled reader opens the index readers of both columns in the first partition
+            // The pooled reader opens only the forward index readers of both columns in the first partition. Unlike
+            // testIndexScansAfterDdl(), which opens both directions, this leaves the check at the lookup in
+            // getIndexReader() alone to catch the POSTING reader in the slot of b: reloadColumnAt() checks and
+            // refreshes only the backward reader. Do not fold this test into that helper.
             try (TableReader reader = getReader("t")) {
                 reader.openPartition(0);
                 Assert.assertNotNull(reader.getIndexReader(0, reader.getMetadata().getColumnIndex("p"), IndexReader.DIR_FORWARD));
