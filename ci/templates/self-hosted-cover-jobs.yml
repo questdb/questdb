@@ -52,7 +52,9 @@ jobs:
           os: Linux
           jdk: "1.25"
           testset: "coverage-cairo-root"
-          includeTests: "**/cairo/*"
+          # Also three subpackages of cairo, which keep this leg and linux-cairo-sub at
+          # about the same length.
+          includeTests: "**/cairo/*,**/cairo/parquet/**,**/cairo/crash/**,**/cairo/lv/**"
           excludeTests: "**/O3*Test**,**/**Fuzz**"
           javadoc_step: ""
           javadoc_profile: ""
@@ -63,16 +65,19 @@ jobs:
           jdk: "1.25"
           testset: "coverage-cairo-sub"
           includeTests: "**/cairo/**/*"
-          excludeTests: "**/cairo/*,**/O3*Test**,**/**Fuzz**"
+          excludeTests: "**/cairo/*,**/cairo/parquet/**,**/cairo/crash/**,**/cairo/lv/**,**/O3*Test**,**/**Fuzz**"
           javadoc_step: ""
           javadoc_profile: ""
-        linux-pgwire:
+        # The wire protocols: PGWire, and core's QWP and ILP tests, which keep linux-other
+        # shorter. The questdb/test prefix leaves the client's own qwp and line tests in
+        # linux-other.
+        linux-protocols:
           TEST_REACTOR_ARGS: "-pl core -am"
           poolName: "hetzner-incus"
           os: Linux
           jdk: "1.25"
-          testset: "coverage-pgwire"
-          includeTests: "**/pgwire/**/*.java"
+          testset: "coverage-protocols"
+          includeTests: "**/pgwire/**/*.java,**/questdb/test/cutlass/qwp/**,**/questdb/test/cutlass/line/**"
           javadoc_step: ""
           javadoc_profile: ""
         # The one leg that runs the whole reactor: its exclude-only pattern is where the compat
@@ -85,7 +90,7 @@ jobs:
           os: Linux
           jdk: "1.25"
           testset: "coverage-other"
-          excludeTests: "**/griffin/**,**/cairo/**,**/pgwire/**"
+          excludeTests: "**/griffin/**,**/cairo/**,**/pgwire/**,**/questdb/test/cutlass/qwp/**,**/questdb/test/cutlass/line/**"
           javadoc_step: ""
           javadoc_profile: ""
     pool:
