@@ -26,11 +26,15 @@ package io.questdb.test.cairo;
 
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.vm.MemoryCMARWImpl;
+import io.questdb.cairo.vm.MemoryPMARImpl;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.cairo.vm.api.MemoryCMARW;
+import io.questdb.cairo.vm.api.MemoryCMR;
+import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.std.*;
 import io.questdb.std.str.*;
 import io.questdb.test.AbstractTest;
@@ -364,6 +368,18 @@ public class VarcharTypeDriverTest extends AbstractTest {
     }
 
     @Test
+    public void testRewindAppendPosition() throws Exception {
+        // A row was cancelled after it moved a VARCHAR column, or did not move it. rewindAppendPosition() moves both
+        // vectors back to the start of the row: the data vector keeps no byte of the cancelled row, so the next values
+        // land right after the committed ones, with no gap between. It maps no page that the files lack.
+        TestUtils.assertMemoryLeak(() -> {
+            for (CancelledRow cancelled : CancelledRow.values()) {
+                assertRewind(cancelled);
+            }
+        });
+    }
+
+    @Test
     public void testSetAppendPosition() throws Exception {
         FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
         long pageSize = Files.PAGE_SIZE;
@@ -452,5 +468,157 @@ public class VarcharTypeDriverTest extends AbstractTest {
             Assert.assertEquals(0, dataMem.getAppendOffset());
             Assert.assertEquals(0, auxMem.getAppendOffset());
         }
+    }
+
+    private static void assertRewind(CancelledRow cancelled) throws Exception {
+        final String context = cancelled.toString();
+        final AllocationCountingFacade ff = new AllocationCountingFacade();
+        final long pageSize = Files.PAGE_SIZE;
+        final ObjList<String> values = new ObjList<>();
+        final long committedRows = switch (cancelled) {
+            case NULL_AT_ROW_ZERO, VALUE_AT_ROW_ZERO, VALUE_CUT_AT_ROW_ZERO -> 0;
+            // values of 100 bytes in the data vector: the next one crosses the end of its first page
+            case VALUE_CUT_BY_FAILED_PAGE -> pageSize / 100;
+            // the aux entries end the first page of the aux file
+            case NONE_AT_AUX_PAGE_END, VALUE_WITH_FAILED_AUX_PAGE, NULL_OPENS_AUX_PAGE, VALUE_OPENS_AUX_PAGE ->
+                    pageSize / VARCHAR_AUX_WIDTH_BYTES;
+            // values of 64 bytes end the first page of the data file
+            case NONE_AT_DATA_PAGE_END, VALUE_OPENS_DATA_PAGE -> pageSize / 64;
+            default -> 10;
+        };
+        for (int i = 0; i < committedRows; i++) {
+            final String c = String.valueOf((char) ('a' + i % 26));
+            // inlined in the aux entry, or longer than an entry holds
+            values.add(switch (cancelled) {
+                case VALUE_CUT_BY_FAILED_PAGE -> c.repeat(100);
+                case NONE_AT_DATA_PAGE_END, VALUE_OPENS_DATA_PAGE -> c.repeat(64);
+                default -> i % 2 == 0 ? c : c.repeat(20);
+            });
+        }
+        try (
+                Path auxPath = new Path().of(temp.newFile().getAbsolutePath());
+                Path dataPath = new Path().of(temp.newFile().getAbsolutePath())
+        ) {
+            try (
+                    MemoryPMARImpl auxMem = new MemoryPMARImpl(ff, auxPath.$(), pageSize, MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);
+                    MemoryPMARImpl dataMem = new MemoryPMARImpl(ff, dataPath.$(), pageSize, MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE)
+            ) {
+                for (int i = 0, n = values.size(); i < n; i++) {
+                    VarcharTypeDriver.appendValue(auxMem, dataMem, utf8Of(values.getQuick(i)));
+                }
+                Assert.assertEquals(context, committedRows * VARCHAR_AUX_WIDTH_BYTES, auxMem.getAppendOffset());
+                if (cancelled == CancelledRow.VALUE_CUT_AT_ROW_ZERO) {
+                    // the first page of the data file, which the value fills
+                    dataMem.jumpTo(0);
+                }
+                final long committedDataSize = dataMem.getAppendOffset();
+                if (cancelled == CancelledRow.NONE_AT_DATA_PAGE_END || cancelled == CancelledRow.VALUE_OPENS_DATA_PAGE) {
+                    Assert.assertEquals(context, pageSize, committedDataSize);
+                }
+
+                // the writes of the cancelled row
+                switch (cancelled) {
+                    case NULL, NULL_AT_ROW_ZERO, NULL_OPENS_AUX_PAGE -> VarcharTypeDriver.INSTANCE.appendNull(auxMem, dataMem);
+                    case VALUE_INLINED -> VarcharTypeDriver.appendValue(auxMem, dataMem, utf8Of("V"));
+                    case VALUE, VALUE_AT_ROW_ZERO, VALUE_OPENS_AUX_PAGE, VALUE_OPENS_DATA_PAGE ->
+                            VarcharTypeDriver.appendValue(auxMem, dataMem, utf8Of("V".repeat(20)));
+                    case VALUE_CUT_BY_FAILED_PAGE -> failAppend(context, ff, dataMem.getFd(), auxMem, dataMem, "F".repeat(100));
+                    case VALUE_CUT_AT_ROW_ZERO -> failAppend(context, ff, dataMem.getFd(), auxMem, dataMem, "F".repeat((int) pageSize + 100));
+                    case VALUE_WITH_FAILED_AUX_PAGE -> failAppend(context, ff, auxMem.getFd(), auxMem, dataMem, "F".repeat(20));
+                    default -> {
+                    }
+                }
+                if (cancelled == CancelledRow.NULL_OPENS_AUX_PAGE || cancelled == CancelledRow.VALUE_OPENS_AUX_PAGE) {
+                    // the entry of the row starts the second page of the aux file
+                    Assert.assertEquals(context, pageSize + VARCHAR_AUX_WIDTH_BYTES, auxMem.getAppendOffset());
+                }
+                if (cancelled == CancelledRow.VALUE_OPENS_DATA_PAGE) {
+                    // the value starts the second page of the data file
+                    Assert.assertEquals(context, pageSize + 20, dataMem.getAppendOffset());
+                }
+
+                final int allocations = ff.allocations.get();
+                VarcharTypeDriver.INSTANCE.rewindAppendPosition(committedRows, auxMem, dataMem);
+                Assert.assertEquals(context, allocations, ff.allocations.get());
+                Assert.assertEquals(context, committedRows * VARCHAR_AUX_WIDTH_BYTES, auxMem.getAppendOffset());
+                Assert.assertEquals(context, committedDataSize, dataMem.getAppendOffset());
+
+                // the next values: one longer than half a page, NULL, and a short one
+                values.add("L".repeat((int) pageSize / 2));
+                values.add(null);
+                values.add("z");
+                for (int i = (int) committedRows, n = values.size(); i < n; i++) {
+                    VarcharTypeDriver.appendValue(auxMem, dataMem, utf8Of(values.getQuick(i)));
+                }
+            }
+            try (
+                    MemoryCMR auxMem = Vm.getCMRInstance(ff, auxPath.$(), ff.length(auxPath.$()), MemoryTag.MMAP_DEFAULT);
+                    MemoryCMR dataMem = Vm.getCMRInstance(ff, dataPath.$(), ff.length(dataPath.$()), MemoryTag.MMAP_DEFAULT)
+            ) {
+                // each value starts where the value before it ends
+                Assert.assertFalse(context, VarcharTypeDriver.INSTANCE.isSparseDataVector(auxMem.addressOf(0), dataMem.addressOf(0), values.size()));
+                for (int i = 0, n = values.size(); i < n; i++) {
+                    final Utf8Sequence actual = VarcharTypeDriver.getSplitValue(auxMem, dataMem, i, 1);
+                    if (values.getQuick(i) == null) {
+                        Assert.assertNull(context + ", row " + i, actual);
+                    } else {
+                        Assert.assertNotNull(context + ", row " + i, actual);
+                        Assert.assertEquals(context + ", row " + i, values.getQuick(i), Utf8s.stringFromUtf8Bytes(actual));
+                    }
+                }
+            }
+        }
+    }
+
+    // the put of the value fails where it needs a page of the file of fd, which cannot be allocated
+    private static void failAppend(String context, AllocationCountingFacade ff, long fd, MemoryMA auxMem, MemoryMA dataMem, String value) {
+        ff.failingFd.set(fd);
+        try {
+            VarcharTypeDriver.appendValue(auxMem, dataMem, utf8Of(value));
+            Assert.fail(context);
+        } catch (CairoException e) {
+            TestUtils.assertContains(context, e.getFlyweightMessage(), "No space left");
+        }
+        Assert.assertEquals(context, -1, ff.failingFd.get());
+    }
+
+    private static Utf8String utf8Of(String value) {
+        return value == null ? null : new Utf8String(value);
+    }
+
+    // what the cancelled row wrote
+    private enum CancelledRow {
+        // nothing
+        NONE,
+        // nothing, the aux entries end the first page of the aux file: a jump to the end of row k - 1 would map the
+        // next page
+        NONE_AT_AUX_PAGE_END,
+        // a NULL
+        NULL,
+        // a NULL in the first row
+        NULL_AT_ROW_ZERO,
+        // a NULL, whose aux entry takes the second page of the aux file
+        NULL_OPENS_AUX_PAGE,
+        // nothing, the values end the first page of the data file: a jump to the end of row k - 1 would map the next
+        // page
+        NONE_AT_DATA_PAGE_END,
+        // a value longer than an aux entry holds
+        VALUE,
+        // a value longer than an aux entry holds, in the first row
+        VALUE_AT_ROW_ZERO,
+        // a value that its aux entry holds
+        VALUE_INLINED,
+        // a value longer than an aux entry holds, whose aux entry takes the second page of the aux file
+        VALUE_OPENS_AUX_PAGE,
+        // a value longer than an aux entry holds, which takes the second page of the data file
+        VALUE_OPENS_DATA_PAGE,
+        // the start of a value that crosses the end of the first page of the data file, whose next page cannot be
+        // allocated
+        VALUE_CUT_BY_FAILED_PAGE,
+        // the start of a value in the first row, longer than the first page of the data file, whose next page cannot
+        // be allocated
+        VALUE_CUT_AT_ROW_ZERO,
+        // a value, whose aux entry needs the next page of the aux file, which cannot be allocated
+        VALUE_WITH_FAILED_AUX_PAGE
     }
 }

@@ -42,6 +42,7 @@ import org.junit.Test;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.SplittableRandom;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -127,6 +128,50 @@ public final class TestUtilsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGenerateRandomMixesClockReadings() {
+        // Without its override, a seed of generateRandom() is a clock reading mixed by mixSeed(): s0 reads
+        // System.nanoTime(), s1 System.currentTimeMillis(). The override of the other seed holds it at 1. Each step
+        // of Rnd maps its state one to one, so the same state after the warm-up means the same seeds.
+        final Rnd expected = new Rnd();
+        withSeedOverrides(null, "1", () -> {
+            final long nanosBefore = System.nanoTime();
+            final Rnd actual = TestUtils.generateRandom(null);
+            final long nanosAfter = System.nanoTime();
+            for (long nanos = nanosBefore; nanos <= nanosAfter; nanos++) {
+                warmUp(expected, TestUtils.mixSeed(nanos), 1);
+                if (expected.getSeed0() == actual.getSeed0() && expected.getSeed1() == actual.getSeed1()) {
+                    return;
+                }
+            }
+            Assert.fail("s0 is not a mixed System.nanoTime() reading");
+        });
+        withSeedOverrides("1", null, () -> {
+            final long millisBefore = System.currentTimeMillis();
+            final Rnd actual = TestUtils.generateRandom(null);
+            final long millisAfter = System.currentTimeMillis();
+            for (long millis = millisBefore; millis <= millisAfter; millis++) {
+                warmUp(expected, 1, TestUtils.mixSeed(millis));
+                if (expected.getSeed0() == actual.getSeed0() && expected.getSeed1() == actual.getSeed1()) {
+                    return;
+                }
+            }
+            Assert.fail("s1 is not a mixed System.currentTimeMillis() reading");
+        });
+    }
+
+    @Test
+    public void testGenerateRandomUsesSeedOverridesAsTheyAre() {
+        // -Dfuzz.s0 and -Dfuzz.s1 set to the seeds that generateRandom() printed reproduce the run, so
+        // generateRandom() does not mix them; mixed seeds use all 64 bits, the sign bit too
+        withSeedOverrides("-9223372036854775808", "9223372036854775807", () -> {
+            final Rnd expected = TestUtils.generateRandom(null, Long.MIN_VALUE, Long.MAX_VALUE);
+            final Rnd actual = TestUtils.generateRandom(null);
+            Assert.assertEquals(expected.getSeed0(), actual.getSeed0());
+            Assert.assertEquals(expected.getSeed1(), actual.getSeed1());
+        });
+    }
+
+    @Test
     public void testJoinThreadsInterruptsTimedOutWorker() throws Exception {
         final CountDownLatch started = new CountDownLatch(1);
         final AtomicBoolean interrupted = new AtomicBoolean();
@@ -150,6 +195,40 @@ public final class TestUtilsTest extends AbstractCairoTest {
         Assert.assertTrue(error.getMessage().contains("did not finish within"));
         Assert.assertTrue(interrupted.get());
         Assert.assertFalse(worker.isAlive());
+    }
+
+    @Test
+    public void testMixSeedDecorrelatesCloseReadings() {
+        // Tests that start close together read close clock values. Rnd carries the bits of its seeds into the high
+        // bits of its values slowly: seeded with the raw readings below, about 4 in 5 of the Rnds choose true first,
+        // so most of the tests would make the same random choice. Mixed, the readings make independent choices.
+        assertFairFirstChoices(1_000, 0); // calls 1 microsecond apart, in one millisecond
+        assertFairFirstChoices(37_000_000, 37); // tests 37 milliseconds apart
+    }
+
+    @Test
+    public void testMixSeedIsSplitMix64() {
+        // mixSeed(x) is the first value of SplitMix64 seeded with x, which java.util.SplittableRandom implements
+        final long[] values = {
+                0,
+                1,
+                -1,
+                Long.MIN_VALUE,
+                Long.MIN_VALUE + 1,
+                Long.MAX_VALUE,
+                Long.MAX_VALUE - 1,
+                // a System.nanoTime() reading
+                8_057_884_243_203_250L,
+                // a System.currentTimeMillis() reading
+                1_795_817_470_513L
+        };
+        for (long value : values) {
+            Assert.assertEquals("value: " + value, new SplittableRandom(value).nextLong(), TestUtils.mixSeed(value));
+        }
+        // the first values of the reference SplitMix64 seeded with 0
+        Assert.assertEquals(0xe220a8397b1dcdafL, TestUtils.mixSeed(0));
+        Assert.assertEquals(0x6e789e6aa1b965f4L, TestUtils.mixSeed(0x9e3779b97f4a7c15L));
+        Assert.assertEquals(0x06c45d188009454fL, TestUtils.mixSeed(2 * 0x9e3779b97f4a7c15L));
     }
 
     @Test
@@ -290,6 +369,52 @@ public final class TestUtilsTest extends AbstractCairoTest {
                 RecordCursor cursor = factory.getCursor(sqlExecutionContext)
         ) {
             TestUtils.addAllRecordsToMap(sink, cursor, factory.getMetadata(), map);
+        }
+    }
+
+    // Asserts that Rnds seeded and warmed up as generateRandom() does it, with 1000 mixed readings of each clock a step
+    // apart, choose true first about half the time: a fair coin makes 500 +/- 47 (3 standard deviations) true
+    // choices of 1000.
+    private static void assertFairFirstChoices(long nanosStep, long millisStep) {
+        final long nanos = 8_057_884_243_203_250L;
+        final long millis = 1_795_817_470_513L;
+        final Rnd rnd = new Rnd();
+        int trueCount = 0;
+        for (int i = 0; i < 1_000; i++) {
+            warmUp(rnd, TestUtils.mixSeed(nanos + i * nanosStep), TestUtils.mixSeed(millis + i * millisStep));
+            if (rnd.nextBoolean()) {
+                trueCount++;
+            }
+        }
+        Assert.assertTrue("true choices: " + trueCount, trueCount >= 453 && trueCount <= 547);
+    }
+
+    private static void setSystemProperty(String name, String value) {
+        if (value != null) {
+            System.setProperty(name, value);
+        } else {
+            System.clearProperty(name);
+        }
+    }
+
+    // seeds rnd and draws the values that generateRandom() draws before it returns its Rnd
+    private static void warmUp(Rnd rnd, long s0, long s1) {
+        rnd.reset(s0, s1);
+        rnd.nextBoolean();
+        rnd.nextBoolean();
+    }
+
+    // runs code with -Dfuzz.s0 and -Dfuzz.s1 set to s0 and s1, or cleared where null
+    private static void withSeedOverrides(String s0, String s1, Runnable code) {
+        final String oldS0 = System.getProperty("fuzz.s0");
+        final String oldS1 = System.getProperty("fuzz.s1");
+        try {
+            setSystemProperty("fuzz.s0", s0);
+            setSystemProperty("fuzz.s1", s1);
+            code.run();
+        } finally {
+            setSystemProperty("fuzz.s0", oldS0);
+            setSystemProperty("fuzz.s1", oldS1);
         }
     }
 

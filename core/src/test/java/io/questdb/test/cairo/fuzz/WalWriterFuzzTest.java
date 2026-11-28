@@ -695,6 +695,90 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     }
 
     @Test
+    public void testNonWalAbandonedRows() throws Exception {
+        // The non-WAL apply leaves the rows that the fuzz cancels in progress, as ILP UDP leaves the row of a line with a
+        // value it cannot put, and the next newRow() or the commit cancels them. Out-of-order writes over several
+        // partitions of tables that start empty: the cancel of the first out-of-order row of a transaction, and of the
+        // only row of a table, changes the path of the next row. The non-WAL table must still match the WAL tables.
+        Rnd rnd = generateRandom(LOG);
+        setTestParams(rnd);
+
+        setFuzzProbabilities(
+                0.3,
+                0.1,
+                0.1,
+                0.05,
+                0.02,
+                0.02,
+                0.02,
+                0.01,
+                1.0,
+                0.01,
+                0.01,
+                0.0,
+                0.0,
+                0.05,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0
+        );
+        // no planted IO failure
+        fuzzer.setFuzzCounts(true, 50_000, 100, 20, 10, 1000, 0, 3 + rnd.nextInt(8), -1, 0);
+        fuzzer.setAbandonedRowsEnabled(true);
+        runFuzz(rnd);
+    }
+
+    @Test
+    public void testNonWalIoFailuresAtPageSwitches() throws Exception {
+        // Column files grow by pages of the smallest size, and the IO failures planted in the non-WAL apply fail
+        // allocate() calls. Two in three count the calls of inserts only, so that they land in the row of an insert:
+        // on a page switch of a column file, the designated timestamp's first, or on the files of a new partition.
+        // After each failure, the apply checks the writer and recovers as a user of the writer does: it cancels the
+        // failed row, as ILP TCP, CSV import and INSERT do, or leaves it for the next row to cancel, as CSV import
+        // after a failed append() and ILP UDP do, then writes the row again and goes on with the transaction; or it
+        // rolls the writer back, or returns it to the pool, and runs the transaction again. Then it checks the writer
+        // again, and the non-WAL table must still match the WAL tables.
+        Rnd rnd = generateRandom(LOG);
+        setTestParams(rnd);
+        // after setTestParams(), which can set the test up again
+        setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, Files.PAGE_SIZE);
+
+        setFuzzProbabilities(
+                0.01,
+                0.01,
+                0.01,
+                0.1,
+                0.02,
+                0.02,
+                0.02,
+                0.0,
+                1.0,
+                0.01,
+                0.01,
+                0.0,
+                0.0,
+                0.01,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0
+        );
+        // Three in four runs write in order, through newRow(), whose files the failures hit. Out-of-order rows go to
+        // memory, so the failures of the other runs hit the O3 commit. Without type changes, the no-sentinel setting
+        // only makes the generator write in order.
+        final boolean isInOrder = rnd.nextInt(4) > 0;
+        fuzzer.setNoSentinelTypeChangeEnabled(isInOrder);
+        fuzzer.setFuzzCounts(!isInOrder && rnd.nextBoolean(), 50_000, 50, 20, 10, 1000, 100, 3 + rnd.nextInt(8), -1, 5 + rnd.nextInt(6));
+        // a third of the failures fail the designated timestamp column only, the first value of each row
+        fuzzer.setIoFailuresOnAllocate(new Rnd(rnd.nextLong(), rnd.nextLong()), "ts.d", 1.0 / 3);
+        runFuzz(rnd);
+        Assert.assertTrue("no planted IO failure fired", fuzzer.getIoFailuresObserved() > 0);
+    }
+
+    @Test
     public void testSimpleDataTransaction() throws Exception {
         Rnd rnd = generateRandom(LOG);
         setTestParams(rnd);

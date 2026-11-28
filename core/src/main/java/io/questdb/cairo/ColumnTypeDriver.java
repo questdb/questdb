@@ -232,6 +232,18 @@ public interface ColumnTypeDriver {
     );
 
     /**
+     * Moves the column back to the start of row {@code pos} after a cancelled row, as {@link #setAppendPosition}
+     * does, but maps only pages that hold bytes the column already has. The memories must be at or past that row
+     * start, moved there only by appends of the cancelled row. A memory that the row did not move stays where it is:
+     * it can sit at the end of a page, where {@code jumpTo()} maps, and allocates, the next page.
+     *
+     * @param pos     the row to move back to, starting from 0
+     * @param auxMem  the auxiliary memory
+     * @param dataMem the data memory
+     */
+    void rewindAppendPosition(long pos, MemoryMA auxMem, MemoryMA dataMem);
+
+    /**
      * For now this method is called by WAL writer when data is rolled back (or row is cancelled). The
      * expectation of the WAL writer is to have the append position set correctly on aux mem and size of data vector
      * provided correctly.

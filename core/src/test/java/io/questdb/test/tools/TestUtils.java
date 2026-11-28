@@ -1948,7 +1948,13 @@ public final class TestUtils {
 
     @NotNull
     public static Rnd generateRandom(Log log) {
-        return generateRandom(log, seedOf("fuzz.s0", System.nanoTime()), seedOf("fuzz.s1", System.currentTimeMillis()));
+        // only the clock readings go through mixSeed(): -Dfuzz.s0 and -Dfuzz.s1, set to the printed seeds,
+        // reproduce the run
+        return generateRandom(
+                log,
+                seedOf("fuzz.s0", mixSeed(System.nanoTime())),
+                seedOf("fuzz.s1", mixSeed(System.currentTimeMillis()))
+        );
     }
 
     @NotNull
@@ -3487,6 +3493,18 @@ public final class TestUtils {
         properties.setProperty("user", username);
         properties.setProperty("password", password);
         return DriverManager.getConnection(getPgConnectionUri(pgPort), properties);
+    }
+
+    /**
+     * Spreads a clock reading over all 64 bits of a seed: returns the first value of SplitMix64 seeded with it. Rnd
+     * carries the bits of its seeds into the high bits of its values slowly, so Rnds seeded with close raw readings,
+     * such as those of tests that start close together, draw nearly the same first values.
+     */
+    static long mixSeed(long value) {
+        long z = value + 0x9e3779b97f4a7c15L;
+        z = (z ^ (z >>> 30)) * 0xbf58476d1ce4e5b9L;
+        z = (z ^ (z >>> 27)) * 0x94d049bb133111ebL;
+        return z ^ (z >>> 31);
     }
 
     public interface CheckedIntFunction {

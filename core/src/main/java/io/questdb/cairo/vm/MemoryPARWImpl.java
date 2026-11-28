@@ -560,7 +560,7 @@ public class MemoryPARWImpl implements MemoryARW {
     @Override
     public void putByte(byte value) {
         if (pageHi == appendPointer) {
-            pageAt(getAppendOffset() + 1);
+            pageAt(getAppendOffset());
         }
         Unsafe.putByte(appendPointer++, value);
     }
@@ -709,9 +709,10 @@ public class MemoryPARWImpl implements MemoryARW {
             Unsafe.putInt(appendPointer, value);
             appendPointer += 4;
         } else if (pageHi == appendPointer) {
-            pageAt(getAppendOffset() + 1);
-            Unsafe.putInt(appendPointer, value);
-            appendPointer += 4;
+            pageAt(getAppendOffset());
+            // The page at the append offset is mapped now. The offset is a page start, unless no page was
+            // mapped (see clearPageLimits()): then the int can straddle the page end, and putIntBytes() writes it.
+            putInt(value);
         } else {
             putIntBytes(value);
         }
@@ -1150,9 +1151,12 @@ public class MemoryPARWImpl implements MemoryARW {
         return pageAddress;
     }
 
+    // Maps the page that holds the offset and moves the append pointer to the offset. The callers pass either the
+    // start of the next page, when they have filled the current one, or the append offset when no page is mapped.
     private void pageAt(long offset) {
         int page = pageIndex(offset);
         updateLimits(page, mapWritePage(page, offset));
+        appendPointer += offsetInPage(offset);
     }
 
     private void putBin0(BinarySequence value, long len, long remaining) {
@@ -1341,6 +1345,20 @@ public class MemoryPARWImpl implements MemoryARW {
         if (n > 0) {
             pages.setPos(1);
         }
+    }
+
+    /**
+     * Forgets the page that the append pointer points into, and keeps the append offset, as {@link #clear()} does
+     * at offset 0: the next put maps the page at the append offset, and {@link #jumpTo(long)} the page it jumps to.
+     * A subclass that unmaps the page calls this first, so that when the next page cannot be mapped, no pointer
+     * into the unmapped page is left to write through.
+     */
+    protected final void clearPageLimits() {
+        baseOffset = getAppendOffset() + 1;
+        appendPointer = -1;
+        pageHi = -1;
+        pageLo = -1;
+        clearHotPage();
     }
 
     protected final void setExtendSegmentSize(long extendSegmentSize) {

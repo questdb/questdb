@@ -337,6 +337,10 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
 
     void releaseCurrentPage() {
         if (pageAddress != 0) {
+            // The append pointer and the page limits of MemoryPARWImpl point into this page. Forget them before the
+            // page goes: when mapping the next page fails, they would be left pointing into unmapped memory, and a
+            // later put, or a jumpTo() back into this page, would write through them.
+            clearPageLimits();
             // Clear pageAddress even if release() rethrows its msync fault (the page is unmapped in release()'s
             // finally), so a later close cannot double-munmap the same address.
             try {

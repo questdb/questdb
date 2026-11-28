@@ -28,6 +28,7 @@ import com.sun.management.ThreadMXBean;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CommitMode;
@@ -54,10 +55,12 @@ import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.AllocateFailingFacade;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.cairo.TestFilesFacade;
 import io.questdb.test.cairo.TestTableReaderRecordCursor;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestMicroClock;
 import io.questdb.test.tools.TestUtils;
@@ -65,7 +68,47 @@ import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.concurrent.atomic.AtomicBoolean;
+
 public class LineUdpParserImplTest extends AbstractCairoTest {
+
+    @Test
+    public void testAbandonedFirstLineOfEmptyTable() throws Exception {
+        // The first line of an empty table has a BYTE value out of range. The parser logs the error and leaves the
+        // row of the line unfinished, the only row of the table. The next line, of the next day or of the same day,
+        // lands, and the table reads.
+        assertMemoryLeak(() -> {
+            final String[][] cases = {
+                    // the next line, its timestamp as the table shows it
+                    {"udp_empty x=2i,b=2i 86400000001000", "1970-01-02T00:00:00.000001Z"},
+                    {"udp_empty x=2i,b=2i 2000", "1970-01-01T00:00:00.000002Z"},
+            };
+            for (String[] nextLine : cases) {
+                execute("CREATE TABLE udp_empty (x LONG, b BYTE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY BYPASS WAL");
+                try (
+                        LineUdpParserImpl parser = new LineUdpParserImpl(engine, new DefaultLineUdpReceiverConfiguration());
+                        LineUdpLexer lexer = new LineUdpLexer(4096)
+                ) {
+                    lexer.withParser(parser);
+                    parseDatagram(lexer, "udp_empty x=1i,b=1000i 1000\n" + nextLine[0] + "\n");
+                    lexer.parseLast();
+                    parser.commitAll();
+                }
+                assertQuery("udp_empty")
+                        .noLeakCheck()
+                        .timestamp("timestamp")
+                        .expectSize()
+                        .returns("x\tb\ttimestamp\n2\t2\t" + nextLine[1] + "\n");
+
+                execute("INSERT INTO udp_empty VALUES (3, 3, '1970-01-01T00:00:00.000003Z')");
+                assertQuery("SELECT x, b, timestamp FROM udp_empty ORDER BY x")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("x\tb\ttimestamp\n2\t2\t" + nextLine[1] + "\n3\t3\t1970-01-01T00:00:00.000003Z\n");
+                execute("DROP TABLE udp_empty");
+            }
+        });
+    }
 
     @Test
     public void testAddColumnDefaultByte() throws Exception {
@@ -957,6 +1000,49 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNoTimestampFailedLine() throws Exception {
+        // A table without a designated timestamp: the STRING value of a line, its first field, crosses the end of the
+        // page of s.d, which cannot be allocated. The row marks no column. The parser logs the error and leaves the row
+        // in progress; the newRow() of the next line cancels it, and the lines after the failed one land as they are.
+        setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, Files.PAGE_SIZE);
+        final AllocateFailingFacade ff = new AllocateFailingFacade("udp_nots", "s.d");
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE udp_nots (x LONG, s STRING)");
+            // 'abcdef' takes 16 bytes of s.d: the committed rows and the first line end s.d 48 bytes before the end of
+            // its first page, and the value of 30 chars takes 64
+            final long n = Files.PAGE_SIZE / 16 - 4;
+            execute("INSERT INTO udp_nots SELECT x, 'abcdef' FROM long_sequence(" + n + ")");
+            try (
+                    LineUdpParserImpl parser = new LineUdpParserImpl(engine, new DefaultLineUdpReceiverConfiguration());
+                    LineUdpLexer lexer = new LineUdpLexer(4096)
+            ) {
+                lexer.withParser(parser);
+                ff.isArmed.set(true);
+                parseDatagram(lexer, "udp_nots s=\"abcdef\",x=" + (n + 1) + "i\n"
+                        + "udp_nots s=\"" + "z".repeat(30) + "\",x=" + (n + 2) + "i\n"
+                        + "udp_nots s=\"next\",x=" + (n + 3) + "i\n"
+                        + "udp_nots x=" + (n + 4) + "i\n");
+                lexer.parseLast();
+                parser.commitAll();
+                Assert.assertFalse(ff.isArmed.get());
+            }
+            assertQuery("SELECT x, s FROM udp_nots WHERE x >= " + (n - 1) + " OR x IS NULL")
+                    .noLeakCheck()
+                    .returns("x\ts\n"
+                            + (n - 1) + "\tabcdef\n"
+                            + n + "\tabcdef\n"
+                            + (n + 1) + "\tabcdef\n"
+                            + (n + 3) + "\tnext\n"
+                            + (n + 4) + "\t\n");
+            assertQuery("SELECT count(), sum(x) FROM udp_nots")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\tsum\n" + (n + 3) + '\t' + (n * (n + 1) / 2 + n + 1 + n + 3 + n + 4) + '\n');
+        });
+    }
+
+    @Test
     public void testO3() throws Exception {
         String expected = """
                 host\tuptime_format\ttimestamp
@@ -968,6 +1054,122 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
                 system,host=linux-questdb uptime_format=" 1:18" 1575990360000000000
                 """;
         assertThat(expected, lines, "system");
+    }
+
+    @Test
+    public void testOutOfOrderLineWithBadValueKeepsNextLines() throws Exception {
+        // The first out-of-order line of the batch has a BYTE value out of range. The parser logs the error and
+        // leaves the row of the line unfinished. The next lines land with their own values.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE udp_o3 (x LONG, b BYTE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY BYPASS WAL");
+            try (
+                    LineUdpParserImpl parser = new LineUdpParserImpl(engine, new DefaultLineUdpReceiverConfiguration());
+                    LineUdpLexer lexer = new LineUdpLexer(4096)
+            ) {
+                lexer.withParser(parser);
+                parseDatagram(lexer, """
+                        udp_o3 x=1i,b=1i 1000
+                        udp_o3 x=2i,b=2i 2000
+                        udp_o3 x=3i,b=3i 3000
+                        """);
+                lexer.parseLast();
+                parser.commitAll();
+                parseDatagram(lexer, """
+                        udp_o3 x=4i,b=1000i 1500
+                        udp_o3 x=5i,b=5i 4000
+                        udp_o3 x=6i,b=6i 5000
+                        """);
+                lexer.parseLast();
+                parser.commitAll();
+            }
+            final String expected = """
+                    x\tb\ttimestamp
+                    1\t1\t1970-01-01T00:00:00.000001Z
+                    2\t2\t1970-01-01T00:00:00.000002Z
+                    3\t3\t1970-01-01T00:00:00.000003Z
+                    5\t5\t1970-01-01T00:00:00.000004Z
+                    6\t6\t1970-01-01T00:00:00.000005Z
+                    """;
+            assertQuery("udp_o3")
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .expectSize()
+                    .returns(expected);
+
+            execute("INSERT INTO udp_o3 VALUES (7, 7, '1970-01-01T00:00:00.000006Z')");
+            assertQuery("udp_o3")
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .expectSize()
+                    .returns(expected + "7\t7\t1970-01-01T00:00:00.000006Z\n");
+        });
+    }
+
+    @Test
+    public void testPartitionSwitchFailureKeepsCommittedRows() throws Exception {
+        // The first line of 1970-01-02 cannot create the directory of its partition, which distresses the writer.
+        // The parser logs the error, keeps the writer and appends the next line with it; the commit fails. The rows
+        // committed to 1970-01-01 must stay as they are.
+        final AtomicBoolean isArmed = new AtomicBoolean();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public int mkdirs(Path path, int mode) {
+                if (Utf8s.containsAscii(path, "udp_switch~") && Utf8s.containsAscii(path, "1970-01-02") && isArmed.compareAndSet(true, false)) {
+                    return -1;
+                }
+                return super.mkdirs(path, mode);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE udp_switch (x LONG, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY BYPASS WAL");
+            try (
+                    LineUdpParserImpl parser = new LineUdpParserImpl(engine, new DefaultLineUdpReceiverConfiguration());
+                    LineUdpLexer lexer = new LineUdpLexer(4096)
+            ) {
+                lexer.withParser(parser);
+                parseDatagram(lexer, """
+                        udp_switch x=1i 1000
+                        udp_switch x=2i 2000
+                        udp_switch x=3i 3000
+                        """);
+                lexer.parseLast();
+                parser.commitAll();
+                isArmed.set(true);
+                parseDatagram(lexer, """
+                        udp_switch x=21i 86400000001000
+                        udp_switch x=22i 86400000002000
+                        """);
+                lexer.parseLast();
+                Assert.assertFalse(isArmed.get());
+                try {
+                    parser.commitAll();
+                    Assert.fail();
+                } catch (CairoError e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "Table 'udp_switch' is distressed");
+                }
+            }
+            final String committed = """
+                    x\ttimestamp
+                    1\t1970-01-01T00:00:00.000001Z
+                    2\t1970-01-01T00:00:00.000002Z
+                    3\t1970-01-01T00:00:00.000003Z
+                    """;
+            assertQuery("udp_switch")
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .expectSize()
+                    .returns(committed);
+
+            // the next writer appends to both days
+            execute("INSERT INTO udp_switch VALUES (4, '1970-01-01T00:00:00.000004Z'), (23, '1970-01-02T00:00:00.000003Z')");
+            assertQuery("udp_switch")
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .expectSize()
+                    .returns(committed
+                            + "4\t1970-01-01T00:00:00.000004Z\n"
+                            + "23\t1970-01-02T00:00:00.000003Z\n");
+        });
     }
 
     @Test

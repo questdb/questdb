@@ -145,6 +145,7 @@ import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.DirectUtf8StringZ;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.SingleCharCharSequence;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -4144,7 +4145,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     public int getSymbolIndexNoTransientCountUpdate(int columnIndex, CharSequence symValue) {
-        return symbolMapWriters.getQuick(columnIndex).put(symValue, SymbolValueCountCollector.NOOP);
+        return putSymbol(columnIndex, symValue, SymbolValueCountCollector.NOOP);
     }
 
     public MapWriter getSymbolMapWriter(int columnIndex) {
@@ -4752,9 +4753,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    // The JIT inlines newRow0() into newRow() only while its bytecode stays within FreqInlineSize, 325 bytes by
+    // default: keep the steps that rarely run in helpers, such as newRowOpenPartition() and newRowSwitchPartition().
+    // TableWriterNewRowInliningTest checks the size.
     private Row newRow0(long timestamp) {
         if (rowAction != ROW_ACTION_NO_TIMESTAMP) {
             timestampDriver.validateBounds(timestamp);
+        }
+        if ((masterRef & 1) != 0) {
+            // The caller left its previous row unfinished: no append() or cancel(), or its newRow() failed after the
+            // row started. Cancel it before choosing the path of this row, because the cancel restores what the path
+            // depends on: rowAction - the cancel of the first out-of-order row of the transaction leaves O3 mode, the
+            // cancel of the only row of an empty table removes its partition - and the max timestamp of txWriter.
+            rowCancel();
         }
         switch (rowAction) {
             case ROW_ACTION_NO_PARTITION:
@@ -4762,40 +4773,28 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     throw CairoException.nonCritical()
                             .put("cannot insert rows out of order to non-partitioned table. Table=").put(path);
                 }
-                bumpMasterRef();
+                masterRef++;
                 updateMaxTimestamp(timestamp);
                 break;
             case ROW_ACTION_NO_TIMESTAMP:
-                bumpMasterRef();
+                masterRef++;
                 break;
             case ROW_ACTION_O3:
-                bumpMasterRef();
+                masterRef++;
                 o3TimestampSetter(timestamp);
                 return row;
             case ROW_ACTION_OPEN_PARTITION:
-                if (metadata.isWalEnabled()) {
-                    // A WAL table is written through its WalWriter and applied by ApplyWal2TableJob, which
-                    // always goes through the O3 path. Nothing appends rows to it in place: the last
-                    // partition is deliberately left closed, so this would write through unmapped columns
-                    // and over the file rows a relocated piece owns.
-                    throw CairoException.nonCritical().put("cannot append rows directly to a WAL table [table=")
-                            .put(tableToken.getTableName()).put(']');
-                }
-                if (txWriter.getMaxTimestamp() == Long.MIN_VALUE) {
-                    txWriter.setMinTimestamp(timestamp);
-                    initLastPartition(txWriter.getPartitionTimestampByTimestamp(timestamp));
-                }
-                rowAction = ROW_ACTION_SWITCH_PARTITION;
+                newRowOpenPartition(timestamp);
                 // fall thru
             case ROW_ACTION_SWITCH_PARTITION:
-                bumpMasterRef();
+                masterRef++;
                 if (timestamp > partitionTimestampHi || timestamp < txWriter.getMaxTimestamp()) {
                     if (timestamp < txWriter.getMaxTimestamp()) {
                         return newRowO3(timestamp);
                     }
 
                     if (PartitionBy.isPartitioned(partitionBy)) {
-                        switchPartition(txWriter.getPartitionTimestampByTimestamp(timestamp));
+                        newRowSwitchPartition(timestamp);
                     }
                 }
                 if (lastOpenPartitionIsReadOnly) {
@@ -7903,14 +7902,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         assert txWriter.getMetadataVersion() == metadata.getMetadataVersion();
     }
 
-    private void bumpMasterRef() {
-        if ((masterRef & 1) == 0) {
-            masterRef++;
-        } else {
-            cancelRowAndBump();
-        }
-    }
-
     private void bumpMetadataAndColumnStructureVersion() {
         columnVersionWriter.commit();
         txWriter.setColumnVersion(columnVersionWriter.getVersion());
@@ -7980,11 +7971,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
         }
         return blockSize;
-    }
-
-    private void cancelRowAndBump() {
-        rowCancel();
-        masterRef++;
     }
 
     private void checkColumnName(CharSequence name) {
@@ -13994,13 +13980,62 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private Row newRowO3(long timestamp) {
         LOG.info().$("switched to o3 [table=").$(tableToken).I$();
-        txWriter.beginPartitionSizeUpdate();
-        o3OpenColumns();
-        o3InError = false;
-        o3MasterRef = masterRef;
-        rowAction = ROW_ACTION_O3;
-        o3TimestampSetter(timestamp);
+        try {
+            txWriter.beginPartitionSizeUpdate();
+            o3OpenColumns();
+            o3InError = false;
+            o3MasterRef = masterRef;
+            rowAction = ROW_ACTION_O3;
+            o3TimestampSetter(timestamp);
+        } catch (Throwable th) {
+            // The first out-of-order row of the transaction could not start: o3OpenColumns() ran out of memory for
+            // the O3 buffer of a STRING or BINARY column, or o3TimestampSetter() for the O3 buffer of the designated
+            // timestamp (fixed-size, VARCHAR and array columns allocate nothing before it). Take the start back whole,
+            // so that the writer stays in order and usable and no row is in progress: the masterRef bump of
+            // newRow0(), and the switch to O3 mode once made; before it, clearO3() changes nothing. Left in progress,
+            // the row would make rollback() distress the writer, as it does for a row whose put failed, and before
+            // o3MasterRef is set, commit() would cancel it as an in-order row, which drops the last row that txWriter
+            // did count.
+            masterRef--;
+            clearO3();
+            throw th;
+        }
         return row;
+    }
+
+    // newRow0() calls this for the first row after the writer sets rowAction to ROW_ACTION_OPEN_PARTITION. The call
+    // keeps code that rarely runs out of newRow0(), which must stay small enough to inline.
+    private void newRowOpenPartition(long timestamp) {
+        if (metadata.isWalEnabled()) {
+            // A WAL table is written through its WalWriter and applied by ApplyWal2TableJob, which always goes
+            // through the O3 path. Nothing appends rows to it in place: the last partition is deliberately left
+            // closed, so this would write through unmapped columns and over the file rows a relocated piece owns.
+            throw CairoException.nonCritical().put("cannot append rows directly to a WAL table [table=")
+                    .put(tableToken.getTableName()).put(']');
+        }
+        if (txWriter.getMaxTimestamp() == Long.MIN_VALUE) {
+            txWriter.setMinTimestamp(timestamp);
+            initLastPartition(txWriter.getPartitionTimestampByTimestamp(timestamp));
+        }
+        rowAction = ROW_ACTION_SWITCH_PARTITION;
+    }
+
+    // newRow0() calls this for a row past the end of the open partition. The call keeps code that rarely runs out of
+    // newRow0(), which must stay small enough to inline.
+    private void newRowSwitchPartition(long timestamp) {
+        try {
+            switchPartition(txWriter.getPartitionTimestampByTimestamp(timestamp));
+        } catch (Throwable th) {
+            // The switch to the next partition failed part way: txWriter, the partition bounds and the open column
+            // files can disagree now, so the writer must not commit. Mark it distressed, as the steps of the switch
+            // that expect to fail already do. newRow0() has bumped masterRef, but txWriter has not counted the row:
+            // take the bump back. Left odd, masterRef would make the next newRow(), or a Row.cancel() by a caller
+            // that keeps the writer, cancel the row through rowCancel(), which rewinds a row that txWriter did
+            // count: the last one, or the first of the partition still open.
+            distressed = true;
+            masterRef--;
+            throw th;
+        }
     }
 
     /**
@@ -20642,6 +20677,50 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    // The key of value in the map of the SYMBOL column, the symbol count collected as the map does unless collector
+    // says otherwise. A put that fails part way takes back what it wrote; a map that cannot take it back closes and
+    // throws CairoError, and the writer must not be used again.
+    private int putSymbol(int columnIndex, CharSequence value, @Nullable SymbolValueCountCollector collector) {
+        final MapWriter mapWriter = symbolMapWriters.getQuick(columnIndex);
+        try {
+            return collector == null ? mapWriter.put(value) : mapWriter.put(value, collector);
+        } catch (CairoError e) {
+            distressed = true;
+            throw e;
+        }
+    }
+
+    // Moves each column that a cancelled row moved back to the start of row rowCount. Only a column past its row
+    // start moves, into a page that holds bytes the column wrote, so the cancel needs no disk space.
+    private void rewindAppendPosition(long rowCount) {
+        engine.getPartitionOverwriteControl().notifyPartitionMutates(
+                tableToken,
+                timestampType,
+                lastOpenPartitionTs,
+                lastOpenPartitionTxnName,
+                rowCount
+        );
+        try {
+            for (int i = 0; i < columnCount; i++) {
+                final int columnType = metadata.getColumnType(i);
+                if (columnType > 0) { // Not deleted
+                    final long pos = Math.max(0, rowCount - getColumnTop(i));
+                    if (ColumnType.isVarSize(columnType)) {
+                        ColumnType.getDriver(columnType).rewindAppendPosition(pos, getSecondaryColumn(i), getPrimaryColumn(i));
+                    } else {
+                        final MemoryMA dataMem = getPrimaryColumn(i);
+                        final long offset = pos << ColumnType.pow2SizeOf(columnType);
+                        if (dataMem.getAppendOffset() != offset) {
+                            dataMem.jumpTo(offset);
+                        }
+                    }
+                }
+            }
+        } catch (CairoException e) {
+            throwDistressException(e);
+        }
+    }
+
     private void rewriteAndSwapMetadata(TableWriterMetadata metadata) {
         final int metadataEffectiveCommitMode = metaSwapCommitMode(getFlushCommitMode());
         // create new _meta.swp
@@ -23554,8 +23633,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void updateMaxTimestamp(long timestamp) {
+        try {
+            this.timestampSetter.accept(timestamp);
+        } catch (Throwable th) {
+            // The designated timestamp is the first value of the row, and its column could not take it, e.g. the
+            // disk is full when the column file needs a new page. newRow0() has bumped masterRef, but txWriter
+            // has not counted the row: take the bump back. Left odd, masterRef would make the next newRow() or
+            // commit() cancel the row through rowCancel(), which drops the last row that txWriter did count.
+            masterRef--;
+            throw th;
+        }
         txWriter.updateMaxTimestamp(timestamp);
-        this.timestampSetter.accept(timestamp);
     }
 
     private void updateO3ColumnTops() {
@@ -24191,23 +24279,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
         } else {
             txWriter.cancelRow();
-            // we are staying within the same partition, prepare append positions for row count
-            boolean rowChanged = metadata.getTimestampIndex() >= 0; // adding new row already writes timestamp
-            if (!rowChanged) {
-                // verify if any of the columns have been changed
-                // if not - we don't have to do
-                for (int i = 0; i < columnCount; i++) {
-                    if (rowValueIsNotNull.getQuick(i) == masterRef) {
-                        rowChanged = true;
-                        break;
-                    }
-                }
-            }
-
-            // if no column has been changed we take easy option and do nothing
-            if (rowChanged) {
-                setAppendPosition(dirtyTransientRowCount - 1, false);
-            }
+            // We are staying within the same partition. The designated timestamp, the puts that returned, a put that
+            // failed part way and the NULLs that rowAppend() writes until one of them fails can each have moved a
+            // column: rewindAppendPosition() moves back those that moved and maps no page the files lack. A column
+            // that the row left at the end of a page keeps that page, rather than map, and allocate, the next one, so
+            // that a cancel on a full disk keeps the writer usable and the rows of its transaction.
+            rewindAppendPosition(dirtyTransientRowCount - 1);
         }
         rowValueIsNotNull.fill(0, columnCount, --masterRef);
 
@@ -24946,13 +25023,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         @Override
         public void putSym(int columnIndex, CharSequence value) {
-            getPrimaryColumn(columnIndex).putInt(symbolMapWriters.getQuick(columnIndex).put(value));
+            getPrimaryColumn(columnIndex).putInt(putSymbol(columnIndex, value, null));
             setRowValueNotNull(columnIndex);
         }
 
         @Override
         public void putSym(int columnIndex, char value) {
-            getPrimaryColumn(columnIndex).putInt(symbolMapWriters.getQuick(columnIndex).put(value));
+            getPrimaryColumn(columnIndex).putInt(putSymbol(columnIndex, SingleCharCharSequence.get(value), null));
             setRowValueNotNull(columnIndex);
         }
 

@@ -27,6 +27,7 @@ package io.questdb.test.cutlass.text;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
@@ -53,10 +54,13 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8String;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.AllocateFailingFacade;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cairo.TestFilesFacade;
 import io.questdb.test.cairo.TestTableReaderRecordCursor;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.After;
@@ -65,9 +69,14 @@ import org.junit.Assert;
 import org.junit.Ignore;
 import org.junit.Test;
 
+import java.time.Instant;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
+import java.time.temporal.ChronoUnit;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
@@ -87,6 +96,7 @@ public class TextLoaderTest extends AbstractCairoTest {
             String.format("[%c%c]", Files.SEPARATOR, Files.SEPARATOR) : String.valueOf(Files.SEPARATOR);
     private static final Utf8String TEST_TABLE_NAME = new Utf8String("test");
     private static final Utf8String TEST_TS_COL_NAME = new Utf8String("ts");
+    private static final DateTimeFormatter TIMESTAMP_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSSSSS'Z'").withZone(ZoneOffset.UTC);
     private static final JsonLexer jsonLexer = new JsonLexer(1024, 1024);
 
     private final String sqlStringTypeName = ColumnType.nameOf(ColumnType.typeOf("STRING"));
@@ -1301,6 +1311,54 @@ public class TextLoaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testImportFailedTimestampPageSkipAll() throws Exception {
+        // The designated timestamp of a row cannot be written: its column file needs a new page and the disk is full.
+        // SKIP_ALL rolls the import back, and the rollback must not take the failed row for a row in progress: the
+        // import fails with the error of the row, not with a distressed writer, and the committed rows stay.
+        setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, Files.PAGE_SIZE);
+        final AllocateFailingFacade ff = new AllocateFailingFacade("test", "ts.d");
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE test (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO test SELECT x::TIMESTAMP, x FROM long_sequence(3)");
+            // the rows from v = 4 fill the first page of ts.d, and the last row needs the second page
+            final long rowsPerPage = Files.PAGE_SIZE / Long.BYTES;
+            final StringBuilder csv = new StringBuilder("ts,v\n");
+            for (long v = 4; v <= rowsPerPage + 1; v++) {
+                csv.append(timestampOf(v)).append(',').append(v).append('\n');
+            }
+            try (TextLoader textLoader = new TextLoader(engine)) {
+                configureLoaderDefaults(textLoader, Atomicity.SKIP_ALL, false, PartitionBy.DAY);
+                textLoader.setForceHeaders(true);
+                // no commit before the failed row
+                textLoader.setMaxUncommittedRows((int) rowsPerPage * 2);
+                ff.isArmed.set(true);
+                try {
+                    playText0(textLoader, csv.toString(), csv.length(), NOOP_TRANSFORMER);
+                    Assert.fail();
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "No space left");
+                }
+                Assert.assertFalse(ff.isArmed.get());
+            }
+            final String committed = "ts\tv\n"
+                    + timestampOf(1) + "\t1\n"
+                    + timestampOf(2) + "\t2\n"
+                    + timestampOf(3) + "\t3\n";
+            assertQuery("test")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns(committed);
+            execute("INSERT INTO test VALUES (4::TIMESTAMP, 4)");
+            assertQuery("test")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns(committed + timestampOf(4) + "\t4\n");
+        });
+    }
+
+    @Test
     public void testImportNullForAllTypesWithDesignatedColumnWhenTableExists() throws Exception {
         assertNoLeak(
                 engine,
@@ -1543,6 +1601,64 @@ public class TextLoaderTest extends AbstractCairoTest {
                     }
             );
         }
+    }
+
+    @Test
+    public void testImportPartitionSwitchFailureKeepsCommittedRows() throws Exception {
+        // The first row of 1970-01-02 cannot create the directory of its partition, which distresses the writer.
+        // SKIP_ROW skips the row and appends the next one with the writer, and the commit at the end of the import
+        // fails. The rows committed to 1970-01-01 must stay as they are.
+        final AtomicBoolean isArmed = new AtomicBoolean();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public int mkdirs(Path path, int mode) {
+                if (Utf8s.containsAscii(path, Files.SEPARATOR + "test~") && Utf8s.containsAscii(path, "1970-01-02") && isArmed.compareAndSet(true, false)) {
+                    return -1;
+                }
+                return super.mkdirs(path, mode);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE test (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO test SELECT x::TIMESTAMP, x FROM long_sequence(3)");
+            final String csv = """
+                    ts,v
+                    1970-01-01T00:00:00.000004Z,4
+                    1970-01-02T00:00:00.000001Z,21
+                    1970-01-02T00:00:00.000002Z,22
+                    """;
+            try (TextLoader textLoader = new TextLoader(engine)) {
+                configureLoaderDefaults(textLoader, Atomicity.SKIP_ROW, false, PartitionBy.DAY);
+                textLoader.setForceHeaders(true);
+                isArmed.set(true);
+                try {
+                    playText0(textLoader, csv, 1024, NOOP_TRANSFORMER);
+                    Assert.fail();
+                } catch (CairoError e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "Table 'test' is distressed");
+                }
+                Assert.assertFalse(isArmed.get());
+            }
+            final String committed = "ts\tv\n"
+                    + timestampOf(1) + "\t1\n"
+                    + timestampOf(2) + "\t2\n"
+                    + timestampOf(3) + "\t3\n";
+            assertQuery("test")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns(committed);
+
+            // the next writer appends to both days
+            execute("INSERT INTO test VALUES (4::TIMESTAMP, 4), ('1970-01-02T00:00:00.000003Z', 23)");
+            assertQuery("test")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns(committed
+                            + timestampOf(4) + "\t4\n"
+                            + "1970-01-02T00:00:00.000003Z\t23\n");
+        });
     }
 
     @Test
@@ -2211,6 +2327,86 @@ public class TextLoaderTest extends AbstractCairoTest {
                     5,
                     4
             );
+        });
+    }
+
+    @Test
+    public void testNoTimestampFailedEmptyRow() throws Exception {
+        // A non-partitioned import into a table without a designated timestamp: a row of empty fields only, after a row
+        // that is not committed yet. append() writes the NULL of x, and the NULL of s needs the next page of s.d, which
+        // cannot be allocated. append() throws and the import fails; the rollback of the writer, which holds the row
+        // in progress, distresses it. The committed rows stay, and the next INSERT lands with a new writer.
+        setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, Files.PAGE_SIZE);
+        final AllocateFailingFacade ff = new AllocateFailingFacade("test", "s.d");
+        assertMemoryLeak(ff, () -> {
+            // 'abcdef' takes 16 bytes of s.d: the committed rows and the first row of the import end its first page
+            final long n = Files.PAGE_SIZE / 16 - 1;
+            execute("CREATE TABLE test (x LONG, s STRING)");
+            execute("INSERT INTO test SELECT x, 'abcdef' FROM long_sequence(" + n + ")");
+            final String csv = "s,x\nabcdef," + (n + 1) + "\n,\n";
+            try (TextLoader textLoader = new TextLoader(engine)) {
+                configureLoaderDefaults(textLoader, (byte) ',', Atomicity.SKIP_ROW);
+                textLoader.setForceHeaders(true);
+                ff.isArmed.set(true);
+                try {
+                    playText0(textLoader, csv, 1024, NOOP_TRANSFORMER);
+                    Assert.fail();
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "No space left");
+                }
+                Assert.assertFalse(ff.isArmed.get());
+            }
+            assertQuery("SELECT count(), sum(x) FROM test")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\tsum\n" + n + '\t' + n * (n + 1) / 2 + '\n');
+            execute("INSERT INTO test VALUES (" + (n + 2) + ", 'abcdef'), (" + (n + 3) + ", NULL)");
+            assertQuery("SELECT x, s FROM test WHERE x >= " + (n - 1) + " OR x IS NULL")
+                    .noLeakCheck()
+                    .returns("x\ts\n" + (n - 1) + "\tabcdef\n" + n + "\tabcdef\n" + (n + 2) + "\tabcdef\n" + (n + 3) + "\t\n");
+        });
+    }
+
+    @Test
+    public void testNoTimestampFailedStringRowSkipRow() throws Exception {
+        // A non-partitioned import into a table without a designated timestamp: the STRING value of a row, its first
+        // field, crosses the end of the page of s.d, which cannot be allocated. The row marks no column; SKIP_ROW
+        // cancels it, and the rows after it land as they are.
+        setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, Files.PAGE_SIZE);
+        final AllocateFailingFacade ff = new AllocateFailingFacade("test", "s.d");
+        assertMemoryLeak(ff, () -> {
+            // 'abcdef' takes 16 bytes of s.d: the committed rows and the first row of the import end s.d 32 bytes
+            // before the end of its first page, and the value of 30 chars takes 64
+            final long n = Files.PAGE_SIZE / 16 - 3;
+            execute("CREATE TABLE test (x LONG, s STRING)");
+            execute("INSERT INTO test SELECT x, 'abcdef' FROM long_sequence(" + n + ")");
+            final String csv = "s,x\n"
+                    + "abcdef," + (n + 1) + '\n'
+                    + "z".repeat(30) + ',' + (n + 2) + '\n'
+                    + "next," + (n + 3) + '\n'
+                    + ',' + (n + 4) + '\n';
+            try (TextLoader textLoader = new TextLoader(engine)) {
+                configureLoaderDefaults(textLoader, (byte) ',', Atomicity.SKIP_ROW);
+                textLoader.setForceHeaders(true);
+                ff.isArmed.set(true);
+                playText0(textLoader, csv, 1024, NOOP_TRANSFORMER);
+                Assert.assertFalse(ff.isArmed.get());
+                Assert.assertEquals(3, textLoader.getWrittenLineCount());
+            }
+            assertQuery("SELECT x, s FROM test WHERE x >= " + (n - 1) + " OR x IS NULL")
+                    .noLeakCheck()
+                    .returns("x\ts\n"
+                            + (n - 1) + "\tabcdef\n"
+                            + n + "\tabcdef\n"
+                            + (n + 1) + "\tabcdef\n"
+                            + (n + 3) + "\tnext\n"
+                            + (n + 4) + "\t\n");
+            assertQuery("SELECT count(), sum(x) FROM test")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\tsum\n" + (n + 3) + '\t' + (n * (n + 1) / 2 + n + 1 + n + 3 + n + 4) + '\n');
         });
     }
 
@@ -3936,6 +4132,10 @@ public class TextLoaderTest extends AbstractCairoTest {
     @SafeVarargs
     private static <T> Set<T> setOf(T... elements) {
         return new HashSet<>(Arrays.asList(elements));
+    }
+
+    private static String timestampOf(long micros) {
+        return TIMESTAMP_FORMAT.format(Instant.EPOCH.plus(micros, ChronoUnit.MICROS));
     }
 
     private void assertDuplicateColumnError(boolean forceHeader) throws Exception {

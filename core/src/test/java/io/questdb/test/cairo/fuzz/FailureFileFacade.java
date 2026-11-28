@@ -27,6 +27,7 @@ package io.questdb.test.cairo.fuzz;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
 import io.questdb.log.Log;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FindVisitor;
 import io.questdb.std.Os;
@@ -35,10 +36,14 @@ import io.questdb.std.str.MutableUtf8Sink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class FailureFileFacade implements FilesFacade {
+    // the file name that the planted allocate()-only failures count the allocate() calls of, or null for any file
+    private volatile String allocateFileName;
     // Three arming modes, selected by armedThread / queryWorkerNamePrefix:
     //   1. Global (both null): any thread counts and fires (WAL/recovery harness).
     //   2. Single-thread (armedThread != null): only the arming thread (serial
@@ -53,9 +58,18 @@ public class FailureFileFacade implements FilesFacade {
     private volatile Thread armingThread;
     // Mode 3: name of an unexpected thread that touched the armed facade, or null.
     private volatile String contaminatingThreadName;
+    // the thread whose allocate() calls all fail, as on a full disk, see setDiskFullOnCurrentThread(), or null
+    private volatile Thread diskFullThread;
     private final AtomicInteger failureGenerated = new AtomicInteger();
+    // the stack of the call that the last planted failure failed, or null
+    private volatile StackTraceElement[] failureStack;
     private final FilesFacade ff;
+    // when true, a planted failure counts and fails allocate() calls only: the allocation of disk space for a new
+    // page of a column file, or for a file that a partition switch opens
+    private volatile boolean isAllocateOnly;
     private volatile boolean isDetachCopied;
+    // the names of the files that openRW() opened, by fd, for allocateFileName
+    private final ConcurrentHashMap<Long, String> openRWFileNames = new ConcurrentHashMap<>();
     private final AtomicInteger osCallsCount = new AtomicInteger(0);
     // Mode 3: name prefix of the query pool's worker threads, or null otherwise.
     private volatile String queryWorkerNamePrefix;
@@ -66,7 +80,7 @@ public class FailureFileFacade implements FilesFacade {
 
     @Override
     public boolean allocate(long fd, long size) {
-        if (checkForFailure()) {
+        if (isDiskFull() || checkForAllocateFailure(fd)) {
             return false;
         }
         return ff.allocate(fd, size);
@@ -74,7 +88,7 @@ public class FailureFileFacade implements FilesFacade {
 
     @Override
     public boolean allocate(long fd, long allocatedSize, long size) {
-        if (checkForFailure()) {
+        if (isDiskFull() || checkForAllocateFailure(fd)) {
             return false;
         }
         return ff.allocate(fd, allocatedSize, size);
@@ -96,19 +110,25 @@ public class FailureFileFacade implements FilesFacade {
     public void clearFailures() {
         osCallsCount.set(0);
         failureGenerated.set(0);
+        failureStack = null;
+        isAllocateOnly = false;
+        allocateFileName = null;
         armedThread = null;
         armingThread = null;
         queryWorkerNamePrefix = null;
         contaminatingThreadName = null;
+        diskFullThread = null;
     }
 
     @Override
     public boolean close(long fd) {
+        openRWFileNames.remove(fd);
         return ff.close(fd);
     }
 
     @Override
     public boolean closeRemove(long fd, LPSZ path) {
+        openRWFileNames.remove(fd);
         return ff.closeRemove(fd, path);
     }
 
@@ -176,6 +196,14 @@ public class FailureFileFacade implements FilesFacade {
 
     public int failureGenerated() {
         return failureGenerated.get();
+    }
+
+    /**
+     * The stack of the call that the last planted failure failed, or null when none failed since
+     * {@link #clearFailures()}.
+     */
+    public StackTraceElement[] getFailureStack() {
+        return failureStack;
     }
 
     /**
@@ -261,6 +289,7 @@ public class FailureFileFacade implements FilesFacade {
 
     @Override
     public void fsyncAndClose(long fd) {
+        openRWFileNames.remove(fd);
         try {
             ff.fsyncAndClose(fd);
         } catch (CairoException e) {
@@ -494,7 +523,12 @@ public class FailureFileFacade implements FilesFacade {
         if (checkForFailure()) {
             return -1;
         }
-        return ff.openRW(name, opts);
+        final long fd = ff.openRW(name, opts);
+        if (fd > -1) {
+            final String path = Utf8s.stringFromUtf8Bytes(name);
+            openRWFileNames.put(fd, path.substring(path.lastIndexOf(Files.SEPARATOR) + 1));
+        }
+        return fd;
     }
 
     @Override
@@ -599,12 +633,30 @@ public class FailureFileFacade implements FilesFacade {
     }
 
     /**
+     * When true, the failures that {@link #setToFailAfter(int)} plants count and fail allocate() calls only, until
+     * {@link #clearFailures()}: the allocate() calls of the files named fileName that openRW() opened, or of any
+     * file when fileName is null.
+     */
+    public void setAllocateOnly(boolean isAllocateOnly, @Nullable String fileName) {
+        this.isAllocateOnly = isAllocateOnly;
+        this.allocateFileName = fileName;
+    }
+
+    /**
      * While on, hardLinkDirRecursive() copies into a directory whose name ends with
      * {@link TableUtils#DETACHING_DIR_MARKER}, the temporary directory of DETACH PARTITION, and links every other
      * directory. Off by default. The detach/attach fuzz copies on DETACH, see questdb-enterprise#1575.
      */
     public void setDetachCopied(boolean isDetachCopied) {
         this.isDetachCopied = isDetachCopied;
+    }
+
+    /**
+     * While on, every allocate() call of the calling thread fails, as on a full disk, apart from the planted failures:
+     * it counts as none of them and does not count one down. Off by default and after {@link #clearFailures()}.
+     */
+    public void setDiskFullOnCurrentThread(boolean isDiskFull) {
+        diskFullThread = isDiskFull ? Thread.currentThread() : null;
     }
 
     public void setToFailAfter(int ioFailureCallCount) {
@@ -715,7 +767,19 @@ public class FailureFileFacade implements FilesFacade {
         return ff.write(fd, address, len, offset);
     }
 
+    private boolean checkForAllocateFailure(long fd) {
+        final String fileName = allocateFileName;
+        if (isAllocateOnly && fileName != null && !fileName.equals(openRWFileNames.get(fd))) {
+            return false;
+        }
+        return checkForFailure0();
+    }
+
     private boolean checkForFailure() {
+        return !isAllocateOnly && checkForFailure0();
+    }
+
+    private boolean checkForFailure0() {
         final Thread current = Thread.currentThread();
         // Mode 2: single-thread scope. Ignore ops on every other thread so the
         // fault stays on the query under test and off engine background jobs.
@@ -733,9 +797,15 @@ public class FailureFileFacade implements FilesFacade {
         }
         boolean fail = osCallsCount.decrementAndGet() == 0;
         if (fail) {
+            failureStack = current.getStackTrace();
             failureGenerated.incrementAndGet();
         }
         return fail;
+    }
+
+    private boolean isDiskFull() {
+        final Thread thread = diskFullThread;
+        return thread != null && thread == Thread.currentThread();
     }
 
     /**
