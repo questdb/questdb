@@ -60,10 +60,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * A row whose start fails inside {@link TableWriter#newRow(long)} before the writer counts it: the first
- * out-of-order row of a transaction that runs out of memory for its O3 buffers, and a partition switch that
- * fails. The failed row must not stay half-started: the next row, commit, rollback or cancel must leave the
- * committed rows as they are. A failed out-of-order start leaves the writer usable; a failed partition switch
- * distresses it. After a failed partition switch, the tests send the writer rows of the new partition only.
+ * out-of-order row of a transaction that runs out of memory for its O3 buffers, a partition switch that fails, and
+ * a row appended to a WAL table in place. The failed row must not stay half-started: the next row, commit, rollback
+ * or cancel must leave the committed rows as they are. A failed out-of-order start and a refused WAL row leave the
+ * writer usable; a failed partition switch distresses it. After a failed partition switch, the tests send the writer rows of the new partition only.
  */
 public class TableWriterNewRowFailureTest extends AbstractCairoTest {
     private static final long DAY = 86_400_000_000L;
@@ -685,6 +685,44 @@ public class TableWriterNewRowFailureTest extends AbstractCairoTest {
                 assertDistressedCommit(writer);
             }
             assertLongTableAfterFailedSwitch();
+        });
+    }
+
+    @Test
+    public void testWalTableRefusesRow() throws Exception {
+        // ApplyWal2TableJob writes the rows of a WAL table through the O3 path; newRow() of a writer that has just
+        // opened the table refuses each row that a caller appends to it in place, before the row starts, and the
+        // pool hands the writer to the next WAL apply
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO tab VALUES (1::TIMESTAMP, 1)");
+            drainWalQueue();
+            // close the writer that applied the WAL, so that getWriter() opens the table again
+            engine.releaseAllWriters();
+            try (TableWriter writer = getWriter("tab")) {
+                for (int i = 0; i < 2; i++) {
+                    try {
+                        writer.newRow(2);
+                        Assert.fail();
+                    } catch (CairoException e) {
+                        Assert.assertFalse(e.isCritical());
+                        TestUtils.assertEquals("cannot append rows directly to a WAL table [table=tab]", e.getFlyweightMessage());
+                    }
+                    Assert.assertFalse(writer.isDistressed());
+                    Assert.assertEquals(0, writer.getUncommittedRowCount());
+                }
+            }
+            execute("INSERT INTO tab VALUES (3::TIMESTAMP, 3)");
+            drainWalQueue();
+            assertQuery("tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tx
+                            1970-01-01T00:00:00.000001Z\t1
+                            1970-01-01T00:00:00.000003Z\t3
+                            """);
         });
     }
 

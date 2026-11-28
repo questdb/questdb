@@ -4753,6 +4753,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    // The JIT inlines newRow0() into newRow() only while its bytecode stays within FreqInlineSize, 325 bytes by
+    // default: keep the steps that rarely run in helpers, such as newRowOpenPartition() and newRowSwitchPartition().
+    // TableWriterNewRowInliningTest checks the size.
     private Row newRow0(long timestamp) {
         if (rowAction != ROW_ACTION_NO_TIMESTAMP) {
             timestampDriver.validateBounds(timestamp);
@@ -4781,19 +4784,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 o3TimestampSetter(timestamp);
                 return row;
             case ROW_ACTION_OPEN_PARTITION:
-                if (metadata.isWalEnabled()) {
-                    // A WAL table is written through its WalWriter and applied by ApplyWal2TableJob, which
-                    // always goes through the O3 path. Nothing appends rows to it in place: the last
-                    // partition is deliberately left closed, so this would write through unmapped columns
-                    // and over the file rows a relocated piece owns.
-                    throw CairoException.nonCritical().put("cannot append rows directly to a WAL table [table=")
-                            .put(tableToken.getTableName()).put(']');
-                }
-                if (txWriter.getMaxTimestamp() == Long.MIN_VALUE) {
-                    txWriter.setMinTimestamp(timestamp);
-                    initLastPartition(txWriter.getPartitionTimestampByTimestamp(timestamp));
-                }
-                rowAction = ROW_ACTION_SWITCH_PARTITION;
+                newRowOpenPartition(timestamp);
                 // fall thru
             case ROW_ACTION_SWITCH_PARTITION:
                 masterRef++;
@@ -4803,20 +4794,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     }
 
                     if (PartitionBy.isPartitioned(partitionBy)) {
-                        try {
-                            switchPartition(txWriter.getPartitionTimestampByTimestamp(timestamp));
-                        } catch (Throwable th) {
-                            // The row needs the next partition, and the switch to it failed part way: txWriter, the
-                            // partition bounds and the open column files can disagree now, so the writer must not
-                            // commit. Mark it distressed, as the steps of the switch that expect to fail already do.
-                            // newRow0() has bumped masterRef, but txWriter has not counted the row: take the bump
-                            // back. Left odd, masterRef would make the next newRow(), or a Row.cancel() by a caller
-                            // that keeps the writer, cancel the row through rowCancel(), which rewinds a row that
-                            // txWriter did count: the last one, or the first of the partition still open.
-                            distressed = true;
-                            masterRef--;
-                            throw th;
-                        }
+                        newRowSwitchPartition(timestamp);
                     }
                 }
                 if (lastOpenPartitionIsReadOnly) {
@@ -14023,6 +14001,41 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             throw th;
         }
         return row;
+    }
+
+    // newRow0() calls this for the first row after the writer sets rowAction to ROW_ACTION_OPEN_PARTITION. The call
+    // keeps code that rarely runs out of newRow0(), which must stay small enough to inline.
+    private void newRowOpenPartition(long timestamp) {
+        if (metadata.isWalEnabled()) {
+            // A WAL table is written through its WalWriter and applied by ApplyWal2TableJob, which always goes
+            // through the O3 path. Nothing appends rows to it in place: the last partition is deliberately left
+            // closed, so this would write through unmapped columns and over the file rows a relocated piece owns.
+            throw CairoException.nonCritical().put("cannot append rows directly to a WAL table [table=")
+                    .put(tableToken.getTableName()).put(']');
+        }
+        if (txWriter.getMaxTimestamp() == Long.MIN_VALUE) {
+            txWriter.setMinTimestamp(timestamp);
+            initLastPartition(txWriter.getPartitionTimestampByTimestamp(timestamp));
+        }
+        rowAction = ROW_ACTION_SWITCH_PARTITION;
+    }
+
+    // newRow0() calls this for a row past the end of the open partition. The call keeps code that rarely runs out of
+    // newRow0(), which must stay small enough to inline.
+    private void newRowSwitchPartition(long timestamp) {
+        try {
+            switchPartition(txWriter.getPartitionTimestampByTimestamp(timestamp));
+        } catch (Throwable th) {
+            // The switch to the next partition failed part way: txWriter, the partition bounds and the open column
+            // files can disagree now, so the writer must not commit. Mark it distressed, as the steps of the switch
+            // that expect to fail already do. newRow0() has bumped masterRef, but txWriter has not counted the row:
+            // take the bump back. Left odd, masterRef would make the next newRow(), or a Row.cancel() by a caller
+            // that keeps the writer, cancel the row through rowCancel(), which rewinds a row that txWriter did
+            // count: the last one, or the first of the partition still open.
+            distressed = true;
+            masterRef--;
+            throw th;
+        }
     }
 
     /**
