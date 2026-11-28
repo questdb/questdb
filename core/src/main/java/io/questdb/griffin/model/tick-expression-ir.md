@@ -24,16 +24,40 @@ Each count takes a whole slot, so no count overflows its slot.
 
 ```
 bit 63                                                              bit 0
-          ┤DWE┤          ┤dayMask┤
- [63 .. 24] [23] [22 .. 7] [6 .. 0]
+          ┤PF ┤     ┤DWE┤          ┤dayMask┤
+ [63 .. 26] [25] [24] [23] [22 .. 7] [6 .. 0]
 ```
 
 | Bits    | Name                     | Description                              |
 |---------|--------------------------|------------------------------------------|
+| 25      | `parseFirst`             | `evaluate()` parses the list first, see below |
 | 23      | `hasDurationWithExchange`| Duration applied after exchange schedule |
 | 6 – 0   | `dayFilterMask`         | Bitmask of allowed days (Mon=bit 0, Sun=bit 6) |
 
-Bits 63–24 and 22–7 are reserved (zero).
+Bits 63–26, 24 and 22–7 are reserved (zero).
+
+## Expressions Parsed on Evaluation
+
+`compileTickExpr()` returns an expression without IR when the IR cannot hold
+it exactly, see `isCompilable()`: numeric brackets in the time
+(`T[09..17]:30`), brackets after a time list, a time list slot with its own
+timezone, an element with its own timezone or day filter (`[$today#Mon]`), a
+static element under a time list or with a time of its own under a time
+override, or a month or year element with a duration outside the forms the IR
+expands. It does the
+same for a duration unit that the timestamp driver does not add. `evaluate()`
+parses such an expression against the "now" of the query, as it parses a bind
+variable.
+
+A list with a tick calendar whose only `;` starts its duration keeps the own
+extent of each fixed date in its STATIC entries: the tick calendar cuts the
+fixed date itself, and the duration extends what the sessions keep, once.
+Where those own extents exceed the interval cap, the compiler keeps the IR
+whose fixed dates are windows as long as the duration and sets `parseFirst`:
+`evaluate()` parses the list as its bind variable, and evaluates the IR only
+where the evaluation is lenient and the parse fails.
+
+`isParsedOnEvaluation()` tells both forms apart from an evaluated IR.
 
 ## Timezone Offset — `ir[1]`
 
@@ -140,8 +164,9 @@ long[2]:  hi  (interval end, fully resolved at compile time)
 The compiler applies the time override, the duration, the day filter and the
 timezone to the intervals of the static elements, so each STATIC entry holds an
 interval of a fixed date after the day filter, in UTC. The compiler writes the
-STATIC entries after the date variable elements. The exchange schedule applies
-at run time, to the whole list.
+STATIC entries in place of the first static element of the list, among the date
+variable elements. The exchange schedule applies at run time, to the whole
+list.
 
 ### RANGE — 2 longs
 
@@ -175,12 +200,14 @@ These cannot be encoded in `long[]` and remain as object references:
 |--------------------|--------------------|--------------------------------------|
 | `timestampDriver`  | `TimestampDriver`  | Always (micro or nano driver)        |
 | `tzRules`          | `TimeZoneRules`    | Global named timezone (e.g. `@Europe/London`) |
-| `elemTzRules`      | `TimeZoneRules[]`  | Per-element named timezones in time list entries |
 | `exchangeSchedule` | `LongList`         | Exchange calendar (e.g. `#NYSE`)     |
 
-The `expression` string is also kept for `toPlan()` display only.
+The `expression` string serves `toPlan()`, and `evaluate()` parses it for an
+expression parsed on evaluation.
 
 ## Evaluate Algorithm
+
+An expression parsed on evaluation skips these phases, see above.
 
 ```
 1. Walk elements (elemOff → end of ir):
@@ -219,7 +246,7 @@ an upper bound on the interval count that holds for every "now".
 | Element    | Bound                                                        |
 |------------|--------------------------------------------------------------|
 | STATIC     | all entries together: runs plus empty intervals (see below)  |
-| SINGLE_VAR | `max(1, T)`                                                  |
+| SINGLE_VAR | `max(1, T)`, three times that under a named timezone with clock changes, unless the element is a whole day |
 | RANGE      | 1 if contiguous (see below), otherwise no bound              |
 
 The compiler writes one STATIC entry per bracket leaf, day or list value, or
@@ -236,11 +263,15 @@ no time override, duration, day filter or named timezone. `emitRange()` then
 emits one interval or a run of adjacent whole days, which phase 5 merges into
 one.
 
-For the date variable elements, the day filter only drops intervals and the
-timezone conversion maps each interval to one, so phases 2 and 3 never raise
-their count, and phase 5 only joins intervals. The method returns -1 (no bound)
-for an exchange calendar, for an offset or duration unit the timestamp driver
-does not know, for any other range, and when the sum exceeds `cap`.
+For the date variable elements, the day filter only drops intervals, and a
+numeric offset maps each interval to one. A named timezone with clock changes
+converts an interval that starts or ends inside a repeated hour to up to three;
+a whole day stays whole unless the clocks fall back across midnight, where
+`CompiledFilterTickBounds` fails the query rather than lose rows. Phase 5 only
+joins intervals. The method returns -1 (no bound) for an expression parsed
+on evaluation, for an exchange calendar, for an offset or duration unit the
+timestamp driver does not know, for any other range, and when the sum exceeds
+`cap`.
 
 ## Compile-Time Construction
 
@@ -251,7 +282,8 @@ does not know, for any other range, and when the sum exceeds `cap`.
 2. Append duration parts at `ir[5..5+D)`
 3. Append time override triples at `ir[5+D..5+D+3T)`
 4. Append elements at `ir[5+D+3T..)`: the distinct date variable elements in
-   list order, then the STATIC entries of the list
+   list order, with the STATIC entries of the list in place of its first
+   static element
 5. Write the header at `ir[0]` and the counts at `ir[2..5)`
 
 The compiler collects the intervals of the static elements of a list in a

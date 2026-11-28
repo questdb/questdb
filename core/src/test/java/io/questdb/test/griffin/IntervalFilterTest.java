@@ -669,18 +669,20 @@ public class IntervalFilterTest extends AbstractCairoTest {
             }
             bindVariableService.clear();
             bindVariableService.setStr("p", n2z);
-            assertExceptionNoLeakCheck("SELECT ts FROM t WHERE tm IN :p", 0, overCapError);
-            // the interval scan holds no rows for a bind value it cannot parse
-            assertQuery("SELECT ts FROM t WHERE ts IN :p").noLeakCheck().timestamp("ts").returns("ts\n");
+            // a bind value that does not parse fails the query at the bind variable, in the row filter
+            // and in the interval scan
+            assertExceptionNoLeakCheck("SELECT ts FROM t WHERE tm IN :p", 29, overCapError);
+            assertExceptionNoLeakCheck("SELECT ts FROM t WHERE ts IN :p", 29, overCapError);
             // one factory, run again with new bind values
-            try (RecordCursorFactory factory = select("SELECT count() FROM t WHERE tm IN :p")) {
+            final String countSql = "SELECT count() FROM t WHERE tm IN :p";
+            try (RecordCursorFactory factory = select(countSql)) {
                 bindVariableService.setStr("p", n1);
                 assertFactory(factory).withContext(sqlExecutionContext).expectSize().noRandomAccess().returns("count\n206\n");
                 bindVariableService.setStr("p", n2z);
                 try (RecordCursor ignore = factory.getCursor(sqlExecutionContext)) {
                     Assert.fail("Expected the cap error for " + n2z);
                 } catch (SqlException e) {
-                    Assert.assertEquals(0, e.getPosition());
+                    Assert.assertEquals(countSql.indexOf(":p"), e.getPosition());
                     TestUtils.assertContains(e.getFlyweightMessage(), overCapError);
                 }
                 bindVariableService.setStr("p", n3);
@@ -965,12 +967,14 @@ public class IntervalFilterTest extends AbstractCairoTest {
             Assert.assertNull(engine.getTableTokenIfExists("mv"));
             Assert.assertNull(engine.getTableTokenIfExists("mv2"));
             // A bind variable string resolves when the cursor opens, and the interval scan of the
-            // designated timestamp swallows the error of parseTickExpr, which keeps the list within
-            // the cap too: IN keeps no row, and NOT IN keeps every row.
+            // designated timestamp fails on the error of parseTickExpr, which keeps the list within the
+            // cap too, at the bind variable, for IN and for NOT IN.
             bindVariableService.clear();
             bindVariableService.setStr("p", fiveDays.substring(1, fiveDays.length() - 1));
-            assertQuery("SELECT ts FROM t WHERE ts IN :p").noLeakCheck().timestamp("ts").returns("ts\n");
-            assertQuery("SELECT count() FROM t WHERE ts NOT IN :p").noLeakCheck().expectSize().noRandomAccess().returns("count\n4320\n");
+            final String inBind = "SELECT ts FROM t WHERE ts IN :p";
+            assertExceptionNoLeakCheck(inBind, inBind.indexOf(":p"), "Bracket expansion produces too many intervals (max 1024)");
+            final String notInBind = "SELECT count() FROM t WHERE ts NOT IN :p";
+            assertExceptionNoLeakCheck(notInBind, notInBind.indexOf(":p"), "Bracket expansion produces too many intervals (max 1024)");
 
             // The list stores a repeated date variable once: 2,000 copies of $today next to
             // $yesterday x 300 minutes two minutes apart, from 00:00 to 09:58, and $today twice x
@@ -1142,20 +1146,14 @@ public class IntervalFilterTest extends AbstractCairoTest {
             assertOverMaxIntervalsError("SELECT k FROM x WHERE ts IN '[$today,20[03..24]-[01..12]-[01..28]]#mon'");
             // the monotonic chain falls back to the row filter, which parses the string again
             assertOverMaxIntervalsError("SELECT k FROM x WHERE dateadd('h', 1, ts) IN " + overCap);
-            // a bind variable on the designated timestamp swallows the error: IN keeps no row, and
-            // NOT IN keeps every row
+            // a bind variable on the designated timestamp fails the query on the error, at the bind
+            // variable, for IN and for NOT IN
             bindVariableService.clear();
             bindVariableService.setStr("p", "[2003..2024]-[01..12]-[01..28]#mon");
-            assertQuery("SELECT k FROM x WHERE ts IN :p").noLeakCheck().returns("k\n");
-            assertQuery("SELECT k FROM x WHERE ts NOT IN :p").noLeakCheck().returns("""
-                    k
-                    1
-                    2
-                    3
-                    4
-                    5
-                    6
-                    """);
+            final String inBind = "SELECT k FROM x WHERE ts IN :p";
+            assertExceptionNoLeakCheck(inBind, inBind.indexOf(":p"), "Bracket expansion produces too many intervals (max 1024)");
+            final String notInBind = "SELECT k FROM x WHERE ts NOT IN :p";
+            assertExceptionNoLeakCheck(notInBind, notInBind.indexOf(":p"), "Bracket expansion produces too many intervals (max 1024)");
             final String mondays = """
                     k
                     3
@@ -1862,11 +1860,13 @@ public class IntervalFilterTest extends AbstractCairoTest {
             Assert.assertNull(engine.getTableTokenIfExists("v"));
             Assert.assertNull(engine.getTableTokenIfExists("mv"));
             // A bind variable string resolves when the cursor opens, and the interval scan of the
-            // designated timestamp swallows its error: IN keeps no row, and NOT IN keeps every row.
+            // designated timestamp fails on its error, at the bind variable, for IN and for NOT IN.
             bindVariableService.clear();
             bindVariableService.setStr("p", "[$today,[1980..1999]]#workday");
-            assertQuery("SELECT ts FROM t WHERE ts IN :p").noLeakCheck().timestamp("ts").returns("ts\n");
-            assertQuery("SELECT count() FROM t WHERE ts NOT IN :p").noLeakCheck().expectSize().noRandomAccess().returns("count\n208\n");
+            final String inBind = "SELECT ts FROM t WHERE ts IN :p";
+            assertExceptionNoLeakCheck(inBind, inBind.indexOf(":p"), "Bracket expansion produces too many intervals (max 1024)");
+            final String notInBind = "SELECT count() FROM t WHERE ts NOT IN :p";
+            assertExceptionNoLeakCheck(notInBind, notInBind.indexOf(":p"), "Bracket expansion produces too many intervals (max 1024)");
 
             // Lists whose static intervals exceed the cap only before their union, against plain SQL:
             // the static intervals end before 2000, and $today adds the Monday 2024-01-08.
@@ -2295,28 +2295,22 @@ public class IntervalFilterTest extends AbstractCairoTest {
             for (String column : new String[]{"ts", "tm"}) {
                 assertOverMaxIntervalsError("SELECT ts FROM t WHERE " + column + " IN '" + overCap + "'");
             }
-            // one factory, run again with new bind values: the row filter fails on the bind value
-            // over the cap, and the interval scan holds no rows for a bind value it cannot parse
-            try (RecordCursorFactory factory = select("SELECT count() FROM t WHERE tm IN :p")) {
-                bindVariableService.setStr("p", tick);
-                assertFactory(factory).withContext(sqlExecutionContext).expectSize().noRandomAccess().returns("count\n3420\n");
-                bindVariableService.setStr("p", overCap);
-                try (RecordCursor ignore = factory.getCursor(sqlExecutionContext)) {
-                    Assert.fail("Expected the cap error for " + overCap);
-                } catch (SqlException e) {
-                    Assert.assertEquals(0, e.getPosition());
-                    TestUtils.assertContains(e.getFlyweightMessage(), "Bracket expansion produces too many intervals (max 1024)");
+            // one factory per filter, run again with new bind values: the row filter and the interval
+            // scan both fail on the bind value over the cap, at the bind variable, and run again
+            for (String sql : new String[]{"SELECT count() FROM t WHERE tm IN :p", "SELECT count() FROM t WHERE ts IN :p"}) {
+                try (RecordCursorFactory factory = select(sql)) {
+                    bindVariableService.setStr("p", tick);
+                    assertFactory(factory).withContext(sqlExecutionContext).expectSize().noRandomAccess().returns("count\n3420\n");
+                    bindVariableService.setStr("p", overCap);
+                    try (RecordCursor ignore = factory.getCursor(sqlExecutionContext)) {
+                        Assert.fail("Expected the cap error for " + overCap);
+                    } catch (SqlException e) {
+                        Assert.assertEquals(sql, sql.indexOf(":p"), e.getPosition());
+                        TestUtils.assertContains(e.getFlyweightMessage(), "Bracket expansion produces too many intervals (max 1024)");
+                    }
+                    bindVariableService.setStr("p", tick);
+                    assertFactory(factory).withContext(sqlExecutionContext).expectSize().noRandomAccess().returns("count\n3420\n");
                 }
-                bindVariableService.setStr("p", tick);
-                assertFactory(factory).withContext(sqlExecutionContext).expectSize().noRandomAccess().returns("count\n3420\n");
-            }
-            try (RecordCursorFactory factory = select("SELECT count() FROM t WHERE ts IN :p")) {
-                bindVariableService.setStr("p", tick);
-                assertFactory(factory).withContext(sqlExecutionContext).expectSize().noRandomAccess().returns("count\n3420\n");
-                bindVariableService.setStr("p", overCap);
-                assertFactory(factory).withContext(sqlExecutionContext).expectSize().noRandomAccess().returns("count\n0\n");
-                bindVariableService.setStr("p", tick);
-                assertFactory(factory).withContext(sqlExecutionContext).expectSize().noRandomAccess().returns("count\n3420\n");
             }
         });
     }

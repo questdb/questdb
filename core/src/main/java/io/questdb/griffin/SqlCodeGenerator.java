@@ -5854,10 +5854,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         int jitOptions;
                         Throwable jitScratchFailure = null;
                         try {
+                            // The cursor only lends the serializer its symbol tables, so a tick
+                            // expression evaluates in it without failing, see
+                            // SqlExecutionContext.isCompileProbe(): its "now" need not be the one the
+                            // query runs at, as a PostgreSQL Parse compiles before the Execute that
+                            // sets "now". Restored rather than cleared, so that an outer probe
+                            // survives.
+                            final boolean wasCompileProbe = executionContext.isCompileProbe();
+                            executionContext.setCompileProbe(true);
                             try (PageFrameCursor cursor = factory.getPageFrameCursor(executionContext, ORDER_ANY)) {
                                 final boolean forceScalar = executionContext.getJitMode() == SqlJitMode.JIT_MODE_FORCE_SCALAR;
                                 jitIRSerializer.of(jitIRMem, executionContext, factory.getMetadata(), cursor, bindVarFunctions);
                                 jitOptions = jitIRSerializer.serialize(filterExpr, forceScalar, enableJitDebug, enableJitNullChecks);
+                            } finally {
+                                executionContext.setCompileProbe(wasCompileProbe);
                             }
 
                             compiledFilter = new CompiledFilter();

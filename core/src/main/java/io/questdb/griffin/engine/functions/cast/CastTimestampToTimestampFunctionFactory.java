@@ -135,5 +135,12 @@ public class CastTimestampToTimestampFunctionFactory implements FunctionFactory 
             io.of(lo, hi);
             return soundness;
         }
+
+        @Override
+        public boolean isExactForFiniteIntervals(Interval scratch) {
+            // The cast changes the precision, as an identity cast is its own argument, so a cast from
+            // micro widens to nano, which inverts every finite upper end exactly, see above
+            return ColumnType.isTimestampMicro(leftTimestampType);
+        }
     }
 }

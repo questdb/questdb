@@ -40,6 +40,8 @@ import io.questdb.griffin.engine.functions.MonotonicTimestampFunction;
 import io.questdb.griffin.engine.functions.ScalarSubQueryTimestampFunction;
 import io.questdb.griffin.engine.functions.columns.ColumnFunction;
 import io.questdb.griffin.model.AliasTranslator;
+import io.questdb.griffin.model.CompiledTickExpression;
+import io.questdb.griffin.model.DateExpressionEvaluator;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.model.IntervalUtils;
@@ -344,7 +346,7 @@ public final class WhereClauseParser implements Mutable {
 
         IntrinsicModel model = models.next();
         int timestampType = timestampTypeOf(m, reader);
-        model.of(timestampType, partitionByOf(reader), executionContext.getCairoEngine().getConfiguration());
+        model.of(timestampType, partitionByOf(reader), executionContext.getCairoEngine().getConfiguration(), !executionContext.isBackgroundJob());
         final TimestampDriver timestampDriver = ColumnType.getTimestampDriver(timestampType);
         try {
 
@@ -796,7 +798,7 @@ public final class WhereClauseParser implements Mutable {
         // Create a temporary model to extract intervals from the inner predicate
         IntrinsicModel tempModel = models.next();
         int timestampType = timestampTypeOf(m, reader);
-        tempModel.of(timestampType, partitionByOf(reader), executionContext.getCairoEngine().getConfiguration());
+        tempModel.of(timestampType, partitionByOf(reader), executionContext.getCairoEngine().getConfiguration(), !executionContext.isBackgroundJob());
 
         // Process the inner predicate recursively
         final boolean isNestedAndOffset = isInsideAndOffset;
@@ -1827,6 +1829,14 @@ public final class WhereClauseParser implements Mutable {
      * {@code in()} semantics rather than a single point. The interval is inverted onto the
      * timestamp axis for partition pruning while the predicate is kept as a residual row filter
      * unless the inversion is exact, so a wider-than-exact inversion can never drop matching rows.
+     * <p>
+     * A TICK expression with a date variable resolves against the time of each execution, so
+     * {@link TimestampMonotonicInverter} inverts it when the scan opens. Where every function of
+     * the chain inverts any intervals exactly, the scan selects exactly the rows that the
+     * predicate holds for, and no residual filter remains, see {@link #isTickInversionExact}.
+     * Otherwise the predicate stays a residual filter, as for any runtime bound. The few such
+     * expressions that {@link IntervalUtils#compileTickExpr} cannot compile keep the static
+     * inversion.
      */
     private boolean analyzeMonotonicTimestampInInterval(
             IntrinsicModel model,
@@ -1837,7 +1847,7 @@ public final class WhereClauseParser implements Mutable {
             RecordMetadata metadata,
             SqlExecutionContext executionContext
     ) {
-        final Function head = compileMonotonicChain(operandNode, functionParser, metadata, executionContext);
+        Function head = compileMonotonicChain(operandNode, functionParser, metadata, executionContext);
         if (head == null) {
             return false;
         }
@@ -1848,8 +1858,50 @@ public final class WhereClauseParser implements Mutable {
                 return false;
             }
             final TimestampDriver outDriver = ColumnType.getTimestampDriver(outType);
+            if (DateExpressionEvaluator.containsDateVariable(inArg.token, 1, inArg.token.length() - 1)) {
+                CompiledTickExpression tickExpr = null;
+                try {
+                    tickExpr = IntervalUtils.compileTickExpr(
+                            outDriver,
+                            executionContext.getCairoEngine().getConfiguration(),
+                            inArg.token,
+                            1,
+                            inArg.token.length() - 1,
+                            inArg.position
+                    );
+                } catch (SqlException | CairoException e) {
+                    // The compiled form does not support every expression the static parser below
+                    // accepts, and in() rejects such an expression, so only the static inversion can
+                    // run it. It keeps doing so, frozen at compile time as before.
+                }
+                if (tickExpr != null) {
+                    try {
+                        if (foldInvertProbe(head) == MonotonicTimestampFunction.NONE) {
+                            return false;
+                        }
+                        final boolean isExact = isTickInversionExact(head, tickExpr, outDriver);
+                        final TimestampMonotonicInverter inverter = new TimestampMonotonicInverter(head, tickExpr, outDriver, isExact, inArg.position);
+                        // ownership transferred to the inverter
+                        head = null;
+                        tickExpr = null;
+                        model.intersectMonotonicTimestamp(inverter);
+                        if (isExact) {
+                            node.intrinsicValue = IntrinsicModel.TRUE;
+                            return true;
+                        }
+                        // the inversion may select more rows than the predicate holds for, or none it
+                        // can narrow the scan to, so the predicate stays a residual filter
+                        return false;
+                    } finally {
+                        Misc.free(tickExpr);
+                    }
+                }
+            }
             tempInIntervals.clear();
             try {
+                // A literal with a date variable that compileTickExpr() rejects reaches this inversion, which
+                // in() cannot back with a residual filter, so it parses the literal as it always has, see
+                // IntervalUtils.parseTickExpr()
                 IntervalUtils.parseTickExpr(
                         outDriver,
                         executionContext.getCairoEngine().getConfiguration(),
@@ -1858,7 +1910,10 @@ public final class WhereClauseParser implements Mutable {
                         inArg.token.length() - 1,
                         inArg.position,
                         tempInIntervals,
-                        intervalSink
+                        intervalSink,
+                        outDriver.getTicks(),
+                        IntervalUtils.TICK_CHECK_ALL,
+                        true
                 );
             } catch (SqlException | CairoException e) {
                 return false;
@@ -3284,6 +3339,33 @@ public final class WhereClauseParser implements Mutable {
         return false;
     }
 
+    /**
+     * Returns whether the chain that {@code head} starts inverts the intervals of
+     * {@code tickExpr} exactly whenever the scan opens, so that the predicate needs no residual
+     * filter: every function of the chain must invert any finite intervals exactly, and the
+     * intervals of the time that the query compiles at must invert exactly too. That rules out an
+     * overflow at the ends of the range when the query runs, unless the chain shifts the
+     * timestamp by centuries and the query runs long after it compiles, when the inverter fails
+     * the query. This checks the expression as in() would as the query compiles; an expression
+     * that fails the check keeps in() as the residual filter, which fails the query as it did.
+     */
+    private boolean isTickInversionExact(Function head, CompiledTickExpression tickExpr, TimestampDriver driver) {
+        Function f = head;
+        while (f instanceof MonotonicTimestampFunction m) {
+            if (!m.isExactForFiniteIntervals(intervalScratch)) {
+                return false;
+            }
+            f = m.getTimestampArg();
+        }
+        tempInIntervals.clear();
+        try {
+            tickExpr.validate(driver.getTicks(), tempInIntervals);
+        } catch (SqlException e) {
+            return false;
+        }
+        return TimestampMonotonicInverter.invertTickIntervals(head, tempInIntervals, intervalScratch) == MonotonicTimestampFunction.EXACT;
+    }
+
     private boolean isTimestamp(ExpressionNode n) {
         return Chars.equalsIgnoreCaseNc(n.token, timestamp);
     }
@@ -4159,6 +4241,9 @@ public final class WhereClauseParser implements Mutable {
         final int savedIntrinsicValue = model.intrinsicValue;
         if (extractOrTimestampIntervals(timestampDriver, model, node, true, functionParser, metadata, executionContext)) {
             orIntrinsicNodes.clear();
+            // The first branch seeds the union with an intersection, which marks the model FALSE
+            // when that branch selects nothing. The union of all the branches decides instead.
+            model.intrinsicValue = model.isIntervalSetEmpty() ? IntrinsicModel.FALSE : savedIntrinsicValue;
             return true;
         }
         revertNodes(orIntrinsicNodes);

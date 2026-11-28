@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.model;
 
-import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
@@ -231,6 +230,12 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
         boolean firstFuncApplied = false;
         // Start index of a pending run of batched UNION leaves, or -1 when no run is open.
         int unionRunStart = -1;
+        // A tick expression resolves against the "now" of the query, which WAL apply fixes to the
+        // commit time of the transaction. An engine job, and a cursor that the compiler holds to
+        // inspect a query, do not fail on it, see IntervalUtils.isTickEvaluationLenient(),
+        // CompiledTickExpression and parseStrInterval()
+        final long now = sqlExecutionContext.getNow(timestampDriver.getTimestampType());
+        final boolean isLenient = IntervalUtils.isTickEvaluationLenient(sqlExecutionContext);
 
         for (int i = dynamicStart; i < size; i += STATIC_LONGS_PER_DYNAMIC_INTERVAL) {
             Function dynamicFunction = dynamicRangeList.getQuick(dynamicIndex);
@@ -394,21 +399,19 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
                         } else {
                             // This is subtraction or intersection with a string interval (not a single timestamp)
                             final CharSequence strInterval = dynamicFunction.getStrA(null);
-                            final CairoConfiguration configuration = sqlExecutionContext.getCairoEngine().getConfiguration();
-                            if (operation == IntervalOperation.INTERSECT_INTERVALS) {
-                                // This is an intersection
-                                if (tryParseInterval(outIntervals, strInterval, configuration)) {
-                                    // return an empty set
+                            if (strInterval == null || !parseStrInterval(strInterval, outIntervals, i, sqlExecutionContext, now, isLenient)) {
+                                // A null interval, or, where the evaluation is lenient, one that does
+                                // not parse, see parseStrInterval()
+                                if (operation == IntervalOperation.INTERSECT_INTERVALS) {
+                                    // a null interval matches nothing: return an empty set
                                     outIntervals.clear();
                                     return;
                                 }
-                            } else {
-                                // This is a subtraction
-                                if (tryParseInterval(outIntervals, strInterval, configuration)) {
-                                    // full set
-                                    negatedNothing(outIntervals, divider, firstFuncApplied);
-                                    continue;
-                                }
+                                // nothing to subtract: full set
+                                negatedNothing(outIntervals, divider, firstFuncApplied);
+                                continue;
+                            }
+                            if (operation == IntervalOperation.SUBTRACT_INTERVALS) {
                                 IntervalUtils.invert(outIntervals, divider);
                             }
                         }
@@ -535,15 +538,51 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
         }
     }
 
-    private boolean tryParseInterval(LongList outIntervals, CharSequence strInterval, CairoConfiguration configuration) {
-        if (strInterval != null) {
-            try {
-                IntervalUtils.parseTickExprAndIntersect(timestampDriver, configuration, strInterval, outIntervals, 0, sink);
-            } catch (SqlException e) {
-                return true;
+    /**
+     * Parses the tick expression of a bind variable or another function against the "now" of the
+     * query, as a literal resolves against it, and fails the query the way a literal does, with
+     * the parser's message at the position of the function, which the entry at {@code index}
+     * carries in its lo.
+     * <p>
+     * An engine job has no caller to report a failure to, and WAL apply would suspend the table on
+     * an UPDATE that the client was told succeeded. A cursor that the compiler holds to inspect a
+     * query hands nobody its results, and its "now" need not be the one the query runs at. In both,
+     * see {@link IntervalUtils#isTickEvaluationLenient}, a range that starts after it ends adds no
+     * interval, as in a literal, and a value that does not parse, or that has more intervals than
+     * the limit, which nothing checked before, acts as a null value: the method returns false. Null
+     * is the only answer that NOT IN agrees with in every plan, since a row filter computes NOT IN
+     * as the negation of IN.
+     */
+    private boolean parseStrInterval(
+            CharSequence strInterval,
+            LongList outIntervals,
+            int index,
+            SqlExecutionContext sqlExecutionContext,
+            long now,
+            boolean isLenient
+    ) throws SqlException {
+        final int outStart = outIntervals.size();
+        final int functionPosition = (int) IntervalUtils.decodeIntervalLo(intervals, index);
+        try {
+            IntervalUtils.parseTickExprAndIntersect(
+                    timestampDriver,
+                    sqlExecutionContext.getCairoEngine().getConfiguration(),
+                    strInterval,
+                    outIntervals,
+                    functionPosition,
+                    sink,
+                    now,
+                    isLenient ? IntervalUtils.TICK_CHECK_INTERVAL_LIMIT : IntervalUtils.TICK_CHECK_ALL
+            );
+            return true;
+        } catch (SqlException e) {
+            if (isLenient) {
+                outIntervals.setPos(outStart);
+                return false;
             }
-            return false;
+            // the parser can point into the value, which is not part of the SQL text
+            e.setPosition(functionPosition);
+            throw e;
         }
-        return true;
     }
 }

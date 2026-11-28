@@ -95,9 +95,11 @@ public class CompiledFilterTickBounds {
             return;
         }
         isEvaluated = false;
-        // evaluate() appends.
+        // evaluate() appends. init() reads "now" and whether the context evaluates leniently, see
+        // IntervalUtils.isTickEvaluationLenient(), as it does for the Java filter.
         bounds.clear();
-        compiledExpr.evaluate(bounds, now);
+        compiledExpr.init(null, executionContext);
+        compiledExpr.evaluate(bounds);
         final int intervalCount = bounds.size() / 2;
         if (intervalCount > maxIntervalCount) {
             // getMaxIntervalCount() got the bound wrong. Dropping the extra intervals would drop rows.

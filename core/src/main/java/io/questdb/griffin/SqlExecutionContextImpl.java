@@ -106,6 +106,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private int intervalFunctionType;
     private long intervalPlanGeneration;
     private long intervalPlanGenerationCounter;
+    private boolean isCompileProbe;
     private boolean isMetadataProbe;
     private boolean isViewCompile;
     private boolean isViewMetadataSubquery;
@@ -478,6 +479,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public boolean isCompileProbe() {
+        return isCompileProbe;
+    }
+
+    @Override
     public boolean isExpiryReadFilterEnabled() {
         return expiryReadPolicy == ExpiryReadPolicy.FILTER;
     }
@@ -718,6 +724,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public void setCloneSymbolTables(boolean cloneSymbolTables) {
         this.cloneSymbolTables = cloneSymbolTables;
+    }
+
+    @Override
+    public void setCompileProbe(boolean value) {
+        this.isCompileProbe = value;
     }
 
     @Override
@@ -993,6 +1004,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         // setLiveViewCompile also clears the mirrored windowContext flag.
         setLiveViewCompile(false);
         this.tableFunctionView = null;
+        isCompileProbe = false;
         isMetadataProbe = false;
         isViewCompile = false;
         isViewMetadataSubquery = false;

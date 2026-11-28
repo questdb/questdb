@@ -112,6 +112,15 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
                     TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
                     CompiledTickExpression compiled = IntervalUtils.compileTickExpr(
                             driver, configuration, right, 0, right.length(), argPositions.getQuick(1));
+                    if (!sqlExecutionContext.isBackgroundJob()) {
+                        // the SQL that the engine runs on its own was validated when its user compiled it
+                        try {
+                            compiled.validate(driver.getTicks());
+                        } catch (Throwable th) {
+                            Misc.free(compiled);
+                            throw th;
+                        }
+                    }
                     return new EqTimestampCompiledTickExprFunction(args.getQuick(0), compiled);
                 }
                 final EqTimestampStrConstantFunction func = new EqTimestampStrConstantFunction(
@@ -148,7 +157,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         }
 
         if (intervalSearch) {
-            return new EqTimestampStrFunction(args.get(0), args.get(1), timestampType, configuration);
+            return new EqTimestampStrFunction(args.get(0), args.get(1), timestampType, argPositions.getQuick(1), configuration);
         }
 
         // have to copy, args is mutable
@@ -307,12 +316,19 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         private final LongList intervals = new LongList();
         private final Function left;
         private final Function right;
+        private final int rightPosition;
         private final TimestampDriver timestampDriver;
         private final StringSink sink = new StringSink();
+        private int checks = IntervalUtils.TICK_CHECK_ALL;
+        // set where IntervalUtils.isTickEvaluationLenient() holds: a value that does not parse acts
+        // as null there instead of failing
+        private boolean isLenient;
+        private long now;
 
-        public EqTimestampStrFunction(Function left, Function right, int timestampType, CairoConfiguration configuration) {
+        public EqTimestampStrFunction(Function left, Function right, int timestampType, int rightPosition, CairoConfiguration configuration) {
             this.left = left;
             this.right = right;
+            this.rightPosition = rightPosition;
             this.timestampDriver = ColumnType.getTimestampDriver(timestampType);
             this.configuration = configuration;
         }
@@ -329,10 +345,18 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
             }
             intervals.clear();
             try {
-                // we are ignoring exception contents here, so we do not need the exact position
-                IntervalUtils.parseTickExprAndIntersect(timestampDriver, configuration, timestampAsString, intervals, 0, sink);
+                IntervalUtils.parseTickExprAndIntersect(timestampDriver, configuration, timestampAsString, intervals, rightPosition, sink, now, checks);
             } catch (SqlException e) {
-                return negated;
+                if (isLenient) {
+                    // An engine job has no caller to report to, and WAL apply would suspend the table
+                    // on an UPDATE that the client was told succeeded. A cursor that the compiler
+                    // holds to inspect a query hands nobody its rows. The value acts as null, as
+                    // NOT IN, which negates IN, then agrees with a null value too.
+                    return negated;
+                }
+                // A value that does not parse fails the query, the way a literal does. The parser can
+                // point into the value, which is not part of the SQL text.
+                throw CairoException.nonCritical().position(rightPosition).put(e.getFlyweightMessage());
             }
             return negated != isInIntervals(intervals, ts);
         }
@@ -345,6 +369,16 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         @Override
         public Function getRight() {
             return right;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            BinaryFunction.super.init(symbolTableSource, executionContext);
+            // a value resolves its date variables against the "now" of the query, as a literal does
+            now = executionContext.getNow(timestampDriver.getTimestampType());
+            isLenient = IntervalUtils.isTickEvaluationLenient(executionContext);
+            // the interval limit still applies, as nothing checked the value before
+            checks = isLenient ? IntervalUtils.TICK_CHECK_INTERVAL_LIMIT : IntervalUtils.TICK_CHECK_ALL;
         }
 
         @Override
@@ -498,7 +532,29 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
             switch (intervalFunc.getType()) {
                 case ColumnType.STRING:
                 case ColumnType.VARCHAR:
-                    IntervalUtils.parseTickExprAndIntersect(driver, executionContext.getCairoEngine().getConfiguration(), intervalFunc.getStrA(null), intervals, 0, sink);
+                    // The value resolves its date variables against the "now" of the query, as a
+                    // literal does. In an engine job, and in a cursor that the compiler holds to
+                    // inspect a query, see IntervalUtils.isTickEvaluationLenient(), a range that
+                    // starts after it ends adds no interval, and a value that does not parse acts as
+                    // null rather than failing: WAL apply would otherwise suspend the table on an
+                    // UPDATE that the client was told succeeded. The interval limit still applies,
+                    // as nothing checked the value.
+                    final boolean isLenient = IntervalUtils.isTickEvaluationLenient(executionContext);
+                    final CairoConfiguration configuration = executionContext.getCairoEngine().getConfiguration();
+                    final long now = executionContext.getNow(driver.getTimestampType());
+                    final int checks = isLenient ? IntervalUtils.TICK_CHECK_INTERVAL_LIMIT : IntervalUtils.TICK_CHECK_ALL;
+                    try {
+                        IntervalUtils.parseTickExprAndIntersect(driver, configuration, intervalFunc.getStrA(null), intervals, intervalFuncPos, sink, now, checks);
+                    } catch (SqlException e) {
+                        if (isLenient) {
+                            intervals.clear();
+                            IntervalUtils.parseTickExprAndIntersect(driver, configuration, null, intervals, intervalFuncPos, sink, now, checks);
+                            break;
+                        }
+                        // the parser can point into the value, which is not part of the SQL text
+                        e.setPosition(intervalFuncPos);
+                        throw e;
+                    }
                     break;
                 default:
                     throw SqlException

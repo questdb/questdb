@@ -39,9 +39,11 @@ import io.questdb.griffin.engine.functions.MonotonicTimestampFunction;
 import io.questdb.griffin.engine.functions.TernaryFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.Interval;
+import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -221,6 +223,101 @@ abstract class AbstractTimestampFloorFromOffsetFunctionFactory implements Functi
         return invertFloorSuperset(io, timestampDriver, unit, stride, effectiveOffset);
     }
 
+    // Inverts the local floor of a named zone, see floorWithTz(), for a list of intervals exactly, where
+    // isFloorNamedTzExact() holds. The floor takes the local time of the timestamp, which no instant
+    // has in a gap of the clocks, and a floor that lands strictly inside a gap floors the start of the
+    // gap instead. At most one bucket starts strictly inside a gap and ends after it, and only the local
+    // times from the end of the gap to the end of that bucket floor elsewhere than the plain floor does.
+    // The instants with the local times that floor into the intervals then follow from the conversion
+    // of a TICK timezone. The walk over the changes of the clocks and the conversion would overflow near
+    // the ends of the range.
+    static int invertFloorNamedTzIntervals(
+            LongList intervals,
+            int startIndex,
+            Interval scratch,
+            TimestampDriver timestampDriver,
+            TimeZoneRules tzRules,
+            TimestampDriver.TimestampFloorWithOffsetMethod floorFunc,
+            char unit,
+            int stride
+    ) {
+        final long margin = timestampDriver.fromHours(48);
+        // add()/dateadd use the lowercase microsecond unit while ceil/floor use the uppercase one
+        final char addUnit = unit == 'U' ? 'u' : unit;
+        final int size = intervals.size();
+        for (int i = startIndex; i < size; i += 2) {
+            final long lo = intervals.getQuick(i);
+            final long hi = intervals.getQuick(i + 1);
+            scratch.of(lo, hi);
+            if (!floorPreimageShifted(scratch, timestampDriver, floorFunc, addUnit, stride, 0, 0)) {
+                return MonotonicTimestampFunction.NONE;
+            }
+            // the local times that the plain floor floors into the interval
+            long pieceLo = scratch.getLo();
+            final long pieceHi = scratch.getHi();
+            if (pieceLo > pieceHi) {
+                continue;
+            }
+            // Besides the piece, the local times that floor into the interval only through a gap lie
+            // within a gap and a bucket after the piece, so the end of the bucket after the piece
+            // bounds the walk below and the conversion, with room to spare.
+            if (pieceLo != Long.MIN_VALUE && pieceLo < Long.MIN_VALUE + 2 * margin) {
+                return MonotonicTimestampFunction.NONE;
+            }
+            if (pieceHi != Long.MAX_VALUE) {
+                final long afterPieceHi = timestampDriver.add(pieceHi + 1, addUnit, stride);
+                if (afterPieceHi <= pieceHi || afterPieceHi > Long.MAX_VALUE - 2 * margin) {
+                    return MonotonicTimestampFunction.NONE;
+                }
+            }
+            if (pieceLo != Long.MIN_VALUE || pieceHi != Long.MAX_VALUE) {
+                // Walk the changes of the clocks from well before the piece to well after it. The
+                // gaps beyond an open end leave both their buckets in the interval.
+                final long walkHi = (pieceHi != Long.MAX_VALUE ? pieceHi : pieceLo) + margin;
+                long instant = (pieceLo != Long.MIN_VALUE ? pieceLo : pieceHi) - margin;
+                long offset = tzRules.getOffset(instant);
+                long transition;
+                while ((transition = tzRules.getNextDST(instant)) <= walkHi) {
+                    final long nextOffset = tzRules.getOffset(transition);
+                    if (nextOffset > offset) {
+                        // clocks spring forward over the local times [gapLo, gapHi)
+                        final long gapLo = transition + offset;
+                        final long gapHi = transition + nextOffset;
+                        final long bucket = floorFunc.floor(gapHi - 1, stride, 0);
+                        final long bucketHi = timestampDriver.add(bucket, addUnit, stride);
+                        if (bucket > gapLo && bucketHi > gapHi) {
+                            // the local times [gapHi, bucketHi) floor to gapBucket rather than bucket
+                            final long gapBucket = floorFunc.floor(gapLo, stride, 0);
+                            final boolean isBucketIn = bucket >= lo && bucket <= hi;
+                            final boolean isGapBucketIn = gapBucket >= lo && gapBucket <= hi;
+                            if (isBucketIn && !isGapBucketIn) {
+                                // they leave the bucket, which the piece holds
+                                intervals.add(pieceLo, gapHi - 1);
+                                pieceLo = bucketHi;
+                            } else if (!isBucketIn && isGapBucketIn) {
+                                intervals.add(gapHi, bucketHi - 1);
+                            }
+                        }
+                    }
+                    offset = nextOffset;
+                    instant = transition;
+                }
+            }
+            if (pieceLo <= pieceHi) {
+                intervals.add(pieceLo, pieceHi);
+            }
+        }
+        // move the pieces down over the intervals, and join them
+        final int pieceSize = intervals.size() - size;
+        for (int k = 0; k < pieceSize; k++) {
+            intervals.setQuick(startIndex + k, intervals.getQuick(size + k));
+        }
+        intervals.setPos(startIndex + pieceSize);
+        IntervalUtils.sortAndUnionInPlace(intervals, startIndex);
+        IntervalUtils.localIntervalsToUtc(tzRules, intervals, startIndex);
+        return MonotonicTimestampFunction.EXACT;
+    }
+
     // 48h bounds any zone offset difference (e.g. Samoa's 2011 date-line shift); the
     // floor can drop the input by up to two buckets (DST-gap re-flooring).
     static int invertFloorSuperset(Interval io, TimestampDriver timestampDriver, char unit, int stride, long effectiveOffset) {
@@ -254,6 +351,20 @@ abstract class AbstractTimestampFloorFromOffsetFunctionFactory implements Functi
         }
         io.of(lo, hi);
         return MonotonicTimestampFunction.SUPERSET;
+    }
+
+    // Whether invertFloorNamedTzIntervals() inverts any finite intervals of the floor of a named zone
+    // exactly: the floor that returns the local time, from no origin and with no offset, and whose
+    // buckets add() reproduces, as floorPreimageShifted() needs.
+    static boolean isFloorNamedTzExact(
+            TimestampDriver timestampDriver,
+            TimestampDriver.TimestampFloorWithOffsetMethod floorFunc,
+            char unit,
+            int stride,
+            long effectiveOffset,
+            boolean returnUtc
+    ) {
+        return !returnUtc && effectiveOffset == 0 && isFloorExactlyInvertible(timestampDriver, floorFunc, unit, stride, 0);
     }
 
     private static boolean canSkipDstGapCorrection(TimestampDriver timestampDriver, int stride, char unit, long from, long offset) {
@@ -615,6 +726,18 @@ abstract class AbstractTimestampFloorFromOffsetFunctionFactory implements Functi
         }
 
         @Override
+        public int invertTimestampIntervals(LongList intervals, int startIndex, Interval scratch) {
+            return isExactForFiniteIntervals(scratch)
+                    ? invertFloorNamedTzIntervals(intervals, startIndex, scratch, timestampDriver, tzRules, floorFunc, unit, stride)
+                    : super.invertTimestampIntervals(intervals, startIndex, scratch);
+        }
+
+        @Override
+        public boolean isExactForFiniteIntervals(Interval scratch) {
+            return isFloorNamedTzExact(timestampDriver, floorFunc, unit, stride, effectiveOffset, returnUtc);
+        }
+
+        @Override
         public boolean preservesTimestampOrder() {
             return returnUtc && effectiveOffset == 0 && CommonUtils.isSubDayUnit(unit)
                     && tsFunc.getType() == getType()
@@ -808,6 +931,18 @@ abstract class AbstractTimestampFloorFromOffsetFunctionFactory implements Functi
         @Override
         public int invertTimestampInterval(Interval io) {
             return invertFloorNamedTz(io, timestampDriver, tzRules, floorFunc, unit, stride, effectiveOffset, returnUtc);
+        }
+
+        @Override
+        public int invertTimestampIntervals(LongList intervals, int startIndex, Interval scratch) {
+            return isExactForFiniteIntervals(scratch)
+                    ? invertFloorNamedTzIntervals(intervals, startIndex, scratch, timestampDriver, tzRules, floorFunc, unit, stride)
+                    : super.invertTimestampIntervals(intervals, startIndex, scratch);
+        }
+
+        @Override
+        public boolean isExactForFiniteIntervals(Interval scratch) {
+            return isFloorNamedTzExact(timestampDriver, floorFunc, unit, stride, effectiveOffset, returnUtc);
         }
 
         @Override

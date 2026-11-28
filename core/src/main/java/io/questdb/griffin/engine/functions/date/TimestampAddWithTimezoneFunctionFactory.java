@@ -39,8 +39,10 @@ import io.questdb.griffin.engine.functions.QuaternaryFunction;
 import io.questdb.griffin.engine.functions.TernaryFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.IntList;
 import io.questdb.std.Interval;
+import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.CommonUtils;
@@ -227,6 +229,43 @@ public class TimestampAddWithTimezoneFunctionFactory implements FunctionFactory 
             }
             io.of(lo, hi);
             return SUPERSET;
+        }
+
+        @Override
+        public int invertTimestampIntervals(LongList intervals, int startIndex, Interval scratch) {
+            if (!isExactForFiniteIntervals(scratch)) {
+                return MonotonicTimestampFunction.super.invertTimestampIntervals(intervals, startIndex, scratch);
+            }
+            // The function converts the timestamp to its local time, adds a constant to it, and
+            // converts that back, see compute(), so the inverse runs the inverses of the steps in
+            // the reverse order, each of them exact. The conversions would overflow near the ends
+            // of the range, as would the add, which also wraps the largest local times to the
+            // smallest when it is positive. The intervals are in ascending order, so their first
+            // and last ends bound the others, and the conversions move an end by less than margin.
+            final long shift = periodAddFunction.add(0, stride);
+            final long margin = timestampDriver.fromHours(48);
+            final int size = intervals.size();
+            if (size > startIndex && (MonotonicTimestampFunction.hasEndNearLongLimits(intervals, startIndex, 2 * margin)
+                    || (shift > 0 && intervals.getQuick(startIndex) < Long.MIN_VALUE + shift + 2 * margin)
+                    || (shift < 0 && intervals.getQuick(size - 1) > Long.MAX_VALUE + shift - 2 * margin))) {
+                return NONE;
+            }
+            IntervalUtils.utcIntervalsToLocal(timeZoneRules, intervals, startIndex, margin);
+            for (int i = startIndex, n = intervals.size(); i < n; i++) {
+                final long value = intervals.getQuick(i);
+                if (value != Long.MIN_VALUE && value != Long.MAX_VALUE) {
+                    intervals.setQuick(i, value - shift);
+                }
+            }
+            IntervalUtils.localIntervalsToUtc(timeZoneRules, intervals, startIndex);
+            return EXACT;
+        }
+
+        @Override
+        public boolean isExactForFiniteIntervals(Interval scratch) {
+            // a fixed unit adds the same constant to every local time; a calendar unit clamps the
+            // day of the month
+            return period != 'M' && period != 'y' && !addOverflows(0, periodAddFunction.add(0, stride), stride);
         }
 
         @Override

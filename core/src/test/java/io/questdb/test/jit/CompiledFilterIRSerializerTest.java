@@ -1762,7 +1762,14 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
                 "[$today, 2020-01-[01..10]T10:00]",
                 // An unknown offset unit.
                 "$today + 1x",
-                "$today..$today + 1x"
+                "$today..$today + 1x",
+                // The IR cannot hold these, so they parse on each evaluation: an element with a day
+                // filter or a timezone of its own, numeric brackets in the time, and a duration unit
+                // that the timestamp driver does not add.
+                "[$today#Mon]",
+                "[$today@+05:00]",
+                "$todayT[09..10]",
+                "$today;1x"
         }) {
             for (String filter : new String[]{
                     "atimestamp IN '" + expression + "'",

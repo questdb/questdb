@@ -590,6 +590,25 @@ public class CompiledFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDateVariableIntervalParsedOnEvaluationFollowsClock() throws Exception {
+        // The IR cannot hold an element with a day filter of its own or numeric brackets in the time,
+        // so the expression parses on each evaluation, has no interval bound, and runs on the Java
+        // filter. Each row lies at 12:00 on day k of January 2024; 2024-01-05 is a Friday and
+        // 2024-01-08 a Monday.
+        assertMemoryLeak(() -> {
+            createTemporalDaysTable();
+            for (String c : new String[]{"dt", "tm", "tn"}) {
+                assertFilterFollowsClock(c + " IN '[$today#Mon]'", false, jan2024(8), keys(8), jan2024(5), keys());
+                assertFilterFollowsClock(c + " IN ('[$today#Mon]')", false, jan2024(8), keys(8), jan2024(5), keys());
+                assertFilterFollowsClock(c + " NOT IN '[$today#Mon]'", false, jan2024(8), allDayKeysExcept(8), jan2024(5), allDayKeysExcept());
+                assertFilterFollowsClock(c + " IN '$todayT[11..12]'", false, jan2024(5), keys(5), jan2024(6), keys(6));
+                assertFilterFollowsClock(c + " IN '$todayT[13..14]'", false, jan2024(5), keys(), jan2024(6), keys());
+            }
+            assertFollowsClock("SELECT k FROM x WHERE ts IN '[$today#Mon]' OR k = 2", false, jan2024(8), keys(2, 8), jan2024(5), keys(2));
+        });
+    }
+
+    @Test
     public void testDateVariableIntervalRepeatedElementsRunOnJit() throws Exception {
         // The list stores a repeated date variable once, so eleven copies of $today take one range
         // check, and $yesterday, nine copies of $today and $yesterday again take two: within the IN
@@ -1153,12 +1172,12 @@ public class CompiledFilterTest extends AbstractCairoTest {
                     assertExceptionNoLeakCheck("SELECT k FROM x WHERE ts IN '" + overCap + "'", 28, overCapError);
                     assertExceptionNoLeakCheck("SELECT k FROM x WHERE ts NOT IN '" + overCap + "'", 32, overCapError);
                     // The row filter parses a bind string when the cursor opens, and any parse error
-                    // fails the query at position 0.
+                    // fails the query at the bind variable.
                     bindVariableService.setStr("p", "2024-13-45");
-                    assertExceptionNoLeakCheck("SELECT k FROM x WHERE ts IN :p", 0, "Invalid date: 2024-13-45");
+                    assertExceptionNoLeakCheck("SELECT k FROM x WHERE ts IN :p", 28, "Invalid date: 2024-13-45");
                     bindVariableService.setStr("p", overCap);
-                    assertExceptionNoLeakCheck("SELECT k FROM x WHERE ts IN :p", 0, overCapError);
-                    assertExceptionNoLeakCheck("SELECT k FROM x WHERE ts NOT IN :p", 0, overCapError);
+                    assertExceptionNoLeakCheck("SELECT k FROM x WHERE ts IN :p", 28, overCapError);
+                    assertExceptionNoLeakCheck("SELECT k FROM x WHERE ts NOT IN :p", 32, overCapError);
                     // the JIT never compiles a timestamp IN over a bind variable
                     for (String sql : new String[]{"SELECT k FROM x WHERE ts IN :p", "SELECT k FROM x WHERE ts NOT IN :p"}) {
                         try (RecordCursorFactory factory = select(sql)) {
@@ -1167,7 +1186,7 @@ public class CompiledFilterTest extends AbstractCairoTest {
                     }
                     // the check after each day of a date variable range reports its own message
                     bindVariableService.setStr("p", "[$today..$today+5000d]T[00,12]:00#mon;1h");
-                    assertExceptionNoLeakCheck("SELECT k FROM x WHERE ts IN :p", 0, "Date range expansion produces too many intervals (max 1024)");
+                    assertExceptionNoLeakCheck("SELECT k FROM x WHERE ts IN :p", 28, "Date range expansion produces too many intervals (max 1024)");
                 }
             } finally {
                 sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);

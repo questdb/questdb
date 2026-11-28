@@ -26,8 +26,11 @@ package io.questdb.test.griffin.model;
 
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.griffin.model.IntervalUtils;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.LongList;
 import io.questdb.std.NumericException;
+import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -39,6 +42,7 @@ import java.util.Comparator;
 import java.util.Random;
 
 public class IntervalUtilsTest {
+    private static final Log LOG = LogFactory.getLog(IntervalUtilsTest.class);
     private final StringSink sink = new StringSink();
 
     @Test
@@ -209,6 +213,7 @@ public class IntervalUtilsTest {
 
     @Test
     public void testInvertEmpty() {
+        // the complement of no interval at all is every timestamp, see testInvertFullRange() for back
         runTestInvertInplace(new LongList(), 0, "[null,9223372036854775807]");
 
         LongList intervals = new LongList();
@@ -217,6 +222,16 @@ public class IntervalUtilsTest {
 
         // B is empty
         runTestInvertInplace(intervals, 2, "[null,9223372036854775807]");
+    }
+
+    @Test
+    public void testInvertFullRange() {
+        LongList intervals = new LongList();
+        // B
+        add(intervals, Long.MIN_VALUE, Long.MAX_VALUE);
+
+        IntervalUtils.invert(intervals, 0);
+        Assert.assertEquals(0, intervals.size());
     }
 
     @Test
@@ -494,6 +509,211 @@ public class IntervalUtilsTest {
     }
 
     @Test
+    public void testUnionAppendedIntervals() {
+        // unionAppendedIntervals() leaves the list as unionBracketExpandedIntervals() from startIndex
+        // does, where the intervals before mergedEnd are the output of an earlier union. It counts the
+        // new intervals it sorts, the merged ones it merges them with, the merged ones after those that
+        // it moves, and the merged ones it compares with to find where the new ones land: the last one,
+        // and those of a binary search when the new ones sort before the last one.
+        final long[] merged = {0, 9, 20, 29, 40, 49};
+        // after all: the new one, [40,49], and the comparison with it
+        assertUnionAppended(null, merged, new long[]{60, 70}, "[0,9], [20,29], [40,49], [60,70]", 3);
+        // adjacent to the last one, overlapping it, and inside it
+        assertUnionAppended(null, merged, new long[]{50, 55}, "[0,9], [20,29], [40,55]", 3);
+        assertUnionAppended(null, merged, new long[]{45, 60}, "[0,9], [20,29], [40,60]", 3);
+        assertUnionAppended(null, merged, new long[]{42, 44}, "[0,9], [20,29], [40,49]", 3);
+        // between two: the new one, [0,9], [20,29] and [40,49] moved right, and the last one and two
+        // of the binary search compared
+        assertUnionAppended(null, merged, new long[]{12, 15}, "[0,9], [12,15], [20,29], [40,49]", 7);
+        // bridging two: the new one, [0,9] and [20,29], [40,49] moved left, three compared
+        assertUnionAppended(null, merged, new long[]{10, 19}, "[0,29], [40,49]", 7);
+        // reaching every merged one after it, the last one by a chain after the new one
+        assertUnionAppended(null, merged, new long[]{5, 45}, "[0,49]", 7);
+        // before all: the new one, the three merged ones moved right, three compared
+        assertUnionAppended(null, merged, new long[]{-5, -2}, "[-5,-2], [0,9], [20,29], [40,49]", 7);
+        // adjacent to the first one, which keeps the number of intervals: nothing moves
+        assertUnionAppended(null, merged, new long[]{-5, -1}, "[-5,9], [20,29], [40,49]", 5);
+        // a duplicate: the new one, [0,9] and [20,29], three compared
+        assertUnionAppended(null, merged, new long[]{20, 29}, "[0,9], [20,29], [40,49]", 6);
+        // two new ones in reverse order, spread over the list: two sorted, three merged, three compared
+        assertUnionAppended(null, merged, new long[]{60, 70, 12, 15}, "[0,9], [12,15], [20,29], [40,49], [60,70]", 8);
+        // no new one
+        assertUnionAppended(null, merged, new long[0], "[0,9], [20,29], [40,49]", 0);
+        // no merged one: a union of all
+        assertUnionAppended(null, new long[0], new long[]{20, 29, 0, 9, 5, 25}, "[0,29]", 3);
+        // an inverted merged interval that the new one reaches by adjacency
+        assertUnionAppended(null, new long[]{10, 5}, new long[]{8, 9}, "[8,9]", 3);
+        assertUnionAppended(null, new long[]{0, 9}, new long[]{10, 12}, "[0,12]", 3);
+        // a merged interval up to Long.MAX_VALUE takes every one after it, and one right before
+        // Long.MAX_VALUE takes Long.MAX_VALUE by adjacency, without overflow
+        assertUnionAppended(null, new long[]{0, 9, 20, Long.MAX_VALUE}, new long[]{30, 40}, "[0,9], [20," + Long.MAX_VALUE + "]", 3);
+        assertUnionAppended(null, new long[]{0, 9, 20, Long.MAX_VALUE - 1}, new long[]{Long.MAX_VALUE, Long.MAX_VALUE}, "[0,9], [20," + Long.MAX_VALUE + "]", 3);
+        // Long.MIN_VALUE renders as null
+        assertUnionAppended(null, new long[]{Long.MIN_VALUE, -10}, new long[]{Long.MIN_VALUE, 5}, "[null,5]", 3);
+        // the intervals before startIndex stay as they are, though the new one overlaps them
+        assertUnionAppended(new long[]{5, 25}, merged, new long[]{12, 15}, "[5,25], [0,9], [12,15], [20,29], [40,49]", 7);
+        // equal inverted intervals stay apart: the new one goes first, the two merged ones move right,
+        // two compared
+        assertUnionAppended(null, new long[]{10, 5, 10, 5}, new long[]{10, 5}, "[10,5], [10,5], [10,5]", 5);
+        // the order is by lo, then by hi: an order by lo alone would put [10,6] first, or start the
+        // merge at [10,20] and take the inverted [10,5] into it
+        assertUnionAppended(null, new long[]{10, 5, 10, 8}, new long[]{10, 6}, "[10,5], [10,6], [10,8]", 5);
+        assertUnionAppended(null, new long[]{10, 5}, new long[]{10, 20}, "[10,5], [10,20]", 3);
+    }
+
+    @Test
+    public void testUnionAppendedIntervalsMatchesUnionOfAll() {
+        // Random merged intervals, the output of a union, with new intervals after them that land
+        // before, between, in and after them, touch them, bridge or absorb them, repeat them, are
+        // inverted, or reach Long.MIN_VALUE or Long.MAX_VALUE, and intervals before startIndex.
+        // unionAppendedIntervals() must leave the list exactly as a union of all intervals from
+        // startIndex does. Both lists hold the same longs, also past their ends, so they compare the
+        // same values where a union of no interval exposes two of those.
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        final LongList merged = new LongList();
+        final LongList appended = new LongList();
+        // the shapes, counted from the inputs
+        int landingFirstCount = 0;
+        int landingMiddleCount = 0;
+        int landingLastCount = 0;
+        int moreWithLaterCount = 0;
+        int fewerWithLaterCount = 0;
+        int sameWithLaterCount = 0;
+        int chainCount = 0;
+        int noAppendedCount = 0;
+        int noMergedCount = 0;
+        int invertedCount = 0;
+        int minMaxCount = 0;
+        int duplicateCount = 0;
+        for (int i = 0; i < 100_000; i++) {
+            merged.clear();
+            for (int j = 0, n = rnd.nextInt(31); j < n; j++) {
+                addRandomInterval(rnd, merged);
+            }
+            if (merged.size() > 0) {
+                IntervalUtils.unionBracketExpandedIntervalsForTesting(merged, 0);
+            }
+            appended.clear();
+            for (int j = 0, n = rnd.nextInt(7); j < n; j++) {
+                addRandomAppendedInterval(rnd, merged, appended);
+            }
+            final LongList intervals = new LongList();
+            final LongList reference = new LongList();
+            for (int j = 0, n = rnd.nextInt(3); j < n; j++) {
+                final long lo = rnd.nextInt(100);
+                intervals.add(lo, lo + 5);
+                reference.add(lo, lo + 5);
+            }
+            final int startIndex = intervals.size();
+            intervals.addAll(merged);
+            reference.addAll(merged);
+            final int mergedEnd = intervals.size();
+            intervals.addAll(appended);
+            reference.addAll(appended);
+
+            IntervalUtils.unionBracketExpandedIntervalsForTesting(reference, startIndex);
+            final int count = IntervalUtils.unionAppendedIntervalsForTesting(intervals, startIndex, mergedEnd);
+            final String expected = toIntervalString(reference, 0);
+            final String actual = toIntervalString(intervals, 0);
+            if (!expected.equals(actual)) {
+                Assert.fail("iteration " + i + ", head " + startIndex / 2 + ", merged " + toIntervalString(merged, 0)
+                        + ", appended " + toIntervalString(appended, 0) + "\nexpected: " + expected + "\nactual:   " + actual);
+            }
+            final int mergedCount = merged.size() / 2;
+            final int appendedCount = appended.size() / 2;
+            Assert.assertTrue("iteration " + i + ", count " + count, count >= appendedCount && count <= 3 * (mergedCount + appendedCount));
+
+            if (mergedCount == 0) {
+                noMergedCount += appendedCount > 0 ? 1 : 0;
+            } else if (appendedCount == 0) {
+                noAppendedCount++;
+            } else {
+                // the merged intervals that sort before the first new one, and whether the last merged
+                // one sorts after every new one
+                int firstAppended = 0;
+                int lastAppended = 0;
+                for (int j = 1; j < appendedCount; j++) {
+                    if (isIntervalBefore(appended, j, appended, firstAppended)) {
+                        firstAppended = j;
+                    }
+                    if (isIntervalBefore(appended, lastAppended, appended, j)) {
+                        lastAppended = j;
+                    }
+                }
+                int landing = 0;
+                while (landing < mergedCount && isIntervalBefore(merged, landing, appended, firstAppended)) {
+                    landing++;
+                }
+                if (landing == 0) {
+                    landingFirstCount++;
+                } else if (landing < mergedCount) {
+                    landingMiddleCount++;
+                } else {
+                    landingLastCount++;
+                }
+                final int resultCount = (reference.size() - startIndex) / 2;
+                if (isIntervalBefore(appended, lastAppended, merged, mergedCount - 1)) {
+                    if (resultCount > mergedCount) {
+                        moreWithLaterCount++;
+                    } else if (resultCount < mergedCount) {
+                        fewerWithLaterCount++;
+                    } else {
+                        sameWithLaterCount++;
+                    }
+                }
+                if (appendedCount == 1 && resultCount <= mergedCount - 1) {
+                    // the new interval took two merged ones or more
+                    chainCount++;
+                }
+                for (int j = 0; j < appendedCount; j++) {
+                    for (int k = 0; k < mergedCount; k++) {
+                        if (appended.getQuick(2 * j) == merged.getQuick(2 * k) && appended.getQuick(2 * j + 1) == merged.getQuick(2 * k + 1)) {
+                            duplicateCount++;
+                            j = appendedCount;
+                            break;
+                        }
+                    }
+                }
+            }
+            boolean isInverted = false;
+            boolean isMinMax = false;
+            for (LongList list : new LongList[]{merged, appended}) {
+                for (int j = 0, n = list.size(); j < n; j += 2) {
+                    isInverted |= list.getQuick(j) > list.getQuick(j + 1);
+                    isMinMax |= list.getQuick(j) == Long.MIN_VALUE || list.getQuick(j + 1) == Long.MAX_VALUE;
+                }
+            }
+            invertedCount += isInverted ? 1 : 0;
+            minMaxCount += isMinMax ? 1 : 0;
+        }
+        LOG.info().$("union of appended intervals [landingFirst=").$(landingFirstCount)
+                .$(", landingMiddle=").$(landingMiddleCount)
+                .$(", landingLast=").$(landingLastCount)
+                .$(", moreWithLater=").$(moreWithLaterCount)
+                .$(", fewerWithLater=").$(fewerWithLaterCount)
+                .$(", sameWithLater=").$(sameWithLaterCount)
+                .$(", chain=").$(chainCount)
+                .$(", noAppended=").$(noAppendedCount)
+                .$(", noMerged=").$(noMergedCount)
+                .$(", inverted=").$(invertedCount)
+                .$(", minMax=").$(minMaxCount)
+                .$(", duplicate=").$(duplicateCount)
+                .I$();
+        Assert.assertTrue(landingFirstCount > 0);
+        Assert.assertTrue(landingMiddleCount > 0);
+        Assert.assertTrue(landingLastCount > 0);
+        Assert.assertTrue(moreWithLaterCount > 0);
+        Assert.assertTrue(fewerWithLaterCount > 0);
+        Assert.assertTrue(sameWithLaterCount > 0);
+        Assert.assertTrue(chainCount > 0);
+        Assert.assertTrue(noAppendedCount > 0);
+        Assert.assertTrue(noMergedCount > 0);
+        Assert.assertTrue(invertedCount > 0);
+        Assert.assertTrue(minMaxCount > 0);
+        Assert.assertTrue(duplicateCount > 0);
+    }
+
+    @Test
     public void testUnionBracketExpandedIntervalsAdjacentPairCoalesces() {
         // lo == prevHi + 1 at a normal boundary - the second disjunct of the guard merges it
         LongList intervals = new LongList();
@@ -651,6 +871,71 @@ public class IntervalUtilsTest {
         runTestUnionInPlace(intervals, 2, "[1,5]");
     }
 
+    /**
+     * Adds an interval of a new batch: mostly one at, next to, over, in or between the merged
+     * intervals, else a random one.
+     */
+    private static void addRandomAppendedInterval(Rnd rnd, LongList merged, LongList appended) {
+        final int mergedCount = merged.size() / 2;
+        if (mergedCount == 0 || rnd.nextInt(8) == 0) {
+            addRandomInterval(rnd, appended);
+            return;
+        }
+        final int k = rnd.nextInt(mergedCount);
+        final long lo = merged.getQuick(2 * k);
+        final long hi = merged.getQuick(2 * k + 1);
+        final long lastHi = merged.getQuick(merged.size() - 1);
+        switch (rnd.nextInt(10)) {
+            // after the last one, with a gap
+            case 0 -> appended.add(lastHi + 2 + rnd.nextInt(5), lastHi + 8 + rnd.nextInt(5));
+            // adjacent after one
+            case 1 -> appended.add(hi + 1, hi + 1 + rnd.nextInt(4));
+            // overlapping one
+            case 2 -> appended.add(lo + rnd.nextInt(3), hi + rnd.nextInt(6));
+            // inside one, inverted when it is short
+            case 3 -> appended.add(lo + 1, hi - 1);
+            // between one and the next
+            case 4 -> appended.add(hi + 2, k + 1 < mergedCount ? merged.getQuick(2 * k + 2) - 2 : hi + 3);
+            // before the first one, adjacent or with a gap
+            case 5 -> appended.add(merged.getQuick(0) - 5 - rnd.nextInt(3), merged.getQuick(0) - 1 - rnd.nextInt(2));
+            // bridging one and up to three after it
+            case 6 -> {
+                final int last = Math.min(mergedCount - 1, k + 1 + rnd.nextInt(3));
+                appended.add(lo + rnd.nextInt(2), merged.getQuick(2 * last) + rnd.nextInt(2));
+            }
+            // from one to past the last one
+            case 7 -> appended.add(lo, lastHi + rnd.nextInt(4));
+            // a duplicate
+            case 8 -> appended.add(lo, hi);
+            // inverted
+            default -> appended.add(lo + rnd.nextInt(5), lo - 1 - rnd.nextInt(3));
+        }
+    }
+
+    /**
+     * Adds a random interval over a small range, now and then inverted, or at Long.MIN_VALUE or
+     * Long.MAX_VALUE.
+     */
+    private static void addRandomInterval(Rnd rnd, LongList out) {
+        long lo = rnd.nextInt(100);
+        long hi = lo + rnd.nextInt(12) - 2;
+        switch (rnd.nextInt(40)) {
+            case 0 -> lo = Long.MIN_VALUE;
+            case 1 -> hi = Long.MAX_VALUE;
+            case 2 -> {
+                lo = Long.MIN_VALUE;
+                hi = Long.MIN_VALUE;
+            }
+            case 3 -> {
+                lo = Long.MAX_VALUE;
+                hi = Long.MAX_VALUE;
+            }
+            default -> {
+            }
+        }
+        out.add(lo, hi);
+    }
+
     private static void assertParseFloorPartialTimestampEquals(long expectedTimestamp, CharSequence actual) throws NumericException {
         Assert.assertEquals(expectedTimestamp, MicrosTimestampDriver.floor(actual));
     }
@@ -661,6 +946,16 @@ public class IntervalUtilsTest {
 
     private static long getIntervalLo(LongList intervals, int pos) {
         return intervals.getQuick(pos << 1);
+    }
+
+    /**
+     * Returns whether interval i of a sorts before interval j of b in the order of a union: by lo,
+     * then by hi.
+     */
+    private static boolean isIntervalBefore(LongList a, int i, LongList b, int j) {
+        final long loA = a.getQuick(2 * i);
+        final long loB = b.getQuick(2 * j);
+        return loA < loB || (loA == loB && a.getQuick(2 * i + 1) < b.getQuick(2 * j + 1));
     }
 
     /**
@@ -755,6 +1050,41 @@ public class IntervalUtilsTest {
     private void add(LongList intervals, long lo, long hi) {
         intervals.add(lo);
         intervals.add(hi);
+    }
+
+    /**
+     * Asserts that unionAppendedIntervals() leaves the head, the merged intervals and the appended
+     * ones after them as the expected list, the same as a union of all intervals after the head does,
+     * and the number of intervals it counts.
+     */
+    private void assertUnionAppended(long[] head, long[] merged, long[] appended, String expected, int expectedCount) {
+        // the merged intervals are the output of a union, which another union leaves as they are
+        final LongList union = new LongList();
+        for (long value : merged) {
+            union.add(value);
+        }
+        final String mergedText = toIntervalString(union, 0);
+        if (union.size() > 0) {
+            IntervalUtils.unionBracketExpandedIntervalsForTesting(union, 0);
+        }
+        TestUtils.assertEquals(mergedText, toIntervalString(union, 0));
+
+        final LongList intervals = new LongList();
+        final LongList reference = new LongList();
+        for (long[] values : new long[][]{head, merged, appended}) {
+            if (values != null) {
+                for (long value : values) {
+                    intervals.add(value);
+                    reference.add(value);
+                }
+            }
+        }
+        final int startIndex = head != null ? head.length : 0;
+        IntervalUtils.unionBracketExpandedIntervalsForTesting(reference, startIndex);
+        final int count = IntervalUtils.unionAppendedIntervalsForTesting(intervals, startIndex, startIndex + merged.length);
+        TestUtils.assertEquals(expected, toIntervalString(intervals, 0));
+        TestUtils.assertEquals(toIntervalString(reference, 0), toIntervalString(intervals, 0));
+        Assert.assertEquals(expected, expectedCount, count);
     }
 
     private void runTestIntersectInplace(LongList intervals, int divider, String expected) {

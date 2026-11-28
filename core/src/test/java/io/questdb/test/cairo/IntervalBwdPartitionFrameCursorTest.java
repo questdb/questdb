@@ -567,8 +567,9 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
 
     @Test
     public void testOverlappingTickIntervals() throws Exception {
-        // The spring-forward gap makes the '...@Europe/London;50m;1h;4' intervals overlap in UTC.
-        // Each row must appear once in both scan directions and in count().
+        // Shifting the local times in the spring-forward gap forward made the
+        // '...@Europe/London;50m;1h;4' intervals overlap in UTC. The conversion now ends and starts
+        // them at the transition. Each row must appear once in both scan directions and in count().
         assertMemoryLeak(() -> {
             AbstractCairoTest.create(new TableModel(configuration, "x", PartitionBy.DAY)
                     .timestamp(timestampType.getTimestampType()));

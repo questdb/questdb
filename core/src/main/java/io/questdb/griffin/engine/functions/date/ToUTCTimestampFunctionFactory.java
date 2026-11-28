@@ -36,8 +36,10 @@ import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.MonotonicTimestampFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.IntList;
 import io.questdb.std.Interval;
+import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -146,6 +148,23 @@ public class ToUTCTimestampFunctionFactory implements FunctionFactory {
         @Override
         public int invertTimestampInterval(Interval io) {
             return MonotonicTimestampFunction.invertZoneOffsetShift(io, tzRules, timestampDriver, 1);
+        }
+
+        @Override
+        public int invertTimestampIntervals(LongList intervals, int startIndex, Interval scratch) {
+            // the conversion takes the local times of each run of one offset of the zone exactly,
+            // across the changes of the clocks too, but would overflow near the ends of the range
+            final long margin = timestampDriver.fromHours(48);
+            if (MonotonicTimestampFunction.hasEndNearLongLimits(intervals, startIndex, 2 * margin)) {
+                return NONE;
+            }
+            IntervalUtils.utcIntervalsToLocal(tzRules, intervals, startIndex, margin);
+            return EXACT;
+        }
+
+        @Override
+        public boolean isExactForFiniteIntervals(Interval scratch) {
+            return true;
         }
     }
 
