@@ -270,6 +270,45 @@ steps:
       - script: python3 .github/prepare_rust_env.py --export-cargo-install-env --match core/rust/qdbr/rust-toolchain.toml
         displayName: "Ensure Rust is installed"
         # Note, the `prepare_rust_env.py` script exports a number of variables.
+      # The legs of a PR build that changes no Rust file test against the release library, and
+      # compiling it takes about 2.5 minutes in each of them. Cache it under a hash of all that
+      # goes into it. A PR run reads the entries of its own earlier builds and of its target
+      # branch, and writes only to its own scope; an entry never changes once saved. A PR that
+      # changes Rust neither reads nor writes the cache: its legs compile the library
+      # instrumented for coverage (qdbr-coverage). .cargo/config.toml is named on its own in
+      # case the pattern skips dot directories.
+      - task: Cache@2
+        displayName: "Cache Rust library"
+        continueOnError: true
+        inputs:
+          key: '"qdbr-release" | "$(RUSTC_HOST_TRIPLE)" | "$(RUSTC_RELEASE)" | "$(LINUX_GLIBC_VERSION)" | core/rust/** | core/rust/qdbr/.cargo/config.toml | core/pom.xml'
+          path: $(Pipeline.Workspace)/qdbr-cache
+        condition: |
+          and(
+            succeeded(),
+            eq(variables['os'], 'Linux'),
+            eq(variables['SOURCE_CODE_CHANGED'], 'true'),
+            ne(variables['RUST_SOURCE_CODE_CHANGED'], 'true'),
+            ne(variables['System.PullRequest.IsFork'], 'true'),
+            or(startsWith(variables['testset'], 'coverage'), startsWith(variables['testset'], 'plain'))
+          )
+      # The folder must exist when the job ends, or the cache task fails to save it. A restored
+      # folder without the library counts as a miss.
+      - bash: |
+          mkdir -p "$(Pipeline.Workspace)/qdbr-cache"
+          if [ -s "$(Pipeline.Workspace)/qdbr-cache/libquestdbr.so" ]; then
+            echo "##vso[task.setvariable variable=RUST_NATIVE_ARGS]-DskipNative -Dqdbr.prebuilt.dir=$(Pipeline.Workspace)/qdbr-cache"
+          fi
+        displayName: "Use cached Rust library"
+        condition: |
+          and(
+            succeeded(),
+            eq(variables['os'], 'Linux'),
+            eq(variables['SOURCE_CODE_CHANGED'], 'true'),
+            ne(variables['RUST_SOURCE_CODE_CHANGED'], 'true'),
+            ne(variables['System.PullRequest.IsFork'], 'true'),
+            or(startsWith(variables['testset'], 'coverage'), startsWith(variables['testset'], 'plain'))
+          )
 
   - template: install-llvm.yml
     parameters:
@@ -415,7 +454,7 @@ steps:
       goals: "install"
       options: "-s $(MAVEN_SETTINGS_FILE) --batch-mode -pl core -am -DskipTests
         -P build-web-console
-        $(CLIENT_PROFILE) $(MAVEN_RUN_OPTS)"
+        $(CLIENT_PROFILE) $(MAVEN_RUN_OPTS) $(RUST_NATIVE_ARGS)"
       jdkVersionOption: $(jdk)
     # succeeded() explicitly: see "Compile with Maven" above.
     condition: |
@@ -472,7 +511,7 @@ steps:
         -Dsurefire.failIfNoSpecifiedTests=false
         -P $(COVERAGE_PROFILES)
         -Dcoverage.includes=$(COVERAGE_INCLUDES)
-        $(CLIENT_PROFILE) $(MAVEN_RUN_OPTS) $(TEST_COMMIT_MODE_OPT)"
+        $(CLIENT_PROFILE) $(MAVEN_RUN_OPTS) $(RUST_NATIVE_ARGS) $(TEST_COMMIT_MODE_OPT)"
       jdkVersionOption: $(jdk)
     env:
       QDB_TEST_WINDOWS_SYMLINKS: "1"
@@ -489,6 +528,25 @@ steps:
             eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'),
             eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true')
         )
+      )
+
+  # On a cache miss Maven compiled the library; put it where the cache task saves it from when
+  # the job ends. The task saves only after a job that succeeded. A failed copy must not fail
+  # a leg whose tests passed: it leaves an empty entry, which reads as a miss.
+  - bash: |
+      if [ ! -e "$(Pipeline.Workspace)/qdbr-cache/libquestdbr.so" ]; then
+        cp core/target/classes/io/questdb/bin/linux-*/libquestdbr.so "$(Pipeline.Workspace)/qdbr-cache/" \
+          || echo "##vso[task.logissue type=warning]no Rust library to cache"
+      fi
+    displayName: "Hand the Rust library to the cache"
+    condition: |
+      and(
+        succeeded(),
+        eq(variables['os'], 'Linux'),
+        eq(variables['SOURCE_CODE_CHANGED'], 'true'),
+        ne(variables['RUST_SOURCE_CODE_CHANGED'], 'true'),
+        ne(variables['System.PullRequest.IsFork'], 'true'),
+        or(startsWith(variables['testset'], 'coverage'), startsWith(variables['testset'], 'plain'))
       )
 
   - bash: |
