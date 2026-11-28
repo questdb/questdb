@@ -145,6 +145,7 @@ import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.DirectUtf8StringZ;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.SingleCharCharSequence;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -4144,7 +4145,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     public int getSymbolIndexNoTransientCountUpdate(int columnIndex, CharSequence symValue) {
-        return symbolMapWriters.getQuick(columnIndex).put(symValue, SymbolValueCountCollector.NOOP);
+        return putSymbol(columnIndex, symValue, SymbolValueCountCollector.NOOP);
     }
 
     public MapWriter getSymbolMapWriter(int columnIndex) {
@@ -20663,9 +20664,29 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    // The key of value in the map of the SYMBOL column, the symbol count collected as the map does unless collector
+    // says otherwise. A put that fails part way takes back what it wrote; a map that cannot take it back closes and
+    // throws CairoError, and the writer must not be used again.
+    private int putSymbol(int columnIndex, CharSequence value, @Nullable SymbolValueCountCollector collector) {
+        final MapWriter mapWriter = symbolMapWriters.getQuick(columnIndex);
+        try {
+            return collector == null ? mapWriter.put(value) : mapWriter.put(value, collector);
+        } catch (CairoError e) {
+            distressed = true;
+            throw e;
+        }
+    }
+
     // Moves each column that a cancelled row moved back to the start of row rowCount. Only a column past its row
     // start moves, into a page that holds bytes the column wrote, so the cancel needs no disk space.
     private void rewindAppendPosition(long rowCount) {
+        engine.getPartitionOverwriteControl().notifyPartitionMutates(
+                tableToken,
+                timestampType,
+                lastOpenPartitionTs,
+                lastOpenPartitionTxnName,
+                rowCount
+        );
         try {
             for (int i = 0; i < columnCount; i++) {
                 final int columnType = metadata.getColumnType(i);
@@ -24245,26 +24266,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
         } else {
             txWriter.cancelRow();
-            // we are staying within the same partition, prepare append positions for row count
-            boolean rowChanged = metadata.getTimestampIndex() >= 0; // adding new row already writes timestamp
-            if (!rowChanged) {
-                for (int i = 0; i < columnCount; i++) {
-                    if (rowValueIsNotNull.getQuick(i) == masterRef) {
-                        rowChanged = true;
-                        break;
-                    }
-                }
-            }
-
-            // A designated timestamp or a put that returned means the row wrote columns, so every column goes back to
-            // the row start. Without either, a put that failed part way, and the NULLs that rowAppend() writes until
-            // one of them fails, can still have moved columns: rewindAppendPosition() moves back those that moved and
-            // maps no page the files lack, so that a cancel on a full disk keeps the writer usable.
-            if (rowChanged) {
-                setAppendPosition(dirtyTransientRowCount - 1, false);
-            } else {
-                rewindAppendPosition(dirtyTransientRowCount - 1);
-            }
+            // We are staying within the same partition. The designated timestamp, the puts that returned, a put that
+            // failed part way and the NULLs that rowAppend() writes until one of them fails can each have moved a
+            // column: rewindAppendPosition() moves back those that moved and maps no page the files lack. A column
+            // that the row left at the end of a page keeps that page, rather than map, and allocate, the next one, so
+            // that a cancel on a full disk keeps the writer usable and the rows of its transaction.
+            rewindAppendPosition(dirtyTransientRowCount - 1);
         }
         rowValueIsNotNull.fill(0, columnCount, --masterRef);
 
@@ -25003,13 +25010,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         @Override
         public void putSym(int columnIndex, CharSequence value) {
-            getPrimaryColumn(columnIndex).putInt(symbolMapWriters.getQuick(columnIndex).put(value));
+            getPrimaryColumn(columnIndex).putInt(putSymbol(columnIndex, value, null));
             setRowValueNotNull(columnIndex);
         }
 
         @Override
         public void putSym(int columnIndex, char value) {
-            getPrimaryColumn(columnIndex).putInt(symbolMapWriters.getQuick(columnIndex).put(value));
+            getPrimaryColumn(columnIndex).putInt(putSymbol(columnIndex, SingleCharCharSequence.get(value), null));
             setRowValueNotNull(columnIndex);
         }
 

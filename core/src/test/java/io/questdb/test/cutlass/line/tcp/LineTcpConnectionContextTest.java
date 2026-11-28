@@ -27,10 +27,12 @@ package io.questdb.test.cutlass.line.tcp;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.DebugUtils;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.std.Files;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
@@ -40,6 +42,7 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.AllocateFailingFacade;
+import io.questdb.test.cairo.DiskFillingFacade;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -1377,6 +1380,57 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
     }
 
     @Test
+    public void testFailedLineAtPageEndDiskStaysFull() throws Exception {
+        // A table with a designated timestamp that bypasses WAL. Column w, added after 10 rows, ends its first page
+        // 10 rows after timestamp and v do. The disk fills up at the put of w of a line, which needs the next page of
+        // w.d, and stays full. ILP logs the error and cancels the row, which allocates nothing, so it keeps the
+        // writer: the lines before the failed one, not committed yet, commit when the context closes, on the full
+        // disk.
+        final String table = "fullDiskPageEnd";
+        node1.setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, Files.PAGE_SIZE);
+        // the lines commit when the context closes
+        node1.setProperty(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 1000);
+        final DiskFillingFacade ff = new DiskFillingFacade(table, "w.d");
+        runInContext(
+                ff,
+                () -> {
+                    final long top = 10;
+                    // w.d ends its first page after row n
+                    final long n = Files.PAGE_SIZE / Long.BYTES + top;
+                    execute("CREATE TABLE " + table + " (v LONG, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY BYPASS WAL");
+                    execute("INSERT INTO " + table + " SELECT x, x::TIMESTAMP FROM long_sequence(" + top + ")");
+                    execute("ALTER TABLE " + table + " ADD COLUMN w LONG");
+                    execute("INSERT INTO " + table + " SELECT x + " + top + ", (x + " + top + ")::TIMESTAMP, x + " + top
+                            + " FROM long_sequence(" + (n - top - 3) + ")");
+                    ff.isArmed.set(true);
+                    // rows n - 2..n land, the last of them ends the first page of w.d, and row n + 1 fails
+                    final StringBuilder lines = new StringBuilder();
+                    for (long x = n - 2; x <= n + 1; x++) {
+                        lines.append(table).append(" v=").append(x).append("i,w=").append(x).append("i ").append(x * 1000).append('\n');
+                    }
+                    recvBuffer = lines.toString();
+                    handleIO();
+                    closeContext();
+                    Assert.assertFalse(ff.isArmed.get());
+                    Assert.assertEquals(1, ff.failedAllocations.get());
+
+                    ff.isFull.set(false);
+                    assertQuery("SELECT count(), count(w), sum(v), sum(w) FROM " + table)
+                            .noLeakCheck()
+                            .expectSize()
+                            .noRandomAccess()
+                            .returns("count\tcount1\tsum\tsum1\n" + n + '\t' + (n - top) + '\t' + n * (n + 1) / 2 + '\t'
+                                    + (n * (n + 1) / 2 - top * (top + 1) / 2) + '\n');
+                    assertQuery("SELECT v, w FROM " + table + " WHERE v >= " + (n - 3))
+                            .noLeakCheck()
+                            .returns("v\tw\n" + (n - 3) + '\t' + (n - 3) + '\n' + (n - 2) + '\t' + (n - 2) + '\n'
+                                    + (n - 1) + '\t' + (n - 1) + '\n' + n + '\t' + n + '\n');
+                },
+                null
+        );
+    }
+
+    @Test
     public void testFailure() throws Exception {
         Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType.getTimestampType()));
         final AtomicInteger nCommittedLines = new AtomicInteger(4);
@@ -1780,6 +1834,41 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
         int nTables = 3;
         int nIterations = 10_000;
         testThreading(nTables, nIterations);
+    }
+
+    @Test
+    public void testNewColumnAfterVarcharKeepsDataDense() throws Exception {
+        // A line puts a VARCHAR value, then names a column that the table lacks: ILP cancels the row, adds the column
+        // and puts the line again. The cancel moves the VARCHAR column back to the start of the row, its data vector
+        // too, so the values follow each other with no bytes between, as in a table that had the column already.
+        final String table = "newColumnDense";
+        runInContext(() -> {
+            execute("CREATE TABLE " + table + " (s VARCHAR, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY BYPASS WAL");
+            final String a = "a".repeat(20);
+            final String b = "b".repeat(20);
+            final String c = "c".repeat(20);
+            recvBuffer = table + " s=\"" + a + "\" 1000\n"
+                    + table + " s=\"" + b + "\",x=1i 2000\n"
+                    + table + " s=\"" + c + "\",y=2i 3000\n";
+            handleIO();
+            closeContext();
+            assertTable(
+                    "s\ttimestamp\tx\ty\n"
+                            + a + "\t1970-01-01T00:00:00.000001Z\tnull\tnull\n"
+                            + b + "\t1970-01-01T00:00:00.000002Z\t1\tnull\n"
+                            + c + "\t1970-01-01T00:00:00.000003Z\tnull\t2\n",
+                    table
+            );
+            try (TableReader reader = getReader(table)) {
+                Assert.assertEquals(1, reader.getPartitionCount());
+                reader.openPartition(0);
+                final int columnBase = reader.getColumnBase(0);
+                final int columnIndex = reader.getMetadata().getColumnIndex("s");
+                final MemoryCR dataMem = reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, columnIndex));
+                final MemoryCR auxMem = reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, columnIndex) + 1);
+                Assert.assertFalse(DebugUtils.isSparseVarCol(3, auxMem.getPageAddress(0), dataMem.getPageAddress(0), ColumnType.VARCHAR));
+            }
+        });
     }
 
     @Test

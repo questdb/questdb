@@ -50,10 +50,9 @@ public class ArrayTypeDriverTest extends AbstractTest {
 
     @Test
     public void testRewindAppendPosition() throws Exception {
-        // A row was cancelled after it moved a DOUBLE[] column, or did not move it. rewindAppendPosition() moves the
-        // aux vector back to the start of the row, and only when the row moved it: each aux entry holds the data
-        // offset of its row, so the data vector keeps the bytes of the cancelled row, which no row points at. It maps
-        // no page that the files lack, and the next values land after the committed ones.
+        // A row was cancelled after it moved a DOUBLE[] column, or did not move it. rewindAppendPosition() moves both
+        // vectors back to the start of the row: the data vector keeps no byte of the cancelled row, so the next values
+        // land right after the committed ones, with no gap between. It maps no page that the files lack.
         TestUtils.assertMemoryLeak(() -> {
             for (CancelledRow cancelled : CancelledRow.values()) {
                 assertRewind(cancelled);
@@ -90,15 +89,22 @@ public class ArrayTypeDriverTest extends AbstractTest {
         final long pageSize = Files.PAGE_SIZE;
         final ObjList<double[]> values = new ObjList<>();
         final long committedRows = switch (cancelled) {
-            case NULL_AT_ROW_ZERO -> 0;
+            case NULL_AT_ROW_ZERO, VALUE_AT_ROW_ZERO, VALUE_CUT_AT_ROW_ZERO -> 0;
             // arrays of 12 doubles, 104 bytes in the data vector: the next one crosses the end of its first page
             case VALUE_CUT_BY_FAILED_PAGE -> pageSize / 104;
             // the aux entries end the first page of the aux file
-            case NONE_AT_AUX_PAGE_END, VALUE_WITH_FAILED_AUX_PAGE, NULL_OPENS_AUX_PAGE -> pageSize / ARRAY_AUX_WIDTH_BYTES;
+            case NONE_AT_AUX_PAGE_END, VALUE_WITH_FAILED_AUX_PAGE, NULL_OPENS_AUX_PAGE, VALUE_OPENS_AUX_PAGE ->
+                    pageSize / ARRAY_AUX_WIDTH_BYTES;
+            // arrays of 7 doubles, 64 bytes in the data vector, end the first page of the data file
+            case NONE_AT_DATA_PAGE_END, VALUE_OPENS_DATA_PAGE -> pageSize / 64;
             default -> 10;
         };
         for (int i = 0; i < committedRows; i++) {
-            values.add(arrayOf(i, cancelled == CancelledRow.VALUE_CUT_BY_FAILED_PAGE ? 12 : 1 + i % 3));
+            values.add(arrayOf(i, switch (cancelled) {
+                case VALUE_CUT_BY_FAILED_PAGE -> 12;
+                case NONE_AT_DATA_PAGE_END, VALUE_OPENS_DATA_PAGE -> 7;
+                default -> 1 + i % 3;
+            }));
         }
         try (
                 Path auxPath = new Path().of(temp.newFile().getAbsolutePath());
@@ -113,26 +119,41 @@ public class ArrayTypeDriverTest extends AbstractTest {
                     append(auxMem, dataMem, array, values.getQuick(i));
                 }
                 Assert.assertEquals(context, committedRows * ARRAY_AUX_WIDTH_BYTES, auxMem.getAppendOffset());
+                if (cancelled == CancelledRow.VALUE_CUT_AT_ROW_ZERO) {
+                    // the first page of the data file, which the value does not fit
+                    dataMem.jumpTo(0);
+                }
+                final long committedDataSize = dataMem.getAppendOffset();
+                if (cancelled == CancelledRow.NONE_AT_DATA_PAGE_END || cancelled == CancelledRow.VALUE_OPENS_DATA_PAGE) {
+                    Assert.assertEquals(context, pageSize, committedDataSize);
+                }
 
                 // the writes of the cancelled row
                 switch (cancelled) {
                     case NULL, NULL_AT_ROW_ZERO, NULL_OPENS_AUX_PAGE -> ArrayTypeDriver.INSTANCE.appendNull(auxMem, dataMem);
+                    case VALUE, VALUE_AT_ROW_ZERO, VALUE_OPENS_AUX_PAGE, VALUE_OPENS_DATA_PAGE ->
+                            append(auxMem, dataMem, array, arrayOf(-1, 2));
                     case VALUE_CUT_BY_FAILED_PAGE -> failAppend(context, ff, dataMem.getFd(), auxMem, dataMem, array, arrayOf(-1, 12));
+                    // its shape lands, its doubles take a page
+                    case VALUE_CUT_AT_ROW_ZERO -> failAppend(context, ff, dataMem.getFd(), auxMem, dataMem, array, arrayOf(-1, (int) pageSize / Double.BYTES));
                     case VALUE_WITH_FAILED_AUX_PAGE -> failAppend(context, ff, auxMem.getFd(), auxMem, dataMem, array, arrayOf(-1, 2));
                     default -> {
                     }
                 }
-                if (cancelled == CancelledRow.NULL_OPENS_AUX_PAGE) {
-                    // the entry of the NULL starts the second page of the aux file
+                if (cancelled == CancelledRow.NULL_OPENS_AUX_PAGE || cancelled == CancelledRow.VALUE_OPENS_AUX_PAGE) {
+                    // the entry of the row starts the second page of the aux file
                     Assert.assertEquals(context, pageSize + ARRAY_AUX_WIDTH_BYTES, auxMem.getAppendOffset());
+                }
+                if (cancelled == CancelledRow.VALUE_OPENS_DATA_PAGE) {
+                    // the value starts the second page of the data file
+                    Assert.assertEquals(context, pageSize + 24, dataMem.getAppendOffset());
                 }
 
                 final int allocations = ff.allocations.get();
-                final long dataOffset = dataMem.getAppendOffset();
                 ArrayTypeDriver.INSTANCE.rewindAppendPosition(committedRows, auxMem, dataMem);
                 Assert.assertEquals(context, allocations, ff.allocations.get());
                 Assert.assertEquals(context, committedRows * ARRAY_AUX_WIDTH_BYTES, auxMem.getAppendOffset());
-                Assert.assertEquals(context, dataOffset, dataMem.getAppendOffset());
+                Assert.assertEquals(context, committedDataSize, dataMem.getAppendOffset());
 
                 // the next values: one longer than half a page, NULL, and a short one
                 values.add(arrayOf(100, (int) pageSize / 16));
@@ -149,6 +170,8 @@ public class ArrayTypeDriverTest extends AbstractTest {
                 final BorrowedArray actual = new BorrowedArray();
                 final long auxAddr = auxMem.addressOf(0);
                 final long dataAddr = dataMem.addressOf(0);
+                // each value starts where the value before it ends
+                Assert.assertFalse(context, ArrayTypeDriver.INSTANCE.isSparseDataVector(auxAddr, dataAddr, values.size()));
                 for (int i = 0, n = values.size(); i < n; i++) {
                     actual.of(DOUBLE_ARRAY, auxAddr, auxAddr + auxMem.size(), dataAddr, dataAddr + dataMem.size(), i);
                     final double[] value = values.getQuick(i);
@@ -190,9 +213,23 @@ public class ArrayTypeDriverTest extends AbstractTest {
         NULL_AT_ROW_ZERO,
         // a NULL, whose aux entry takes the second page of the aux file
         NULL_OPENS_AUX_PAGE,
+        // nothing, the values end the first page of the data file: a jump to the end of row k - 1 would map the next
+        // page
+        NONE_AT_DATA_PAGE_END,
+        // a value
+        VALUE,
+        // a value in the first row
+        VALUE_AT_ROW_ZERO,
+        // a value, whose aux entry takes the second page of the aux file
+        VALUE_OPENS_AUX_PAGE,
+        // a value, which takes the second page of the data file
+        VALUE_OPENS_DATA_PAGE,
         // the start of a value that crosses the end of the first page of the data file, whose next page cannot be
         // allocated
         VALUE_CUT_BY_FAILED_PAGE,
+        // the start of a value in the first row, which the first page of the data file cannot hold, and whose next
+        // page cannot be allocated
+        VALUE_CUT_AT_ROW_ZERO,
         // a value, whose aux entry needs the next page of the aux file, which cannot be allocated
         VALUE_WITH_FAILED_AUX_PAGE
     }

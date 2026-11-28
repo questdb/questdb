@@ -701,17 +701,39 @@ public class SymbolMapWriter implements Closeable, MapWriter {
         // offsetMem has N+1 entries, where N is the number of symbols
         // Last entry is the length of the symbol (.c) file after N symbols are already written
         final long nOffsetOffset = offsetMem.getAppendOffset() - 8L;
-        final long nPlusOneValue = charMem.putStr(symbol);
+        try {
+            final long nPlusOneValue = charMem.putStr(symbol);
 
-        // Here we're adding the offset of in the offset file where the symbol started
-        indexWriter.add(hash, nOffsetOffset);
+            // Here we're adding the offset of in the offset file where the symbol started
+            indexWriter.add(hash, nOffsetOffset);
 
-        // Here we are adding a new symbol and writing offset file the offset AFTER the new symbol
-        offsetMem.putLong(nPlusOneValue);
+            // Here we are adding a new symbol and writing offset file the offset AFTER the new symbol
+            offsetMem.putLong(nPlusOneValue);
+        } catch (Throwable th) {
+            takeBackFailedPut(offsetToKey(nOffsetOffset), th);
+            throw th;
+        }
 
         final int symIndex = offsetToKey(nOffsetOffset);
         countCollector.collectValueCount(symbolIndexInTxWriter, symIndex + 1);
         return symIndex;
+    }
+
+    // A put that failed part way, when a file of the map could not grow on a full disk for one, can leave the chars of
+    // the symbol in the char file and its offset in the index, but not the offset after it in the offset file. Left
+    // there, they make the next symbol take this key, its chars start after this one's and the key read as this
+    // symbol. Take them back, as rollback() does, but leave the cache and the symbol count, which the put did not
+    // change. When they cannot be taken back, close the map: the CairoError tells the table writer not to use it.
+    private void takeBackFailedPut(int symbolCount, Throwable failure) {
+        try {
+            indexWriter.rollbackValues(keyToOffset(symbolCount - 1));
+            offsetMem.jumpTo(keyToOffset(symbolCount) + Long.BYTES);
+            jumpCharMemToSymbolCount(symbolCount);
+        } catch (Throwable takeBackFailure) {
+            failure.addSuppressed(takeBackFailure);
+            closeNoTruncate();
+            throw new CairoError(failure);
+        }
     }
 
     /**

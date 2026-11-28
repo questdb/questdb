@@ -28,15 +28,21 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.DebugUtils;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderMetadata;
+import io.questdb.cairo.SymbolMapWriter;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.arr.DirectArray;
+import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
@@ -56,6 +62,7 @@ import java.util.Base64;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.LongFunction;
 
 /**
@@ -184,10 +191,130 @@ public class AppendPageFailureTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDesignatedTimestampCancelKeepsVarSizeDataDense() throws Exception {
+        // A row of a table with a designated timestamp puts a value of 24 bytes in the data vector of v, a var-size
+        // column, and its INSERT fails on a disk that fills up: at the put of x after it, which needs the next page
+        // of x.d; because the value crosses the end of the page of v.d; or because the aux entry of the value needs
+        // the next page of v.i. The cancel moves the data vector of v back to where the row starts, maps no page that
+        // the files lack, and keeps the writer: the values of the next rows follow the committed ones with no bytes
+        // between, as in a table that never had the failed row.
+        setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, Files.PAGE_SIZE);
+        final long pageSize = Files.PAGE_SIZE;
+        final String[][] types = {
+                // type, a value of 24 bytes in the data vector, whether the aux vector has an entry more than rows
+                {"STRING", "'abcdefghij'", "true"},
+                {"VARCHAR", "'abcdefghijklmnopqrstuvwx'::VARCHAR", "false"},
+                // 16 bytes
+                {"BINARY", "from_base64('QUJDREVGR0hJSktMTU5PUA==')", "true"},
+                {"DOUBLE[]", "ARRAY[1.5, 2.5]", "false"},
+        };
+        for (String[] type : types) {
+            final String value = type[1];
+            final boolean isAuxRowsPlusOne = Boolean.parseBoolean(type[2]);
+            for (String failingFile : new String[]{"x.d", "v.d", "v.i"}) {
+                final long n = switch (failingFile) {
+                    // x.d and ts.d end their first page, v.d its third
+                    case "x.d" -> pageSize / Long.BYTES;
+                    // the next value crosses the end of the first page of v.d
+                    case "v.d" -> pageSize / 24;
+                    // the aux entries end the first page of v.i
+                    default -> isAuxRowsPlusOne ? pageSize / Long.BYTES - 1 : pageSize / 16;
+                };
+                final String context = type[0] + ", " + failingFile;
+                final DiskFillingFacade ff = new DiskFillingFacade("t", failingFile);
+                assertMemoryLeak(ff, () -> assertCase(context, () -> {
+                    executeOnBoth("CREATE TABLE %t (ts TIMESTAMP, v " + type[0] + ", x LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+                    executeOnBoth("INSERT INTO %t SELECT x::TIMESTAMP, " + value + ", x FROM long_sequence(" + n + ")");
+                    final TableWriter writer = pooledWriter();
+                    ff.isArmed.set(true);
+                    failInsert(context, "INSERT INTO t VALUES (" + (n + 1) + "::TIMESTAMP, " + value + ", " + (n + 1) + ")");
+                    Assert.assertFalse(context, ff.isArmed.get());
+                    Assert.assertEquals(context, 1, ff.failedAllocations.get());
+                    assertPooledWriter(context, writer);
+
+                    ff.isFull.set(false);
+                    executeOnBoth("INSERT INTO %t VALUES (" + (n + 2) + "::TIMESTAMP, " + value + ", " + (n + 2) + "), ("
+                            + (n + 3) + "::TIMESTAMP, NULL, " + (n + 3) + ")");
+                    assertQuery("SELECT count(), sum(x) FROM t")
+                            .noLeakCheck()
+                            .expectSize()
+                            .noRandomAccess()
+                            .returns("count\tsum\n" + (n + 2) + '\t' + (n * (n + 1) / 2 + n + 2 + n + 3) + '\n');
+                    assertSqlCursors("ref", "t");
+                    assertVarSizeDataDense(context, "t");
+                    execute("DROP TABLE t");
+                    execute("DROP TABLE ref");
+                }));
+            }
+        }
+    }
+
+    @Test
+    public void testDesignatedTimestampFailedPutKeepsTransaction() throws Exception {
+        // Column w, added after `top` rows, as ILP adds a column, ends its first page `top` rows after ts and v do.
+        // Rows of a transaction land, then the put of w of the next row needs the next page of w.d on a disk that
+        // stays full. The cancel of that row allocates nothing and leaves the writer usable: the commit, on the full
+        // disk, keeps the rows of the transaction, and the rows after it land once the disk has space.
+        setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, Files.PAGE_SIZE);
+        final DiskFillingFacade ff = new DiskFillingFacade("t", "w.d");
+        assertMemoryLeak(ff, () -> {
+            final long top = 10;
+            // w.d ends its first page after row n
+            final long n = Files.PAGE_SIZE / Long.BYTES + top;
+            executeOnBoth("CREATE TABLE %t (ts TIMESTAMP, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            executeOnBoth("INSERT INTO %t SELECT x::TIMESTAMP, x / 2.0 FROM long_sequence(" + top + ")");
+            executeOnBoth("ALTER TABLE %t ADD COLUMN w DOUBLE");
+            executeOnBoth("INSERT INTO %t SELECT (x + " + top + ")::TIMESTAMP, (x + " + top + ") / 2.0, (x + " + top + ") / 4.0"
+                    + " FROM long_sequence(" + (n - top - 3) + ")");
+            try (
+                    TableWriter writer = getWriter("t");
+                    TableWriter refWriter = getWriter("ref")
+            ) {
+                // the rows of the transaction
+                for (long x = n - 2; x <= n; x++) {
+                    for (TableWriter w : new TableWriter[]{writer, refWriter}) {
+                        final TableWriter.Row row = w.newRow(x);
+                        row.putDouble(1, x / 2.0);
+                        row.putDouble(2, x / 4.0);
+                        row.append();
+                    }
+                }
+                ff.isArmed.set(true);
+                final TableWriter.Row row = writer.newRow(n + 1);
+                row.putDouble(1, -1);
+                try {
+                    row.putDouble(2, -1);
+                    Assert.fail();
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "No space left");
+                }
+                Assert.assertFalse(ff.isArmed.get());
+                row.cancel();
+                Assert.assertFalse(writer.isDistressed());
+                Assert.assertEquals(3, writer.getUncommittedRowCount());
+                // the disk is still full
+                writer.commit();
+                refWriter.commit();
+                Assert.assertEquals(1, ff.failedAllocations.get());
+            }
+            assertSqlCursors("ref", "t");
+
+            ff.isFull.set(false);
+            executeOnBoth("INSERT INTO %t VALUES (" + (n + 2) + "::TIMESTAMP, 1.5, 2.5), (" + (n + 3) + "::TIMESTAMP, 3.5, NULL)");
+            assertQuery("SELECT count(), count(w), max(ts) FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\tcount1\tmax\n" + (n + 2) + '\t' + (n - top + 1) + '\t' + timestampOf(n + 3) + '\n');
+            assertSqlCursors("ref", "t");
+        });
+    }
+
+    @Test
     public void testDesignatedTimestampNullRowFailedPage() throws Exception {
-        // A table with a designated timestamp: newRow() writes the timestamp, so the cancel of a row with NULLs in its
-        // other columns moves every column back to the end of the committed rows with setAppendPosition(). x's NULL
-        // landed, s's NULL needed the next page of s.d.
+        // A table with a designated timestamp: newRow() writes the timestamp, and append() the NULLs of the other
+        // columns until one fails. x's NULL landed, s's NULL needed the next page of s.d. The cancel moves back the
+        // timestamp and x, which the row moved, and leaves s at the end of the page of s.d.
         setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, Files.PAGE_SIZE);
         final AllocateFailingFacade ff = new AllocateFailingFacade("tab", "s.d");
         assertMemoryLeak(ff, () -> {
@@ -355,57 +482,12 @@ public class AppendPageFailureTest extends AbstractCairoTest {
     public void testInsertAfterFailedPutPage() throws Exception {
         // For each column file of a table of every column type: the committed rows end at the end of the first page
         // of the file, or the value of the next row crosses it, and the next row cannot map the next page. The
-        // INSERT fails; InsertRowImpl cancels the row, which moves every column back to the end of the committed
-        // rows. The next rows, with and without values, land after the committed rows.
+        // INSERT fails; InsertRowImpl cancels the row, which moves the columns that the row moved back to the end of
+        // the committed rows. The next rows, with and without values, land after the committed rows.
         setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, Files.PAGE_SIZE);
-        final long pageSize = Files.PAGE_SIZE;
-        final Object[][] files = {
-                // file, committed rows
-                {"v_boolean.d", pageSize},
-                {"v_byte.d", pageSize},
-                {"v_geo1.d", pageSize},
-                {"v_dec8.d", pageSize},
-                {"v_short.d", pageSize / 2},
-                {"v_char.d", pageSize / 2},
-                {"v_geo2.d", pageSize / 2},
-                {"v_dec16.d", pageSize / 2},
-                {"v_int.d", pageSize / 4},
-                {"v_float.d", pageSize / 4},
-                {"v_ipv4.d", pageSize / 4},
-                {"v_symbol.d", pageSize / 4},
-                {"v_geo4.d", pageSize / 4},
-                {"v_dec32.d", pageSize / 4},
-                {"v_date.d", pageSize / 8},
-                {"v_long.d", pageSize / 8},
-                {"v_double.d", pageSize / 8},
-                {"v_timestamp.d", pageSize / 8},
-                {"v_timestamp_ns.d", pageSize / 8},
-                {"v_geo8.d", pageSize / 8},
-                {"v_dec64.d", pageSize / 8},
-                {"v_uuid.d", pageSize / 16},
-                {"v_dec128.d", pageSize / 16},
-                {"v_long256.d", pageSize / 32},
-                {"v_dec256.d", pageSize / 32},
-                // values of 100 bytes: the next one crosses the end of the page
-                {"v_string.d", pageSize / 100},
-                // an offset of 8 bytes per row after the first one of 8
-                {"v_string.i", pageSize / 8 - 1},
-                {"v_varchar.d", pageSize / 100},
-                // 16 bytes per row
-                {"v_varchar.i", pageSize / 16},
-                {"v_binary.d", pageSize / 100},
-                {"v_binary.i", pageSize / 8 - 1},
-                // values of 104 bytes
-                {"v_array.d", pageSize / 104},
-                {"v_array.i", pageSize / 16},
-        };
-        final StringBuilder columns = new StringBuilder("ts TIMESTAMP, x LONG");
-        final StringBuilder values = new StringBuilder("x::TIMESTAMP, x");
-        for (String[] type : ALL_TYPES) {
-            columns.append(", ").append(type[0]).append(' ').append(type[1]);
-            values.append(", ").append(type[2]);
-        }
-        for (Object[] file : files) {
+        final String columns = allTypesColumns();
+        final String values = allTypesValues();
+        for (Object[] file : allTypesPageEnds()) {
             final String fileName = (String) file[0];
             final long n = (Long) file[1];
             final AllocateFailingFacade ff = new AllocateFailingFacade("tab", fileName);
@@ -416,14 +498,14 @@ public class AppendPageFailureTest extends AbstractCairoTest {
                 execute("INSERT INTO ref SELECT " + values + " FROM long_sequence(" + n + ")");
                 ff.isArmed.set(true);
                 try {
-                    execute("INSERT INTO tab VALUES (" + values.toString().replaceAll("\\bx\\b", Long.toString(n + 1)) + ")");
+                    execute("INSERT INTO tab VALUES (" + valueOfRow(values, n + 1) + ")");
                     Assert.fail(fileName);
                 } catch (CairoException e) {
                     TestUtils.assertContains(fileName, e.getFlyweightMessage(), "No space left");
                 }
                 Assert.assertFalse(fileName, ff.isArmed.get());
                 // a row with a value in every column, and a row of NULLs
-                final String next = " VALUES (" + values.toString().replaceAll("\\bx\\b", Long.toString(n + 2)) + ")";
+                final String next = " VALUES (" + valueOfRow(values, n + 2) + ")";
                 final String nulls = " (ts, x) VALUES (" + (n + 3) + "::TIMESTAMP, " + (n + 3) + ")";
                 execute("INSERT INTO tab" + next);
                 execute("INSERT INTO ref" + next);
@@ -447,6 +529,49 @@ public class AppendPageFailureTest extends AbstractCairoTest {
                 execute("DROP TABLE tab");
                 execute("DROP TABLE ref");
             });
+        }
+    }
+
+    @Test
+    public void testInsertAfterFailedPutPageDiskStaysFull() throws Exception {
+        // As testInsertAfterFailedPutPage, on a disk that stays full from the failed put on: every allocation after it
+        // fails too. The cancel moves back only the columns that the row moved, so the file whose put failed, and any
+        // other that ends at the end of its page, keeps that page rather than allocate the next one. The INSERT fails
+        // with the error of its put after that one allocation, as does the same INSERT again, and the pooled writer
+        // stays as it was, not distressed. The next rows land once the disk has space.
+        setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, Files.PAGE_SIZE);
+        final String columns = allTypesColumns();
+        final String values = allTypesValues();
+        for (Object[] file : allTypesPageEnds()) {
+            final String fileName = (String) file[0];
+            final long n = (Long) file[1];
+            final DiskFillingFacade ff = new DiskFillingFacade("t", fileName);
+            assertMemoryLeak(ff, () -> assertCase(fileName, () -> {
+                executeOnBoth("CREATE TABLE %t (" + columns + ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+                executeOnBoth("INSERT INTO %t SELECT " + values + " FROM long_sequence(" + n + ")");
+                final TableWriter writer = pooledWriter();
+                ff.isArmed.set(true);
+                for (int attempt = 1; attempt <= 2; attempt++) {
+                    failInsert(fileName, "INSERT INTO t VALUES (" + valueOfRow(values, n + 1) + ")");
+                    Assert.assertFalse(fileName, ff.isArmed.get());
+                    Assert.assertEquals(fileName, attempt, ff.failedAllocations.get());
+                    assertPooledWriter(fileName, writer);
+                }
+
+                ff.isFull.set(false);
+                // a row with a value in every column, and a row of NULLs
+                executeOnBoth("INSERT INTO %t VALUES (" + valueOfRow(values, n + 2) + ")");
+                executeOnBoth("INSERT INTO %t (ts, x) VALUES (" + (n + 3) + "::TIMESTAMP, " + (n + 3) + ")");
+                assertQuery("SELECT count(), sum(x) FROM t")
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("count\tsum\n" + (n + 2) + "\t" + (n * (n + 1) / 2 + n + 2 + n + 3) + "\n");
+                assertSqlCursors("ref", "t");
+                assertVarSizeDataDense(fileName, "t");
+                execute("DROP TABLE t");
+                execute("DROP TABLE ref");
+            }));
         }
     }
 
@@ -946,10 +1071,8 @@ public class AppendPageFailureTest extends AbstractCairoTest {
         // The disk stays full after the failed row: every allocation of disk space fails. The cancel of a row that
         // marked no column maps no page that the column files lack, so each failed INSERT makes one allocation, the
         // one that failed, and the pooled writer stays as it was, not distressed: the rows that fit the pages the
-        // files have land while the disk is full, and those that need a page fail the same way. Rows whose cancel
-        // moves every column, those of a row that marked a column, stay out: when a column ends exactly at the end
-        // of a page, that cancel maps, and allocates, the next page, which distresses the writer on a full disk (a
-        // pre-existing bug, apart from this one).
+        // files have land while the disk is full, and those that need a page fail the same way. A row that marked a
+        // column is the case of testNoTimestampMarkedRowDiskStaysFull.
         setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, Files.PAGE_SIZE);
         final long pageSize = Files.PAGE_SIZE;
         final String failedString = "f".repeat(48);
@@ -1261,12 +1384,13 @@ public class AppendPageFailureTest extends AbstractCairoTest {
         // the random test makes, on these seeds, each shape of failed row that the cancel must take back; its tables
         // have pages of FUZZ_PAGE_SIZE, so the seeds make the same shapes on every OS
         final long[][] seeds = {
-                // a STRING put at the start of a page, STRING and BINARY puts, an aux page, disk-full runs,
+                // a STRING put at the start of a page, STRING puts, an aux page, fixed-size pages, disk-full runs,
                 // mappings that fail in the cancel
-                {333L, 334L},
-                // all-NULL rows that fail after a fixed-size, a VARCHAR, an array and a STRING column, a fixed-size
-                // page
-                {462L, 463L},
+                {315L, 316L},
+                // all-NULL rows that fail after a fixed-size, a VARCHAR and an array column
+                {24L, 25L},
+                // BINARY puts, all-NULL rows that fail after a STRING column
+                {30L, 31L},
         };
         final FailedRowShapes shapes = new FailedRowShapes();
         for (long[] seed : seeds) {
@@ -1490,6 +1614,36 @@ public class AppendPageFailureTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNoTimestampMarkedRowDiskStaysFull() throws Exception {
+        // A table without a designated timestamp: the put of x lands, then the put of u needs the next page of u.d,
+        // on a disk that stays full. The cancel moves x back, and leaves u at the end of the page of u.d rather than
+        // allocate the next one: the INSERT fails with the error of its put, as does the same INSERT again, and the
+        // pooled writer stays as it was. The next rows land once the disk has space.
+        setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, Files.PAGE_SIZE);
+        final DiskFillingFacade ff = new DiskFillingFacade("t", "u.d");
+        assertMemoryLeak(ff, () -> {
+            final String uuid = "'11111111-2222-3333-4444-555555555555'";
+            // u.d ends its first page after row n
+            final long n = Files.PAGE_SIZE / 16;
+            executeOnBoth("CREATE TABLE %t (x LONG, u UUID)");
+            executeOnBoth("INSERT INTO %t SELECT x, " + uuid + " FROM long_sequence(" + n + ")");
+            final TableWriter writer = pooledWriter();
+            ff.isArmed.set(true);
+            for (int attempt = 1; attempt <= 2; attempt++) {
+                failInsert("INSERT INTO t VALUES (" + (n + 1) + ", " + uuid + ")");
+                Assert.assertFalse(ff.isArmed.get());
+                Assert.assertEquals(attempt, ff.failedAllocations.get());
+                assertPooledWriter("attempt " + attempt, writer);
+            }
+
+            ff.isFull.set(false);
+            executeOnBoth("INSERT INTO %t VALUES (" + (n + 2) + ", " + uuid + "), (" + (n + 3) + ", NULL)");
+            assertCountAndSum("t", n + 2, n * (n + 1) / 2 + n + 2 + n + 3);
+            assertSqlCursors("ref", "t");
+        });
+    }
+
+    @Test
     public void testNoTimestampRewindMmapFailure() throws Exception {
         // The cancel of an all-NULL row maps the page of s1.i before the one that s1's NULL took, and that mapping
         // fails: the cancel distresses the writer, the INSERT fails with that error, and the pool opens another
@@ -1595,6 +1749,137 @@ public class AppendPageFailureTest extends AbstractCairoTest {
                 writer.commit();
             }
             assertRows(ROWS_PER_PAGE - 2);
+        });
+    }
+
+    @Test
+    public void testSymbolMapFileFailedPage() throws Exception {
+        // New symbols land until a file of the symbol map of s cannot grow: the char file, the value file of its
+        // index, or the offset file, which the put writes in that order. The put of that symbol fails part way, and
+        // the map takes back what it wrote: the next rows get keys of their own, the failed symbol among them, and
+        // read back as they were written, as in ref, which never had the failed row.
+        // the value file of the index grows a page at a time
+        setProperty(PropertyKey.CAIRO_WRITER_DATA_INDEX_VALUE_APPEND_PAGE_SIZE, Files.PAGE_SIZE);
+        for (String file : new String[]{"s.c", "s.v", "s.o"}) {
+            final AllocateFailingFacade ff = new AllocateFailingFacade("t", file);
+            assertMemoryLeak(ff, () -> assertCase(file, () -> {
+                executeOnBoth("CREATE TABLE %t (s SYMBOL, x LONG)");
+                try (
+                        TableWriter writer = getWriter("t");
+                        TableWriter refWriter = getWriter("ref")
+                ) {
+                    ff.isArmed.set(true);
+                    long failed = -1;
+                    for (long x = 0; x < 20_000 && failed < 0; x++) {
+                        final TableWriter.Row row = writer.newRow();
+                        try {
+                            row.putSym(0, "sym" + x);
+                        } catch (CairoException e) {
+                            TestUtils.assertContains(e.getFlyweightMessage(), "No space left");
+                            row.cancel();
+                            failed = x;
+                            continue;
+                        }
+                        row.putLong(1, x);
+                        row.append();
+                        final TableWriter.Row refRow = refWriter.newRow();
+                        refRow.putSym(0, "sym" + x);
+                        refRow.putLong(1, x);
+                        refRow.append();
+                    }
+                    Assert.assertFalse(ff.isArmed.get());
+                    Assert.assertFalse(writer.isDistressed());
+                    // the failed symbol, then new ones, the last of a single char
+                    for (long x = failed; x < failed + 3; x++) {
+                        for (TableWriter w : new TableWriter[]{writer, refWriter}) {
+                            final TableWriter.Row row = w.newRow();
+                            row.putSym(0, "sym" + x);
+                            row.putLong(1, x);
+                            row.append();
+                        }
+                    }
+                    for (TableWriter w : new TableWriter[]{writer, refWriter}) {
+                        final TableWriter.Row row = w.newRow();
+                        row.putSym(0, 'z');
+                        row.putLong(1, -1);
+                        row.append();
+                    }
+                    writer.commit();
+                    refWriter.commit();
+                }
+                assertQuery("SELECT s FROM t WHERE x = -1")
+                        .noLeakCheck()
+                        .returns("s\nz\n");
+                assertQuery("SELECT count() FROM t WHERE x >= 0 AND s::STRING != 'sym' || x")
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("count\n0\n");
+                assertSqlCursors("ref", "t");
+                execute("DROP TABLE t");
+                execute("DROP TABLE ref");
+            }));
+        }
+    }
+
+    @Test
+    public void testSymbolMapTakeBackFailureDistressesWriter() throws Exception {
+        // The put of a new symbol fails where the offset file of the map cannot grow, and the map cannot take back what
+        // the put wrote either: the last offset in the file reads damaged. The map closes, and the writer gets
+        // distressed rather than put another symbol through it. Its rows, none committed, are lost, and the next
+        // writer takes rows, the failed symbol among them.
+        final TableFile offsetFile = new TableFile("t", "s.o");
+        final AtomicLong damagedOffset = new AtomicLong();
+        final AllocateFailingFacade ff = new AllocateFailingFacade("t", "s.o") {
+            @Override
+            public boolean allocate(long fd, long size) {
+                if (offsetFile.is(fd) && isArmed.get()) {
+                    // the last offset of the file, the end of the chars of the symbols, which the take-back reads
+                    final long buf = Unsafe.calloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                    try {
+                        Assert.assertEquals(Long.BYTES, write(fd, buf, Long.BYTES, damagedOffset.get()));
+                    } finally {
+                        Unsafe.free(buf, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                    }
+                }
+                return super.allocate(fd, size);
+            }
+
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                final long fd = super.openRW(name, opts);
+                offsetFile.onOpen(name, fd);
+                return fd;
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE t (s SYMBOL, x LONG)");
+            long failed = -1;
+            try (TableWriter writer = getWriter("t")) {
+                ff.isArmed.set(true);
+                for (long x = 0; x < 20_000 && failed < 0; x++) {
+                    // symbols sym0..symx-1 are in the map
+                    damagedOffset.set(SymbolMapWriter.keyToOffset((int) x));
+                    final TableWriter.Row row = writer.newRow();
+                    try {
+                        row.putSym(0, "sym" + x);
+                    } catch (CairoError e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "No space left");
+                        failed = x;
+                        continue;
+                    }
+                    row.putLong(1, x);
+                    row.append();
+                }
+                Assert.assertFalse(ff.isArmed.get());
+                Assert.assertTrue(failed > 0);
+                Assert.assertTrue(writer.isDistressed());
+            }
+            execute("INSERT INTO t VALUES ('sym" + failed + "', " + failed + "), ('next', -1)");
+            assertQuery("SELECT s, x FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("s\tx\nsym" + failed + '\t' + failed + "\nnext\t-1\n");
         });
     }
 
@@ -1729,6 +2014,70 @@ public class AppendPageFailureTest extends AbstractCairoTest {
         });
     }
 
+    // the columns of a table of every column type: ts, the designated timestamp, x, and those of ALL_TYPES
+    private static String allTypesColumns() {
+        final StringBuilder columns = new StringBuilder("ts TIMESTAMP, x LONG");
+        for (String[] type : ALL_TYPES) {
+            columns.append(", ").append(type[0]).append(' ').append(type[1]);
+        }
+        return columns.toString();
+    }
+
+    // each column file of a table of allTypesColumns(), with the rows of allTypesValues() that end it at the end of
+    // its first page, or whose next value crosses that end
+    private static Object[][] allTypesPageEnds() {
+        final long pageSize = Files.PAGE_SIZE;
+        return new Object[][]{
+                // file, committed rows
+                {"v_boolean.d", pageSize},
+                {"v_byte.d", pageSize},
+                {"v_geo1.d", pageSize},
+                {"v_dec8.d", pageSize},
+                {"v_short.d", pageSize / 2},
+                {"v_char.d", pageSize / 2},
+                {"v_geo2.d", pageSize / 2},
+                {"v_dec16.d", pageSize / 2},
+                {"v_int.d", pageSize / 4},
+                {"v_float.d", pageSize / 4},
+                {"v_ipv4.d", pageSize / 4},
+                {"v_symbol.d", pageSize / 4},
+                {"v_geo4.d", pageSize / 4},
+                {"v_dec32.d", pageSize / 4},
+                {"v_date.d", pageSize / 8},
+                {"v_long.d", pageSize / 8},
+                {"v_double.d", pageSize / 8},
+                {"v_timestamp.d", pageSize / 8},
+                {"v_timestamp_ns.d", pageSize / 8},
+                {"v_geo8.d", pageSize / 8},
+                {"v_dec64.d", pageSize / 8},
+                {"v_uuid.d", pageSize / 16},
+                {"v_dec128.d", pageSize / 16},
+                {"v_long256.d", pageSize / 32},
+                {"v_dec256.d", pageSize / 32},
+                // values of 100 bytes: the next one crosses the end of the page
+                {"v_string.d", pageSize / 100},
+                // an offset of 8 bytes per row after the first one of 8
+                {"v_string.i", pageSize / 8 - 1},
+                {"v_varchar.d", pageSize / 100},
+                // 16 bytes per row
+                {"v_varchar.i", pageSize / 16},
+                {"v_binary.d", pageSize / 100},
+                {"v_binary.i", pageSize / 8 - 1},
+                // values of 104 bytes
+                {"v_array.d", pageSize / 104},
+                {"v_array.i", pageSize / 16},
+        };
+    }
+
+    // the values of row x of a table of allTypesColumns(), as SQL that computes them from x
+    private static String allTypesValues() {
+        final StringBuilder values = new StringBuilder("x::TIMESTAMP, x");
+        for (String[] type : ALL_TYPES) {
+            values.append(", ").append(type[2]);
+        }
+        return values.toString();
+    }
+
     // the rows after a failed row of createFailedRowTables(), through the writer
     private static void appendFailedRowTablesNextRows(TableWriter writer, boolean isNullRow, long n) {
         TableWriter.Row row = writer.newRow();
@@ -1807,6 +2156,30 @@ public class AppendPageFailureTest extends AbstractCairoTest {
         try (TableWriter pooled = getWriter("t")) {
             Assert.assertSame(context, writer, pooled);
             Assert.assertFalse(context, pooled.isDistressed());
+        }
+    }
+
+    // the data vector of each var-size column of the table holds the values of its rows back to back: no bytes of a
+    // cancelled row stay between them
+    private static void assertVarSizeDataDense(String context, String tableName) {
+        try (TableReader reader = getReader(tableName)) {
+            final TableReaderMetadata metadata = reader.getMetadata();
+            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                final int columnType = metadata.getColumnType(i);
+                if (ColumnType.isVarSize(columnType)) {
+                    for (int p = 0, m = reader.getPartitionCount(); p < m; p++) {
+                        reader.openPartition(p);
+                        final int columnBase = reader.getColumnBase(p);
+                        final MemoryCR dataMem = reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, i));
+                        final MemoryCR auxMem = reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, i) + 1);
+                        final long rowCount = reader.getPartitionRowCount(p) - reader.getColumnTop(columnBase, i);
+                        Assert.assertFalse(
+                                context + ", column " + metadata.getColumnName(i) + ", partition " + p,
+                                DebugUtils.isSparseVarCol(rowCount, auxMem.getPageAddress(0), dataMem.getPageAddress(0), columnType)
+                        );
+                    }
+                }
+            }
         }
     }
 
@@ -2349,9 +2722,8 @@ public class AppendPageFailureTest extends AbstractCairoTest {
      * Writes random rows to t and ref through their writers, the same rows to both, and makes rows of t fail where
      * a file of t needs a page. ONCE: the next allocation of one file fails. MMAP: so does the next mapping of that
      * file after it, which a cancel that moves the file back into the page before makes, and the writer gets
-     * distressed. DISK_FULL: every allocation of a file of t fails for a few rows, which are all-NULL: the cancel of
-     * a row that marked a column can distress the writer on a full disk (a pre-existing bug, apart from this one).
-     * A failed row is cancelled, left in progress for the next newRow() to cancel, or committed, which cancels it;
+     * distressed. DISK_FULL: every allocation of a file of t fails for a few rows, all-NULL or with values; the
+     * cancel of a failed row allocates nothing, so the writer stays usable. A failed row is cancelled, left in progress for the next newRow() to cancel, or committed, which cancels it;
      * ref never gets it. Between failures the writers commit, go back to the pool for an INSERT, or reopen; after each
      * commit t holds what ref holds.
      */
@@ -2542,13 +2914,13 @@ public class AppendPageFailureTest extends AbstractCairoTest {
             ff.disarmAllocation();
         }
 
-        // all-NULL rows on a disk that is full: the first that needs a page fails, then 0-2 more rows, which land
-        // when they fit the pages the files have
+        // rows on a disk that is full, all-NULL or with values: the first that needs a page fails, then 0-2 more
+        // rows, which land when they fit the pages the files have
         private void failRowsOnFullDisk() {
             ff.isFull.set(true);
             int rowsLeft = -1;
             for (int i = 0, n = 4 * (int) FUZZ_PAGE_SIZE; i < n && rowsLeft != 0; i++) {
-                nextRow(-1, true);
+                nextRow(-1, rnd.nextBoolean());
                 final boolean isLanded = appendRow();
                 if (!isLanded) {
                     counts.diskFullRows++;

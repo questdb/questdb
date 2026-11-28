@@ -747,11 +747,31 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
 
     @Override
     public void rewindAppendPosition(long pos, MemoryMA auxMem, MemoryMA dataMem) {
-        // Each aux entry holds the data offset of its row, so the data vector keeps the bytes of the cancelled row,
-        // which no row points at, and only the aux vector goes back.
+        // The data vector goes back to where the row starts in it, so that the bytes of the cancelled row do not
+        // stay in the file between the rows: the aux entry of the row holds that offset when the row wrote it, and
+        // the end of the entry before it does otherwise.
         final long auxOffset = getAuxVectorOffset(pos);
-        if (auxMem.getAppendOffset() != auxOffset) {
+        final long dataOffset;
+        if (auxMem.getAppendOffset() > auxOffset) {
+            // a jump back, to the page that holds the entry the row wrote
             auxMem.jumpTo(auxOffset);
+            dataOffset = readDataOffset(auxMem.getAppendAddress());
+        } else if (pos > 0) {
+            // The row wrote no aux entry, but a put that failed can still have written data. Putting the entry
+            // before back, rather than jumping to auxOffset, leaves the aux memory at auxOffset without mapping the
+            // next page when the entry ends a page.
+            assert auxMem.getAppendOffset() == auxOffset;
+            auxMem.jumpTo(auxOffset - ARRAY_AUX_WIDTH_BYTES);
+            final long entry = auxMem.getAppendAddress();
+            dataOffset = calcDataOffsetEnd(entry);
+            auxMem.putLong128(Unsafe.getLong(entry), Unsafe.getLong(entry + Long.BYTES));
+        } else {
+            // the first row of the column
+            assert auxMem.getAppendOffset() == 0;
+            dataOffset = 0;
+        }
+        if (dataMem.getAppendOffset() != dataOffset) {
+            dataMem.jumpTo(dataOffset);
         }
     }
 
