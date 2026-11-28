@@ -55,7 +55,6 @@ import io.questdb.griffin.engine.groupby.GroupByRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.griffin.engine.groupby.StreamGroupByMap;
 import io.questdb.jit.CompiledFilter;
-import io.questdb.mp.SCSequence;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntHashSet;
@@ -70,7 +69,6 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
 public class AsyncStreamGroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     private static final long CHAIN_SAMPLE_BYTES = 128 * 1024;
     private static final int GROUP_SAMPLE_SIZE = 4096;
-    private final SCSequence collectSubSeq = new SCSequence();
     private final int order;
     private final int workerCount;
     private RecordCursorFactory base;
@@ -110,6 +108,10 @@ public class AsyncStreamGroupByRecordCursorFactory extends AbstractRecordCursorF
         this.recordFunctions = recordFunctions;
         this.workerCount = workerCount;
         order = isDescending ? ORDER_DESC : ORDER_ASC;
+        // The first window holds a frame for each worker, which the parallel filter limit counts, and one for the
+        // owner. The limit may be Integer.MAX_VALUE.
+        final int dispatchLimit = Math.max(1, configuration.getSqlParallelFilterDispatchLimit());
+        final int initialDispatchLimit = dispatchLimit < Integer.MAX_VALUE ? dispatchLimit + 1 : dispatchLimit;
         try {
             frameSequence = new PageFrameSequence<>(
                     engine,
@@ -118,13 +120,14 @@ public class AsyncStreamGroupByRecordCursorFactory extends AbstractRecordCursorF
                     new AsyncStreamGroupByAtom(configuration, asm, base.getMetadata(), columnFilter, keyTypes, valueTypes, streamKeyIndex,
                             keyFunction, keyFunctions, perWorkerKeys, groupByFunctions, perWorkerFunctions,
                             compiledFilter, bindVarMemory, bindVarFunctions, filter, filterUsedColumnIndexes, perWorkerFilters, workerCount,
-                            isDescending, Math.max(1, configuration.getSqlParallelFilterDispatchLimit()) + 1,
+                            isDescending, initialDispatchLimit,
                             messageBus.getPageFrameReduceQueue(0).getCycle()),
                     AsyncStreamGroupByRecordCursorFactory::aggregate,
                     reduceTaskFactory,
                     workerCount,
                     PageFrameReduceTask.TYPE_GROUP_BY
             );
+            frameSequence.setLaneCount(frameSequence.getAtom().getLaneCount());
             cursor = new AsyncStreamGroupByRecordCursor(engine, messageBus, frameSequence.getAtom().getStateTypes(), recordFunctions,
                     frameSequence.getAtom().getCollectorMap(),
                     configuration.getFactoryProvider().getWorkStealingStrategy(configuration, workerCount, frameSequence.getAtom()));
@@ -150,15 +153,29 @@ public class AsyncStreamGroupByRecordCursorFactory extends AbstractRecordCursorF
         return frameSequence.getDispatchedTaskCount();
     }
 
+    // The frames the owner reduced itself because it could not publish them to its shard.
+    @TestOnly
+    public int getLocallyReducedFrameCount() {
+        return frameSequence.getLocalReduceCount();
+    }
+
     @TestOnly
     public int getReducedFrameCount() {
         return frameSequence.getReducedTaskCount();
     }
 
+    // The frame staged on the lane, or -1: a task holds a single frame.
+    @TestOnly
+    public int getStagedFrame(int lane) {
+        return frameSequence.getStagedTask(lane);
+    }
+
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottledOrYield();
-        frameSequence.of(base, executionContext, collectSubSeq, order);
+        // Without a collect subscriber the sequence tracks completions, so a consumer that stops reading never holds
+        // the shard's queue. The atom keeps each frame's output until the cursor emits it.
+        frameSequence.of(base, executionContext, null, order);
         try {
             cursor.of(frameSequence, executionContext);
             return cursor;
@@ -251,6 +268,10 @@ public class AsyncStreamGroupByRecordCursorFactory extends AbstractRecordCursorF
                 final RecordChain results = atom.getResultRecords(task);
                 long previous = -1;
                 long segmentCount = 0;
+                long firstSegmentKey = 0;
+                long lastSegmentKey = 0;
+                boolean isFirstSegmentKeyInSpan = false;
+                boolean isLastSegmentKeyInSpan = false;
                 long sampleRows = 0;
                 long sampleStartKey = 0;
                 long sampleStartOffset = 0;
@@ -272,14 +293,14 @@ public class AsyncStreamGroupByRecordCursorFactory extends AbstractRecordCursorF
                     // Span maps merge shard by shard on the workers, while the owner merges chain rows one by one.
                     final boolean isSpan = (isFirst && isLast) || ((isFirst || isLast) && end - start > atom.getSpanRowThreshold());
                     if (isFirst) {
-                        task.setGroupByFirstKey(key);
-                        task.setGroupByFirstKeyInSpan(isSpan);
+                        firstSegmentKey = key;
+                        isFirstSegmentKeyInSpan = isSpan;
                     }
                     if (isLast) {
-                        task.setGroupByLastKeyInSpan(isSpan);
+                        isLastSegmentKeyInSpan = isSpan;
                     }
                     if (isSpan) {
-                        atom.acquireSpanMap(slot, key).aggregate(record, rows, start, end, baseRowId, batchRows, circuitBreaker);
+                        atom.acquireSpanMap(task.getFrameIndex(), slot, key).aggregate(map, record, rows, start, end, baseRowId, batchRows, circuitBreaker);
                     } else {
                         map.clear(key);
                         map.aggregate(record, rows, start, end, baseRowId, batchRows, circuitBreaker);
@@ -301,9 +322,9 @@ public class AsyncStreamGroupByRecordCursorFactory extends AbstractRecordCursorF
                             }
                         }
                     }
-                    task.setGroupByLastKey(key);
+                    lastSegmentKey = key;
                 }
-                task.setGroupBySegmentCount(segmentCount);
+                atom.setSegments(task.getFrameIndex(), segmentCount, firstSegmentKey, isFirstSegmentKeyInSpan, lastSegmentKey, isLastSegmentKeyInSpan);
                 results.toTop();
                 return;
             }

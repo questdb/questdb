@@ -33,6 +33,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoConfigurationWrapper;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
@@ -78,6 +79,7 @@ import io.questdb.mp.continuation.SourceRegistrationResult;
 import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.mp.continuation.TimerShards;
 import io.questdb.std.LongList;
+import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -1334,7 +1336,9 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testForeignFiberHashJoinReducesLocallyWhenStoppedBuildSidePinsQueue() throws Exception {
+    public void testForeignFiberHashJoinPublishesEveryFrameAfterBuildSideStops() throws Exception {
+        // The LIMIT stops the build side after its only frame. The filter frees the queue slot of a task once a thread
+        // reduces it, so the probe side publishes all of its frames into the 4-slot queue: 1 frame of s and 6 of t.
         assertForeignFiberQueryCompletes(
                 "SELECT t.k FROM t JOIN (SELECT k, ct FROM s WHERE ct = 'u' LIMIT 1) s ON s.k = t.k WHERE t.vt IS NULL",
                 """
@@ -1356,7 +1360,7 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
                                                 Frame forward scan on: s
                         """,
                 "[2]",
-                4
+                7
         );
     }
 
@@ -1465,6 +1469,51 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
                 Misc.free(frameSequence);
             }
         });
+    }
+
+    @Test
+    public void testCollectingOwnerOnQueryFiberKeepsErrorType() throws Exception {
+        assertOwnerOnQueryFiberReducesLocally(false, true);
+    }
+
+    @Test
+    public void testCollectingOwnerOnQueryFiberReducesLocally() throws Exception {
+        assertOwnerOnQueryFiberReducesLocally(false, false);
+    }
+
+    @Test
+    public void testCompletionTrackedCloseParksUntilTaskInFlightIsReduced() throws Exception {
+        assertCompletionTrackedOwnerWaitsForItsTask(true, true);
+    }
+
+    @Test
+    public void testCompletionTrackedOwnerOnQueryFiberKeepsErrorType() throws Exception {
+        assertOwnerOnQueryFiberReducesLocally(true, true);
+    }
+
+    @Test
+    public void testCompletionTrackedOwnerOnQueryFiberReducesLocally() throws Exception {
+        assertOwnerOnQueryFiberReducesLocally(true, false);
+    }
+
+    @Test
+    public void testCompletionTrackedOwnerParksUntilItsTaskIsReduced() throws Exception {
+        assertCompletionTrackedOwnerWaitsForItsTask(true, false);
+    }
+
+    @Test
+    public void testCompletionTrackedLocalSlotFailureLetsOwnerClose() throws Exception {
+        assertResultSlotFailureLeavesShardUsable(true);
+    }
+
+    @Test
+    public void testCompletionTrackedOwnerYieldsWithoutDispatcher() throws Exception {
+        assertCompletionTrackedOwnerWaitsForItsTask(false, false);
+    }
+
+    @Test
+    public void testCompletionTrackedSlotFailureLeavesShardQueueFree() throws Exception {
+        assertResultSlotFailureLeavesShardUsable(false);
     }
 
     @Test
@@ -3125,6 +3174,64 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
         });
     }
 
+    // An owner that may not publish reduces a task it staged once the task's lane is free and no thread took it: the
+    // thread that ended the lane's previous task did not take it, here the owner itself, which stole that task, and no
+    // other thread ever will. With two lanes, the owner publishes tasks 0 and 1 and stages tasks 2 and 3, then steals
+    // task 0, whose reducer turns publication off.
+    @Test
+    public void testOwnerReducesStagedTaskItMayNotPublish() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT, 1);
+        setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, 4);
+        assertMemoryLeak(() -> TestUtils.execute(null, (engine, compiler, sqlExecutionContext) -> {
+            execute(compiler, "CREATE TABLE staged AS (SELECT x FROM long_sequence(6))", sqlExecutionContext);
+            final MessageBus messageBus = engine.getMessageBus();
+            final PageFrameReduceDispatcher previousDispatcher = messageBus.getPageFrameReduceDispatcher();
+            final AtomicReference<PageFrameSequence<StatefulAtom>> sequence = new AtomicReference<>();
+            // Only the owner reduces: there are no workers.
+            final IntList reducedFrames = new IntList();
+            final PageFrameSequence<StatefulAtom> frameSequence = new PageFrameSequence<>(
+                    engine,
+                    configuration,
+                    messageBus,
+                    new StatefulAtom() {
+                    },
+                    (_, _, task, _, _) -> {
+                        reducedFrames.add(task.getFrameIndex());
+                        if (task.getFrameIndex() == 0) {
+                            sequence.get().setPublicationRefusedForTesting(true);
+                        }
+                    },
+                    () -> new PageFrameReduceTask(configuration, MemoryTag.NATIVE_OFFLOAD),
+                    1,
+                    PageFrameReduceTask.TYPE_GROUP_BY
+            );
+            sequence.set(frameSequence);
+            frameSequence.setLaneCount(2);
+            final AtomicInteger collectedCount = new AtomicInteger();
+            messageBus.setPageFrameReduceDispatcher(null);
+            try (
+                    NetworkSqlExecutionCircuitBreaker breaker = new NetworkSqlExecutionCircuitBreaker(engine, new DefaultSqlExecutionCircuitBreakerConfiguration());
+                    SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, 1).with(sqlExecutionContext.getSecurityContext(), null, null, -1, breaker);
+                    RecordCursorFactory factory = compiler.compile("staged", sqlExecutionContext).getRecordCursorFactory()
+            ) {
+                frameSequence.of(factory, context, null, PartitionFrameCursorFactory.ORDER_ASC);
+                frameSequence.prepareForDispatch();
+                collectWithDeadline(frameSequence, collectedCount);
+                Assert.assertEquals(6, collectedCount.get());
+                // The owner stole tasks 0 and 1 from the queue and reduced the staged tasks 2 and 3, and then tasks 4 and
+                // 5, which it never dispatched, itself.
+                Assert.assertEquals("[0,1,2,3,4,5]", reducedFrames.toString());
+                Assert.assertEquals(4, frameSequence.getLocalReduceCount());
+                frameSequence.await();
+            } finally {
+                messageBus.setPageFrameReduceDispatcher(previousDispatcher);
+                Misc.free(frameSequence);
+            }
+        }, configuration, LOG));
+    }
+
     @Test
     public void testPlainOwnerReducesLocallyWithoutMountingFiber() throws Exception {
         assertMemoryLeak(() -> {
@@ -3488,6 +3595,7 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
                 assertQueryCancelledByQuiesce("SELECT * FROM tab WHERE x > 0");
                 assertQueryCancelledByQuiesce("SELECT count() FROM tab WHERE x > 0");
                 assertQueryCancelledByQuiesce("SELECT k, count() FROM tab GROUP BY k");
+                assertQueryCancelledByQuiesce("SELECT ts, count() FROM tab SAMPLE BY 1m");
             } finally {
                 close(runtime);
                 Misc.free(dispatcher);
@@ -4774,6 +4882,20 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
         };
     }
 
+    // Collects every task in order, the way a cursor does, and fails rather than spin on a task that no thread reduces.
+    private static void collectWithDeadline(PageFrameSequence<?> frameSequence, AtomicInteger collectedCount) {
+        final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
+        while (collectedCount.get() < frameSequence.getFrameCount()) {
+            long cursor;
+            while ((cursor = frameSequence.next()) == -1) {
+                Assert.assertTrue("the owner waits for a task that no thread reduces", System.nanoTime() < deadline);
+                Os.pause();
+            }
+            frameSequence.collect(cursor, false);
+            collectedCount.incrementAndGet();
+        }
+    }
+
     private static FiberTask newCollectingTask(
             PageFrameSequence<?> frameSequence,
             AtomicInteger collectedCount,
@@ -4822,6 +4944,15 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
             coordinator.abort(token);
             coordinator.consume(token);
             throw th;
+        }
+    }
+
+    private static void runToCompletion(FiberRuntime runtime, FiberTask task) {
+        Assert.assertSame(LaunchResult.LAUNCHED, runtime.launch(task));
+        final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
+        while (!task.isDone()) {
+            Assert.assertTrue("the owner did not finish", System.nanoTime() < deadline);
+            runtime.drain(8);
         }
     }
 
@@ -5072,6 +5203,336 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
                 close(queryRuntime);
                 Misc.free(dispatcher);
                 Misc.free(frameSequence);
+            }
+        });
+    }
+
+    // The result slot of task 1 fails to allocate. The owner throws the failure and closes, and the shard's queue then
+    // takes the tasks of the next sequence: the failure leaves neither a claimed queue slot nor a counted task behind.
+    // With isLocalReduce, the owner runs on a fiber of the dispatcher's own runtime, which may not publish, so it fails
+    // while it reduces task 1 itself; otherwise it fails while it dispatches task 1 after task 0.
+    private void assertResultSlotFailureLeavesShardUsable(boolean isLocalReduce) throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT, 1);
+        setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, 4);
+        // A fresh engine takes the single shard, which both sequences then share.
+        assertMemoryLeak(() -> TestUtils.execute(null, (engine, compiler, sqlExecutionContext) -> {
+            Assert.assertEquals(1, engine.getMessageBus().getPageFrameReduceShardCount());
+            Assert.assertEquals(4, engine.getMessageBus().getPageFrameReduceQueue(0).getCycle());
+            execute(compiler, "CREATE TABLE tracked AS (SELECT x FROM long_sequence(3))", sqlExecutionContext);
+            final MessageBus messageBus = engine.getMessageBus();
+            final FiberRuntime queryRuntime = new FiberRuntime(1);
+            final PageFrameReduceDispatcher dispatcher = new PageFrameReduceDispatcher(engine, messageBus, queryRuntime);
+            final PageFrameReduceDispatcher previousDispatcher = messageBus.getPageFrameReduceDispatcher();
+            final AtomicInteger instanceCount = new AtomicInteger();
+            final PageFrameSequence<StatefulAtom> failing = new PageFrameSequence<>(
+                    engine,
+                    configuration,
+                    messageBus,
+                    new StatefulAtom() {
+                    },
+                    (_, _, _, _, _) -> {
+                    },
+                    () -> {
+                        if (instanceCount.incrementAndGet() == 2) {
+                            throw CairoException.nonCritical().put("test result slot failure");
+                        }
+                        return new PageFrameReduceTask(configuration, MemoryTag.NATIVE_OFFLOAD);
+                    },
+                    1,
+                    PageFrameReduceTask.TYPE_GROUP_BY
+            );
+            final PageFrameSequence<StatefulAtom> following = new PageFrameSequence<>(
+                    engine,
+                    configuration,
+                    messageBus,
+                    new StatefulAtom() {
+                    },
+                    (_, _, _, _, _) -> {
+                    },
+                    () -> new PageFrameReduceTask(configuration, MemoryTag.NATIVE_OFFLOAD),
+                    1,
+                    PageFrameReduceTask.TYPE_GROUP_BY
+            );
+            final AtomicReference<Throwable> failure = new AtomicReference<>();
+            final AtomicReference<String> slotFailure = new AtomicReference<>();
+            final AtomicInteger collectedCount = new AtomicInteger();
+            messageBus.setPageFrameReduceDispatcher(isLocalReduce ? dispatcher : null);
+            try (
+                    NetworkSqlExecutionCircuitBreaker breaker = new NetworkSqlExecutionCircuitBreaker(engine, new DefaultSqlExecutionCircuitBreakerConfiguration());
+                    SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, 1).with(sqlExecutionContext.getSecurityContext(), null, null, -1, breaker);
+                    RecordCursorFactory factory = compiler.compile("tracked", sqlExecutionContext).getRecordCursorFactory()
+            ) {
+                failing.of(factory, context, null, PartitionFrameCursorFactory.ORDER_ASC);
+                failing.prepareForDispatch();
+                runToCompletion(queryRuntime, new FiberTask() {
+                    @Override
+                    protected void onError(Throwable th) {
+                        failure.set(th);
+                    }
+
+                    @Override
+                    protected boolean runStep() {
+                        try {
+                            collectWithDeadline(failing, collectedCount);
+                        } catch (CairoException e) {
+                            slotFailure.set(e.getFlyweightMessage().toString());
+                        }
+                        // The owner counts a task as dispatched only once its result slot is bound, so await() waits
+                        // for no task that will never run. A local reduce ends each task before the next one.
+                        Assert.assertEquals(1, failing.getDispatchedTaskCount());
+                        if (isLocalReduce) {
+                            Assert.assertEquals(1, failing.getReducedTaskCount());
+                        }
+                        failing.await();
+                        return true;
+                    }
+                });
+                Assert.assertNull(failure.get());
+                Assert.assertEquals("test result slot failure", slotFailure.get());
+                // A local reduce collects task 0 first; a dispatch fails before the owner waits for task 0.
+                Assert.assertEquals(isLocalReduce ? 1 : 0, collectedCount.get());
+                failing.reset();
+
+                messageBus.setPageFrameReduceDispatcher(null);
+                following.of(factory, context, null, PartitionFrameCursorFactory.ORDER_ASC);
+                following.prepareForDispatch();
+                collectedCount.set(0);
+                runToCompletion(queryRuntime, new FiberTask() {
+                    @Override
+                    protected void onError(Throwable th) {
+                        failure.set(th);
+                    }
+
+                    @Override
+                    protected boolean runStep() {
+                        collectWithDeadline(following, collectedCount);
+                        return true;
+                    }
+                });
+                Assert.assertNull(failure.get());
+                Assert.assertEquals(3, collectedCount.get());
+                Assert.assertEquals(0, following.getLocalReduceCount());
+                following.await();
+            } finally {
+                messageBus.setPageFrameReduceDispatcher(previousDispatcher);
+                close(queryRuntime);
+                Misc.free(dispatcher);
+                Misc.free(failing);
+                Misc.free(following);
+            }
+        }, configuration, LOG));
+    }
+
+    // A fiber of the dispatcher's own runtime may not publish, so an owner on it reduces every task itself instead of
+    // cancelling the query, as a quiescing dispatcher would. A completion-tracked owner reduces into its result slots,
+    // a collecting one into its local task. With isFailing, the reduce of task 1 fails and the owner throws the
+    // reducer's error with its type.
+    private void assertOwnerOnQueryFiberReducesLocally(boolean isCompletionTracked, boolean isFailing) throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 1);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tracked AS (SELECT x FROM long_sequence(2))");
+            final MessageBus messageBus = engine.getMessageBus();
+            final FiberRuntime queryRuntime = new FiberRuntime(1);
+            final PageFrameReduceDispatcher dispatcher = new PageFrameReduceDispatcher(engine, messageBus, queryRuntime);
+            final PageFrameReduceDispatcher previousDispatcher = messageBus.getPageFrameReduceDispatcher();
+            final PageFrameSequence<StatefulAtom> sequence = new PageFrameSequence<>(
+                    engine,
+                    configuration,
+                    messageBus,
+                    new StatefulAtom() {
+                    },
+                    (_, _, task, _, _) -> {
+                        if (isFailing && task.getTaskIndex() == 1) {
+                            throw ImplicitCastException.instance().position(7).put("test failure in task 1");
+                        }
+                    },
+                    () -> new PageFrameReduceTask(configuration, MemoryTag.NATIVE_OFFLOAD),
+                    1,
+                    PageFrameReduceTask.TYPE_GROUP_BY
+            );
+            final AtomicReference<Throwable> failure = new AtomicReference<>();
+            final AtomicBoolean hasFailed = new AtomicBoolean();
+            messageBus.setPageFrameReduceDispatcher(dispatcher);
+            try (
+                    NetworkSqlExecutionCircuitBreaker breaker = new NetworkSqlExecutionCircuitBreaker(engine, new DefaultSqlExecutionCircuitBreakerConfiguration());
+                    SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, 1).with(sqlExecutionContext.getSecurityContext(), null, null, -1, breaker);
+                    RecordCursorFactory factory = select("tracked")
+            ) {
+                sequence.of(factory, context, isCompletionTracked ? null : new SCSequence(), PartitionFrameCursorFactory.ORDER_ASC);
+                sequence.prepareForDispatch();
+                final FiberTask ownerTask = new FiberTask() {
+                    @Override
+                    protected void onError(Throwable th) {
+                        failure.set(th);
+                    }
+
+                    @Override
+                    protected boolean runStep() {
+                        for (int taskIndex = 0; taskIndex < 2; taskIndex++) {
+                            final long cursor;
+                            try {
+                                cursor = sequence.next(2, false);
+                                final PageFrameReduceTask task = sequence.getTask(cursor);
+                                Assert.assertEquals(taskIndex, task.getTaskIndex());
+                                // A collecting owner reads the error from the task; a completion-tracked one throws it.
+                                if (task.hasError()) {
+                                    Assert.assertFalse(isCompletionTracked);
+                                    throw task.buildError();
+                                }
+                            } catch (ImplicitCastException e) {
+                                Assert.assertTrue(isFailing);
+                                Assert.assertEquals(1, taskIndex);
+                                Assert.assertEquals(7, e.getPosition());
+                                TestUtils.assertEquals("test failure in task 1", e.getFlyweightMessage());
+                                hasFailed.set(true);
+                                return true;
+                            }
+                            sequence.collect(cursor, false);
+                        }
+                        return true;
+                    }
+                };
+                Assert.assertSame(LaunchResult.LAUNCHED, queryRuntime.launch(ownerTask));
+                final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
+                while (!ownerTask.isDone()) {
+                    Assert.assertTrue("the owner did not finish", System.nanoTime() < deadline);
+                    queryRuntime.drain(8);
+                }
+                Assert.assertNull(failure.get());
+                Assert.assertEquals(isFailing, hasFailed.get());
+                Assert.assertEquals(!isFailing, sequence.isActive());
+                Assert.assertEquals(2, sequence.getLocalReduceCount());
+                sequence.await();
+            } finally {
+                messageBus.setPageFrameReduceDispatcher(previousDispatcher);
+                close(queryRuntime);
+                Misc.free(dispatcher);
+                Misc.free(sequence);
+            }
+        });
+    }
+
+    // A completion-tracked owner on a fiber waits for task 1 while a query fiber reduces it, with nothing on the shard
+    // left to steal: for its output, or with isClosing for the task to finish before the cursor closes. With a
+    // dispatcher the owner parks until the reduce signals progress; without one it yields its carrier until the task
+    // is marked reduced.
+    private void assertCompletionTrackedOwnerWaitsForItsTask(boolean hasDispatcher, boolean isClosing) throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 1);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tracked AS (SELECT x FROM long_sequence(2))");
+            final MessageBus messageBus = engine.getMessageBus();
+            final FiberRuntime ownerRuntime = new FiberRuntime(1);
+            final FiberRuntime queryRuntime = new FiberRuntime(1);
+            final FiberWalWaitQueue waitQueue = new FiberWalWaitQueue();
+            final PageFrameReduceDispatcher dispatcher = new PageFrameReduceDispatcher(engine, messageBus, queryRuntime);
+            final PageFrameReduceDispatcher previousDispatcher = messageBus.getPageFrameReduceDispatcher();
+            final PageFrameSequence<StatefulAtom> sequence = new PageFrameSequence<>(
+                    engine,
+                    configuration,
+                    messageBus,
+                    new StatefulAtom() {
+                    },
+                    (_, _, task, _, _) -> {
+                        if (task.getTaskIndex() == 1) {
+                            park(waitQueue);
+                        }
+                    },
+                    () -> new PageFrameReduceTask(configuration, MemoryTag.NATIVE_OFFLOAD),
+                    1,
+                    PageFrameReduceTask.TYPE_GROUP_BY
+            );
+            final AtomicBoolean isStopped = new AtomicBoolean();
+            final AtomicInteger reduced = new AtomicInteger(-1);
+            final AtomicReference<Throwable> failure = new AtomicReference<>();
+            final Thread carrier = new Thread(() -> {
+                while (!isStopped.get()) {
+                    if (ownerRuntime.drain(8) == 0) {
+                        Os.pause();
+                    }
+                }
+            });
+            if (hasDispatcher) {
+                messageBus.setPageFrameReduceDispatcher(dispatcher);
+            }
+            try (
+                    NetworkSqlExecutionCircuitBreaker breaker = new NetworkSqlExecutionCircuitBreaker(engine, new DefaultSqlExecutionCircuitBreakerConfiguration());
+                    SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, 1).with(sqlExecutionContext.getSecurityContext(), null, null, -1, breaker);
+                    RecordCursorFactory factory = select("tracked")
+            ) {
+                sequence.of(factory, context, null, PartitionFrameCursorFactory.ORDER_ASC);
+                sequence.prepareForDispatch();
+                Assert.assertEquals(2, sequence.getTaskCount());
+
+                // The owner publishes both tasks and steals task 0, the head of the queue, on this thread.
+                Assert.assertEquals(0, sequence.next(2, false));
+                sequence.collect(0, false);
+                // A query fiber takes task 1 and parks in its reducer, so the shard holds nothing to steal.
+                final int shard = sequence.getShard();
+                Assert.assertFalse(dispatcher.consumeOrdered(0, messageBus.getPageFrameReduceQueue(shard), messageBus.getPageFrameReduceSubSeq(shard), null));
+                Assert.assertEquals(1, queryRuntime.getParkedFiberCount());
+
+                final FiberTask ownerTask = new FiberTask() {
+                    @Override
+                    protected void onError(Throwable th) {
+                        failure.set(th);
+                    }
+
+                    @Override
+                    protected boolean runStep() {
+                        if (isClosing) {
+                            // await() returns once task 1, the last one dispatched, is reduced.
+                            sequence.await();
+                            reduced.set(sequence.getReducedTaskCount() - 1);
+                        } else {
+                            reduced.set((int) sequence.next(2, false));
+                        }
+                        return true;
+                    }
+                };
+                Assert.assertSame(LaunchResult.LAUNCHED, ownerRuntime.launch(ownerTask));
+                carrier.start();
+                final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
+                try {
+                    // Without a dispatcher, each yield mounts the owner again.
+                    while (hasDispatcher ? ownerRuntime.getParkedFiberCount() != 1 : ownerRuntime.getMountCount() < 3) {
+                        Assert.assertNull(failure.get());
+                        Assert.assertTrue("the owner did not wait for its task", System.nanoTime() < deadline);
+                        Os.pause();
+                    }
+                    Assert.assertFalse(ownerTask.isDone());
+                    Assert.assertEquals(1, sequence.getReducedTaskCount());
+                } finally {
+                    waitQueue.fire(1, false);
+                    final long drainDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
+                    while (queryRuntime.getOutstandingTaskCount() > 0 && System.nanoTime() < drainDeadline) {
+                        queryRuntime.drain(8);
+                    }
+                }
+                while (!ownerTask.isDone()) {
+                    Assert.assertTrue("the owner did not see its task reduced", System.nanoTime() < deadline);
+                    Os.pause();
+                }
+                Assert.assertNull(failure.get());
+                Assert.assertEquals(1, reduced.get());
+                if (!isClosing) {
+                    sequence.collect(1, false);
+                }
+                Assert.assertEquals(0, sequence.getLocalReduceCount());
+                sequence.await();
+            } finally {
+                isStopped.set(true);
+                if (carrier.isAlive()) {
+                    carrier.join();
+                }
+                messageBus.setPageFrameReduceDispatcher(previousDispatcher);
+                close(ownerRuntime);
+                close(queryRuntime);
+                Misc.free(dispatcher);
+                Misc.free(sequence);
             }
         });
     }

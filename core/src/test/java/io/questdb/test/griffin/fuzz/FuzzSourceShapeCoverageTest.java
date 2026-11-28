@@ -60,20 +60,29 @@ public class FuzzSourceShapeCoverageTest {
         final FuzzSource base = FuzzSource.direct(new FuzzTable("t", columns, "ts"));
         final Rnd rnd = new Rnd();
         int keyed = 0;
+        int keyedLimited = 0;
         int plain = 0;
+        int plainLimited = 0;
         for (int i = 0; i < 1_000; i++) {
             final FuzzSource source = rnd.nextBoolean() ? FuzzSource.subquery(rnd, base) : FuzzSource.cte(rnd, base, i);
             final String sql = source.getPrefixSql() + source.getFromSql();
             if (sql.contains(" SAMPLE BY ")) {
                 final FuzzTable table = source.getTable();
                 Assert.assertTrue(source.isOrderStable());
+                final boolean isLimited = sql.contains(" LIMIT -");
                 if (sql.contains(" ORDER BY ts, k")) {
                     keyed++;
+                    if (isLimited) {
+                        keyedLimited++;
+                    }
                     Assert.assertTrue(sql, sql.contains("SELECT ts AS ts, i AS k, count() AS cnt FROM t SAMPLE BY "));
                     Assert.assertNull(table.getTsColumnName());
                     Assert.assertEquals(3, table.getColumns().size());
                 } else {
                     plain++;
+                    if (isLimited) {
+                        plainLimited++;
+                    }
                     Assert.assertTrue(sql, sql.contains("SELECT ts AS ts, count() AS cnt FROM t SAMPLE BY "));
                     Assert.assertEquals("ts", table.getTsColumnName());
                     Assert.assertEquals(2, table.getColumns().size());
@@ -81,5 +90,8 @@ public class FuzzSourceShapeCoverageTest {
             }
         }
         Assert.assertTrue("only " + keyed + " keyed and " + plain + " plain of 1000 sources sample by", keyed > 25 && plain > 25);
+        // A negative LIMIT over the stream reads it through a lax copy.
+        Assert.assertTrue("only " + keyedLimited + " keyed and " + plainLimited + " plain sources take a negative LIMIT",
+                keyedLimited > 5 && plainLimited > 5);
     }
 }

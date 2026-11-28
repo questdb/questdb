@@ -34,6 +34,8 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.TextPlanSink;
 import io.questdb.mp.WorkerPool;
+import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.mp.WorkerPoolMode;
 import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.std.Misc;
 import org.openjdk.jmh.annotations.Benchmark;
@@ -68,6 +70,9 @@ public class SampleByStreamBenchmark {
     public String dataFormat;
     @Param({"stream"})
     public String expectedStrategy;
+    // The parallel filter dispatch limit; 0 takes the server default, the worker count up to 32.
+    @Param({"0"})
+    public int dispatchLimit;
     @Param({"none"})
     public String fill;
     @Param({"7"})
@@ -82,11 +87,15 @@ public class SampleByStreamBenchmark {
     public int rowCount;
     @Param({"64"})
     public int symbolCount;
+    // legacy runs the reducers on worker threads; fiber runs them on the fibers of a fiber host pool, as the server
+    // does by default.
+    @Param({"legacy"})
+    public String poolMode;
     @Param({"UTC"})
     public String timeZone;
     @Param({"0", "4"})
     public int workers;
-    @Param({"basic", "count", "double", "stats", "decimal", "first_last", "distinct_byte", "expression", "filtered", "filtered_desc", "filtered_gaps", "hash_filtered", "keyed", "keyed_double", "keyed_filtered", "keyed_string", "keyed_multi", "keyed_distinct_byte", "keyed_unique"})
+    @Param({"basic", "count", "double", "stats", "decimal", "first_last", "distinct_byte", "expression", "filtered", "filtered_desc", "filtered_gaps", "hash_filtered", "keyed", "keyed_double", "keyed_filtered", "keyed_string", "keyed_multi", "keyed_distinct_byte", "keyed_unique", "keyed_wide"})
     public String workload;
     private int[] columnTypes;
     private SqlCompiler compiler;
@@ -134,11 +143,31 @@ public class SampleByStreamBenchmark {
                 public int getSqlPageFrameMinRows() {
                     return frameRows;
                 }
+
+                @Override
+                public int getSqlParallelFilterDispatchLimit() {
+                    return dispatchLimit > 0 ? dispatchLimit : Math.min(Math.max(1, workers), 32);
+                }
             };
             engine = new CairoEngine(configuration);
             if (workers > 0) {
-                workerPool = new WorkerPool(() -> workers);
-                WorkerPoolUtils.setupQueryJobs(workerPool, engine);
+                final WorkerPoolMode workerPoolMode = switch (poolMode) {
+                    case "legacy" -> WorkerPoolMode.LEGACY;
+                    case "fiber" -> WorkerPoolMode.FIBER_HOST;
+                    default -> throw new IllegalArgumentException("unknown pool mode: " + poolMode);
+                };
+                workerPool = new WorkerPool(new WorkerPoolConfiguration() {
+                    @Override
+                    public int getWorkerCount() {
+                        return workers;
+                    }
+
+                    @Override
+                    public WorkerPoolMode getWorkerPoolMode() {
+                        return workerPoolMode;
+                    }
+                });
+                WorkerPoolUtils.setupQueryJobs(workerPool, engine, true);
                 workerPool.start();
             }
             context = new SqlExecutionContextImpl(engine, Math.max(1, workers))
@@ -174,6 +203,8 @@ public class SampleByStreamBenchmark {
                 case "keyed_multi" -> "sym, v % 7 k, count(*), sum(v), avg(d)";
                 case "keyed_distinct_byte" -> "sym, count_distinct(v::byte), approx_count_distinct(v::byte), count(*)";
                 case "keyed_unique" -> "id, count(*), sum(v)";
+                // Every frame holds the same 100_000 keys, the most a span map of each lane can collect.
+                case "keyed_wide" -> "id % 100_000 k, count(*), sum(v)";
                 default -> throw new IllegalArgumentException("unknown workload: " + workload);
             };
             final boolean isHashControl = "hash_filtered".equals(workload);

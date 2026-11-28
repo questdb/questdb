@@ -315,10 +315,12 @@ public class TemporalStreamJoinTest extends AbstractCairoTest {
                     .assertsPlanContaining("Materialize", "Stream Group By");
             try (RecordCursorFactory factory = compiler.compile(sub, context).getRecordCursorFactory()) {
                 Assert.assertFalse(factory.recordCursorSupportsRandomAccess());
-                // The non-strict copy makes rewinds cheap but cannot promise random access.
-                Assert.assertFalse(factory.isRewindRecomputing());
+                // The non-strict copy streams its base again on a rewind once its rows outgrow the memory limit, so
+                // it reports the rewind cost of its base, and the join keeps a copy of its own above the LIMIT.
+                Assert.assertTrue(factory.isRewindRecomputing());
             }
             assertQuery(query(sub, false)).withEngine(engine).withContext(context).noLeakCheck()
+                    .withPlanContaining("Materialize\n            Limit value: -3")
                     .timestamp("ts").expectSize().noRandomAccess().returns(expectedTextRows());
         });
     }

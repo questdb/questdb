@@ -31,6 +31,7 @@ import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.MemoryTrackerWorkload;
+import io.questdb.std.ObjList;
 import io.questdb.std.PerQueryMemoryTracker;
 import io.questdb.std.PerQueryMemoryTrackerProvider;
 import io.questdb.std.Unsafe;
@@ -139,6 +140,39 @@ public class PerQueryMemoryTrackerTest {
                 Assert.assertEquals(MemoryTrackerWorkload.MAT_VIEW_REFRESH, t2.getWorkload());
                 t2.close();
             }
+        });
+    }
+
+    @Test
+    public void testAllocationRetriesWhoeverFreedTheMemory() throws Exception {
+        // Two allocations past the limit at once: the reclaimer frees its memory for one, and the other finds nothing to
+        // free when it asks. The second must still try again, since the memory is free by then. The reclaimer here
+        // stands in for both: it frees nothing of its own and a block another thread held.
+        assertWithReclaimers(1024, (tracker, reclaimers) -> {
+            final long[] other = {Unsafe.malloc(600, MemoryTag.NATIVE_DEFAULT, tracker)};
+            final MemoryTracker.Reclaimer reclaimer = () -> other[0] = Unsafe.free(other[0], 600, MemoryTag.NATIVE_DEFAULT, tracker);
+            Assert.assertTrue(tracker.addReclaimer(reclaimer));
+            try {
+                final long ptr = Unsafe.malloc(500, MemoryTag.NATIVE_DEFAULT, tracker);
+                Assert.assertEquals(500, tracker.getUsed());
+                Unsafe.free(ptr, 500, MemoryTag.NATIVE_DEFAULT, tracker);
+            } finally {
+                tracker.removeReclaimer(reclaimer);
+                if (other[0] != 0) {
+                    Unsafe.free(other[0], 600, MemoryTag.NATIVE_DEFAULT, tracker);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testAllocationWithinLimitAsksNoReclaimer() throws Exception {
+        assertWithReclaimers(1024, (tracker, reclaimers) -> {
+            final BlockReclaimer reclaimer = reclaimers.add(100);
+            final long ptr = Unsafe.malloc(200, MemoryTag.NATIVE_DEFAULT, tracker);
+            Assert.assertEquals(300, tracker.getUsed());
+            Assert.assertEquals(0, reclaimer.askCount);
+            Unsafe.free(ptr, 200, MemoryTag.NATIVE_DEFAULT, tracker);
         });
     }
 
@@ -360,6 +394,105 @@ public class PerQueryMemoryTrackerTest {
     }
 
     @Test
+    public void testReclaimerCapacity() throws Exception {
+        assertWithReclaimers(1024, (tracker, reclaimers) -> {
+            for (int i = 0; i < MemoryTracker.MAX_RECLAIMER_COUNT; i++) {
+                reclaimers.add(0);
+            }
+            Assert.assertEquals(MemoryTracker.MAX_RECLAIMER_COUNT, tracker.getReclaimerCount());
+            final BlockReclaimer extra = new BlockReclaimer(tracker, 0);
+            Assert.assertFalse(tracker.addReclaimer(extra));
+            tracker.removeReclaimer(reclaimers.get(3));
+            Assert.assertTrue(tracker.addReclaimer(extra));
+            Assert.assertEquals(MemoryTracker.MAX_RECLAIMER_COUNT, tracker.getReclaimerCount());
+            tracker.removeReclaimer(extra);
+        });
+    }
+
+    @Test
+    public void testReclaimerFreeingNothingLeavesLimitError() throws Exception {
+        assertWithReclaimers(1024, (tracker, reclaimers) -> {
+            final BlockReclaimer reclaimer = reclaimers.add(0);
+            final long ptr = Unsafe.malloc(600, MemoryTag.NATIVE_DEFAULT, tracker);
+            try {
+                Unsafe.malloc(500, MemoryTag.NATIVE_DEFAULT, tracker);
+                Assert.fail("expected the per-query limit to reject the allocation");
+            } catch (CairoException e) {
+                Assert.assertTrue(e.isOutOfMemory());
+                TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                TestUtils.assertContains(e.getFlyweightMessage(), "used=600");
+                TestUtils.assertContains(e.getFlyweightMessage(), "size=500");
+            }
+            Assert.assertEquals(1, reclaimer.askCount);
+            Assert.assertEquals(600, tracker.getUsed());
+            Unsafe.free(ptr, 600, MemoryTag.NATIVE_DEFAULT, tracker);
+        });
+    }
+
+    @Test
+    public void testReclaimerFreeingTooLittleLeavesLimitError() throws Exception {
+        assertWithReclaimers(1024, (tracker, reclaimers) -> {
+            final long ptr = Unsafe.malloc(600, MemoryTag.NATIVE_DEFAULT, tracker);
+            final BlockReclaimer reclaimer = reclaimers.add(300);
+            Assert.assertEquals(900, tracker.getUsed());
+            try {
+                Unsafe.malloc(500, MemoryTag.NATIVE_DEFAULT, tracker);
+                Assert.fail("expected the per-query limit to reject the allocation");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "used=600");
+                TestUtils.assertContains(e.getFlyweightMessage(), "size=500");
+            }
+            // The reclaimer freed its block, though the allocation did not fit after all.
+            Assert.assertEquals(1, reclaimer.askCount);
+            Assert.assertEquals(0, reclaimer.ptr);
+            Assert.assertEquals(600, tracker.getUsed());
+            Unsafe.free(ptr, 600, MemoryTag.NATIVE_DEFAULT, tracker);
+        });
+    }
+
+    @Test
+    public void testReclaimerFreesMemoryForReallocationPastLimit() throws Exception {
+        assertWithReclaimers(1024, (tracker, reclaimers) -> {
+            long ptr = Unsafe.malloc(300, MemoryTag.NATIVE_DEFAULT, tracker);
+            final BlockReclaimer reclaimer = reclaimers.add(600);
+            ptr = Unsafe.realloc(ptr, 300, 700, MemoryTag.NATIVE_DEFAULT, tracker);
+            Assert.assertEquals(700, tracker.getUsed());
+            Assert.assertEquals(1, reclaimer.askCount);
+            Unsafe.free(ptr, 700, MemoryTag.NATIVE_DEFAULT, tracker);
+        });
+    }
+
+    @Test
+    public void testReclaimersFreeMemoryForAllocationPastLimit() throws Exception {
+        assertWithReclaimers(1024, (tracker, reclaimers) -> {
+            final BlockReclaimer first = reclaimers.add(400);
+            final BlockReclaimer second = reclaimers.add(400);
+            // 800 + 500 passes the limit, and 500 needs both blocks gone: the tracker asks every reclaimer.
+            final long ptr = Unsafe.malloc(500, MemoryTag.NATIVE_DEFAULT, tracker);
+            Assert.assertEquals(500, tracker.getUsed());
+            Assert.assertEquals(1, first.askCount);
+            Assert.assertEquals(1, second.askCount);
+            Unsafe.free(ptr, 500, MemoryTag.NATIVE_DEFAULT, tracker);
+        });
+    }
+
+    @Test
+    public void testRemovedReclaimerIsNotAsked() throws Exception {
+        assertWithReclaimers(1024, (tracker, reclaimers) -> {
+            final BlockReclaimer reclaimer = reclaimers.add(600);
+            tracker.removeReclaimer(reclaimer);
+            Assert.assertEquals(0, tracker.getReclaimerCount());
+            try {
+                Unsafe.malloc(500, MemoryTag.NATIVE_DEFAULT, tracker);
+                Assert.fail("expected the per-query limit to reject the allocation");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "used=600");
+            }
+            Assert.assertEquals(0, reclaimer.askCount);
+        });
+    }
+
+    @Test
     public void testUnlimitedTrackerNeverBreaches() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (PerQueryMemoryTrackerProvider provider = newProvider(0, 0, 0)) {
@@ -439,6 +572,21 @@ public class PerQueryMemoryTrackerTest {
         });
     }
 
+    private static void assertWithReclaimers(long limit, ReclaimerTest test) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (PerQueryMemoryTrackerProvider provider = newProvider(limit, 0, 0)) {
+                final MemoryTracker tracker = provider.acquire(SEC, 1, MemoryTrackerWorkload.QUERY);
+                final Reclaimers reclaimers = new Reclaimers(tracker);
+                try {
+                    test.run(tracker, reclaimers);
+                } finally {
+                    reclaimers.close();
+                    tracker.close();
+                }
+            }
+        });
+    }
+
     private static PerQueryMemoryTrackerProvider newProvider(long queryLimit, long matViewRefreshLimit, long walApplyLimit) {
         return new PerQueryMemoryTrackerProvider(new LimitsConfiguration(queryLimit, matViewRefreshLimit, walApplyLimit));
     }
@@ -472,6 +620,64 @@ public class PerQueryMemoryTrackerTest {
         @Override
         public long getWalApplyMemoryLimitBytes() {
             return walApplyLimit;
+        }
+    }
+
+    @FunctionalInterface
+    private interface ReclaimerTest {
+        void run(MemoryTracker tracker, Reclaimers reclaimers) throws Exception;
+    }
+
+    // Holds a block charged to the tracker and frees it when the tracker asks.
+    private static final class BlockReclaimer implements MemoryTracker.Reclaimer {
+        private final long size;
+        private final MemoryTracker tracker;
+        private int askCount;
+        private long ptr;
+
+        private BlockReclaimer(MemoryTracker tracker, long size) {
+            this.tracker = tracker;
+            this.size = size;
+            this.ptr = size > 0 ? Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT, tracker) : 0;
+        }
+
+        @Override
+        public void reclaim() {
+            askCount++;
+            if (ptr != 0) {
+                ptr = Unsafe.free(ptr, size, MemoryTag.NATIVE_DEFAULT, tracker);
+            }
+        }
+    }
+
+    // The reclaimers a test registers, which it frees and removes at the end.
+    private static final class Reclaimers {
+        private final ObjList<BlockReclaimer> list = new ObjList<>();
+        private final MemoryTracker tracker;
+
+        private Reclaimers(MemoryTracker tracker) {
+            this.tracker = tracker;
+        }
+
+        private BlockReclaimer add(long size) {
+            final BlockReclaimer reclaimer = new BlockReclaimer(tracker, size);
+            list.add(reclaimer);
+            Assert.assertTrue(tracker.addReclaimer(reclaimer));
+            return reclaimer;
+        }
+
+        private void close() {
+            for (int i = 0, n = list.size(); i < n; i++) {
+                final BlockReclaimer reclaimer = list.getQuick(i);
+                tracker.removeReclaimer(reclaimer);
+                if (reclaimer.ptr != 0) {
+                    reclaimer.ptr = Unsafe.free(reclaimer.ptr, reclaimer.size, MemoryTag.NATIVE_DEFAULT, tracker);
+                }
+            }
+        }
+
+        private BlockReclaimer get(int index) {
+            return list.getQuick(index);
         }
     }
 }

@@ -54,7 +54,6 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
     public static final byte TYPE_HORIZON_JOIN = 3;
     public static final byte TYPE_TOP_K = 1;
     public static final byte TYPE_WINDOW_JOIN = 2;
-    private static final String exceptionMessage = "unexpected filter error";
 
     // Concatenated per-sub-frame filteredRows for a multi-sub-frame run (subFrameCount > 1); a single
     // sub-frame keeps using filteredRows directly with no copy. See runReduce.
@@ -81,11 +80,6 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
     private PageFrameMemory frameMemory;
     private PageFrameSequence<?> frameSequence;
     private long frameSequenceId = -1;
-    private long groupByFirstKey;
-    private boolean groupByFirstKeyInSpan;
-    private long groupByLastKey;
-    private boolean groupByLastKeyInSpan;
-    private long groupBySegmentCount;
     private int interruptionReason = SqlExecutionCircuitBreaker.STATE_OK;
     // Valid for TYPE_FILTER and TYPE_HORIZON_JOIN only. When set, the reducer sets filteredRowCount
     // and the collecting cursor must not read filteredRows: a filtered TYPE_HORIZON_JOIN reducer
@@ -134,6 +128,11 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
                             : 0
             );
         }
+    }
+
+    // The message of a reducer error that carries none.
+    static String getUnexpectedErrorMessage(byte taskType) {
+        return taskType == TYPE_GROUP_BY ? "unexpected reduce error" : "unexpected filter error";
     }
 
     /**
@@ -233,26 +232,6 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
         return frameSequenceId;
     }
 
-    public long getGroupByFirstKey() {
-        return groupByFirstKey;
-    }
-
-    public long getGroupByLastKey() {
-        return groupByLastKey;
-    }
-
-    public long getGroupBySegmentCount() {
-        return groupBySegmentCount;
-    }
-
-    public boolean isGroupByFirstKeyInSpan() {
-        return groupByFirstKeyInSpan;
-    }
-
-    public boolean isGroupByLastKeyInSpan() {
-        return groupByLastKeyInSpan;
-    }
-
     /**
      * Returns the per-query memory tracker captured by the owning frame sequence
      * at workload start, or {@code null} between workloads / when no per-query
@@ -316,6 +295,10 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
             frameMemoryPool.of(frameSequence.getPageFrameAddressCache());
         }
         frameMemory = null;
+        // A result slot frees its lists between queries, see releaseMemory().
+        filteredRows.reopen();
+        dataAddresses.reopen();
+        auxAddresses.reopen();
         filteredRows.clear();
         accumulatedRows.clear();
         subFrameRowCounts.clear();
@@ -451,7 +434,7 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
             errorMessagePosition = fmc.getPosition();
         } else {
             final String msg = th.getMessage();
-            errorMsg.put(msg != null ? msg : taskType == TYPE_GROUP_BY ? "unexpected reduce error" : exceptionMessage);
+            errorMsg.put(msg != null ? msg : getUnexpectedErrorMessage(taskType));
         }
 
         if (th instanceof CairoException ce) {
@@ -465,26 +448,6 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
 
     public void setFilteredRowCount(long filteredRowCount) {
         this.filteredRowCount = filteredRowCount;
-    }
-
-    public void setGroupByFirstKey(long groupByFirstKey) {
-        this.groupByFirstKey = groupByFirstKey;
-    }
-
-    public void setGroupByFirstKeyInSpan(boolean groupByFirstKeyInSpan) {
-        this.groupByFirstKeyInSpan = groupByFirstKeyInSpan;
-    }
-
-    public void setGroupByLastKey(long groupByLastKey) {
-        this.groupByLastKey = groupByLastKey;
-    }
-
-    public void setGroupByLastKeyInSpan(boolean groupByLastKeyInSpan) {
-        this.groupByLastKeyInSpan = groupByLastKeyInSpan;
-    }
-
-    public void setGroupBySegmentCount(long groupBySegmentCount) {
-        this.groupBySegmentCount = groupBySegmentCount;
     }
 
     public void setTaskType(byte taskType) {
@@ -519,6 +482,13 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
         }
     }
 
+    // A completion-tracked task reduces into its sequence's result slot, so the queued task holds nothing to release.
+    // It drops its references before its queue slot goes back to the publishers.
+    void detach() {
+        frameSequence = null;
+        frameMemory = null;
+    }
+
     long getTaskRowCount() {
         // Scheduling budgets cover the whole run; reducers still read one subframe at a time.
         long rowCount = 0;
@@ -526,5 +496,16 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
             rowCount += frameSequence.getFrameRowCount(firstFrameIndex + i);
         }
         return rowCount;
+    }
+
+    // Frees the native memory and keeps the task for reuse: of() reopens the lists. A completion-tracked sequence keeps
+    // its result slots while its factory sits in the cache, so they hold no memory meanwhile. Returns the cleanup
+    // failure chain, as the Misc best-effort methods do.
+    Throwable releaseMemory(Throwable cleanupFailure) {
+        filteredRows.close();
+        accumulatedRows.close();
+        dataAddresses.close();
+        auxAddresses.close();
+        return Misc.clearBestEffort(cleanupFailure, frameMemoryPool);
     }
 }

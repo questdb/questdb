@@ -26,10 +26,12 @@ package io.questdb.std;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.mp.CarrierIdentity;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReferenceArray;
 
 /**
  * Tracks native memory charged to one bounded workload. The first 16 bytes of
@@ -42,6 +44,8 @@ import java.util.concurrent.atomic.AtomicLong;
  * the adaptive threshold or an execution boundary is reached.</p>
  */
 public abstract class MemoryTracker implements Closeable {
+    // The most reclaimers a tracker holds at once, see addReclaimer().
+    public static final int MAX_RECLAIMER_COUNT = 8;
 
     private static final AtomicInteger RESOURCE_MEMORY_ACTIVE_TRACKER_COUNT = new AtomicInteger();
     private static final long RESOURCE_MEMORY_CONTEXT_COUNT_OFFSET = 48;
@@ -63,6 +67,9 @@ public abstract class MemoryTracker implements Closeable {
     // One Rust QdbAllocator per native memory tag, created lazily and retained
     // for the lifetime of this pooled tracker.
     private final long[] nativeAllocators = new long[MemoryTag.SIZE - MemoryTag.NATIVE_DEFAULT];
+    // The holders of memory that the workload can do without, see addReclaimer(). Owners add and remove themselves;
+    // any thread that allocates reads the slots.
+    private final AtomicReferenceArray<Reclaimer> reclaimers = new AtomicReferenceArray<>(MAX_RECLAIMER_COUNT);
     private long nativeAddress;
     private long resourceMemoryGeneration;
 
@@ -75,6 +82,21 @@ public abstract class MemoryTracker implements Closeable {
         if (delta != 0) {
             coveredBytes.addAndGet(delta);
         }
+    }
+
+    /**
+     * Registers memory that the workload holds only to save work and could free, such as a copy of rows it can
+     * compute again. Once an allocation would pass a limit, the tracker asks every reclaimer to free its memory and
+     * tries once more before it fails, so such memory never fails an allocation the workload needs. Returns false when
+     * the tracker holds {@link #MAX_RECLAIMER_COUNT} reclaimers; the caller's memory then counts as any other.
+     */
+    public final boolean addReclaimer(Reclaimer reclaimer) {
+        for (int i = 0; i < MAX_RECLAIMER_COUNT; i++) {
+            if (reclaimers.compareAndSet(i, null, reclaimer)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     @Override
@@ -96,6 +118,17 @@ public abstract class MemoryTracker implements Closeable {
     }
 
     public abstract long getQueryId();
+
+    @TestOnly
+    public final int getReclaimerCount() {
+        int count = 0;
+        for (int i = 0; i < MAX_RECLAIMER_COUNT; i++) {
+            if (reclaimers.get(i) != null) {
+                count++;
+            }
+        }
+        return count;
+    }
 
     /**
      * Returns the currently published usage. Resource Group trackers may have
@@ -126,6 +159,16 @@ public abstract class MemoryTracker implements Closeable {
         final long covered = coveredBytes.getAndSet(0);
         if (covered != 0) {
             release(covered);
+        }
+    }
+
+    // Once this returns, the tracker asks the reclaimer nothing more, though a thread may still be in a call that began
+    // before; the reclaimer waits for such a call itself.
+    public final void removeReclaimer(Reclaimer reclaimer) {
+        for (int i = 0; i < MAX_RECLAIMER_COUNT; i++) {
+            if (reclaimers.compareAndSet(i, reclaimer, null)) {
+                return;
+            }
         }
     }
 
@@ -246,19 +289,17 @@ public abstract class MemoryTracker implements Closeable {
         if (bytes <= 0 || base == 0) {
             return;
         }
-        if (Unsafe.getLongVolatile(base + RESOURCE_MEMORY_MAGIC_OFFSET) == RESOURCE_MEMORY_MAGIC) {
-            final int scope = CarrierIdentity.chargeMemoryTracker(base, bytes);
-            if (scope != 0) {
-                throwLimitExceeded(scope, bytes, memoryTag);
-            }
-            return;
+        int scope = tryReserve(base, bytes);
+        if (scope != 0) {
+            // Tries again whatever the reclaimers free here: another thread may have freed memory since, a reclaimer's
+            // for one, which then no longer counts among the reclaimers. A failed charge charges nothing, so the second
+            // try costs only the time.
+            reclaim();
+            scope = tryReserve(base, bytes);
         }
-        final long limit = getLimit();
-        final long used = getUsed();
-        if (limit != 0 && used + bytes > limit) {
-            throwLimitExceeded("query", limit, used, bytes, memoryTag);
+        if (scope != 0) {
+            throwLimitExceeded(scope, bytes, memoryTag);
         }
-        Unsafe.getUnsafe().getAndAddLong(null, base + Unsafe.MEMORY_TRACKER_USED_OFFSET, bytes);
     }
 
     private static long calculateUnpublishedThreshold(long base, long groupAddress, long processAddress) {
@@ -286,6 +327,16 @@ public abstract class MemoryTracker implements Closeable {
             if (nativeAllocators[i] != 0) {
                 Unsafe.freeTrackerNativeAllocator(nativeAllocators[i]);
                 nativeAllocators[i] = 0;
+            }
+        }
+    }
+
+    // Asks every reclaimer to free its memory, see addReclaimer().
+    private void reclaim() {
+        for (int i = 0; i < MAX_RECLAIMER_COUNT; i++) {
+            final Reclaimer reclaimer = reclaimers.get(i);
+            if (reclaimer != null) {
+                reclaimer.reclaim();
             }
         }
     }
@@ -328,5 +379,30 @@ public abstract class MemoryTracker implements Closeable {
                 .put(", size=").put(bytes)
                 .put(", memoryTag=").put(memoryTag)
                 .put(']');
+    }
+
+    // Charges the bytes and returns 0, or returns the scope whose limit they would pass and charges nothing.
+    private int tryReserve(long base, long bytes) {
+        if (Unsafe.getLongVolatile(base + RESOURCE_MEMORY_MAGIC_OFFSET) == RESOURCE_MEMORY_MAGIC) {
+            return CarrierIdentity.chargeMemoryTracker(base, bytes);
+        }
+        final long limit = getLimit();
+        if (limit != 0 && getUsed() + bytes > limit) {
+            return SCOPE_QUERY;
+        }
+        Unsafe.getUnsafe().getAndAddLong(null, base + Unsafe.MEMORY_TRACKER_USED_OFFSET, bytes);
+        return 0;
+    }
+
+    /**
+     * Holds memory that the workload can do without, see {@link #addReclaimer(Reclaimer)}.
+     */
+    public interface Reclaimer {
+        /**
+         * Frees what memory it can. A thread that allocates against the tracker calls it in the middle of the
+         * allocation, so it must not allocate against the tracker itself. Once it returns, the memory it freed, here or
+         * on another thread, must count as free: a Resource Group tracker sees a free only once its thread publishes it.
+         */
+        void reclaim();
     }
 }

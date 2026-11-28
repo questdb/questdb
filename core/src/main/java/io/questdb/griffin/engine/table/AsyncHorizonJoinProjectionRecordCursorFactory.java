@@ -47,7 +47,6 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.join.JoinRecordMetadata;
 import io.questdb.jit.CompiledFilter;
-import io.questdb.mp.SCSequence;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -103,7 +102,6 @@ public class AsyncHorizonJoinProjectionRecordCursorFactory extends AbstractRecor
      * each task 10 times the rows to share one epoch between.
      */
     private static final int MIN_FRAME_BUDGET_DIVISOR = 10;
-    private final SCSequence collectSubSeq = new SCSequence();
     private final MasterFrameSource masterFrameSource = new MasterFrameSource();
     private final int offsetCount;
     private final int pageFrameMaxRows;
@@ -414,7 +412,7 @@ public class AsyncHorizonJoinProjectionRecordCursorFactory extends AbstractRecor
     private PageFrameSequence<AsyncHorizonJoinProjectionAtom> execute(SqlExecutionContext executionContext) throws SqlException {
         // The frame sequence opens the master's page frame cursor through masterFrameSource,
         // which sizes the master frames.
-        return frameSequence.of(masterFrameSource, executionContext, collectSubSeq, ORDER_ASC);
+        return frameSequence.of(masterFrameSource, executionContext, null, ORDER_ASC);
     }
 
     /**

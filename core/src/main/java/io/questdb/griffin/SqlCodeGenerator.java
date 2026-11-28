@@ -2105,6 +2105,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return false;
     }
 
+    // Whether a lax copy sits between the factory and the stream GROUP BY that a rewind of its cursor reruns; a stream
+    // GROUP BY reads a table, so the copy is never under it. A LIMIT or FILL that rewinds the cursor then needs no copy of
+    // its own: the copy under it already spares the rerun while memory allows, which is all a second lax copy could do.
+    private static boolean isOverLaxCopy(RecordCursorFactory factory) {
+        for (RecordCursorFactory f = factory; f != null && !f.recordCursorSupportsRandomAccess(); f = f.getBaseFactory()) {
+            if (f instanceof MaterializedRecordCursorFactory) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     // Over a hash GROUP BY, only these factories pass random access through to a light join or sort.
     private static boolean isOverStreamGroupBy(RecordCursorFactory factory) {
         for (RecordCursorFactory f = factory; !f.recordCursorSupportsRandomAccess();
@@ -9261,7 +9273,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             hiFunc = getHiFunction(model, executionContext);
             // A negative bound makes the limit count the base rows and then rewind the base, which reruns
             // a stream GROUP BY.
-            if (factory.isRewindRecomputing()
+            if (factory.isRewindRecomputing() && !isOverLaxCopy(factory)
                     && (mayBeNegativeLimit(loFunc, executionContext) || (hiFunc != null && mayBeNegativeLimit(hiFunc, executionContext)))) {
                 final RecordCursorFactory base = factory;
                 factory = null;
@@ -10960,7 +10972,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final boolean isSampleFromRuntimeUtc = isSampleFromUtc && !isSampleFromConstant;
             final boolean isSampleFromOrToRuntimeUtc = isSampleFromRuntimeUtc || (isSampleToUtc && !isSampleToConstant);
 
-            if (!isFillNone && keyTypes.getColumnCount() > 0 && factory.isRewindRecomputing()) {
+            if (!isFillNone && keyTypes.getColumnCount() > 0 && factory.isRewindRecomputing() && !isOverLaxCopy(factory)) {
                 final RecordCursorFactory base = factory;
                 factory = null;
                 factory = materialize(base, false);

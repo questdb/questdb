@@ -67,7 +67,6 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.*;
 public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFactory {
     private static final PageFrameReducer REDUCER = AsyncJitFilteredRecordCursorFactory::filter;
 
-    private final SCSequence collectSubSeq = new SCSequence();
     private final ExpressionNode filterExpr;
     private Function limitLoFunction;
     private final int limitLoPos;
@@ -267,11 +266,11 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
             if (negativeLimitRows == null) {
                 negativeLimitRows = new DirectLongList(maxNegativeLimit, MemoryTag.NATIVE_OFFLOAD);
             }
-            negativeLimitCursor.of(execute(executionContext, collectSubSeq, order), rowsRemaining, negativeLimitRows);
+            negativeLimitCursor.of(execute(executionContext, null, order), rowsRemaining, negativeLimitRows);
             return negativeLimitCursor;
         }
 
-        cursor.of(execute(executionContext, collectSubSeq, order), rowsRemaining);
+        cursor.of(execute(executionContext, null, order), rowsRemaining);
         return cursor;
     }
 

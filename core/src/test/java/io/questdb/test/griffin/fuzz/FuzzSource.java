@@ -309,10 +309,14 @@ public final class FuzzSource {
         // first(), and designates no timestamp, since windows and LATEST ON over tied timestamps depend on order.
         final boolean isKeyed = rnd.nextBoolean();
         final String interval = SAMPLE_INTERVALS[rnd.nextInt(SAMPLE_INTERVALS.length)];
+        // A negative LIMIT counts its input before it reads the rows it keeps. Over the stream it reads through a copy,
+        // which keeps the second read from running the aggregation again; the keyed shape's order is total, so the
+        // rows it keeps are too.
+        final String limit = rnd.nextInt(3) == 0 ? " LIMIT -" + (1 + rnd.nextInt(20)) : "";
         final String sql = isKeyed
                 ? "SELECT " + tsName + " AS ts, " + key.getName() + " AS k, count() AS cnt FROM " + base.getFromSql()
-                  + " SAMPLE BY " + interval + " ORDER BY ts, k"
-                : "SELECT " + tsName + " AS ts, count() AS cnt FROM " + base.getFromSql() + " SAMPLE BY " + interval;
+                  + " SAMPLE BY " + interval + " ORDER BY ts, k" + limit
+                : "SELECT " + tsName + " AS ts, count() AS cnt FROM " + base.getFromSql() + " SAMPLE BY " + interval + limit;
         final ObjList<FuzzColumn> cols = new ObjList<>();
         cols.add(new FuzzColumn("ts", ts.getType()));
         if (isKeyed) {
